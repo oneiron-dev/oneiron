@@ -4,13 +4,16 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 317 code-mode rows (299 host rows, 18 run rows), 1081 declarations.
-// Replies: 257 fully typed, 47 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Every verb call resolves with its row's output itself, or with a `StoredResult` card in its place past 512 KiB of JSON.
+// A refused call throws a string, the refusal's JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,
+// `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
+// A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
+// refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
+// Census: 320 code-mode rows (302 host rows, 18 run rows), 1097 declarations.
+// Replies: 260 fully typed, 47 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
-  /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
-  type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
   type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
@@ -337,7 +340,8 @@ declare namespace Sdk {
   type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty };
   type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
   type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
-  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null };
+  type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
+  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null; lens_refused?: WeaveLensRefusal | null };
   type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string };
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type PackFileInput = { path: string; text: string };
@@ -792,7 +796,7 @@ declare namespace Sdk {
   type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
   type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
   type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
-  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[] };
+  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null };
   type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline";
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
@@ -852,7 +856,8 @@ declare namespace Sdk {
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
   type OpenInput = { url: string };
   type Row = { ref: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null };
+  type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
   type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean };
   type ObserveInput = { since?: number | null };
@@ -981,7 +986,7 @@ declare namespace Sdk {
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
-  type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null };
+  type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
   type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
   type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
   type OfficeBodyForkEditRequest = { artifact_ref: string; fork_ref: string; ops: OfficeBodyOps; made_by?: unknown | null };
@@ -990,8 +995,21 @@ declare namespace Sdk {
   type BlockChange = { block: string; kind: ChangeKind };
   type ConflictKind = "delete_edit" | "competing_move" | "both_edited" | "both_set";
   type BodyConflict = { block: string; kind: ConflictKind };
-  type OfficeBodyDiff = { base: number[]; head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
-  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[] };
+  type OfficeBodyDiff = { base: number[]; head: number[]; fork_head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
+  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[] };
+  type OfficeBodyProposalRequest = { artifact_ref: string; proposal_ref: string };
+  type ProposalHeader = { proposal: EntityId; artifact: EntityId; opener: EntityId; run_root?: EntityId | null; opened_at: number };
+  type MemberVerdict = "waiting" | "landed" | "rejected" | "let_go";
+  type AnsweringAuthority = { kind: "word"; person: EntityId } | { kind: "grant"; grant_ref: string; decision: string };
+  type MemberAnswer = { by: AnsweringAuthority; caller: EntityId; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
+  type ProposalMember = { fork: EntityId; opener: EntityId; run_root?: EntityId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
+  type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go";
+  type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null };
+  type OfficeBodyProposal = { header: ProposalHeader; members: ProposalMember[]; settlement?: ProposalSettlement | null };
+  type SettleVerdict = "accept" | "reject";
+  type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
+  type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
+  type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null };
   type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
@@ -1009,7 +1027,6 @@ declare namespace Sdk {
   type RenderPair = { head: RenderSide; candidate: RenderSide; changed: NodeId[] };
   type DeckDiff = { base_version: number; head_version: number; proposal_version: number; added: NodeId[]; removed: NodeId[]; moved: NodeMove[]; text_changed: NodeId[]; formatting_changed: NodeId[]; geometry_changed: NodeId[]; payload_changed: NodeId[]; opaque_changed: OpaqueChange[]; affected_slides: NodeId[]; head_only: NodeId[]; conflicts: Conflict[]; relationships: RelationshipChange[]; renders?: RenderPair | null };
   type DeckReviewView = { head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null };
-  type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
   type Landing = "merge" | "switch";
   type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
   type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
@@ -1020,6 +1037,9 @@ declare namespace Sdk {
   type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
   type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
   type DeckOracleRequest = { receipt: OracleReceipt };
+  type DeckPreviewRequest = { artifact_ref: string; slides: number[] };
+  type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string };
+  type DeckPreview = { frontier: number[]; profile: string; projector: string; export_key: string; renderer: string; provisional: boolean; slides: DeckPreviewSlide[] };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
   type ReadBlobVersionRequest = { artifact_ref: string; version: number };
@@ -1093,768 +1113,775 @@ declare namespace Sdk {
   type TaskWaitSetResult = { ready: TaskWaitFinding[]; partial: TaskWaitFinding[]; failed: TaskWaitFailure[]; pending: EntityId[]; done: boolean; reason?: string | null; until: number };
   type SummarizeInputEffort = "low" | "medium" | "high";
   type SummarizeInput = { ref: string; effort?: SummarizeInputEffort | null; group?: string[] | null; defer?: boolean | null };
-  type BudgetLegibilityEnvelope = { remaining_units: number; limit_units: number; remaining_ms: number; wrap_up: boolean; finalize_by_ms?: number | null };
 }
 declare const ai: {
   /** One embedding vector per input text, from the host's embedding model. */
-  embed(input: Sdk.AiCallRequest): Promise<Sdk.Reply<Sdk.AiAnswer>>;
+  embed(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** One image out of the host's image model; reference images make it an edit. */
-  image(input: Sdk.AiCallRequest): Promise<Sdk.Reply<Sdk.AiAnswer>>;
+  image(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left. */
-  options(input: Sdk.AiOptionsRequest): Promise<Sdk.Reply<Sdk.AiOptions>>;
+  options(input: Sdk.AiOptionsRequest): Promise<Sdk.AiOptions | StoredResult>;
   /** Speech audio out of text, from the host's speech model. */
-  speech(input: Sdk.AiCallRequest): Promise<Sdk.Reply<Sdk.AiAnswer>>;
+  speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** Text out of speech audio, from the host's transcription model. */
-  transcribe(input: Sdk.AiCallRequest): Promise<Sdk.Reply<Sdk.AiAnswer>>;
+  transcribe(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt. */
-  verdict(input: Sdk.AiVerdictRequest): Promise<Sdk.Reply<Sdk.AiVerdict>>;
+  verdict(input: Sdk.AiVerdictRequest): Promise<Sdk.AiVerdict | StoredResult>;
   /** Starts a video render as a provider job and answers with its ticket. */
-  video: ((input: Sdk.AiCallRequest) => Promise<Sdk.Reply<Sdk.AiVideoTicket>>) & {
+  video: ((input: Sdk.AiCallRequest) => Promise<Sdk.AiVideoTicket | StoredResult>) & {
     /** Stops a video job at its provider. */
-    cancel(input: Sdk.AiVideoJobRequest): Promise<Sdk.Reply<Sdk.AiVideoCancelled>>;
+    cancel(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoCancelled | StoredResult>;
     /** Where a video job stands; a finished one answers with its clip, once. */
-    poll(input: Sdk.AiVideoJobRequest): Promise<Sdk.Reply<Sdk.AiVideoJob>>;
+    poll(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoJob | StoredResult>;
   };
 };
 /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
-declare function ask(input: Sdk.TaskAskRequest): Promise<Sdk.Reply<Sdk.TaskAskReceipt>>;
+declare function ask(input: Sdk.TaskAskRequest): Promise<Sdk.TaskAskReceipt | StoredResult>;
 /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
-declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.Reply<Sdk.TaskAskPreflight>>;
+declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.TaskAskPreflight | StoredResult>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
-declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.Reply<Sdk.TaskCancelReceipt>>;
-declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<Sdk.Reply<Sdk.ConnectorCallReply>> } } & {
+declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.TaskCancelReceipt | StoredResult>;
+declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<Sdk.ConnectorCallReply | StoredResult> } } & {
   /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
-  call(input: Sdk.ConnectorCallRequest): Promise<Sdk.Reply<Sdk.ConnectorCallReply>>;
+  call(input: Sdk.ConnectorCallRequest): Promise<Sdk.ConnectorCallReply | StoredResult>;
   /** Every live catalogued connector whose name or summary matches the query. */
-  list(input: Sdk.ConnectorListRequest): Promise<Sdk.Reply<Sdk.ConnectorEntry[]>>;
+  list(input: Sdk.ConnectorListRequest): Promise<Sdk.ConnectorEntry[] | StoredResult>;
   outbound: {
     /** Schedules one send through a granted outbound connector, gated and held for delivery. */
-    schedule(input: Sdk.OutboundScheduleRequest): Promise<Sdk.Reply<Sdk.OutboundIntentReceipt>>;
+    schedule(input: Sdk.OutboundScheduleRequest): Promise<Sdk.OutboundIntentReceipt | StoredResult>;
   };
   /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
-  schema(input: Sdk.ConnectorSchemaRequest): Promise<Sdk.Reply<Sdk.ConnectorSchemaReply>>;
+  schema(input: Sdk.ConnectorSchemaRequest): Promise<Sdk.ConnectorSchemaReply | StoredResult>;
   /** One catalogued connector by name, removed ones included. */
-  status(input: Sdk.ConnectorNameRequest): Promise<Sdk.Reply<Sdk.ConnectorView | null>>;
+  status(input: Sdk.ConnectorNameRequest): Promise<Sdk.ConnectorView | null | StoredResult>;
 };
 /** Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named. */
-declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldDescription>>>;
-declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.Reply<Sdk.TaskDescription>>;
+declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
+declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
-declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.Reply<Sdk.TaskAskPersonEvidence[]>>;
+declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
-declare function report(input: Sdk.ReportRequest): Promise<Sdk.Reply<Sdk.ReportReceipt>>;
+declare function report(input: Sdk.ReportRequest): Promise<Sdk.ReportReceipt | StoredResult>;
 /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
-declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.Reply<Sdk.RevealPending>>) & {
+declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.RevealPending | StoredResult>) & {
   /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
-  describe(input: Sdk.RevealDescribeRequest): Promise<Sdk.Reply<Sdk.RevealHandleCard>>;
+  describe(input: Sdk.RevealDescribeRequest): Promise<Sdk.RevealHandleCard | StoredResult>;
   /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
-  wait(input: Sdk.RevealWaitRequest): Promise<Sdk.Reply<Sdk.RevealWaitAnswer>>;
+  wait(input: Sdk.RevealWaitRequest): Promise<Sdk.RevealWaitAnswer | StoredResult>;
 };
 declare namespace self {
   const agents: {
-    spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.Reply<Sdk.AgentSpawnOutput>>;
+    spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
     /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails. */
-    batch(input: Sdk.BatchInput): Promise<Sdk.Reply<Sdk.BatchOutput>>;
+    batch(input: Sdk.BatchInput): Promise<Sdk.BatchOutput | StoredResult>;
     /** Clicks one page target and observes the result. */
-    click(input: Sdk.ClickInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    click(input: Sdk.ClickInput): Promise<Sdk.Observation | StoredResult>;
     /** Clicks a point of a held screenshot, mapped onto the viewport. */
-    click_at(input: Sdk.PointInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    click_at(input: Sdk.PointInput): Promise<Sdk.Observation | StoredResult>;
     /** Crops a held image to a rectangle. */
-    crop(input: Sdk.CropInput): Promise<Sdk.Reply<Sdk.ImageOutput>>;
+    crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Checks that a page row is present or absent, and holds a given value. */
-    expect(input: Sdk.ExpectInput): Promise<Sdk.Reply<Sdk.ExpectOutput>>;
+    expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
     /** Finds the page rows whose role and name match. */
-    find(input: Sdk.FindInput): Promise<Sdk.Reply<Sdk.FindOutput>>;
+    find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     library: {
       /** The replay library's programs for a site, or for the open page's site. */
-      find(input: Sdk.LibraryFindInput): Promise<Sdk.Reply<Sdk.LibraryFindOutput>>;
+      find(input: Sdk.LibraryFindInput): Promise<Sdk.LibraryFindOutput | StoredResult>;
       /** Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition. */
-      propose(input: Sdk.ProposeInput): Promise<Sdk.Reply<Sdk.ProposeOutput>>;
+      propose(input: Sdk.ProposeInput): Promise<Sdk.ProposeOutput | StoredResult>;
       /** Takes a program out of the replay library for every later run, and returns the card it had. */
-      retire(input: Sdk.LibraryRetireInput): Promise<Sdk.Reply<Sdk.LibraryRetireOutput>>;
+      retire(input: Sdk.LibraryRetireInput): Promise<Sdk.LibraryRetireOutput | StoredResult>;
       /** Runs a replay library program live with its arguments; a missed postcondition goes back to the planner. */
-      run(input: Sdk.LibraryRunInput): Promise<Sdk.Reply<Sdk.LibraryRunOutput>>;
+      run(input: Sdk.LibraryRunInput): Promise<Sdk.LibraryRunOutput | StoredResult>;
     };
     /** Observes the current page of the run's browser session. */
-    observe(input: Sdk.ObserveInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    observe(input: Sdk.ObserveInput): Promise<Sdk.Observation | StoredResult>;
     /** Opens a URL in the run's own browser session and observes the page. */
-    open(input: Sdk.OpenInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    open(input: Sdk.OpenInput): Promise<Sdk.Observation | StoredResult>;
     /** Takes a screenshot the session holds, by image ref and never captioned. */
-    screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.Reply<Sdk.ScreenshotOutput>>;
+    screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
     /** Picks the option of a select element by its label, text or value. */
-    select(input: Sdk.SelectInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    select(input: Sdk.SelectInput): Promise<Sdk.Observation | StoredResult>;
     /** Types text into one page target and observes the result. */
-    type(input: Sdk.TypeInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
-    view(input: Sdk.ViewInput): Promise<Sdk.Reply<Sdk.ImageOutput>>;
+    view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Waits until some page row matches a role and name. */
-    wait_for(input: Sdk.WaitForInput): Promise<Sdk.Reply<Sdk.WaitForOutput>>;
+    wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
-    zoom(input: Sdk.ZoomInput): Promise<Sdk.Reply<Sdk.ImageOutput>>;
+    zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
   };
-  const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldCompactAsked>>>;
+  const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.FoldReply<Sdk.FoldCompactAsked> | StoredResult>;
   const decisions: {
-    asks(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.DecisionAsk[]>>;
+    asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
   };
   const desktop: {
     /** Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails. */
-    batch(input: Sdk.BatchInput): Promise<Sdk.Reply<Sdk.BatchOutput>>;
+    batch(input: Sdk.BatchInput): Promise<Sdk.BatchOutput | StoredResult>;
     /** Clicks one window target and observes the result. */
-    click(input: Sdk.ClickInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    click(input: Sdk.ClickInput): Promise<Sdk.Observation | StoredResult>;
     /** Clicks a point of a held screenshot, mapped onto the window. */
-    click_at(input: Sdk.PointInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    click_at(input: Sdk.PointInput): Promise<Sdk.Observation | StoredResult>;
     /** Crops a held image to a rectangle. */
-    crop(input: Sdk.CropInput): Promise<Sdk.Reply<Sdk.ImageOutput>>;
+    crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Checks that a window row is present or absent, and holds a given value. */
-    expect(input: Sdk.ExpectInput): Promise<Sdk.Reply<Sdk.ExpectOutput>>;
+    expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
     /** Finds the window rows whose role and name match. */
-    find(input: Sdk.FindInput): Promise<Sdk.Reply<Sdk.FindOutput>>;
+    find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     /** Presses a key combination in the current window. */
-    hotkey(input: Sdk.HotkeyInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    hotkey(input: Sdk.HotkeyInput): Promise<Sdk.Observation | StoredResult>;
     /** Presses one key, with modifiers, on a window target or the window's focus. */
-    key(input: Sdk.KeyInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    key(input: Sdk.KeyInput): Promise<Sdk.Observation | StoredResult>;
     /** Observes the current window of the run's desktop guest. */
-    observe(input: Sdk.ObserveInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    observe(input: Sdk.ObserveInput): Promise<Sdk.Observation | StoredResult>;
     /** Opens an app of the run's own desktop guest by app:name and observes its window. */
-    open(input: Sdk.OpenInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    open(input: Sdk.OpenInput): Promise<Sdk.Observation | StoredResult>;
     /** Takes a screenshot of the window the session holds, by image ref and never captioned. */
-    screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.Reply<Sdk.ScreenshotOutput>>;
+    screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
     /** Scrolls a window target, or the window, by steps. */
-    scroll(input: Sdk.ScrollInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    scroll(input: Sdk.ScrollInput): Promise<Sdk.Observation | StoredResult>;
     /** Sets the value of a combo box or list target by its option label. */
-    select(input: Sdk.SelectInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    select(input: Sdk.SelectInput): Promise<Sdk.Observation | StoredResult>;
     /** Types text into one window target and observes the result. */
-    type(input: Sdk.TypeInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
-    view(input: Sdk.ViewInput): Promise<Sdk.Reply<Sdk.ImageOutput>>;
+    view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Waits until some window row matches a role and name. */
-    wait_for(input: Sdk.WaitForInput): Promise<Sdk.Reply<Sdk.WaitForOutput>>;
+    wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Moves the session onto another desktop window and observes it. */
-    window(input: Sdk.WindowInput): Promise<Sdk.Reply<Sdk.Observation>>;
+    window(input: Sdk.WindowInput): Promise<Sdk.Observation | StoredResult>;
     /** Lists the desktop guest's windows, or one app's. */
-    windows(input: Sdk.WindowsInput): Promise<Sdk.Reply<Sdk.WindowsOutput>>;
+    windows(input: Sdk.WindowsInput): Promise<Sdk.WindowsOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
-    zoom(input: Sdk.ZoomInput): Promise<Sdk.Reply<Sdk.ImageOutput>>;
+    zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
   };
   const focus: {
     /** Re-renders the run's context board as one frame, at the frame epoch the caller last saw. */
-    refresh(input: Sdk.BoardRefreshRequest): Promise<Sdk.Reply<Sdk.BoardVerbOutput>>;
+    refresh(input: Sdk.BoardRefreshRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
     scratchpad: {
       /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
-      recall(input: Sdk.ScratchpadRecallRequest): Promise<Sdk.Reply<Sdk.ScratchpadRecallReply>>;
+      recall(input: Sdk.ScratchpadRecallRequest): Promise<Sdk.ScratchpadRecallReply | StoredResult>;
     };
     /** Subscribes the run's board stream to the named scopes. */
-    subscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.Reply<Sdk.BoardVerbOutput>>;
+    subscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
     /** Unsubscribes the run's board stream from the named scopes. */
-    unsubscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.Reply<Sdk.BoardVerbOutput>>;
+    unsubscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
   };
-  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldMarked>>>;
-  const folds: (input: Sdk.FoldsInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldList>>>;
+  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>;
+  const folds: (input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>;
   const grants: {
     /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
-    ask(input: Sdk.GrantAskRequest): Promise<Sdk.Reply<Sdk.GrantAskReceipt>>;
+    ask(input: Sdk.GrantAskRequest): Promise<Sdk.GrantAskReceipt | StoredResult>;
   };
   const identity: {
     /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
-    answer(input: Sdk.IdentityAnswerRequest): Promise<Sdk.Reply<Sdk.IdentitySettled>>;
+    answer(input: Sdk.IdentityAnswerRequest): Promise<Sdk.IdentitySettled | StoredResult>;
     /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
-    settle(input: Sdk.IdentityActNowRequest): Promise<Sdk.Reply<Sdk.IdentityActNow>>;
+    settle(input: Sdk.IdentityActNowRequest): Promise<Sdk.IdentityActNow | StoredResult>;
   };
   const inbox: {
-    concern: ((input: Sdk.ConcernCardRequest) => Promise<Sdk.Reply<Sdk.AgentHealthCardView>>) & {
-      move(input: Sdk.ConcernMoveRequest): Promise<Sdk.Reply<Sdk.ConcernMoveOutcome>>;
-      outcome(input: Sdk.ConcernOutcomeRequest): Promise<Sdk.Reply<Sdk.ConcernCardSummary>>;
+    concern: ((input: Sdk.ConcernCardRequest) => Promise<Sdk.AgentHealthCardView | StoredResult>) & {
+      move(input: Sdk.ConcernMoveRequest): Promise<Sdk.ConcernMoveOutcome | StoredResult>;
+      outcome(input: Sdk.ConcernOutcomeRequest): Promise<Sdk.ConcernCardSummary | StoredResult>;
     };
     /** Lists one page of notifications delivered to the bound actor, without marking them. */
-    list(input: Sdk.InboxListRequest): Promise<Sdk.Reply<Sdk.NotificationPage>>;
+    list(input: Sdk.InboxListRequest): Promise<Sdk.NotificationPage | StoredResult>;
     /** Marks one delivered notification seen or acknowledged for the bound actor. */
-    mark(input: Sdk.InboxMarkRequest): Promise<Sdk.Reply<Sdk.NotificationRow>>;
+    mark(input: Sdk.InboxMarkRequest): Promise<Sdk.NotificationRow | StoredResult>;
   };
   const leader: {
-    advice(input: Sdk.LeaderAdviceInput): Promise<Sdk.Reply<unknown>>;
-    pattern(input: Sdk.LeaderPatternInput): Promise<Sdk.Reply<Sdk.LeaderPatternOutput>>;
+    advice(input: Sdk.LeaderAdviceInput): Promise<unknown>;
+    pattern(input: Sdk.LeaderPatternInput): Promise<Sdk.LeaderPatternOutput | StoredResult>;
   };
   const memory: {
     /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
-    diary: ((input: Sdk.DiaryEntryRequest) => Promise<Sdk.Reply<Sdk.DiaryEntryReceipt>>) & {
+    diary: ((input: Sdk.DiaryEntryRequest) => Promise<Sdk.DiaryEntryReceipt | StoredResult>) & {
       /** Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log. */
-      query(input: Sdk.DiaryQueryRequest): Promise<Sdk.Reply<Sdk.DiaryQueryOutcome>>;
+      query(input: Sdk.DiaryQueryRequest): Promise<Sdk.DiaryQueryOutcome | StoredResult>;
       /** This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds. */
-      reads(input: Sdk.DiaryReadsRequest): Promise<Sdk.Reply<Sdk.DiaryReadsView>>;
+      reads(input: Sdk.DiaryReadsRequest): Promise<Sdk.DiaryReadsView | StoredResult>;
       /** This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers. */
-      review(input: Sdk.DiaryReviewAnswer): Promise<Sdk.Reply<Sdk.DiaryReadRequest>>;
+      review(input: Sdk.DiaryReviewAnswer): Promise<Sdk.DiaryReadRequest | StoredResult>;
     };
   };
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
-  const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.Reply<Sdk.MessagePersonReceipt>>;
+  const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
   const skills: {
-    call(input: Sdk.SkillCallInput): Promise<Sdk.Reply<unknown>>;
+    call(input: Sdk.SkillCallInput): Promise<unknown>;
     /** Every loadable callable helper skill and its call contract: what it takes and returns. */
-    callables(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.CallableCardView[]>>;
+    callables(input: Sdk.EmptyRequest): Promise<Sdk.CallableCardView[] | StoredResult>;
     /** An agent forks a stored skill under its own identity, keeping its import ancestry. */
-    fork(input: Sdk.SkillForkRequest): Promise<Sdk.Reply<Sdk.SkillAuthoringReceipt>>;
+    fork(input: Sdk.SkillForkRequest): Promise<Sdk.SkillAuthoringReceipt | StoredResult>;
     /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
-    save(input: Sdk.SkillSaveRequest): Promise<Sdk.Reply<Sdk.SkillAuthoringReceipt>>;
+    save(input: Sdk.SkillSaveRequest): Promise<Sdk.SkillAuthoringReceipt | StoredResult>;
   };
-  const spawn: (input: Sdk.ReaderSpawnInput) => Promise<Sdk.Reply<Sdk.ReaderSpawnReceipt>>;
+  const spawn: (input: Sdk.ReaderSpawnInput) => Promise<Sdk.ReaderSpawnReceipt | StoredResult>;
   const team: {
-    record(input: Sdk.TeamRecordInput): Promise<Sdk.Reply<Sdk.TeamRunAnswer>>;
-    start(input: Sdk.TeamStartInput): Promise<Sdk.Reply<Sdk.TeamRunAnswer>>;
+    record(input: Sdk.TeamRecordInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
+    start(input: Sdk.TeamStartInput): Promise<Sdk.TeamRunAnswer | StoredResult>;
   };
-  const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldUnfolded>>>;
+  const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.FoldReply<Sdk.FoldUnfolded> | StoredResult>;
   /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
-  const use: (input: Sdk.SecretUseRequest) => Promise<Sdk.Reply<Sdk.SecretUseAnswer>>;
+  const use: (input: Sdk.SecretUseRequest) => Promise<Sdk.SecretUseAnswer | StoredResult>;
 }
 /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
-declare function steer(input: Sdk.SteerRequest): Promise<Sdk.Reply<Sdk.SteerReceipt>>;
-declare function summarize(input: Sdk.SummarizeInput): Promise<Sdk.Reply<unknown>>;
+declare function steer(input: Sdk.SteerRequest): Promise<Sdk.SteerReceipt | StoredResult>;
+declare function summarize(input: Sdk.SummarizeInput): Promise<unknown>;
 declare const tasks: {
   /** Admits one person's word on an ask; the word is evidence, never approval. */
-  answer(input: Sdk.TaskAnswerRequest): Promise<Sdk.Reply<Sdk.TaskAskAnswer>>;
+  answer(input: Sdk.TaskAnswerRequest): Promise<Sdk.TaskAskAnswer | StoredResult>;
   /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */
-  create(input: Sdk.TaskCreateRequest): Promise<Sdk.Reply<Sdk.TaskCreateReceipt>>;
+  create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
-  outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.Reply<Sdk.CalibrationPair[]>>;
-  refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.Reply<Sdk.TaskRefuseOutput>>;
+  outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.CalibrationPair[] | StoredResult>;
+  refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.TaskRefuseOutput | StoredResult>;
   /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
-  update(input: Sdk.TaskUpdateRequest & { resultRef: NonNullable<Sdk.TaskUpdateRequest["resultRef"]> }): Promise<Sdk.Reply<Sdk.ReaderReportReceipt>>;
-  update(input: Sdk.TaskUpdateRequest): Promise<Sdk.Reply<Sdk.TaskUpdateReceipt>>;
-  wait(input: Sdk.TaskWaitSetRequest): Promise<Sdk.Reply<Sdk.TaskWaitSetResult>>;
+  update(input: Sdk.TaskUpdateRequest & { resultRef: NonNullable<Sdk.TaskUpdateRequest["resultRef"]> }): Promise<Sdk.ReaderReportReceipt | StoredResult>;
+  update(input: Sdk.TaskUpdateRequest): Promise<Sdk.TaskUpdateReceipt | StoredResult>;
+  wait(input: Sdk.TaskWaitSetRequest): Promise<Sdk.TaskWaitSetResult | StoredResult>;
   /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
-  wave(input: Sdk.TaskWaveRequest): Promise<Sdk.Reply<Sdk.TaskWaveReceipt>>;
+  wave(input: Sdk.TaskWaveRequest): Promise<Sdk.TaskWaveReceipt | StoredResult>;
 };
 declare const vault: Sdk.VaultHost & {
   artifacts: {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
-    append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.Reply<Sdk.BlobVersionView>>;
+    append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
     body: {
       /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
-      commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.TextCommitReceipt[]>>;
+      commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.TextCommitReceipt[] | StoredResult>;
       deck: {
         /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep. */
-        export(input: Sdk.DeckExportRequest): Promise<Sdk.Reply<Sdk.DeckExportView>>;
+        export(input: Sdk.DeckExportRequest): Promise<Sdk.DeckExportView | StoredResult>;
         /** The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector. */
-        gate(input: Sdk.DeckGateRequest): Promise<Sdk.Reply<Sdk.DeckGateView>>;
+        gate(input: Sdk.DeckGateRequest): Promise<Sdk.DeckGateView | StoredResult>;
         /** A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses. */
-        merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.Reply<Sdk.LandingReceipt>>;
+        merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.LandingReceipt | StoredResult>;
         /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
-        oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.Reply<Sdk.DeckGateView>>;
+        oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.DeckGateView | StoredResult>;
+        /** The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed. */
+        preview(input: Sdk.DeckPreviewRequest): Promise<Sdk.DeckPreview | StoredResult>;
         /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
-        review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.DeckReviewView>>;
+        review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.DeckReviewView | StoredResult>;
       };
       /** A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head. */
-      edit(input: Sdk.OfficeBodyEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
+      edit(input: Sdk.OfficeBodyEditRequest): Promise<Sdk.OfficeBodyEdit | StoredResult>;
       /** Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export. */
-      export(input: Sdk.OfficeBodyExportVerbRequest): Promise<Sdk.Reply<Sdk.OfficeBodyExportView>>;
+      export(input: Sdk.OfficeBodyExportVerbRequest): Promise<Sdk.OfficeBodyExportView | StoredResult>;
       fork: {
         /** A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show. */
-        diff(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
+        diff(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.OfficeBodyDiff | StoredResult>;
         /** Abandons an open fork's unlanded work and returns its record. */
-        discard(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyFork>>;
+        discard(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.OfficeBodyFork | StoredResult>;
         /** The opener's typed DOCX, XLSX or deck operations on its open fork of a live body. */
-        edit(input: Sdk.OfficeBodyForkEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
-        /** A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses. */
-        merge(input: Sdk.OfficeBodyForkMergeRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
-        /** Opens a fork of the live body at its head for machine work, in an optional run. */
-        open(input: Sdk.OfficeBodyForkOpenRequest): Promise<Sdk.Reply<Sdk.OfficeBodyFork>>;
+        edit(input: Sdk.OfficeBodyForkEditRequest): Promise<Sdk.OfficeBodyEdit | StoredResult>;
+        /** Lands one reviewed fork, naming the head and fork head the review read, on the caller's word from outside the opener's lineage or on a standing grant; a moved head, a blocking conflict or no answer refuses. */
+        merge(input: Sdk.OfficeBodyForkMergeRequest): Promise<Sdk.OfficeBodyDiff | StoredResult>;
+        /** Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own. */
+        open(input: Sdk.OfficeBodyForkOpenRequest): Promise<Sdk.OfficeBodyFork | StoredResult>;
       };
       /** An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none. */
-      head(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.OfficeBodyHead | null>>;
+      head(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.OfficeBodyHead | null | StoredResult>;
       /** Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document. */
-      import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.Reply<Sdk.OfficeBodyHead>>;
+      import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.OfficeBodyHead | StoredResult>;
       /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
-      preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.XlsxPreview>>;
+      preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.XlsxPreview | StoredResult>;
+      proposal: {
+        /** An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement. */
+        read(input: Sdk.OfficeBodyProposalRequest): Promise<Sdk.OfficeBodyProposal | StoredResult>;
+        /** Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits. */
+        settle(input: Sdk.OfficeBodyProposalSettleRequest): Promise<Sdk.OfficeBodyProposal | StoredResult>;
+      };
       /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history. */
-      read(input: Sdk.OfficeBodyReadRequest): Promise<Sdk.Reply<Sdk.OfficeBodyView>>;
+      read(input: Sdk.OfficeBodyReadRequest): Promise<Sdk.OfficeBodyView | StoredResult>;
     };
     /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
-    born_from(input: Sdk.BornFromRequest): Promise<Sdk.Reply<Sdk.BornFromView>>;
+    born_from(input: Sdk.BornFromRequest): Promise<Sdk.BornFromView | StoredResult>;
     /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */
-    create(input: Sdk.ArtifactCreateRequest): Promise<Sdk.Reply<Sdk.ArtifactView | null>>;
+    create(input: Sdk.ArtifactCreateRequest): Promise<Sdk.ArtifactView | null | StoredResult>;
     /** Drops one waiting artifact proposal, once. */
-    discard(input: Sdk.ProposalSettleRequest): Promise<Sdk.Reply<Sdk.DiscardedProposal>>;
+    discard(input: Sdk.ProposalSettleRequest): Promise<Sdk.DiscardedProposal | StoredResult>;
     /** One artifact version's export file, with the born-with text the caller chose and a share receipt listing it. */
-    export(input: Sdk.ArtifactExportRequest): Promise<Sdk.Reply<Sdk.ArtifactExportFile | null>>;
+    export(input: Sdk.ArtifactExportRequest): Promise<Sdk.ArtifactExportFile | null | StoredResult>;
     /** Settles one waiting artifact proposal into a version. */
-    keep(input: Sdk.ProposalSettleRequest): Promise<Sdk.Reply<Sdk.KeptProposal>>;
+    keep(input: Sdk.ProposalSettleRequest): Promise<Sdk.KeptProposal | StoredResult>;
     /** The proposals waiting beside one artifact. */
-    proposals(input: Sdk.ArtifactRefRequest): Promise<Sdk.Reply<Sdk.PendingProposalView[]>>;
+    proposals(input: Sdk.ArtifactRefRequest): Promise<Sdk.PendingProposalView[] | StoredResult>;
     /** Runs one native deck transaction over an artifact's head and holds the proposal for Keep. */
-    propose_deck(input: Sdk.DeckProposeRequest): Promise<Sdk.Reply<Sdk.DeckProposeOutcome>>;
+    propose_deck(input: Sdk.DeckProposeRequest): Promise<Sdk.DeckProposeOutcome | StoredResult>;
     /** Offers one native organ result to an artifact as its next version, held for Keep. */
-    propose_output(input: Sdk.NativeOutputRequest): Promise<Sdk.Reply<Sdk.PendingProposalView>>;
+    propose_output(input: Sdk.NativeOutputRequest): Promise<Sdk.PendingProposalView | StoredResult>;
     /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
-    put(input: Sdk.BlobArtifactInput): Promise<Sdk.Reply<Sdk.EntityRefReceipt>>;
+    put(input: Sdk.BlobArtifactInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Reads one version of a blob artifact's bytes. */
-    read(input: Sdk.ReadBlobVersionRequest): Promise<Sdk.Reply<Sdk.BlobContent | null>>;
+    read(input: Sdk.ReadBlobVersionRequest): Promise<Sdk.BlobContent | null | StoredResult>;
     /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
-    release_wait(input: Sdk.ProposalSettleRequest): Promise<Sdk.Reply<Sdk.ReleasedWait>>;
+    release_wait(input: Sdk.ProposalSettleRequest): Promise<Sdk.ReleasedWait | StoredResult>;
     /** Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard. */
-    review_slides(input: Sdk.SlideReviewSubmit): Promise<Sdk.Reply<Sdk.SlideReviewOutcome>>;
+    review_slides(input: Sdk.SlideReviewSubmit): Promise<Sdk.SlideReviewOutcome | StoredResult>;
     /** Undoes one Keep by appending a new version. */
-    undo(input: Sdk.ProposalSettleRequest): Promise<Sdk.Reply<Sdk.UndoneKeep>>;
+    undo(input: Sdk.ProposalSettleRequest): Promise<Sdk.UndoneKeep | StoredResult>;
     /** One artifact: its kind, name, type, head and every version with its made_by and born-from. */
-    view(input: Sdk.ArtifactRefRequest): Promise<Sdk.Reply<Sdk.ArtifactView | null>>;
+    view(input: Sdk.ArtifactRefRequest): Promise<Sdk.ArtifactView | null | StoredResult>;
     /** The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits. */
-    waits(input: Sdk.ArtifactRefRequest): Promise<Sdk.Reply<Sdk.OrganWaitView[]>>;
+    waits(input: Sdk.ArtifactRefRequest): Promise<Sdk.OrganWaitView[] | StoredResult>;
   };
   authority: {
     /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
-    audit(input: Sdk.AuthorityAuditQuery): Promise<Sdk.Reply<Sdk.AuthorityAuditPage>>;
+    audit(input: Sdk.AuthorityAuditQuery): Promise<Sdk.AuthorityAuditPage | StoredResult>;
     /** Every saved authority handoff fork alarm, for the owner. */
-    handoff_alarms: ((input: Sdk.EmptyRequest) => Promise<Sdk.Reply<Sdk.AuthorityHandoffAlarm[]>>) & {
+    handoff_alarms: ((input: Sdk.EmptyRequest) => Promise<Sdk.AuthorityHandoffAlarm[] | StoredResult>) & {
       /** The owner acknowledges one saved handoff fork alarm. */
-      acknowledge(input: Sdk.HandoffAlarmRequest): Promise<Sdk.Reply<Sdk.AuthorityHandoffAlarm>>;
+      acknowledge(input: Sdk.HandoffAlarmRequest): Promise<Sdk.AuthorityHandoffAlarm | StoredResult>;
     };
   };
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
-  batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.Reply<Sdk.CoreBatchWriteReceipt>>;
+  batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
   claims: {
     /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
-    admit(input: Sdk.AdmitImportedClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
+    admit(input: Sdk.AdmitImportedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
     /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-    history(input: Sdk.ClaimRefRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.ClaimView[]>>>;
+    history(input: Sdk.ClaimRefRequest): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
     /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
-    list(input: Sdk.ClaimListFilter): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.ClaimView[]>>>;
-    put(input: Sdk.MemoryClaimInput): Promise<Sdk.Reply<Sdk.MemoryWriteOutput>>;
+    list(input: Sdk.ClaimListFilter): Promise<Sdk.ScopedReadResult<Sdk.ClaimView[]> | StoredResult>;
+    put(input: Sdk.MemoryClaimInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
-    retract(input: Sdk.ClaimRefRequest): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
+    retract(input: Sdk.ClaimRefRequest): Promise<Sdk.CommitReceipt | StoredResult>;
     /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
-    seed(input: Sdk.CommitRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;
-    supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.Reply<Sdk.MemoryWriteOutput>>;
+    seed(input: Sdk.CommitRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
+    supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
-    upsert(input: Sdk.ClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
+    upsert(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
   };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
-    blame(input: Sdk.CodeStateRequest): Promise<Sdk.Reply<Sdk.CodeBlameView | null>>;
+    blame(input: Sdk.CodeStateRequest): Promise<Sdk.CodeBlameView | null | StoredResult>;
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
-    diff(input: Sdk.CodeDiffRequest): Promise<Sdk.Reply<Sdk.CodeDiffView | null>>;
+    diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
     /** One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied. */
-    proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.Reply<Sdk.CodeProposalView | null>>;
+    proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
-    repo_diff(input: Sdk.CodeRepoDiffRequest): Promise<Sdk.Reply<Sdk.CodeRepoDiffView | null>>;
+    repo_diff(input: Sdk.CodeRepoDiffRequest): Promise<Sdk.CodeRepoDiffView | null | StoredResult>;
   };
   /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
-  commit(input: Sdk.CommitRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;
+  commit(input: Sdk.CommitRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
   companions: {
     sharing: {
       /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */
-      get(input: Sdk.CompanionSharingRequest): Promise<Sdk.Reply<Sdk.CompanionSharingView>>;
+      get(input: Sdk.CompanionSharingRequest): Promise<Sdk.CompanionSharingView | StoredResult>;
       /** The owner's standing yes to one frozen clearance offer for a companion's contact. */
-      set(input: Sdk.CompanionSharingSetRequest): Promise<Sdk.Reply<Sdk.CompanionSharingView>>;
+      set(input: Sdk.CompanionSharingSetRequest): Promise<Sdk.CompanionSharingView | StoredResult>;
     };
   };
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */
-    enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.Reply<Sdk.DreamerAttemptRef>>;
+    enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
-    status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.Reply<Sdk.DreamerAttemptView | null>>;
+    status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
   };
   conversations: {
     /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
-    create(input: Sdk.ConversationCreateInput): Promise<Sdk.Reply<Sdk.CoreEntityWriteReceipt>>;
+    create(input: Sdk.ConversationCreateInput): Promise<Sdk.CoreEntityWriteReceipt | StoredResult>;
     records: {
       /** Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once. */
-      append(input: Sdk.DagRecordAppendInput): Promise<Sdk.Reply<Sdk.DagRecordAppendReceipt>>;
+      append(input: Sdk.DagRecordAppendInput): Promise<Sdk.DagRecordAppendReceipt | StoredResult>;
     };
     turn: {
       /** Queues generation that resumes an incomplete assistant reply from exactly its saved text. */
-      continue(input: Sdk.TurnActionRequest): Promise<Sdk.Reply<Sdk.TurnActionReceipt>>;
+      continue(input: Sdk.TurnActionRequest): Promise<Sdk.TurnActionReceipt | StoredResult>;
       /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
-      retry(input: Sdk.TurnActionRequest): Promise<Sdk.Reply<Sdk.TurnActionReceipt>>;
+      retry(input: Sdk.TurnActionRequest): Promise<Sdk.TurnActionReceipt | StoredResult>;
     };
     turns: {
       /** Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once. */
-      create(input: Sdk.ConversationTurnCreateInput): Promise<Sdk.Reply<Sdk.CoreEntityWriteReceipt>>;
+      create(input: Sdk.ConversationTurnCreateInput): Promise<Sdk.CoreEntityWriteReceipt | StoredResult>;
     };
   };
   decisions: {
     asks: {
-      answer(input: Sdk.DecisionAskAnswerRequest): Promise<Sdk.Reply<Sdk.DecisionAsk>>;
-      climb(input: Sdk.DecisionAskClimbRequest): Promise<Sdk.Reply<Sdk.ResolvedRole | null>>;
+      answer(input: Sdk.DecisionAskAnswerRequest): Promise<Sdk.DecisionAsk | StoredResult>;
+      climb(input: Sdk.DecisionAskClimbRequest): Promise<Sdk.ResolvedRole | null | StoredResult>;
     };
   };
   /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
-  delete(input: Sdk.SafeDeleteRequest): Promise<Sdk.Reply<Sdk.DeleteReceipt>>;
+  delete(input: Sdk.SafeDeleteRequest): Promise<Sdk.DeleteReceipt | StoredResult>;
   disclosure: {
     /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
-    offer(input: Sdk.DisclosureOfferRequest): Promise<Sdk.Reply<Sdk.DisclosureOffered>>;
+    offer(input: Sdk.DisclosureOfferRequest): Promise<Sdk.DisclosureOffered | StoredResult>;
   };
   edges: {
-    put(input: Sdk.MemoryEdgeInput): Promise<Sdk.Reply<Sdk.MemoryEdgeOutput>>;
+    put(input: Sdk.MemoryEdgeInput): Promise<Sdk.MemoryEdgeOutput | StoredResult>;
   };
   embedding_spaces: {
     /** Binds one kind slot to a declared space, or returns it to its default when no space is named. */
-    bind(input: Sdk.EmbeddingSpaceBindRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    bind(input: Sdk.EmbeddingSpaceBindRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
     /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
-    declare(input: Sdk.EmbeddingSpaceDeclareRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    declare(input: Sdk.EmbeddingSpaceDeclareRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
     /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
-    list(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    list(input: Sdk.EmptyRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
     /** Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space. */
-    move(input: Sdk.EmbeddingSpaceMoveRequest): Promise<Sdk.Reply<Sdk.SpaceMove>>;
+    move(input: Sdk.EmbeddingSpaceMoveRequest): Promise<Sdk.SpaceMove | StoredResult>;
     /** Ends an open embedding space move with no swap. */
-    move_abandon(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    move_abandon(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
     /** The owner says yes to a full candidate over a check that did not read not worse; it swaps in. */
-    move_approve(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    move_approve(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
     /** Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes. */
-    move_check(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpaceMoveChecked>>;
+    move_check(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.EmbeddingSpaceMoveChecked | StoredResult>;
     /** Binds a swapped-in move incumbent again. */
-    move_undo(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    move_undo(input: Sdk.EmbeddingSpaceCandidateRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
     /** Binds every kind slot the space accepts, text included, to that one space. */
-    one_space(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    one_space(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
     probes: {
       /** Removes one stored embedding space probe by its id. */
-      delete(input: Sdk.EmbeddingSpaceProbeDeleteRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpaceProbeDeleted>>;
+      delete(input: Sdk.EmbeddingSpaceProbeDeleteRequest): Promise<Sdk.EmbeddingSpaceProbeDeleted | StoredResult>;
       /** Every stored embedding space probe with its id. */
-      list(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpaceProbes>>;
+      list(input: Sdk.EmptyRequest): Promise<Sdk.EmbeddingSpaceProbes | StoredResult>;
       /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
-      put(input: Sdk.EmbeddingSpaceProbePutRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpaceProbe>>;
+      put(input: Sdk.EmbeddingSpaceProbePutRequest): Promise<Sdk.EmbeddingSpaceProbe | StoredResult>;
     };
     /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
-    retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.Reply<Sdk.EmbeddingSpacesView>>;
+    retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
   };
   /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. */
-  export(input: Sdk.ExportOptions): Promise<Sdk.Reply<Sdk.MemoryExport>>;
+  export(input: Sdk.ExportOptions): Promise<Sdk.MemoryExport | StoredResult>;
   fanout: {
     /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
-    ack(input: Sdk.FanoutAckRequest): Promise<Sdk.Reply<Sdk.FanoutLaunchView>>;
+    ack(input: Sdk.FanoutAckRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
     /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none. */
-    launch(input: Sdk.FanoutLaunchRequest): Promise<Sdk.Reply<Sdk.FanoutLaunchView | null>>;
+    launch(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutLaunchView | null | StoredResult>;
     /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
-    resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.Reply<Sdk.FanoutLaunchView>>;
+    resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
   };
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
-  forget(input: Sdk.ForgetRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;
+  forget(input: Sdk.ForgetRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
   /** Reads one entity as a typed view, or none when absent or withheld; the receipt says which. */
-  get(input: Sdk.EntityRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.EntityView | null>>>;
+  get(input: Sdk.EntityRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView | null> | StoredResult>;
   graph: {
-    ask(input: Sdk.GraphAskRequest): Promise<Sdk.Reply<Sdk.GraphAskOutcome>>;
+    ask(input: Sdk.GraphAskRequest): Promise<Sdk.GraphAskOutcome | StoredResult>;
   };
   guests: {
     /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
-    mint_slip(input: Sdk.GuestSlipMintRequest): Promise<Sdk.Reply<Sdk.GuestSlipMinted>>;
-    revoke(input: Sdk.GuestRevokeRequest): Promise<Sdk.Reply<Sdk.GuestRevokeResponse>>;
+    mint_slip(input: Sdk.GuestSlipMintRequest): Promise<Sdk.GuestSlipMinted | StoredResult>;
+    revoke(input: Sdk.GuestRevokeRequest): Promise<Sdk.GuestRevokeResponse | StoredResult>;
   };
   habits: {
     /** Appends one immutable check-in under a Habit TASK. */
-    checkin(input: Sdk.HabitCheckinInput): Promise<Sdk.Reply<Sdk.EntityRefReceipt>>;
+    checkin(input: Sdk.HabitCheckinInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
   hooks: {
     /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
-    replay(input: Sdk.HooksReplayRequest): Promise<Sdk.Reply<Sdk.HookReplayRow[]>>;
+    replay(input: Sdk.HooksReplayRequest): Promise<Sdk.HookReplayRow[] | StoredResult>;
   };
   /** Hydrates short refs or hex ids to full entity views, with the read's receipt. */
-  hydrate(input: Sdk.HydrateRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.EntityView[]>>>;
+  hydrate(input: Sdk.HydrateRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView[]> | StoredResult>;
   images: {
     /** The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull. */
-    view(input: Sdk.ImageViewRequest): Promise<Sdk.Reply<Sdk.PulledImage>>;
+    view(input: Sdk.ImageViewRequest): Promise<Sdk.PulledImage | StoredResult>;
   };
   inspection: {
     /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */
-    resolve(input: Sdk.InspectionResolveRequest): Promise<Sdk.Reply<Sdk.InspectionResolved>>;
+    resolve(input: Sdk.InspectionResolveRequest): Promise<Sdk.InspectionResolved | StoredResult>;
   };
   kv: {
     /** Withdraws only the caller's current key; absent is a no-op and claim history stays. */
-    delete(input: Sdk.KeyValueAddress): Promise<Sdk.Reply<Sdk.KeyValueDeleteReceipt>>;
+    delete(input: Sdk.KeyValueAddress): Promise<Sdk.KeyValueDeleteReceipt | StoredResult>;
     /** Exact key lookup in the bound actor's worldless key-value namespace; never recall. */
-    get(input: Sdk.KeyValueAddress): Promise<Sdk.Reply<Sdk.KeyValueItem | null>>;
+    get(input: Sdk.KeyValueAddress): Promise<Sdk.KeyValueItem | null | StoredResult>;
     /** The caller's distinct live namespaces, with exact segment prefix and suffix matching. */
-    namespaces(input: Sdk.KeyValueNamespaces): Promise<Sdk.Reply<string[][]>>;
+    namespaces(input: Sdk.KeyValueNamespaces): Promise<string[][] | StoredResult>;
     /** Synchronous gated write of one key; a write that needs review fails without changing the key. */
-    put(input: Sdk.KeyValuePut): Promise<Sdk.Reply<Sdk.KeyValuePutReceipt>>;
+    put(input: Sdk.KeyValuePut): Promise<Sdk.KeyValuePutReceipt | StoredResult>;
     /** Exact prefix and equality search over the caller's keys, ordered by namespace then key. */
-    search(input: Sdk.KeyValueSearch): Promise<Sdk.Reply<Sdk.KeyValueItem[]>>;
+    search(input: Sdk.KeyValueSearch): Promise<Sdk.KeyValueItem[] | StoredResult>;
   };
   legal_holds: {
     /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
-    lift_and_erase(input: Sdk.LegalHoldLiftAndEraseRequest): Promise<Sdk.Reply<Sdk.LegalHoldLiftAndErased>>;
+    lift_and_erase(input: Sdk.LegalHoldLiftAndEraseRequest): Promise<Sdk.LegalHoldLiftAndErased | StoredResult>;
     /** Every legal hold the owner may see. */
-    list(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.LegalHold[]>>;
+    list(input: Sdk.EmptyRequest): Promise<Sdk.LegalHold[] | StoredResult>;
     /** The owner-visible legal hold log, oldest first. */
-    log(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.LegalHoldEvent[]>>;
+    log(input: Sdk.EmptyRequest): Promise<Sdk.LegalHoldEvent[] | StoredResult>;
     /** The owner places a customer legal hold on the named records or gate partitions. */
-    place(input: Sdk.LegalHoldPlaceRequest): Promise<Sdk.Reply<Sdk.LegalHold>>;
+    place(input: Sdk.LegalHoldPlaceRequest): Promise<Sdk.LegalHold | StoredResult>;
     /** Adds targets to one of the owner's standing customer legal holds. */
-    widen(input: Sdk.LegalHoldWidenRequest): Promise<Sdk.Reply<Sdk.LegalHold>>;
+    widen(input: Sdk.LegalHoldWidenRequest): Promise<Sdk.LegalHold | StoredResult>;
   };
   lenses: {
     /** The owner selects a proposed lens revision for its pack slot. */
-    activate(input: Sdk.LensActivateRequest): Promise<Sdk.Reply<Sdk.LensActivationReceipt>>;
+    activate(input: Sdk.LensActivateRequest): Promise<Sdk.LensActivationReceipt | StoredResult>;
     /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
-    deactivate(input: Sdk.LensDeactivateRequest): Promise<Sdk.Reply<Sdk.LensActivationReceipt>>;
+    deactivate(input: Sdk.LensDeactivateRequest): Promise<Sdk.LensActivationReceipt | StoredResult>;
     /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
-    default(input: Sdk.LensDefaultRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.LensFrameCard>>>;
+    default(input: Sdk.LensDefaultRequest): Promise<Sdk.ScopedReadResult<Sdk.LensFrameCard> | StoredResult>;
     /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
-    list(input: Sdk.LensListRequest): Promise<Sdk.Reply<Sdk.LensListPage>>;
+    list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
-    propose(input: Sdk.LensProposeRequest): Promise<Sdk.Reply<Sdk.LensProposalReceipt>>;
+    propose(input: Sdk.LensProposeRequest): Promise<Sdk.LensProposalReceipt | StoredResult>;
   };
   members: {
     /** The invitee accepts their own invitation and joins the shared vault at its role. */
-    accept(input: Sdk.SharedInvitationRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    accept(input: Sdk.SharedInvitationRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
-    add(input: Sdk.SharedMemberAddRequest): Promise<Sdk.Reply<Sdk.SharedMemberInvited>>;
+    add(input: Sdk.SharedMemberAddRequest): Promise<Sdk.SharedMemberInvited | StoredResult>;
     /** An Admin assigns another non-root role to a member who is not an Owner. */
-    change(input: Sdk.SharedMemberRoleRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    change(input: Sdk.SharedMemberRoleRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** The invitee declines their own invitation; nothing is granted. */
-    decline(input: Sdk.SharedInvitationRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    decline(input: Sdk.SharedInvitationRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
-    invitation_slip(input: Sdk.InvitationSlipRequest): Promise<Sdk.Reply<Sdk.InvitationSlip>>;
+    invitation_slip(input: Sdk.InvitationSlipRequest): Promise<Sdk.InvitationSlip | StoredResult>;
     /** The caller's own pending invitations into a shared vault. */
-    invitations(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.SharedInvitation[]>>;
+    invitations(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedInvitation[] | StoredResult>;
     /** A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead. */
-    leave(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    leave(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** An Admin removes one member from a shared vault. */
-    remove(input: Sdk.SharedMemberRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    remove(input: Sdk.SharedMemberRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** An Admin with the add_member power takes back a pending invitation. */
-    withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
   };
   messages: {
     /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
-    react(input: Sdk.MessageReactionRequest): Promise<Sdk.Reply<Sdk.MessageReactionReceipt>>;
+    react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
   };
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
-  neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.NeighborHit[]>>>;
+  neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.ScopedReadResult<Sdk.NeighborHit[]> | StoredResult>;
   notes: {
     /** Creates a NOTE of a registered kind, its first authored text as its birth. */
-    create(input: Sdk.CreateNoteRequest): Promise<Sdk.Reply<Sdk.EntityRefReceipt>>;
+    create(input: Sdk.CreateNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
-    edit(input: Sdk.EditNoteRequest): Promise<Sdk.Reply<Sdk.NoteEditOutcome>>;
+    edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteEditOutcome | StoredResult>;
     /** Creates a NOTE of a registered kind from an existing entity. */
-    from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.Reply<Sdk.EntityRefReceipt>>;
+    from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
-    lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.Reply<Sdk.NoteLifecycleView>>;
+    lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
     /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
-    seal(input: Sdk.NoteRefRequest): Promise<Sdk.Reply<Sdk.NoteSeal>>;
+    seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
   };
   packs: {
     /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
-    put(input: Sdk.PackPutRequest): Promise<Sdk.Reply<Sdk.PackPutReceipt>>;
+    put(input: Sdk.PackPutRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     setup: {
       /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
-      answer(input: Sdk.PackSetupAnswerRequest): Promise<Sdk.Reply<Sdk.PackSetupReceipt>>;
+      answer(input: Sdk.PackSetupAnswerRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
       /** A pack's guided setup as it stands, for the owner. */
-      get(input: Sdk.PackSetupRequest): Promise<Sdk.Reply<Sdk.PackSetupReceipt>>;
+      get(input: Sdk.PackSetupRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
       /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
-      prepare(input: Sdk.PackSetupRequest): Promise<Sdk.Reply<Sdk.PackSetupReceipt>>;
+      prepare(input: Sdk.PackSetupRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
       /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
-      verify(input: Sdk.PackSetupVerifyRequest): Promise<Sdk.Reply<Sdk.PackSetupReceipt>>;
+      verify(input: Sdk.PackSetupVerifyRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
     };
   };
   people: {
     /** One person the vault knows, by their pr handle. */
-    get(input: Sdk.PersonRequest): Promise<Sdk.Reply<Sdk.PersonRow>>;
+    get(input: Sdk.PersonRequest): Promise<Sdk.PersonRow | StoredResult>;
     /** One page of the people the caller reads, in handle order. */
-    list(input: Sdk.PeopleListRequest): Promise<Sdk.Reply<Sdk.PeoplePage>>;
+    list(input: Sdk.PeopleListRequest): Promise<Sdk.PeoplePage | StoredResult>;
   };
   projects: {
     /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */
-    confirm(input: Sdk.ProjectCardConfirmRequest): Promise<Sdk.Reply<Sdk.ProjectMintReceipt>>;
+    confirm(input: Sdk.ProjectCardConfirmRequest): Promise<Sdk.ProjectMintReceipt | StoredResult>;
     /** The card's person dismisses a project card so it never mints; false when it was dismissed already. */
-    dismiss_card(input: Sdk.ProjectCardRequest): Promise<Sdk.Reply<Sdk.ProjectCardDismissal>>;
+    dismiss_card(input: Sdk.ProjectCardRequest): Promise<Sdk.ProjectCardDismissal | StoredResult>;
     goal: {
       /** The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry. */
-      dismiss(input: Sdk.ProjectGoalDismissRequest): Promise<Sdk.Reply<Sdk.ProjectGoalDismissReceipt>>;
+      dismiss(input: Sdk.ProjectGoalDismissRequest): Promise<Sdk.ProjectGoalDismissReceipt | StoredResult>;
       /** What a project's goal-intake interview starts from, for a member of its home room. */
-      intake(input: Sdk.ProjectRefRequest): Promise<Sdk.Reply<Sdk.ProjectGoalInterviewContext>>;
+      intake(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalInterviewContext | StoredResult>;
       /** The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first. */
-      revisions(input: Sdk.ProjectRefRequest): Promise<Sdk.Reply<Sdk.ProjectGoalRevisionProposal[]>>;
+      revisions(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalRevisionProposal[] | StoredResult>;
     };
     /** The project cards shown in a conversation, each with its state. */
-    proposals(input: Sdk.ProjectConversationRequest): Promise<Sdk.Reply<Sdk.ProjectCardRecord[]>>;
+    proposals(input: Sdk.ProjectConversationRequest): Promise<Sdk.ProjectCardRecord[] | StoredResult>;
     /** The drafting agent proposes a project card on a source message; the card writes no project and confers no authority. */
-    propose(input: Sdk.ProjectProposalRequest): Promise<Sdk.Reply<Sdk.ProjectProposalCard>>;
+    propose(input: Sdk.ProjectProposalRequest): Promise<Sdk.ProjectProposalCard | StoredResult>;
     roster: {
       /** Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent. */
-      write(input: Sdk.ProjectRosterWriteRequest): Promise<Sdk.Reply<Sdk.ProjectRosterWriteOutcome>>;
+      write(input: Sdk.ProjectRosterWriteRequest): Promise<Sdk.ProjectRosterWriteOutcome | StoredResult>;
     };
     /** Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room. */
-    route_tradeoff(input: Sdk.ProjectTradeoffRouteRequest): Promise<Sdk.Reply<Sdk.TaskAskReceipt>>;
+    route_tradeoff(input: Sdk.ProjectTradeoffRouteRequest): Promise<Sdk.TaskAskReceipt | StoredResult>;
   };
   questions: {
-    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.Reply<Sdk.QuestionAnswer[]>>;
-    backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.Reply<Sdk.ScheduledBackfill>>;
-    create(input: Sdk.QuestionCreateRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
-    edit(input: Sdk.QuestionEditRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
-    pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.Reply<Sdk.QuestionPaused>>;
-    read(input: Sdk.QuestionReadRequest): Promise<Sdk.Reply<Sdk.QuestionRecord | null>>;
+    answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.QuestionAnswer[] | StoredResult>;
+    backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.ScheduledBackfill | StoredResult>;
+    create(input: Sdk.QuestionCreateRequest): Promise<Sdk.QuestionRecord | StoredResult>;
+    edit(input: Sdk.QuestionEditRequest): Promise<Sdk.QuestionRecord | StoredResult>;
+    pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.QuestionPaused | StoredResult>;
+    read(input: Sdk.QuestionReadRequest): Promise<Sdk.QuestionRecord | null | StoredResult>;
   };
   /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
-  recall(input: Sdk.RecallRequest): Promise<Sdk.Reply<Sdk.MemoryPack>>;
+  recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
   /** Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds. */
-  receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.Reply<Sdk.MemoryReceipt[]>>) & {
+  receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.MemoryReceipt[] | StoredResult>) & {
     /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
-    get(input: Sdk.CallReceiptRequest): Promise<Sdk.Reply<Sdk.CallReceipt | null>>;
+    get(input: Sdk.CallReceiptRequest): Promise<Sdk.CallReceipt | null | StoredResult>;
   };
   records: {
     /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
-    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.Reply<Sdk.RecordEraseOutcome>>;
+    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.RecordEraseOutcome | StoredResult>;
     /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
-    erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.Reply<Sdk.RecordErasePreview>>;
+    erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.RecordErasePreview | StoredResult>;
   };
   refs: {
     /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
-    links(input: Sdk.RecordLinksRequest): Promise<Sdk.Reply<Sdk.RecordLinks>>;
+    links(input: Sdk.RecordLinksRequest): Promise<Sdk.RecordLinks | StoredResult>;
     /** The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same. */
-    resolve(input: Sdk.ResolveRecordRefRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.RecordRefPreview>>>;
+    resolve(input: Sdk.ResolveRecordRefRequest): Promise<Sdk.ScopedReadResult<Sdk.RecordRefPreview> | StoredResult>;
   };
   /** Commits one claim through the gate, the same as vault.claims.upsert. */
-  remember(input: Sdk.ClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
+  remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
-    claim(input: Sdk.RoomClaimRequest): Promise<Sdk.Reply<Sdk.RoomClaimOutcome>>;
+    claim(input: Sdk.RoomClaimRequest): Promise<Sdk.RoomClaimOutcome | StoredResult>;
     /** One party's answer to a join that waits on it, after which the join is decided again. */
-    consent(input: Sdk.ConsentAnswer): Promise<Sdk.Reply<Sdk.JoinOutcome>>;
+    consent(input: Sdk.ConsentAnswer): Promise<Sdk.JoinOutcome | StoredResult>;
     /** One page of a room's threads. */
-    find(input: Sdk.RoomRequest): Promise<Sdk.Reply<Sdk.RoomThreadPage>>;
+    find(input: Sdk.RoomRequest): Promise<Sdk.RoomThreadPage | StoredResult>;
     /** One thread of a room by its turn, even when every list omits it. */
-    get(input: Sdk.RoomTurnRequest): Promise<Sdk.Reply<Sdk.RoomThread | null>>;
+    get(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomThread | null | StoredResult>;
     /** Who hosts a room now, and the caller's own speaking role there. */
-    host: ((input: Sdk.RoomHostRequest) => Promise<Sdk.Reply<Sdk.RoomStanding>>) & {
+    host: ((input: Sdk.RoomHostRequest) => Promise<Sdk.RoomStanding | StoredResult>) & {
       /** The room's current host hands the hosting duty to another agent that may host. */
-      hand(input: Sdk.RoomHostHand): Promise<Sdk.Reply<Sdk.RoomStanding>>;
+      hand(input: Sdk.RoomHostHand): Promise<Sdk.RoomStanding | StoredResult>;
       /** Pins an agent as a room's host, or clears the stored host, pin or handoff. */
-      pin(input: Sdk.RoomHostPin): Promise<Sdk.Reply<Sdk.RoomStanding>>;
+      pin(input: Sdk.RoomHostPin): Promise<Sdk.RoomStanding | StoredResult>;
     };
     /** Files and decides a request to take part in a room or one of its threads. */
-    join(input: Sdk.JoinRequest): Promise<Sdk.Reply<Sdk.JoinOutcome>>;
+    join(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** The caller's rooms its own grants admit; inside a room turn, only that room. */
-    list(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.RoomEntry[]>>;
+    list(input: Sdk.EmptyRequest): Promise<Sdk.RoomEntry[] | StoredResult>;
     /** One page of the turns in a room this reader may read. */
-    messages(input: Sdk.RoomRequest): Promise<Sdk.Reply<Sdk.RoomPage>>;
+    messages(input: Sdk.RoomRequest): Promise<Sdk.RoomPage | StoredResult>;
     /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
-    offer: ((input: Sdk.OfferDraft) => Promise<Sdk.Reply<Sdk.OfferCard>>) & {
+    offer: ((input: Sdk.OfferDraft) => Promise<Sdk.OfferCard | StoredResult>) & {
       /** The room's host answers an offer card: join, or not now. */
-      answer(input: Sdk.OfferAnswerRequest): Promise<Sdk.Reply<Sdk.OfferSettlement>>;
+      answer(input: Sdk.OfferAnswerRequest): Promise<Sdk.OfferSettlement | StoredResult>;
       /** The room's owner or delegated host reopens its aged-out room-wide offer card. */
-      reopen(input: Sdk.OfferReopenRequest): Promise<Sdk.Reply<Sdk.OfferCard>>;
+      reopen(input: Sdk.OfferReopenRequest): Promise<Sdk.OfferCard | StoredResult>;
       /** Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits. */
-      vote(input: Sdk.OfferVoteRequest): Promise<Sdk.Reply<Sdk.OfferCard>>;
+      vote(input: Sdk.OfferVoteRequest): Promise<Sdk.OfferCard | StoredResult>;
     };
     /** One page of the current offer cards in a room or one of its threads. */
-    offers(input: Sdk.OffersRequest): Promise<Sdk.Reply<Sdk.OffersPage>>;
+    offers(input: Sdk.OffersRequest): Promise<Sdk.OffersPage | StoredResult>;
     /** One page of who took part in a room or one of its threads, each with its causes and whether it may take part now. */
-    participants(input: Sdk.ParticipantsRequest): Promise<Sdk.Reply<Sdk.ParticipantsPage>>;
+    participants(input: Sdk.ParticipantsRequest): Promise<Sdk.ParticipantsPage | StoredResult>;
     /** The standalone rendered view of a room's threads. */
-    render(input: Sdk.RoomRefRequest): Promise<Sdk.Reply<string[]>>;
+    render(input: Sdk.RoomRefRequest): Promise<string[] | StoredResult>;
     /** One page of a thread's quote replies, grouped by the message they quote, in reply order. */
-    reply_strips(input: Sdk.ReplyStripsRequest): Promise<Sdk.Reply<Sdk.ReplyStripsPage>>;
+    reply_strips(input: Sdk.ReplyStripsRequest): Promise<Sdk.ReplyStripsPage | StoredResult>;
     /** A room's effective sharing scope and why it is clamped, for a member of the room. */
-    sharing(input: Sdk.RoomRefRequest): Promise<Sdk.Reply<Sdk.RoomSharingView>>;
+    sharing(input: Sdk.RoomRefRequest): Promise<Sdk.RoomSharingView | StoredResult>;
     /** Speaks one turn into the current room turn's room, through the normal witness gate. */
-    speak(input: Sdk.WitnessTurn): Promise<Sdk.Reply<Sdk.WitnessReceipt>>;
+    speak(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
-    trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.Reply<Sdk.RoomTrunk>>;
+    trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
   };
-  search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.Reply<Sdk.MemorySearchOutput>>) & {
+  search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */
-    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.LexicalHit[]>>>;
+    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.ScopedReadResult<Sdk.LexicalHit[]> | StoredResult>;
   };
   secrets: {
     /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
-    lift_history(input: Sdk.SecretLiftRequest): Promise<Sdk.Reply<Sdk.SecretLiftStatus>>;
+    lift_history(input: Sdk.SecretLiftRequest): Promise<Sdk.SecretLiftStatus | StoredResult>;
   };
   settings: {
     /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */
-    inference_defaults: ((input: Sdk.EmptyRequest) => Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>) & {
+    inference_defaults: ((input: Sdk.EmptyRequest) => Promise<Sdk.PolicyActionOutcome | StoredResult>) & {
       /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
-      replace(input: Sdk.InferenceDefaultsReplaceRequest): Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>;
+      replace(input: Sdk.InferenceDefaultsReplaceRequest): Promise<Sdk.PolicyActionOutcome | StoredResult>;
     };
     /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
-    learning: ((input: Sdk.LearningSettingsRequest) => Promise<Sdk.Reply<Sdk.LearningSettingsView>>) & {
+    learning: ((input: Sdk.LearningSettingsRequest) => Promise<Sdk.LearningSettingsView | StoredResult>) & {
       /** The owner clears one learned-setting row of a key, mode and scope. */
-      clear(input: Sdk.LearningSettingClear): Promise<Sdk.Reply<Sdk.LearningSettingsView>>;
+      clear(input: Sdk.LearningSettingClear): Promise<Sdk.LearningSettingsView | StoredResult>;
       /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
-      put(input: Sdk.LearningSettingPut): Promise<Sdk.Reply<Sdk.LearningSettingsView>>;
+      put(input: Sdk.LearningSettingPut): Promise<Sdk.LearningSettingsView | StoredResult>;
     };
     wake_policy: {
       /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
-      set(input: Sdk.WakePolicySetRequest): Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>;
+      set(input: Sdk.WakePolicySetRequest): Promise<Sdk.PolicyActionOutcome | StoredResult>;
     };
   };
   shape: {
     /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
-    apply(input: Sdk.ShapeApplyRequest): Promise<Sdk.Reply<Sdk.ShapeApplyReceipt>>;
+    apply(input: Sdk.ShapeApplyRequest): Promise<Sdk.ShapeApplyReceipt | StoredResult>;
     /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
-    plan(input: Sdk.ShapePlanRequest): Promise<Sdk.Reply<Sdk.ShapePlan>>;
+    plan(input: Sdk.ShapePlanRequest): Promise<Sdk.ShapePlan | StoredResult>;
     /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
-    read(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.ShapeRead>>;
+    read(input: Sdk.EmptyRequest): Promise<Sdk.ShapeRead | StoredResult>;
   };
   shared: {
     /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */
-    close_erase_ask(input: Sdk.SharedEraseAskCloseRequest): Promise<Sdk.Reply<Sdk.SharedEraseAsk>>;
+    close_erase_ask(input: Sdk.SharedEraseAskCloseRequest): Promise<Sdk.SharedEraseAsk | StoredResult>;
     /** The executed delete-the-vault act, if any. */
-    deletion(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.SharedVaultDeletion | null>>;
+    deletion(input: Sdk.EmptyRequest): Promise<Sdk.SharedVaultDeletion | null | StoredResult>;
     /** A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing. */
-    erase_ask(input: Sdk.SharedEraseAskRequest): Promise<Sdk.Reply<Sdk.SharedEraseAsk>>;
+    erase_ask(input: Sdk.SharedEraseAskRequest): Promise<Sdk.SharedEraseAsk | StoredResult>;
     /** The erase asks the caller may see: every ask for an Owner, their own for anyone else. */
-    erase_asks(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.SharedEraseAsk[]>>;
+    erase_asks(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedEraseAsk[] | StoredResult>;
     /** A live Owner runs a matured shared-vault act and gets its receipt. */
-    execute(input: Sdk.SharedActRequest): Promise<Sdk.Reply<Sdk.SharedActExecuted>>;
+    execute(input: Sdk.SharedActRequest): Promise<Sdk.SharedActExecuted | StoredResult>;
     /** The caller's own notices of shared acts whose veto window has passed. */
-    matured(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.PendingActMatured[]>>;
+    matured(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingActMatured[] | StoredResult>;
     /** A holder of a pending shared act's objector role objects inside its veto window. */
-    object(input: Sdk.SharedActRequest): Promise<Sdk.Reply<Sdk.PendingAuthorityAct>>;
+    object(input: Sdk.SharedActRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** The reader's own outcome notices for a shared vault. */
-    outcomes(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.SharedActOutcome[]>>;
+    outcomes(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActOutcome[] | StoredResult>;
     /** Starts a shared vault's delete_vault act, returned as a typed pending act. */
-    propose_delete(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.PendingAuthorityAct>>;
+    propose_delete(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** Starts a shared vault's remove_owner act, with its export-first answer. */
-    propose_remove_owner(input: Sdk.SharedRemoveOwnerRequest): Promise<Sdk.Reply<Sdk.PendingAuthorityAct>>;
+    propose_remove_owner(input: Sdk.SharedRemoveOwnerRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** Starts a shared vault's transfer_ownership act: a live Owner hands the vault to another person. */
-    propose_transfer(input: Sdk.SharedTransferRequest): Promise<Sdk.Reply<Sdk.PendingAuthorityAct>>;
+    propose_transfer(input: Sdk.SharedTransferRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** One shared-act or membership receipt its reader was told about, by id. */
-    receipt(input: Sdk.SharedReceiptRequest): Promise<Sdk.Reply<Sdk.SharedActExecutionReceipt>>;
+    receipt(input: Sdk.SharedReceiptRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** The caller's own notices of shared acts started in the vault. */
-    started(input: Sdk.SharedVaultRequest): Promise<Sdk.Reply<Sdk.PendingActStarted[]>>;
+    started(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingActStarted[] | StoredResult>;
     /** The holder withdraws their objection; past the deadline the last withdrawal releases the act. */
-    withdraw_objection(input: Sdk.SharedActRequest): Promise<Sdk.Reply<Sdk.PendingAuthorityAct>>;
+    withdraw_objection(input: Sdk.SharedActRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
   };
   shares: {
     /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
-    create(input: Sdk.ShareCreateRequest): Promise<Sdk.Reply<Sdk.ShareCreated>>;
-    revoke(input: Sdk.ShareRevokeRequest): Promise<Sdk.Reply<Sdk.ShareRevokeReceipt>>;
-    view(input: Sdk.ShareViewRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.SharedBriefView | null>>>;
+    create(input: Sdk.ShareCreateRequest): Promise<Sdk.ShareCreated | StoredResult>;
+    revoke(input: Sdk.ShareRevokeRequest): Promise<Sdk.ShareRevokeReceipt | StoredResult>;
+    view(input: Sdk.ShareViewRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefView | null> | StoredResult>;
   };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
-    put(input: Sdk.StructuralPutInput): Promise<Sdk.Reply<Sdk.EntityRefReceipt>>;
+    put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
   weave: {
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
-    digest(input: Sdk.WeaveDigestRequest): Promise<Sdk.Reply<Sdk.WeaveDigestView | null>>;
-    lens(input: Sdk.WeaveReportRequest): Promise<Sdk.Reply<Sdk.GeneratedLens>>;
+    digest(input: Sdk.WeaveDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
+    lens(input: Sdk.WeaveReportRequest): Promise<Sdk.GeneratedLens | StoredResult>;
     link: {
       /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
-      wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.Reply<Sdk.WeaveLinkCorrectionView>>;
+      wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
     };
     /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
-    report(input: Sdk.WeaveReportRequest): Promise<Sdk.Reply<Sdk.WeaveReportView>>;
+    report(input: Sdk.WeaveReportRequest): Promise<Sdk.WeaveReportView | StoredResult>;
   };
   /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
-  widen_proposals: ((input: Sdk.WidenProposalsRequest) => Promise<Sdk.Reply<Sdk.WidenProposalsView>>) & {
+  widen_proposals: ((input: Sdk.WidenProposalsRequest) => Promise<Sdk.WidenProposalsView | StoredResult>) & {
     /** The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued. */
-    approve(input: Sdk.WidenProposalAnswer): Promise<Sdk.Reply<Sdk.WidenProposalView>>;
+    approve(input: Sdk.WidenProposalAnswer): Promise<Sdk.WidenProposalView | StoredResult>;
     /** The owner, as the board above, declines one context-widen proposal for good; the decline stays on record. */
-    decline(input: Sdk.WidenProposalAnswer): Promise<Sdk.Reply<Sdk.WidenProposalView>>;
+    decline(input: Sdk.WidenProposalAnswer): Promise<Sdk.WidenProposalView | StoredResult>;
   };
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
-  witness(input: Sdk.WitnessTurn): Promise<Sdk.Reply<Sdk.WitnessReceipt>>;
+  witness(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
   workspace: {
     work_companion: {
       /** A workspace's work_companion policy, readable by every member it governs. */
-      get(input: Sdk.WorkspaceRefRequest): Promise<Sdk.Reply<Sdk.WorkCompanionPolicy>>;
+      get(input: Sdk.WorkspaceRefRequest): Promise<Sdk.WorkCompanionPolicy | StoredResult>;
       /** The owner sets a workspace's work_companion policy in person. */
-      set(input: Sdk.WorkCompanionSetRequest): Promise<Sdk.Reply<Sdk.WorkCompanionPolicy>>;
+      set(input: Sdk.WorkCompanionSetRequest): Promise<Sdk.WorkCompanionPolicy | StoredResult>;
     };
   };
   writes: {
     /** Gated writes parked for consent, newest first. */
-    pending(input: Sdk.ReceiptsRequest): Promise<Sdk.Reply<Sdk.PendingWrite[]>>;
+    pending(input: Sdk.ReceiptsRequest): Promise<Sdk.PendingWrite[] | StoredResult>;
   };
 };
 /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
-declare function wait(input: Sdk.TaskWaitRequest): Promise<Sdk.Reply<Sdk.TaskAskWait>>;
+declare function wait(input: Sdk.TaskWaitRequest): Promise<Sdk.TaskAskWait | StoredResult>;

@@ -52,6 +52,7 @@ mod fold_state;
 mod guest_revoke;
 mod handoff_equivocation;
 mod history_coverage;
+mod history_fetch;
 mod history_repair;
 mod history_transfer;
 mod host_actor;
@@ -149,6 +150,10 @@ pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
 pub use history_coverage::{AuthorityHistoryCoverage, AuthorityHistoryRequest};
+pub use history_fetch::{
+    AUTHORITY_HISTORY_PAGE_MAX, AuthorityHistoryFetch, AuthorityHistoryPage,
+    AuthorityHistoryVerificationCoverage,
+};
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use host_re_root::{HostReRoot, RetiredSlip};
