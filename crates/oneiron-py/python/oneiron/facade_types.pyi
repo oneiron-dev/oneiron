@@ -2664,6 +2664,7 @@ class WeaveReceipt(TypedDict):
     validation_overlap: float
     claim: EntityId
     claim_approval: ClaimApprovalStatus
+    gate_decision: str
     at: int
 class PruneReasonDominatedBody(TypedDict):
     by: AttemptId

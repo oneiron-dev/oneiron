@@ -7281,6 +7281,8 @@ pub struct WeaveReceipt {
     pub claim: String,
     #[serde(rename = "claim_approval")]
     pub claim_approval: ClaimApprovalStatus,
+    #[serde(rename = "gate_decision")]
+    pub gate_decision: String,
     #[serde(rename = "at")]
     pub at: u64,
 }

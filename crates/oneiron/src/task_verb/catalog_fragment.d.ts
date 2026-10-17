@@ -529,7 +529,7 @@ declare namespace Sdk {
   type SearchEvidence = { measurement: Measurement; confirmed_hits: number; attribution: number; hop_cost: number; expected_gain: number; estimator_version: string; knob_reliability?: number | null; receipt_refs: string[] };
   type HeldOutEvidence = { measurement: Measurement; receipt_refs: string[]; recorded_at: number };
   type InvalidReceipt = { reason: string; evidence_refs: string[]; at: number };
-  type WeaveReceipt = { common_ancestor: AttemptId; validation_overlap: number; claim: EntityId; claim_approval: ClaimApprovalStatus; at: number };
+  type WeaveReceipt = { common_ancestor: AttemptId; validation_overlap: number; claim: EntityId; claim_approval: ClaimApprovalStatus; gate_decision: string; at: number };
   type PruneReason = { dominated: { by: AttemptId } } | { floor_regression: { axis: string } } | "gain_below_floor" | { stopped: { by: EntityId } };
   type PruneReceipt = { reason: PruneReason; evidence_refs: string[]; at: number };
   type ExperimentNode = { attempt: AttemptId; kind: ExperimentKind; parents: AttemptId[]; candidate: CandidateRef; search?: SearchEvidence | null; held_out?: HeldOutEvidence | null; invalid?: InvalidReceipt | null; weave?: WeaveReceipt | null; pruned?: PruneReceipt | null; recorded_at: number };

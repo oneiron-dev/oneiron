@@ -1017,7 +1017,7 @@ export type HeldOutEvidence = { measurement: Measurement; receipt_refs: string[]
 /** `oneiron::autoreason_campaign::research::InvalidReceipt` */
 export type InvalidReceipt = { reason: string; evidence_refs: string[]; at: number }
 /** `oneiron::autoreason_campaign::research::WeaveReceipt` */
-export type WeaveReceipt = { common_ancestor: AttemptId; validation_overlap: number; claim: EntityId; claim_approval: ClaimApprovalStatus; at: number }
+export type WeaveReceipt = { common_ancestor: AttemptId; validation_overlap: number; claim: EntityId; claim_approval: ClaimApprovalStatus; gate_decision: string; at: number }
 /** `oneiron::autoreason_campaign::research::PruneReason` */
 export type PruneReason = { dominated: { by: AttemptId } } | { floor_regression: { axis: string } } | "gain_below_floor" | { stopped: { by: EntityId } }
 /** `oneiron::autoreason_campaign::research::PruneReceipt` */
