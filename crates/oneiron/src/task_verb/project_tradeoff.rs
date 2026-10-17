@@ -7,8 +7,11 @@
 //! The gate's ask row stays the domain state. The route row here is a
 //! reference from the project ask to the gate's question, never an authority:
 //! an answer on the project ask settles nothing by itself, and only
-//! [`Memory::tasks_settle_project_tradeoff`] hands an authenticated person's
-//! pick to the gate, whose role and digest checks decide it. The pick the
+//! [`Memory::tasks_settle_project_tradeoff`] (an authenticated person's pick)
+//! or [`Memory::tasks_settle_project_tradeoff_as_agent`] (a bound agent's
+//! pick) hands it to the gate, whose role and digest checks decide it. A
+//! route voided because its question moved cuts its ask Stale in the same
+//! commit, so the old ask stops waiting for its deadline. The pick the
 //! gate learns is proposed for the project's goal record; the project's
 //! members read those proposals here and a vault owner may dismiss one.
 use std::collections::{BTreeMap, BTreeSet};
@@ -146,6 +149,17 @@ impl Memory<'_> {
             state: RouteState::Open,
         };
         self.tasks_ask_project_with(task, &spec, |txn, group| {
+            // A question replaced since an earlier route voids that route and
+            // its ask with this admission, on whichever TASK it was routed.
+            let now = vault.store.clock.now_recorded_at();
+            for (old, row) in ROUTES.scan(&vault.store, txn)? {
+                if row.state == RouteState::Open
+                    && row.proposal == route.proposal
+                    && row.question_digest != route.question_digest
+                {
+                    close_route_in(vault, txn, old, RouteState::Void { at: now })?;
+                }
+            }
             ROUTES.put(&vault.store, txn, &group, &route)?;
             Ok(())
         })
@@ -212,8 +226,8 @@ impl Memory<'_> {
     /// Settle the skill tradeoff a routed project ask carries with this
     /// caller's pick. `owner` must be this caller's own proof. The route and
     /// the gate's current question are read again: a question replaced since
-    /// the ask refuses and leaves the ask void, so an answer to an older
-    /// question never settles a newer one. Otherwise the gate's own
+    /// the ask refuses and voids the route and its ask, so an answer to an
+    /// older question never settles a newer one. Otherwise the gate's own
     /// door ([`crate::skill_optimize::settle_skill_tradeoff_ask`]) decides,
     /// with its role and digest checks. The settlement and the route's close
     /// are two writes, in that order.
@@ -232,6 +246,81 @@ impl Memory<'_> {
                 "Settle with the caller's own proof.",
             ));
         }
+        let route = self.pending_project_tradeoff_route(ask)?;
+        let now = vault.store.clock.now_recorded_at();
+        let verdict = crate::skill_optimize::settle_skill_tradeoff_ask(
+            vault,
+            owner,
+            &route.proposal,
+            &route.question_digest,
+            choice,
+            now,
+        )?;
+        close_route(
+            vault,
+            ask.group_ref,
+            RouteState::Settled {
+                verdict: verdict.id,
+                at: now,
+            },
+        )?;
+        Ok(verdict)
+    }
+
+    /// Settle the skill tradeoff a routed project ask carries with this
+    /// agent caller's pick: an agent holding a responsible role the ask has
+    /// reached (ROLES-EVERYWHERE), such as an agent board member. The agent
+    /// is this bound caller, never a field of the request, and no person's
+    /// proof stands in for it. The route and question are read again as for
+    /// [`Self::tasks_settle_project_tradeoff`]; the gate's agent door
+    /// ([`crate::skill_optimize::settle_skill_tradeoff_ask_as_agent`]) then
+    /// decides, with its live role and digest checks. The settlement and the
+    /// route's close are two writes, in that order.
+    pub fn tasks_settle_project_tradeoff_as_agent(
+        &self,
+        ask: TaskAskHandle,
+        choice: TradeoffChoice,
+    ) -> MemoryResult<HeldOutVerdict> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        if self.actor_class() != EdgeActorClass::Agent {
+            return Err(consult_refusal(
+                MEMORY_CODE_FORBIDDEN,
+                "only an agent caller settles a project tradeoff without a person's proof",
+                "Settle with the caller's own proof.",
+            ));
+        }
+        let vault = self.vault();
+        let agent = crate::write_envelope::WriteActor::new(self.actor(), self.actor_class());
+        let route = self.pending_project_tradeoff_route(ask)?;
+        let now = vault.store.clock.now_recorded_at();
+        let verdict = crate::skill_optimize::settle_skill_tradeoff_ask_as_agent(
+            vault,
+            &agent,
+            &route.proposal,
+            &route.question_digest,
+            choice,
+            now,
+        )?;
+        close_route(
+            vault,
+            ask.group_ref,
+            RouteState::Settled {
+                verdict: verdict.id,
+                at: now,
+            },
+        )?;
+        Ok(verdict)
+    }
+
+    /// The open route `ask` carries, its gate question read again. No
+    /// pending question refuses and leaves the route open; a question
+    /// replaced since the ask voids the route and its ask in one commit and
+    /// refuses.
+    fn pending_project_tradeoff_route(
+        &self,
+        ask: TaskAskHandle,
+    ) -> MemoryResult<ProjectTradeoffRoute> {
+        let vault = self.vault();
         let route = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             ROUTES.get(&vault.store, &txn, &ask.group_ref)?
@@ -251,31 +340,15 @@ impl Memory<'_> {
                 "no tradeoff question is pending on this proposal now",
             ));
         };
-        let now = vault.store.clock.now_recorded_at();
         if current.question.digest()? != route.question_digest {
+            let now = vault.store.clock.now_recorded_at();
             close_route(vault, ask.group_ref, RouteState::Void { at: now })?;
             return Err(MemoryError::bad_request_with(
                 "the tradeoff question moved since this ask; the ask is void",
                 &["Route the current question again."],
             ));
         }
-        let verdict = crate::skill_optimize::settle_skill_tradeoff_ask(
-            vault,
-            owner,
-            &route.proposal,
-            &route.question_digest,
-            choice,
-            now,
-        )?;
-        close_route(
-            vault,
-            ask.group_ref,
-            RouteState::Settled {
-                verdict: verdict.id,
-                at: now,
-            },
-        )?;
-        Ok(verdict)
+        Ok(route)
     }
 
     /// The learned preferences proposed for `project`'s goal in force and
@@ -347,14 +420,27 @@ impl Memory<'_> {
 
 /// Close an open route; a closed one keeps its first close.
 fn close_route(vault: &crate::Vault, ask: EntityId, state: RouteState) -> MemoryResult<()> {
-    vault.with_write_txn_grouped(|txn| {
-        if let Some(mut route) = ROUTES.get(&vault.store, txn, &ask)?
-            && route.state == RouteState::Open
-        {
-            route.state = state;
-            ROUTES.put(&vault.store, txn, &ask, &route)?;
+    vault.with_write_txn_grouped(|txn| close_route_in(vault, txn, ask, state))?;
+    Ok(())
+}
+
+/// [`close_route`] inside `txn`. Voiding an open route cuts its ask Stale
+/// in the same commit, so its answers settle nothing and it stops waiting
+/// for its deadline; a cut that fails aborts the close with it.
+fn close_route_in(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ask: EntityId,
+    state: RouteState,
+) -> crate::error::Result<()> {
+    if let Some(mut route) = ROUTES.get(&vault.store, txn, &ask)?
+        && route.state == RouteState::Open
+    {
+        if let RouteState::Void { at } = state {
+            super::ask_settlement::void_in(vault, txn, ask, at)?;
         }
-        Ok(())
-    })?;
+        route.state = state;
+        ROUTES.put(&vault.store, txn, &ask, &route)?;
+    }
     Ok(())
 }
