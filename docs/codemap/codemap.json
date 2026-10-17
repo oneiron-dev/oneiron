@@ -49885,7 +49885,8 @@
       "Safeguard",
       "ToolEvent",
       "TtsCommand",
-      "TtsSeamClient"
+      "TtsSeamClient",
+      "TurnMemories"
      ],
      "path": "src/voice_cascade/protocol.rs",
      "purpose": "Small local contracts for provider adapters; no transport or provider selection",
@@ -49893,7 +49894,7 @@
       "crate-vis": 1,
       "enum": 5,
       "fn": 1,
-      "struct": 7,
+      "struct": 8,
       "trait": 6
      }
     },
