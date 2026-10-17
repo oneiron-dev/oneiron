@@ -6,7 +6,9 @@
 //!
 //! It never stops an agent and never narrows a grant or scope: its output is
 //! cards and proposed moves, and an agent-health event never feeds the auto
-//! arm (`Vault::is_signed_tripwire`). It reads no diary.
+//! arm (`Vault::is_signed_tripwire`). It reads no diary. A card's recipient
+//! settles it (`self.inbox.concern.outcome`), as the owner does through
+//! `/v1/owner/inbox/concern/outcome`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,17 +16,24 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, agent_dispatch_actor,
-    decode_agent_dispatch_input,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, SpendScope, SpendState,
+    agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::agent_inbox_lens::{
     AgentInboxConcern, AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::DreamerRunnerStore;
+use crate::edge::EdgeKind;
 use crate::learning::{TeamEvent, project_run_coordination, team_events_from_attempts};
 use crate::learning_setting::{SettingSpec, setting_value_in_txn};
+use crate::llm::run_admission::LeaseUnit;
+use crate::llm::{DreamerTrapKind, OpenTrapWait, open_trap_waits};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::ports::EdgeDirection;
 use crate::receipt::{CallOutcome, CallReceipt};
+use crate::run_tree::{RunTree, RunTreeAdapter};
 use crate::self_heal::{
     AgentHealthSignal, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
     DiagnosticReplayCoordinate, DiagnosticSourceKind, diagnostic_event_id,
@@ -85,9 +94,19 @@ pub const HEALTH_SILENT_MINUTES: SettingSpec = SettingSpec {
     seed: 30.0,
 };
 
-/// `misalignment`: widen denials in one attempt. No capture reads it yet.
+/// `misalignment`: widen proposals one attempt raised that the board has not
+/// approved.
 pub const HEALTH_WIDEN_DENIALS: SettingSpec = SettingSpec {
     key: "health.widen.denials",
+    min: 1.0,
+    max: 100.0,
+    seed: 3.0,
+};
+
+/// `cost_spike`: an attempt's own spend over this many times its task type's
+/// p90, or the plan's expected spend while the type has too few runs.
+pub const HEALTH_COST_SPIKE: SettingSpec = SettingSpec {
+    key: "health.cost.spike",
     min: 1.0,
     max: 100.0,
     seed: 3.0,
@@ -113,6 +132,10 @@ const MAX_CARD_DIAGNOSTICS: usize = 64;
 const MAX_EVENT_EVIDENCE: usize = 64;
 /// A wait on a person is not a problem (agent-mind §3.4).
 const WAIT_PERSON: &str = "person";
+/// `cost_spike` needs this many settled runs of a task type for its p90.
+const COST_MIN_RUNS: usize = 10;
+/// The newest settled runs of a task type its p90 is taken over.
+const COST_HISTORY: usize = 100;
 const HEALTH_DIGEST_DOMAIN: &[u8] = b"oneiron.coach.agent_health.evidence.v1";
 const CARD_REF_PREFIX: &str = "health:";
 
@@ -197,6 +220,9 @@ pub enum AgentHealthCounter {
     RefusedCalls,
     /// Most of the wait was in the queue: the cause may be systemic.
     QueueWait,
+    /// Too few runs of the task type for a p90: the spend was held against
+    /// the plan's expected spend.
+    FewRuns,
 }
 
 /// Low when counter-evidence stands against the signal.
@@ -306,11 +332,16 @@ struct Finding {
     measured: i64,
     counter: Vec<AgentHealthCounter>,
     confession: Option<EntityId>,
+    /// The agent said it was stuck: a Blocked TASK, or a blocked report since
+    /// its attempt began.
+    blocked: bool,
 }
 
 /// The working set's attempts, and its agent dispatches, by attempt bytes.
 type Attempts = BTreeMap<[u8; 16], AttemptRecord>;
 type Dispatches = BTreeMap<[u8; 16], Dispatched>;
+/// The open trap waits, by attempt bytes.
+type Traps = BTreeMap<[u8; 16], Vec<OpenTrapWait>>;
 
 /// The dials in force for one review.
 struct Dials {
@@ -318,6 +349,8 @@ struct Dials {
     wait_share: f64,
     wait_secs: u64,
     silent_secs: u64,
+    widen_denials: u64,
+    cost_spike: f64,
     ttl_secs: u64,
 }
 
@@ -334,6 +367,8 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             wait_share: value(&HEALTH_WAIT_SHARE)?,
             wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
             silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
+            widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
+            cost_spike: value(&HEALTH_COST_SPIKE)?,
             ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
         }
     };
@@ -349,16 +384,32 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         .filter_map(|(key, record)| Dispatched::of(record).map(|dispatch| (*key, dispatch)))
         .collect();
 
+    let mut traps = Traps::new();
+    for wait in open_trap_waits(vault)? {
+        traps
+            .entry(*wait.attempt.as_bytes())
+            .or_default()
+            .push(wait);
+    }
+
     let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
     findings.extend(silent_findings(
         vault,
         &calls,
         &dispatched,
         &attempts,
+        &traps,
         &dials,
         now,
     )?);
-    findings.extend(long_wait_findings(&dispatched, &attempts, &dials, since));
+    findings.extend(long_wait_findings(
+        &dispatched,
+        &attempts,
+        &traps,
+        &dials,
+        since,
+        now,
+    ));
     findings.extend(duplicate_findings(
         vault,
         &dispatched,
@@ -367,6 +418,37 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         now,
     )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
+    findings.extend(widen_denial_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        &dials,
+        since,
+    )?);
+    findings.extend(unsupported_done_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        since,
+    )?);
+    findings.extend(cost_spike_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        &dials,
+        since,
+        now,
+    )?);
+    // What each agent said itself, for its card.
+    for finding in &mut findings {
+        let began = finding
+            .attempt
+            .and_then(|attempt| attempts.get(attempt.as_bytes()))
+            .map_or(finding.window.0, |record| {
+                record.claimed_at.unwrap_or(record.created_at)
+            });
+        finding.blocked = said_blocked(vault, finding.subject, finding.task, began)?;
+    }
 
     // Each finding's DIAGNOSTIC, in its own write: the event door opens one.
     let mut emitted = Vec::with_capacity(findings.len());
@@ -411,11 +493,15 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     })
 }
 
-/// An agent-dispatch attempt's actor, project and parent.
+/// An agent-dispatch attempt's actor, project, parent, task type and plan.
 struct Dispatched {
     actor: EntityId,
     project: Option<EntityId>,
     parent: Option<AttemptId>,
+    /// The task type's node (OF-543), across tree versions.
+    type_node: String,
+    /// The launch plan's expected spend, and its unit.
+    expected: Option<(LeaseUnit, u64)>,
 }
 
 impl Dispatched {
@@ -433,6 +519,11 @@ impl Dispatched {
             actor: agent_dispatch_actor(&input).ok()?.entity_ref(),
             project: input.project_ref,
             parent: payload.parent_attempt,
+            type_node: input.type_ref.node_id.clone(),
+            expected: input
+                .launch
+                .as_ref()
+                .map(|launch| (launch.unit.clone(), launch.expected.units)),
         })
     }
 }
@@ -553,6 +644,7 @@ fn loop_findings(
                 measured: count,
                 counter,
                 confession: None,
+                blocked: false,
             });
         }
     }
@@ -560,16 +652,18 @@ fn loop_findings(
 }
 
 /// `silent`: a leased attempt whose actor made no call within the dial, with
-/// no Blocked TASK and no open ask. Saying it is stuck is the honest move.
+/// no open wait (an ask, a trap, a park) and no word that it is stuck (a
+/// Blocked TASK or a blocked report). Saying it is stuck is the honest move.
 fn silent_findings(
     vault: &Vault,
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
     attempts: &Attempts,
+    traps: &Traps,
     dials: &Dials,
     now: u64,
 ) -> Result<Vec<Finding>> {
-    let rtxn = vault.store.env.read_txn()?;
+    let runner = DreamerRunnerStore::new(vault);
     let mut out = Vec::new();
     for (id, dispatch) in dispatched {
         let Some(record) = attempts.get(id) else {
@@ -591,13 +685,11 @@ fn silent_findings(
         let waiting = record
             .asks
             .iter()
-            .any(|ask| ask.answers.len() < ask.questions.len());
+            .any(|ask| ask.answers.len() < ask.questions.len())
+            || traps.contains_key(id)
+            || runner.parked_attempt(record.id)?.is_some();
         let task = task_of(record);
-        let blocked = match task {
-            Some(task) => crate::task_verb::task_is_blocked_in(vault, &rtxn, task)?,
-            None => false,
-        };
-        if waiting || blocked {
+        if waiting || said_blocked(vault, dispatch.actor, task, claimed)? {
             continue;
         }
         let Some(attempt) = entity(record.id) else {
@@ -615,33 +707,40 @@ fn silent_findings(
             measured: quiet as i64,
             counter: Vec::new(),
             confession: None,
+            blocked: false,
         });
     }
     Ok(out)
 }
 
-/// `long_wait`: a settled attempt that spent more than the dial's share of its
-/// life waiting, not on a person, over at least the dial's minutes. Only
-/// settled attempts have a closed life to measure.
+/// `long_wait`: an attempt that spent more than the dial's share of its life
+/// waiting, not on a person, over at least the dial's minutes. A settled
+/// attempt's life is closed. A live one's runs to now, and its open trap
+/// waits on a peer or on budget count to now; a wait for a person's answer
+/// or consent does not.
 fn long_wait_findings(
     dispatched: &Dispatches,
     attempts: &Attempts,
+    traps: &Traps,
     dials: &Dials,
     since: u64,
+    now: u64,
 ) -> Vec<Finding> {
     let mut out = Vec::new();
     for (id, dispatch) in dispatched {
         let Some(record) = attempts.get(id) else {
             continue;
         };
-        if !settled(record.state) || record.updated_at < since {
+        let live = matches!(record.state, AttemptState::Leased | AttemptState::Paused);
+        if !live && (!settled(record.state) || record.updated_at < since) {
             continue;
         }
-        let life = record.updated_at.saturating_sub(record.created_at);
+        let end = if live { now } else { record.updated_at };
+        let life = end.saturating_sub(record.created_at);
         if life == 0 || life < dials.wait_secs {
             continue;
         }
-        let mut wait = 0_u64;
+        let mut spans = Vec::new();
         let mut queue = 0_u64;
         for event in team_events_from_attempts(std::slice::from_ref(record)) {
             if let TeamEvent::Wait {
@@ -649,20 +748,32 @@ fn long_wait_findings(
             } = event
                 && reason != WAIT_PERSON
             {
-                let span = end.saturating_sub(start);
-                wait += span;
                 if reason == crate::learning::coordination::WAIT_QUEUE {
-                    queue += span;
+                    queue += end.saturating_sub(start);
                 }
+                spans.push((start, end));
             }
-        }
-        let share = wait as f64 / life as f64;
-        if share <= dials.wait_share {
-            continue;
         }
         let Some(attempt) = entity(record.id) else {
             continue;
         };
+        let mut evidence = vec![attempt];
+        if live {
+            for trap in traps.get(id).into_iter().flatten() {
+                if matches!(
+                    trap.kind,
+                    DreamerTrapKind::PeerResult | DreamerTrapKind::Budget
+                ) {
+                    spans.push((trap.opened_at_ms / 1000, now));
+                    evidence.push(trap.anchor);
+                }
+            }
+        }
+        let wait = covered(spans);
+        let share = wait as f64 / life as f64;
+        if share <= dials.wait_share {
+            continue;
+        }
         let permille = (share * 1000.0).round() as i64;
         let mut counter = Vec::new();
         if queue * 2 > wait {
@@ -673,16 +784,214 @@ fn long_wait_findings(
             signal: AgentHealthSignal::LongWait,
             task: task_of(record),
             attempt: Some(record.id),
-            evidence: vec![attempt],
-            window: (record.created_at, record.updated_at),
-            actual: permille,
+            evidence,
+            window: (record.created_at, end),
+            // A live share moves on every review; the DIAGNOSTIC carries it in
+            // tenths, so it is written again only when it crosses one.
+            actual: if live { permille / 100 * 100 } else { permille },
             dial: (dials.wait_share * 1000.0).round() as i64,
             measured: permille,
             counter,
             confession: None,
+            blocked: false,
         });
     }
     out
+}
+
+/// Seconds covered by the union of `spans`.
+fn covered(mut spans: Vec<(u64, u64)>) -> u64 {
+    spans.sort_unstable();
+    let mut total = 0;
+    let mut reach = 0;
+    for (start, end) in spans {
+        let start = start.max(reach);
+        if end > start {
+            total += end - start;
+            reach = end;
+        }
+    }
+    total
+}
+
+/// `cost_spike`: an attempt's own spend over the dial times the p90 of its
+/// task type's settled runs in the same unit, from at least
+/// [`COST_MIN_RUNS`] of them. With fewer, it is held against the plan's
+/// expected spend, at low confidence. Own spend is the launch scope's spend
+/// less what its settled children spent. Retries share one scope, so a scope
+/// counts once, on its newest attempt.
+fn cost_spike_findings(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    dials: &Dials,
+    since: u64,
+    now: u64,
+) -> Result<Vec<Finding>> {
+    let dispatcher = AgentDispatcher::new(vault);
+    let mut scopes: BTreeMap<String, ([u8; 16], SpendScope)> = BTreeMap::new();
+    for key in dispatched.keys() {
+        let Some(record) = attempts.get(key) else {
+            continue;
+        };
+        let Some(scope_id) = dispatcher.spend_scope_for_attempt(record.id)? else {
+            continue;
+        };
+        let name = scope_id.to_string();
+        let newer = scopes
+            .get(&name)
+            .and_then(|(held, _)| attempts.get(held))
+            .is_none_or(|held| held.updated_at <= record.updated_at);
+        if newer && let Some(scope) = dispatcher.read_spend_scope(&scope_id)? {
+            scopes.insert(name, (*key, scope));
+        }
+    }
+    let mut children: BTreeMap<String, u64> = BTreeMap::new();
+    for (_, scope) in scopes.values() {
+        if scope.state == SpendState::Closed
+            && let Some(parent) = &scope.parent
+        {
+            *children.entry(parent.to_string()).or_default() += scope.spent_units;
+        }
+    }
+    let own = |name: &str, scope: &SpendScope| {
+        scope
+            .spent_units
+            .saturating_sub(children.get(name).copied().unwrap_or(0))
+    };
+    let mut history: BTreeMap<(&str, &LeaseUnit), Vec<(u64, &str, u64)>> = BTreeMap::new();
+    for (name, (key, scope)) in &scopes {
+        if let (Some(record), Some(dispatch)) = (attempts.get(key), dispatched.get(key))
+            && settled(record.state)
+            && scope.state == SpendState::Closed
+        {
+            history
+                .entry((dispatch.type_node.as_str(), &scope.unit))
+                .or_default()
+                .push((record.updated_at, name.as_str(), own(name, scope)));
+        }
+    }
+    for runs in history.values_mut() {
+        runs.sort_unstable();
+        if runs.len() > COST_HISTORY {
+            runs.drain(..runs.len() - COST_HISTORY);
+        }
+    }
+    let mut out = Vec::new();
+    for (name, (key, scope)) in &scopes {
+        let (Some(record), Some(dispatch)) = (attempts.get(key), dispatched.get(key)) else {
+            continue;
+        };
+        let live = record.state == AttemptState::Leased;
+        if !live && (!settled(record.state) || record.updated_at < since) {
+            continue;
+        }
+        let spent = own(name, scope);
+        let runs: Vec<u64> = history
+            .get(&(dispatch.type_node.as_str(), &scope.unit))
+            .into_iter()
+            .flatten()
+            .filter(|(_, run, _)| *run != name.as_str())
+            .map(|(_, _, spent)| *spent)
+            .collect();
+        let (baseline, counter) = if runs.len() >= COST_MIN_RUNS {
+            (p90(runs), Vec::new())
+        } else {
+            match &dispatch.expected {
+                Some((unit, units)) if *unit == scope.unit => {
+                    (*units, vec![AgentHealthCounter::FewRuns])
+                }
+                _ => continue,
+            }
+        };
+        if baseline == 0 || spent == 0 {
+            continue;
+        }
+        let ratio = spent as f64 / baseline as f64;
+        if ratio <= dials.cost_spike {
+            continue;
+        }
+        let Some(attempt) = entity(record.id) else {
+            continue;
+        };
+        let permille = (ratio * 1000.0).round() as i64;
+        out.push(Finding {
+            subject: dispatch.actor,
+            signal: AgentHealthSignal::CostSpike,
+            task: task_of(record),
+            attempt: Some(record.id),
+            evidence: vec![attempt],
+            window: (
+                record.created_at,
+                if live { now } else { record.updated_at },
+            ),
+            // A live ratio moves on every review; the DIAGNOSTIC carries it in
+            // halves, so it is written again only when it crosses one.
+            actual: if live { permille / 500 * 500 } else { permille },
+            dial: (dials.cost_spike * 1000.0).round() as i64,
+            measured: permille,
+            counter,
+            confession: None,
+            blocked: false,
+        });
+    }
+    Ok(out)
+}
+
+/// The 90th percentile, by nearest rank, of `values` (not empty).
+fn p90(mut values: Vec<u64>) -> u64 {
+    values.sort_unstable();
+    let rank = (values.len() * 9).div_ceil(10).max(1);
+    values[rank - 1]
+}
+
+/// Whether the agent said it was stuck: its TASK is Blocked, or it filed a
+/// blocked report (`self.report_blocked`) at or after `since`.
+fn said_blocked(
+    vault: &Vault,
+    actor: EntityId,
+    task: Option<EntityId>,
+    since: u64,
+) -> Result<bool> {
+    let recent = {
+        let rtxn = vault.store.env.read_txn()?;
+        if let Some(task) = task
+            && crate::task_verb::task_is_blocked_in(vault, &rtxn, task)?
+        {
+            return Ok(true);
+        }
+        let mut recent = Vec::new();
+        for id in vault.filtered_edge_peers(
+            &rtxn,
+            EdgeDirection::In,
+            &actor,
+            EdgeKind::AuthoredBy,
+            Some(crate::registry::ENTITY_TYPE_MESSAGE),
+        )? {
+            let at = vault
+                .get_raw_in(&rtxn, &id)?
+                .as_deref()
+                .and_then(crate::batch::EntityMetadataHeader::parse)
+                .map_or(0, |header| unix_secs(header.occurred_start));
+            if at >= since {
+                recent.push(id);
+            }
+        }
+        recent
+    };
+    // The report reader opens its own snapshot.
+    for id in recent {
+        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// A stored time in seconds, whether it was written in seconds or in
+/// milliseconds.
+const fn unix_secs(at: u64) -> u64 {
+    if at >= 100_000_000_000 { at / 1000 } else { at }
 }
 
 /// `duplicate_work`: the run's audit-labelled duplicates. The card goes on the
@@ -739,6 +1048,7 @@ fn duplicate_findings(
                 measured: 1,
                 counter: Vec::new(),
                 confession: None,
+                blocked: false,
             });
         }
     }
@@ -807,6 +1117,107 @@ fn misalignment_findings(
             measured: count,
             counter: Vec::new(),
             confession: Some(attempt),
+            blocked: false,
+        });
+    }
+    Ok(out)
+}
+
+/// `misalignment`: one attempt raised at least the dial's widen proposals
+/// that the board has not approved, pending or refused alike.
+fn widen_denial_findings(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    dials: &Dials,
+    since: u64,
+) -> Result<Vec<Finding>> {
+    let mut out = Vec::new();
+    for (id, denials) in crate::agent_dispatch::unlanded_widens_by_parent(vault)? {
+        if denials < dials.widen_denials {
+            continue;
+        }
+        let (Some(dispatch), Some(record)) = (dispatched.get(&id), attempts.get(&id)) else {
+            continue;
+        };
+        if settled(record.state) && record.updated_at < since {
+            continue;
+        }
+        let Some(attempt) = entity(record.id) else {
+            continue;
+        };
+        let count = denials as i64;
+        out.push(Finding {
+            subject: dispatch.actor,
+            signal: AgentHealthSignal::Misalignment,
+            task: task_of(record),
+            attempt: Some(record.id),
+            evidence: vec![attempt],
+            window: (
+                record.claimed_at.unwrap_or(record.created_at),
+                record.updated_at,
+            ),
+            actual: count,
+            dial: dials.widen_denials as i64,
+            measured: count,
+            counter: Vec::new(),
+            confession: None,
+            blocked: false,
+        });
+    }
+    Ok(out)
+}
+
+/// `unsupported_done`: a Completed attempt whose TASK settled Done while an
+/// evidence ref its done-means names does not resolve to a live entity.
+/// Missing evidence, not deception: any one flags.
+fn unsupported_done_findings(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    since: u64,
+) -> Result<Vec<Finding>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for (id, dispatch) in dispatched {
+        let Some(record) = attempts.get(id) else {
+            continue;
+        };
+        if record.state != AttemptState::Completed || record.updated_at < since {
+            continue;
+        }
+        let (Some(task), Some(attempt)) = (task_of(record), entity(record.id)) else {
+            continue;
+        };
+        let Some(needed) = crate::task_verb::done_task_evidence_in(vault, &rtxn, task)? else {
+            continue;
+        };
+        let mut missing = BTreeSet::new();
+        for evidence in needed {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &evidence)?.is_live() {
+                missing.insert(evidence);
+            }
+        }
+        if missing.is_empty() {
+            continue;
+        }
+        let count = missing.len() as i64;
+        out.push(Finding {
+            subject: dispatch.actor,
+            signal: AgentHealthSignal::UnsupportedDone,
+            task: Some(task),
+            attempt: Some(record.id),
+            evidence: vec![attempt, task],
+            window: (
+                record.claimed_at.unwrap_or(record.created_at),
+                record.updated_at,
+            ),
+            actual: count,
+            dial: 0,
+            measured: count,
+            counter: Vec::new(),
+            confession: None,
+            blocked: false,
         });
     }
     Ok(out)
@@ -999,6 +1410,7 @@ fn merge(
         AgentHealthConfidence::Low
     };
     card.confession = finding.confession.or(card.confession);
+    card.agent_blocked = finding.blocked;
     if card.outcome != AgentHealthOutcome::Open && card.evidence.len() > card.watermark {
         card.outcome = AgentHealthOutcome::Open;
         card.outcome_by = None;
@@ -1100,6 +1512,148 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
     Ok(items)
 }
 
+/// What a card now says: the answer to a settle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConcernCardSummary {
+    /// The card's `health:` handle.
+    pub card: String,
+    /// The agent the card is about, as 32 hex.
+    pub agent: String,
+    pub signal: String,
+    pub tone: String,
+    pub outcome: String,
+    pub evidence: usize,
+}
+
+impl ConcernCardSummary {
+    #[must_use]
+    pub fn of(card: &AgentHealthCard) -> Self {
+        Self {
+            card: card.card_ref(),
+            agent: card.subject.to_hex(),
+            signal: card.signal.as_str().to_owned(),
+            tone: card.tone.as_str().to_owned(),
+            outcome: card.outcome.as_str().to_owned(),
+            evidence: card.evidence.len(),
+        }
+    }
+}
+
+/// The outcome a card's reader sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConcernOutcome {
+    Confirmed,
+    Dismissed,
+    Unresolved,
+}
+
+impl From<ConcernOutcome> for AgentHealthOutcome {
+    fn from(outcome: ConcernOutcome) -> Self {
+        match outcome {
+            ConcernOutcome::Confirmed => Self::Confirmed,
+            ConcernOutcome::Dismissed => Self::Dismissed,
+            ConcernOutcome::Unresolved => Self::Unresolved,
+        }
+    }
+}
+
+/// `self.inbox.concern`'s input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConcernCardRequest {
+    /// The card's `health:` handle: the concern row's `payload_ref`.
+    pub card: String,
+}
+
+/// `self.inbox.concern.outcome`'s input.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConcernOutcomeRequest {
+    /// The card's `health:` handle: the concern row's `payload_ref`.
+    pub card: String,
+    pub outcome: ConcernOutcome,
+}
+
+/// One card as its reader sees it, with the ARCH-0066 run-tree diagram.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentHealthCardView {
+    /// The card's `health:` handle.
+    pub card: String,
+    pub body: AgentHealthCard,
+    /// The run of the card's newest attempt, when it has one.
+    pub run_tree: Option<AgentHealthRunTree>,
+}
+
+/// The run a card's attempt is in, with that attempt's node marked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentHealthRunTree {
+    pub run_id: String,
+    pub tree: RunTree,
+    /// The node the card is about: its attempt, as 32 hex.
+    pub marked: String,
+}
+
+/// Whether `reader` sees and settles `card`: one of its recipients (its
+/// leader, its spawner, an owner with a copy) or a live vault owner. The
+/// agent a card is about never settles it.
+fn may_read(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    card: &AgentHealthCard,
+    reader: EntityId,
+) -> Result<bool> {
+    if reader == card.subject {
+        return Ok(false);
+    }
+    Ok(card.recipients.contains(&reader)
+        || crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &reader)?)
+}
+
+/// Sets a card's outcome. A settled card leaves the inbox until its evidence
+/// grows past the watermark set here.
+fn settle(card: &mut AgentHealthCard, by: EntityId, outcome: AgentHealthOutcome, at: u64) {
+    card.outcome = outcome;
+    card.outcome_by = Some(by);
+    card.outcome_at = Some(at);
+    card.watermark = card.evidence.len();
+    card.updated_at = at;
+}
+
+fn forbidden() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "only a card's recipient or a vault owner reads or settles a concern card",
+        &["Act on the cards your inbox shows: their payload_ref is the card."],
+    )
+}
+
+fn card_view(
+    vault: &Vault,
+    key: &([u8; 16], [u8; 1], [u8; 16]),
+    card: AgentHealthCard,
+) -> Result<AgentHealthCardView> {
+    let mut run_tree = None;
+    if let Some(attempt) = card.attempt {
+        let attempt = AttemptId::from_bytes(attempt.as_bytes())?;
+        if let Some(run_id) = AttemptQueue::new(vault)
+            .get(attempt)?
+            .and_then(|record| record.run_id)
+        {
+            run_tree = Some(AgentHealthRunTree {
+                tree: RunTreeAdapter::new(vault).read_run(&run_id)?,
+                marked: crate::entity_id::bytes_to_hex_lower(attempt.as_bytes()),
+                run_id,
+            });
+        }
+    }
+    Ok(AgentHealthCardView {
+        card: card_ref(key),
+        body: card,
+        run_tree,
+    })
+}
+
 impl Vault {
     /// One agent-health card by its `health:` handle.
     ///
@@ -1112,6 +1666,55 @@ impl Vault {
         };
         let rtxn = self.store.env.read_txn()?;
         CARDS.get(&self.store, &rtxn, &key)
+    }
+
+    /// One card with its run-tree diagram, for the owner.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn agent_health_card_view(&self, card: &str) -> Result<Option<AgentHealthCardView>> {
+        let Some(key) = parse_card_ref(card) else {
+            return Ok(None);
+        };
+        let stored = {
+            let rtxn = self.store.env.read_txn()?;
+            CARDS.get(&self.store, &rtxn, &key)?
+        };
+        stored
+            .map(|stored| card_view(self, &key, stored))
+            .transpose()
+    }
+
+    /// The cards a digest period carries (agent-mind §3.5: a card that does
+    /// not go up to the owner's inbox goes into the owner's digest and the
+    /// weave report): each card opened, updated or settled in `[from, to)`,
+    /// in impact order (concern first), newest first within a tone.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn agent_health_cards_between(&self, from: u64, to: u64) -> Result<Vec<AgentHealthCard>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut cards: Vec<AgentHealthCard> = CARDS
+            .scan(&self.store, &rtxn)?
+            .into_iter()
+            .map(|(_, card)| card)
+            .filter(|card| {
+                let touched = |at: u64| at >= from && at < to;
+                touched(card.opened_at)
+                    || touched(card.updated_at)
+                    || card.outcome_at.is_some_and(touched)
+            })
+            .collect();
+        cards.sort_by(|left, right| {
+            right
+                .tone
+                .impact()
+                .cmp(&left.tone.impact())
+                .then(right.updated_at.cmp(&left.updated_at))
+        });
+        Ok(cards)
     }
 
     /// The owner sets a card's outcome: confirmed, dismissed or unresolved.
@@ -1134,14 +1737,55 @@ impl Vault {
             let mut card = CARDS
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::EntityNotFound)?;
-            let at = self.store.clock.now_recorded_at();
-            card.outcome = outcome;
-            card.outcome_by = Some(by);
-            card.outcome_at = Some(at);
-            card.watermark = card.evidence.len();
-            card.updated_at = at;
+            settle(&mut card, by, outcome, self.store.clock.now_recorded_at());
             CARDS.put(&self.store, txn, &key, &card)?;
             Ok(card)
+        })
+    }
+}
+
+impl Memory<'_> {
+    /// `self.inbox.concern`: one agent-health card with its run-tree diagram,
+    /// for one of its recipients or a vault owner.
+    pub fn concern_card(&self, input: &ConcernCardRequest) -> MemoryResult<AgentHealthCardView> {
+        crate::memory::verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let key = parse_card_ref(&input.card).ok_or_else(|| {
+            MemoryError::bad_request("card is a health: handle from a concern row")
+        })?;
+        let card = {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            let card = CARDS
+                .get(&self.vault().store, &txn, &key)?
+                .ok_or_else(|| MemoryError::not_found("no such concern card"))?;
+            if !may_read(self.vault(), &txn, &card, self.actor())? {
+                return Err(forbidden());
+            }
+            card
+        };
+        Ok(card_view(self.vault(), &key, card)?)
+    }
+
+    /// `self.inbox.concern.outcome`: a card's recipient (its leader or
+    /// spawner) or a vault owner marks it confirmed, dismissed or unresolved,
+    /// as the owner's route does. It never moves `learning.reliability`.
+    pub fn concern_outcome(
+        &self,
+        input: &ConcernOutcomeRequest,
+    ) -> MemoryResult<ConcernCardSummary> {
+        let key = parse_card_ref(&input.card).ok_or_else(|| {
+            MemoryError::bad_request("card is a health: handle from a concern row")
+        })?;
+        let at = self.vault().store.clock.now_recorded_at();
+        self.with_verified_actor_write_txn(|txn| {
+            let mut card = CARDS
+                .get(&self.vault().store, txn, &key)?
+                .ok_or_else(|| MemoryError::not_found("no such concern card"))?;
+            if !may_read(self.vault(), txn, &card, self.actor())? {
+                return Err(forbidden());
+            }
+            settle(&mut card, self.actor(), input.outcome.into(), at);
+            CARDS.put(&self.vault().store, txn, &key, &card)?;
+            Ok(ConcernCardSummary::of(&card))
         })
     }
 }

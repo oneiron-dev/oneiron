@@ -105,10 +105,7 @@ impl Vault {
     ) -> Result<()> {
         super::strong_ed25519_key(&public_key).map_err(|_| denied())?;
         let txn = self.store.env.read_txn()?;
-        let raw = self
-            .store
-            .entities
-            .get(&txn, machine.as_bytes())?
+        let raw = EntityStoreRead::port_entity_raw_wiped(&self.store, &txn, &machine)?
             .ok_or_else(denied)?;
         if EntityMetadataHeader::parse(&raw)
             .is_none_or(|header| header.entity_type != ENTITY_TYPE_MACHINE)
@@ -283,7 +280,7 @@ fn names_machine(store: &Store, txn: &heed::RoTxn<'_>, entries: &[(Value, Value)
         if let Value::Binary(bytes) = value
             && let Ok(raw_id) = bytes.as_slice().try_into()
             && let Ok(actor_id) = EntityId::from_bytes(raw_id)
-            && let Some(raw) = store.entities.get(txn, actor_id.as_bytes())?
+            && let Some(raw) = EntityStoreRead::port_entity_raw_wiped(store, txn, &actor_id)?
             && EntityMetadataHeader::parse(&raw)
                 .is_some_and(|header| header.entity_type == ENTITY_TYPE_MACHINE)
         {
@@ -330,7 +327,7 @@ pub(crate) fn machine_claim_read_admitted(
         // Selector/guest export operates on RAW CRDT bytes. A control row
         // travels only if these exact bytes match a locally verified row and
         // its id belongs to the authenticated target closure.
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, id)? else {
             return Ok(false);
         };
         if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
@@ -422,7 +419,7 @@ pub(crate) fn machine_claim_read_admitted(
             if let Value::Binary(bytes) = value
                 && let Ok(raw_id) = bytes.as_slice().try_into()
                 && let Ok(actor) = EntityId::from_bytes(raw_id)
-                && store.entities.get(txn, actor.as_bytes())?.is_none()
+                && EntityStoreRead::port_entity_raw_wiped(store, txn, &actor)?.is_none()
                 && entries.iter().any(|(key, value)| {
                     key.as_str() == Some("actor_class")
                         && value.as_u64() == Some(EdgeActorClass::System as u64)
@@ -504,7 +501,7 @@ pub(crate) fn machine_history_authority_descends(
         store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
     {
         let id = id?;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, &id)? else {
             return Err(Error::CorruptedIndex("authority history row"));
         };
         let body = raw
@@ -563,9 +560,7 @@ pub(crate) fn machine_history_host_context(
         store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
     {
         let id = id?;
-        let raw = store
-            .entities
-            .get(txn, id.as_bytes())?
+        let raw = EntityStoreRead::port_entity_raw(store, txn, &id)?
             .ok_or(Error::CorruptedIndex("authority head row"))?;
         let entry = super::decode_authority_log_entry_body(
             raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
@@ -622,9 +617,7 @@ pub(crate) fn verify_machine_claim_in_txn(
             other => other,
         })?
         .ok_or_else(|| invalid_origin(replicated))?;
-    let actor_type = store
-        .entities
-        .get(txn, actor.as_bytes())?
+    let actor_type = EntityStoreRead::port_entity_raw_wiped(store, txn, &actor)?
         .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type));
     if class != EdgeActorClass::System as u64
         || !replicated && actor_type != Some(ENTITY_TYPE_MACHINE)

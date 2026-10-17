@@ -10,6 +10,8 @@ pub enum AgentVerb {
     SelfMemoryDiaryReview,
     SelfIdentityAnswer,
     SelfIdentitySettle,
+    SelfInboxConcern,
+    SelfInboxConcernOutcome,
     VaultPeopleList,
     VaultPeopleGet,
     SelfMessage,
@@ -160,6 +162,25 @@ pub enum AgentVerb {
     SelfBrowserLibraryFind,
     SelfBrowserLibraryPropose,
     SelfBrowserLibraryRun,
+    SelfDesktopOpen,
+    SelfDesktopObserve,
+    SelfDesktopFind,
+    SelfDesktopClick,
+    SelfDesktopClickAt,
+    SelfDesktopType,
+    SelfDesktopSelect,
+    SelfDesktopKey,
+    SelfDesktopHotkey,
+    SelfDesktopScroll,
+    SelfDesktopWaitFor,
+    SelfDesktopExpect,
+    SelfDesktopScreenshot,
+    SelfDesktopView,
+    SelfDesktopCrop,
+    SelfDesktopZoom,
+    SelfDesktopBatch,
+    SelfDesktopWindows,
+    SelfDesktopWindow,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -196,6 +217,8 @@ impl AgentVerb {
         Self::SelfMemoryDiaryReview,
         Self::SelfIdentityAnswer,
         Self::SelfIdentitySettle,
+        Self::SelfInboxConcern,
+        Self::SelfInboxConcernOutcome,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
         Self::SelfMessage,
@@ -346,6 +369,25 @@ impl AgentVerb {
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryPropose,
         Self::SelfBrowserLibraryRun,
+        Self::SelfDesktopOpen,
+        Self::SelfDesktopObserve,
+        Self::SelfDesktopFind,
+        Self::SelfDesktopClick,
+        Self::SelfDesktopClickAt,
+        Self::SelfDesktopType,
+        Self::SelfDesktopSelect,
+        Self::SelfDesktopKey,
+        Self::SelfDesktopHotkey,
+        Self::SelfDesktopScroll,
+        Self::SelfDesktopWaitFor,
+        Self::SelfDesktopExpect,
+        Self::SelfDesktopScreenshot,
+        Self::SelfDesktopView,
+        Self::SelfDesktopCrop,
+        Self::SelfDesktopZoom,
+        Self::SelfDesktopBatch,
+        Self::SelfDesktopWindows,
+        Self::SelfDesktopWindow,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -385,6 +427,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
             Self::SelfIdentityAnswer => "self.identity.answer",
             Self::SelfIdentitySettle => "self.identity.settle",
+            Self::SelfInboxConcern => "self.inbox.concern",
+            Self::SelfInboxConcernOutcome => "self.inbox.concern.outcome",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
             Self::SelfMessage => "self.message",
@@ -537,6 +581,25 @@ impl AgentVerb {
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
+            Self::SelfDesktopOpen => "self.desktop.open",
+            Self::SelfDesktopObserve => "self.desktop.observe",
+            Self::SelfDesktopFind => "self.desktop.find",
+            Self::SelfDesktopClick => "self.desktop.click",
+            Self::SelfDesktopClickAt => "self.desktop.click_at",
+            Self::SelfDesktopType => "self.desktop.type",
+            Self::SelfDesktopSelect => "self.desktop.select",
+            Self::SelfDesktopKey => "self.desktop.key",
+            Self::SelfDesktopHotkey => "self.desktop.hotkey",
+            Self::SelfDesktopScroll => "self.desktop.scroll",
+            Self::SelfDesktopWaitFor => "self.desktop.wait_for",
+            Self::SelfDesktopExpect => "self.desktop.expect",
+            Self::SelfDesktopScreenshot => "self.desktop.screenshot",
+            Self::SelfDesktopView => "self.desktop.view",
+            Self::SelfDesktopCrop => "self.desktop.crop",
+            Self::SelfDesktopZoom => "self.desktop.zoom",
+            Self::SelfDesktopBatch => "self.desktop.batch",
+            Self::SelfDesktopWindows => "self.desktop.windows",
+            Self::SelfDesktopWindow => "self.desktop.window",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -572,6 +635,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcern
+                | Self::SelfInboxConcernOutcome
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -751,6 +816,25 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRun
+                | Self::SelfDesktopOpen
+                | Self::SelfDesktopObserve
+                | Self::SelfDesktopFind
+                | Self::SelfDesktopClick
+                | Self::SelfDesktopClickAt
+                | Self::SelfDesktopType
+                | Self::SelfDesktopSelect
+                | Self::SelfDesktopKey
+                | Self::SelfDesktopHotkey
+                | Self::SelfDesktopScroll
+                | Self::SelfDesktopWaitFor
+                | Self::SelfDesktopExpect
+                | Self::SelfDesktopScreenshot
+                | Self::SelfDesktopView
+                | Self::SelfDesktopCrop
+                | Self::SelfDesktopZoom
+                | Self::SelfDesktopBatch
+                | Self::SelfDesktopWindows
+                | Self::SelfDesktopWindow
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -765,6 +849,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcern
+                | Self::SelfInboxConcernOutcome
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -999,6 +1085,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcern
+                | Self::SelfInboxConcernOutcome
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -1145,6 +1233,25 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRun
+                | Self::SelfDesktopOpen
+                | Self::SelfDesktopObserve
+                | Self::SelfDesktopFind
+                | Self::SelfDesktopClick
+                | Self::SelfDesktopClickAt
+                | Self::SelfDesktopType
+                | Self::SelfDesktopSelect
+                | Self::SelfDesktopKey
+                | Self::SelfDesktopHotkey
+                | Self::SelfDesktopScroll
+                | Self::SelfDesktopWaitFor
+                | Self::SelfDesktopExpect
+                | Self::SelfDesktopScreenshot
+                | Self::SelfDesktopView
+                | Self::SelfDesktopCrop
+                | Self::SelfDesktopZoom
+                | Self::SelfDesktopBatch
+                | Self::SelfDesktopWindows
+                | Self::SelfDesktopWindow
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1173,6 +1280,7 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcernOutcome
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1254,6 +1362,14 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRun
+                | Self::SelfDesktopOpen
+                | Self::SelfDesktopClick
+                | Self::SelfDesktopClickAt
+                | Self::SelfDesktopType
+                | Self::SelfDesktopSelect
+                | Self::SelfDesktopKey
+                | Self::SelfDesktopHotkey
+                | Self::SelfDesktopBatch
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1295,6 +1411,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
+            Self::SelfInboxConcern => &["spec"],
+            Self::SelfInboxConcernOutcome => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1445,6 +1563,25 @@ impl AgentVerb {
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
+            Self::SelfDesktopOpen => &["spec"],
+            Self::SelfDesktopObserve => &["spec"],
+            Self::SelfDesktopFind => &["spec"],
+            Self::SelfDesktopClick => &["spec"],
+            Self::SelfDesktopClickAt => &["spec"],
+            Self::SelfDesktopType => &["spec"],
+            Self::SelfDesktopSelect => &["spec"],
+            Self::SelfDesktopKey => &["spec"],
+            Self::SelfDesktopHotkey => &["spec"],
+            Self::SelfDesktopScroll => &["spec"],
+            Self::SelfDesktopWaitFor => &["spec"],
+            Self::SelfDesktopExpect => &["spec"],
+            Self::SelfDesktopScreenshot => &["spec"],
+            Self::SelfDesktopView => &["spec"],
+            Self::SelfDesktopCrop => &["spec"],
+            Self::SelfDesktopZoom => &["spec"],
+            Self::SelfDesktopBatch => &["spec"],
+            Self::SelfDesktopWindows => &["spec"],
+            Self::SelfDesktopWindow => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -1482,6 +1619,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
+            Self::SelfInboxConcern => &["spec"],
+            Self::SelfInboxConcernOutcome => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1632,6 +1771,25 @@ impl AgentVerb {
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
+            Self::SelfDesktopOpen => &["spec"],
+            Self::SelfDesktopObserve => &["spec"],
+            Self::SelfDesktopFind => &["spec"],
+            Self::SelfDesktopClick => &["spec"],
+            Self::SelfDesktopClickAt => &["spec"],
+            Self::SelfDesktopType => &["spec"],
+            Self::SelfDesktopSelect => &["spec"],
+            Self::SelfDesktopKey => &["spec"],
+            Self::SelfDesktopHotkey => &["spec"],
+            Self::SelfDesktopScroll => &["spec"],
+            Self::SelfDesktopWaitFor => &["spec"],
+            Self::SelfDesktopExpect => &["spec"],
+            Self::SelfDesktopScreenshot => &["spec"],
+            Self::SelfDesktopView => &["spec"],
+            Self::SelfDesktopCrop => &["spec"],
+            Self::SelfDesktopZoom => &["spec"],
+            Self::SelfDesktopBatch => &["spec"],
+            Self::SelfDesktopWindows => &["spec"],
+            Self::SelfDesktopWindow => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -1686,6 +1844,8 @@ impl AgentVerb {
             Self::SelfIdentitySettle => {
                 "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."
             }
+            Self::SelfInboxConcern => "",
+            Self::SelfInboxConcernOutcome => "",
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
             Self::SelfMessage => {
@@ -2059,6 +2219,41 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryRun => {
                 "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."
+            }
+            Self::SelfDesktopOpen => {
+                "Opens an app of the run's own desktop guest by app:name and observes its window."
+            }
+            Self::SelfDesktopObserve => "Observes the current window of the run's desktop guest.",
+            Self::SelfDesktopFind => "Finds the window rows whose role and name match.",
+            Self::SelfDesktopClick => "Clicks one window target and observes the result.",
+            Self::SelfDesktopClickAt => {
+                "Clicks a point of a held screenshot, mapped onto the window."
+            }
+            Self::SelfDesktopType => "Types text into one window target and observes the result.",
+            Self::SelfDesktopSelect => {
+                "Sets the value of a combo box or list target by its option label."
+            }
+            Self::SelfDesktopKey => {
+                "Presses one key, with modifiers, on a window target or the window's focus."
+            }
+            Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
+            Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
+            Self::SelfDesktopWaitFor => "Waits until some window row matches a role and name.",
+            Self::SelfDesktopExpect => {
+                "Checks that a window row is present or absent, and holds a given value."
+            }
+            Self::SelfDesktopScreenshot => {
+                "Takes a screenshot of the window the session holds, by image ref and never captioned."
+            }
+            Self::SelfDesktopView => "Reads back a held image by its ref.",
+            Self::SelfDesktopCrop => "Crops a held image to a rectangle.",
+            Self::SelfDesktopZoom => "Zooms into a rectangle of a held image.",
+            Self::SelfDesktopBatch => {
+                "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails."
+            }
+            Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
+            Self::SelfDesktopWindow => {
+                "Moves the session onto another desktop window and observes it."
             }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."

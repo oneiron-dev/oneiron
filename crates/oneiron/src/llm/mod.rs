@@ -125,4 +125,5 @@ pub use budget::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
     RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
 };
+pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};

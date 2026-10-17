@@ -53,6 +53,12 @@ impl OneironClient {
                 "self.identity.settle" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::maintenance::identity::IdentityActNow,
                 >(client, verb, &input),
+                "self.inbox.concern" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCardView,
+                >(client, verb, &input),
+                "self.inbox.concern.outcome" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::maintenance::agent_health::ConcernCardSummary,
+                >(client, verb, &input),
                 "vault.people.list" => {
                     remote_agent_verb_output::<oneiron::memory::PeoplePage>(client, verb, &input)
                 }
@@ -645,6 +651,32 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("self.identity.settle", value)
     }
+    pub fn self_inbox_concern(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest,
+    ) -> Result<oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCardView, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.concern", value)
+    }
+    pub fn self_inbox_concern_outcome(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest,
+    ) -> Result<oneiron::dreamer_runner::maintenance::agent_health::ConcernCardSummary, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.concern.outcome", value)
+    }
     pub fn vault_people_list(
         &self,
         input: &oneiron::memory::PeopleListRequest,
@@ -767,7 +799,7 @@ impl OneironClient {
     }
     pub fn tasks_update(
         &self,
-        input: &oneiron::task_verb::sdk::TaskRequest,
+        input: &oneiron::task_verb::sdk::TaskUpdateRequest,
     ) -> Result<oneiron::task_verb::TaskUpdateReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
