@@ -16,7 +16,7 @@ use crate::runtime_hooks::lineage::{self, LineageLink};
 use crate::runtime_hooks::outcome::{BlockRequest, HookOutcome};
 use crate::runtime_hooks::runner::{Verdict, block_id, bounded, judge};
 use crate::runtime_hooks::store::{self, HookIntent, HookIntentState, HookRunState, RunKey};
-use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read};
+use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -40,7 +40,7 @@ type Stopped<T> = std::result::Result<T, VerbHookStop>;
 /// Whether a verb hook may run on `verb`: no when hooks are off or
 /// suppressed, at hook depth 1, or when no binding's verb glob takes it. The
 /// cached binding list answers; one that does not read answers yes, so the
-/// chain reports the error.
+/// chain reports the error. Scope is not read here: a scoped binding may run.
 pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
     let state = &vault.verb_hook_state;
     if state.suppressed() || depth() > 0 {
@@ -73,8 +73,8 @@ pub(super) fn pre(
         return through(call, args);
     }
     let bindings = state.bindings(vault)?;
-    let hooks = matching(&bindings.verb, HookPhase::Pre, &call);
-    if hooks.is_empty() && matching(&bindings.verb, HookPhase::Post, &call).is_empty() {
+    let hooks = matching(vault, &bindings.verb, HookPhase::Pre, &call)?;
+    if hooks.is_empty() && matching(vault, &bindings.verb, HookPhase::Post, &call)?.is_empty() {
         return through(call, args);
     }
     let Some(runtime) = state.runtime() else {
@@ -133,7 +133,7 @@ pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Sto
         return Ok(Ok(result));
     }
     let bindings = state.bindings(vault)?;
-    let hooks = matching(&bindings.verb, HookPhase::Post, &call);
+    let hooks = matching(vault, &bindings.verb, HookPhase::Post, &call)?;
     if hooks.is_empty() {
         return Ok(Ok(result));
     }
@@ -156,33 +156,45 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
     }))
 }
 
+/// The bindings that take `call` in `phase`. A storage error reading a
+/// scope fails the chain, as other binding reads do.
 fn matching<'b>(
+    vault: &Vault,
     bindings: &'b [(EntityId, PackHookBinding)],
     phase: HookPhase,
     call: &VerbCall,
-) -> Vec<Hook<'b>> {
-    bindings
-        .iter()
-        .filter(|(_, binding)| takes(&binding.selector, phase, call))
-        .map(|(id, binding)| (*id, binding))
-        .collect()
+) -> Result<Vec<Hook<'b>>> {
+    let mut hooks = Vec::new();
+    for (id, binding) in bindings {
+        if takes(vault, &binding.selector, phase, call)? {
+            hooks.push((*id, binding));
+        }
+    }
+    Ok(hooks)
 }
 
 /// Whether `selector` takes `call` in `phase`: a verb glob, the class, and a
-/// scope the call's scope is, or sits under (`<scope>/…`).
-fn takes(selector: &HookSelector, phase: HookPhase, call: &VerbCall) -> bool {
-    selector.phase == phase
-        && selector
+/// scope that holds the call's ([`scope::call_within`]). The scope is read
+/// last, so an unscoped binding reads nothing.
+fn takes(
+    vault: &Vault,
+    selector: &HookSelector,
+    phase: HookPhase,
+    call: &VerbCall,
+) -> Result<bool> {
+    if selector.phase != phase
+        || !selector
             .verbs
             .iter()
             .any(|glob| filter::glob_match(glob, &call.verb))
-        && (selector.actors.is_empty() || selector.actors.contains(&call.class))
-        && selector.scope.as_deref().is_none_or(|scope| {
-            call.scope.as_deref().is_some_and(|own| {
-                own.strip_prefix(scope)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-            })
-        })
+        || !(selector.actors.is_empty() || selector.actors.contains(&call.class))
+    {
+        return Ok(false);
+    }
+    match selector.scope.as_deref() {
+        None => Ok(true),
+        Some(wanted) => scope::call_within(vault, wanted, call),
+    }
 }
 
 /// One chain: its call and phase, and what its runs leave to commit.

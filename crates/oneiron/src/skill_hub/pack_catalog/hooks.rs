@@ -130,7 +130,8 @@ pub struct HookSelector {
     pub verbs: Vec<String>,
     /// Empty selects every class.
     pub actors: Vec<HookActorClass>,
-    /// A world, facet, room or project; a scope only narrows.
+    /// A world, facet, room or project as `<axis>:<32 hex id>`; a scope
+    /// only narrows.
     pub scope: Option<String>,
     pub phase: HookPhase,
     /// Higher runs first; ties break on the content hash.
@@ -294,9 +295,15 @@ impl PackHook {
             return Err(invalid("only a fact hook may declare the generative class"));
         }
         let actors: Vec<HookActorClass> = json_list(&fields, "actors")?;
+        // A world, facet, room or project id; no other grammar.
         let scope = scalar("scope")?;
-        if scope.as_ref().is_some_and(|scope| scope.len() > 256) {
-            return Err(invalid("hook scope exceeds its bound"));
+        if scope
+            .as_deref()
+            .is_some_and(|scope| crate::runtime_hooks::HookScope::parse(scope).is_none())
+        {
+            return Err(invalid(
+                "hook scope is world, facet, room or project:<32 lowercase hex id>",
+            ));
         }
         let priority = scalar("priority")?
             .map(|value| value.parse::<i32>())

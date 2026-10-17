@@ -189,6 +189,7 @@ pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
 pub(crate) use rooms::erase_room_side_rows;
 pub(crate) use rooms::project_room_audience_in;
+pub(crate) use rooms::room_project_in;
 
 pub(crate) use rooms::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,

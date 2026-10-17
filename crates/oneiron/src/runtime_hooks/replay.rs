@@ -220,11 +220,13 @@ impl Replay<'_> {
         };
         let actor = filter::actor_class(self.vault, entry.actor)?;
         if !filter::fact_matches(
+            self.vault,
             &self.binding.selector,
             entry.kind,
+            entry.entity,
             seen.claim.as_ref(),
             actor,
-        ) {
+        )? {
             return Ok(None);
         }
         if entry.body_hash != Some(seen.body_hash) {
