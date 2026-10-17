@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use super::SkillRecord;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::llm::decision::{
-    AnswerContract, AskTo, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
-    HumanAskReason, HumanDecisionRequest, ProviderPin,
+    AnswerContract, AskAct, AskRole, AskTo, DecisionAnswer, DecisionClass, DecisionQuestion,
+    DecisionRung, HumanAskReason, HumanDecisionRequest, ProviderPin, RoleRank,
 };
 use crate::llm::run_admission::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
@@ -54,6 +54,17 @@ const MAX_LINEAGE: usize = 1024;
 
 /// The engine's own versioned queue identity for an overrun ask: the cost
 /// comparison is deterministic, so no model read precedes it.
+/// Hours an unanswered overrun ask waits on the role it went to before it
+/// climbs to the next role up its chain: the ask's reminder. At the chain's
+/// top it waits on.
+pub const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
+    crate::learning_setting::SettingSpec {
+        key: "exploration.ask.climb_hours",
+        min: 1.0,
+        max: 720.0,
+        seed: 24.0,
+    };
+
 const OVERRUN_QUEUE: &str = "skill.exploration_slice";
 const OVERRUN_QUEUE_VERSION: &str = "v1";
 
@@ -71,7 +82,7 @@ pub(crate) enum ExplorationTrialClose {
     ReportStored,
     /// The gate recorded a verdict on the proposal.
     VerdictRecorded,
-    /// The owner declined a run past the goal's exploration slice.
+    /// The board declined a run past the goal's exploration slice.
     OverrunDeclined,
     /// An offline floor regressed on the held-out set.
     FloorsRegressed,
@@ -83,7 +94,7 @@ pub(crate) enum ExplorationTrialStatus {
     /// An offline floor regressed: no trial runs, and the gate rules on the
     /// failed preflight.
     FloorsRegressed,
-    /// The trial routes live runs, or waits on its owner's answer.
+    /// The trial routes live runs, or waits on its board's answer.
     Waiting,
     /// The trial is closed: measure the live runs it routed.
     Measurable,
@@ -104,6 +115,10 @@ struct PendingOverrun {
     version: u32,
     /// The decision ask's arrival number, once queued.
     seq: Option<u64>,
+    /// When the ask last climbed, unix seconds; its next climb counts from
+    /// here, else from when it was asked.
+    #[serde(default)]
+    climbed_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,7 +126,7 @@ struct PendingOverrun {
 enum TrialState {
     Open,
     AskPending(PendingOverrun),
-    /// The owner approved one run of up to `charge` past the slice.
+    /// The board approved one run of up to `charge` past the slice.
     Approved {
         charge: u64,
     },
@@ -172,7 +187,7 @@ struct SliceLedger {
     /// Each routed run's charge: its reservation, or what it spent once its
     /// scope settled.
     charged: u64,
-    /// The overruns the owner approved past the slice, summed.
+    /// The overruns the board approved past the slice, summed.
     approved_overrun: u64,
 }
 
@@ -184,7 +199,8 @@ pub(super) struct TrialLoad {
 }
 
 /// What the load door does: load the proposal, and whether an over-slice
-/// trial must ask its owner once the door's transaction has committed.
+/// trial must ask its project's board once the door's transaction has
+/// committed.
 #[derive(Default)]
 pub(super) struct Routed {
     pub(super) load: Option<TrialLoad>,
@@ -301,7 +317,7 @@ fn dispatch_charge_in_txn(
         .map(|launch| launch.expected.units))
 }
 
-/// The trial state an owner's answer to an overrun ask leaves: a yes covers
+/// The trial state an answer to an overrun ask leaves: a yes covers
 /// one run of up to `charge` past the slice; anything else declines.
 fn answered(charge: u64, answer: &DecisionAnswer) -> TrialState {
     match answer {
@@ -310,7 +326,7 @@ fn answered(charge: u64, answer: &DecisionAnswer) -> TrialState {
     }
 }
 
-/// Applies the owner's answer to the trial's queued overrun ask, once one is
+/// Applies the answer to the trial's queued overrun ask, once one is
 /// given. `true` when the state moved.
 fn take_answer_in_txn(
     vault: &Vault,
@@ -339,7 +355,7 @@ fn take_answer_in_txn(
 enum SliceAnswer {
     /// Inside the slice, or inside an approved overrun: the ledger to keep.
     Charge(SliceLedger),
-    /// Past it: the trial now asks its owner about this exact charge.
+    /// Past it: the trial now asks its project's board about this exact charge.
     Ask,
     /// The ledger is another project's or unit's: no trial.
     Refuse,
@@ -368,7 +384,7 @@ fn slice_answer_in_txn(
         .saturating_sub(ledger.charged);
     if charge > remaining {
         match trial.state {
-            // The owner's yes covers this one run: the approved overrun
+            // The board's yes covers this one run: the approved overrun
             // joins the slice and is spent by it.
             TrialState::Approved { charge: approved } if charge <= approved => {
                 ledger.approved_overrun =
@@ -387,6 +403,7 @@ fn slice_answer_in_txn(
                     remaining,
                     version: trial.asks,
                     seq: None,
+                    climbed_at: None,
                 });
                 return Ok(SliceAnswer::Ask);
             }
@@ -609,7 +626,7 @@ fn open_in_txn(
     Ok(Some(trial.state))
 }
 
-/// The owner's answer to a pending overrun ask, applied while the trial
+/// The board's answer to a pending overrun ask, applied while the trial
 /// still waits on that ask.
 fn answer_in_txn(
     vault: &Vault,
@@ -673,11 +690,20 @@ fn overrun_request(
             model: OVERRUN_QUEUE.to_owned(),
             version: OVERRUN_QUEUE_VERSION.to_owned(),
         },
-        to: AskTo::owner(),
+        // The project's board decides its goal's exploration overrun. With no
+        // live holder there, the ask goes up the chain (the parents' boards,
+        // then the owners) to the first role that has one.
+        to: AskTo {
+            role: AskRole::Board {
+                project: trial.project,
+            },
+            ceiling: RoleRank::Owner,
+            act: AskAct::Judgment,
+        },
     }
 }
 
-/// Queues the owner ask of `proposal`'s pending overrun and keeps its
+/// Queues the board ask of `proposal`'s pending overrun and keeps its
 /// arrival number on the trial. Outside any write transaction: the queue
 /// opens its own. An ask already queued, or no pending overrun: nothing.
 /// # Errors
@@ -712,6 +738,35 @@ pub(super) fn queue_trial_ask(vault: &Vault, proposal: &EntityId) -> Result<()> 
             if let TrialState::AskPending(held) = &mut now.state {
                 held.seq = Some(seq);
             }
+            TRIALS.put(&vault.store, txn, proposal, &now)?;
+        }
+        Ok(())
+    })
+}
+
+/// Climbs `proposal`'s unanswered overrun ask `seq` one role up its chain
+/// once [`EXPLORATION_ASK_CLIMB_HOURS`] have passed `since`, and restarts
+/// that clock. An ask at its chain's top stays where it is.
+fn climb_stale_ask(
+    vault: &Vault,
+    proposal: &EntityId,
+    seq: u64,
+    since: u64,
+    at: u64,
+) -> Result<()> {
+    let hours = crate::learning_setting::setting_value(vault, &EXPLORATION_ASK_CLIMB_HOURS)?;
+    if (at.saturating_sub(since) as f64) < hours * 3600.0 {
+        return Ok(());
+    }
+    vault.climb_decision_ask(seq)?;
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut now) = TRIALS.get(&vault.store, txn, proposal)? else {
+            return Ok(());
+        };
+        if let TrialState::AskPending(held) = &mut now.state
+            && held.seq == Some(seq)
+        {
+            held.climbed_at = Some(at);
             TRIALS.put(&vault.store, txn, proposal, &now)?;
         }
         Ok(())
@@ -782,8 +837,16 @@ pub(crate) fn drive_exploration_trial(
             queue_trial_ask(vault, proposal)?;
             return Ok(ExplorationTrialStatus::Waiting);
         }
-        TrialState::AskPending(PendingOverrun { seq: Some(seq), .. }) => {
-            let Some(answer) = vault.decision_ask(seq)?.and_then(|ask| ask.answer) else {
+        TrialState::AskPending(PendingOverrun {
+            seq: Some(seq),
+            climbed_at,
+            ..
+        }) => {
+            let Some(ask) = vault.decision_ask(seq)? else {
+                return Ok(ExplorationTrialStatus::Waiting);
+            };
+            let Some(answer) = ask.answer else {
+                climb_stale_ask(vault, proposal, seq, climbed_at.unwrap_or(ask.asked_at), at)?;
                 return Ok(ExplorationTrialStatus::Waiting);
             };
             vault.with_write_txn_grouped(|txn| {
