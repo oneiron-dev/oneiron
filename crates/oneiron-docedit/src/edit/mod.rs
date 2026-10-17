@@ -22,7 +22,7 @@ pub mod transaction;
 mod xfrm;
 pub(crate) mod xml;
 
-pub use structure::{NewShape, Preset, StructureEdit, StructureReport, structure_patch};
+pub use structure::{NewGroup, NewShape, Preset, StructureEdit, StructureReport, structure_patch};
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,
@@ -139,6 +139,11 @@ pub enum Effect {
     CommentsOmitted { relationship: String },
     /// A custom show that lists the source and is not given the copy.
     NotInCustomShow { show: String },
+    /// A slide left the slide list; its part stays, unreachable.
+    SlideRemoved { part: String, sld_id: u32 },
+    /// One native id of a copied shape (or member) and the id its copy
+    /// holds on the destination slide.
+    ShapeCopied { from: u32, id: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
