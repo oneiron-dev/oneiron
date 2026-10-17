@@ -535,6 +535,16 @@ pub struct AgentVerbRefusal {
     pub code: String,
 }
 
+/// A verb-table row's refusal as its own route worded it (OF-181): the code,
+/// the message and the suggestions a host caller of its action is answered
+/// with. The guest still sees only the code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentVerbRefusalWords {
+    pub code: String,
+    pub message: String,
+    pub suggestions: Vec<String>,
+}
+
 /// The refusal a verb call gets from a run whose host binds no verb door.
 pub const AGENT_VERB_DOOR_UNBOUND: &str = "agent_verb_door_unbound";
 
@@ -587,6 +597,14 @@ pub trait AgentVerbDoor: Send + Sync {
         _rows: Option<&[EntityId]>,
     ) -> std::result::Result<bool, AgentVerbRefusal> {
         Ok(false)
+    }
+
+    /// The words the door's route refused its newest call with, when it
+    /// worded one. An action keeps them on its replay record, so a retry
+    /// under the same key answers as the first try did. A door that words
+    /// no refusal keeps none.
+    fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
+        None
     }
 }
 

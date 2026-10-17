@@ -5,9 +5,9 @@
 //! calls name the same verbs, every row of the SDK verb table among them, and
 //! each runs through the one gated SDK the agent writes code against.
 use super::{
-    AgentVerbDoor, CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord, GatedActorWrite,
-    SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher,
-    SelfFailedResult,
+    AgentVerbDoor, AgentVerbRefusalWords, CodeRunBridgeCall, CodeRunDeterminism,
+    CodeRunReplayRecord, GatedActorWrite, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
+    SelfDispatchOutcome, SelfDispatcher, SelfFailedResult,
 };
 use crate::agent_def::AgentCeiling;
 use crate::claim::{PointRead, ScopedReadReceipt};
@@ -141,6 +141,9 @@ pub struct AgentActionCall {
 pub struct ActionDispatch {
     pub outcome: SelfDispatchOutcome,
     pub read_receipt: ScopedReadReceipt,
+    /// A refused verb-table row's own words, as its route answered them and
+    /// its replay record keeps them; `None` for every other outcome.
+    pub refusal: Option<AgentVerbRefusalWords>,
 }
 impl ActionDispatch {
     /// The outcome as the run's replay record spells it, as JSON for a host
@@ -554,12 +557,17 @@ impl ActionRegistry {
                 ));
             }
             lease_holds()?;
+            let refusal = record
+                .bridge_calls
+                .first()
+                .and_then(|row| super::payload::refusal_words(&row.outcome));
             return record
                 .replay_cursor()
                 .dispatch(call)
                 .map(|outcome| ActionDispatch {
                     outcome,
                     read_receipt,
+                    refusal,
                 });
         }
         lease_holds()?;
@@ -577,6 +585,7 @@ impl ActionRegistry {
             Some(proof) => dispatcher.with_authenticated_owner(proof),
             None => dispatcher,
         };
+        let worded = verb_door.clone();
         let dispatcher = match verb_door {
             Some(door) => dispatcher.with_agent_verb_door(door),
             None => dispatcher,
@@ -609,13 +618,25 @@ impl ActionRegistry {
                 error: error.to_string(),
             }),
         };
-        record.bridge_calls.push(CodeRunBridgeCall::record(
-            0, &call, &recorded, frozen, frozen,
-        )?);
+        // A refused row's own words ride on its record, so a retry under the
+        // same key answers with them, not with the code alone.
+        let refusal = match &recorded {
+            SelfDispatchOutcome::Denied(denied) => worded
+                .as_deref()
+                .and_then(|door| door.refusal_words())
+                .filter(|words| words.code == denied.outcome),
+            _ => None,
+        };
+        let mut row = CodeRunBridgeCall::record(0, &call, &recorded, frozen, frozen)?;
+        if let Some(words) = &refusal {
+            super::payload::word_refusal(&mut row.outcome, words);
+        }
+        record.bridge_calls.push(row);
         vault.put_code_run_replay_record_if_generation(&record, Some(generation))?;
         result.map(|outcome| ActionDispatch {
             outcome,
             read_receipt,
+            refusal,
         })
     }
 }
