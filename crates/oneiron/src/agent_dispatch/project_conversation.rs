@@ -107,8 +107,16 @@ impl AgentDispatcher<'_> {
         at: u64,
     ) -> Result<Option<LoadedSkillPack>> {
         let run = self.live_project_run(leased)?;
-        let briefing = self.resolve_attempt_context(run.attempt.id)?.briefing;
-        let Some(briefing) = briefing.as_deref().and_then(project_briefing).transpose()? else {
+        // Both project runs are roots, so the briefing their dispatch froze is
+        // the one they run with. Any other run's briefing is not read here.
+        let briefing = run
+            .input
+            .context_spec
+            .as_ref()
+            .and_then(|spec| spec.briefing.as_deref())
+            .and_then(project_briefing)
+            .transpose()?;
+        let Some(briefing) = briefing else {
             return Ok(None);
         };
         let skill = match briefing {
