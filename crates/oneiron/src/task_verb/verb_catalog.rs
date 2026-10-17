@@ -3225,7 +3225,9 @@ impl AgentVerb {
             Self::SelfBrowserSelect => {
                 "Picks the option of a select element by its label, text or value."
             }
-            Self::SelfBrowserWaitFor => "Waits until some page row matches a role and name.",
+            Self::SelfBrowserWaitFor => {
+                "Waits until a page row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfBrowserExpect => {
                 "Checks that a page row is present or absent, and holds a given value."
             }
@@ -3268,7 +3270,9 @@ impl AgentVerb {
             }
             Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
             Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
-            Self::SelfDesktopWaitFor => "Waits until some window row matches a role and name.",
+            Self::SelfDesktopWaitFor => {
+                "Waits until a window row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfDesktopExpect => {
                 "Checks that a window row is present or absent, and holds a given value."
             }
