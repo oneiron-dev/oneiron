@@ -17,6 +17,7 @@ use crate::llm::decision::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
+use super::calibration::{AuditAnswerSource, RawAnswer};
 use super::types::{
     AttemptOutcome, AttributionVerdict, DeviationCause, FollowedState, HunkVerdict, JudgeRequest,
     OutcomeEvidence,
@@ -40,6 +41,16 @@ const RULE_VERSION: &str = "1";
 /// revision that gave them when one provider gave them all.
 pub(crate) struct Attributed {
     pub(crate) answers: Vec<HunkVerdict>,
+    pub(crate) revision: Option<String>,
+}
+
+/// What a judge said about one outcome before any floor or lane rule held an
+/// answer: each region's raw label and probability, and the revision that
+/// gave them, kept even when the outcome abstains. The held-out audit files
+/// it as its calibration batch (OF-542).
+pub(crate) struct JudgeTrace {
+    pub(crate) source: AuditAnswerSource,
+    pub(crate) answers: Vec<RawAnswer>,
     pub(crate) revision: Option<String>,
 }
 
@@ -104,8 +115,12 @@ impl AttributionDecisions<'_> {
     /// the labels its lane admits, keyed by lane and position, with the
     /// decision's probability as its confidence. A region that abstains
     /// abstains the outcome, as a judge did. Doubtful answers then take their
-    /// notes from [`AttributionNotes`].
-    pub(crate) fn answer(&self, request: &JudgeRequest<'_>) -> Result<Option<Attributed>> {
+    /// notes from [`AttributionNotes`]. The trace beside it keeps every raw
+    /// answer, abstaining ones too.
+    pub(crate) fn answer(
+        &self,
+        request: &JudgeRequest<'_>,
+    ) -> Result<(Option<Attributed>, JudgeTrace)> {
         let options: Vec<String> = AttributionVerdict::ALL
             .iter()
             .filter(|verdict| verdict.valid_in(request.lane))
@@ -136,15 +151,30 @@ impl AttributionDecisions<'_> {
             Reversibility::ReversibleRead,
             &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
+        let revision = revision(&decisions);
+        let trace = JudgeTrace {
+            source: AuditAnswerSource::Model,
+            answers: decisions
+                .iter()
+                .map(|decision| RawAnswer {
+                    label: match &decision.answer {
+                        DecisionAnswer::Choice(label) => Some(label.clone()),
+                        _ => None,
+                    },
+                    confidence: decision.probability,
+                })
+                .collect(),
+            revision: revision.clone(),
+        };
         let mut answers = Vec::with_capacity(decisions.len());
         for decision in &decisions {
             let (DecisionAnswer::Choice(label), Some(probability)) =
                 (&decision.answer, decision.probability)
             else {
-                return Ok(None);
+                return Ok((None, trace));
             };
             let Some(verdict) = AttributionVerdict::parse(label) else {
-                return Ok(None);
+                return Ok((None, trace));
             };
             answers.push(HunkVerdict::with_confidence(verdict, narrow(probability)));
         }
@@ -161,10 +191,7 @@ impl AttributionDecisions<'_> {
                 answer.note = note;
             }
         }
-        Ok(Some(Attributed {
-            answers,
-            revision: revision(&decisions),
-        }))
+        Ok((Some(Attributed { answers, revision }), trace))
     }
 }
 
@@ -323,12 +350,27 @@ impl RoutingFacts {
 pub struct AttributionRules;
 
 impl AttributionRules {
-    /// The rule's verdict on every region of `request`, or `None` to abstain.
-    pub(crate) fn answer(request: &JudgeRequest<'_>) -> Option<Attributed> {
-        rule_verdict(&RoutingFacts::of(request.evidence)).map(|verdict| Attributed {
+    /// The rule's verdict on every region of `request`, or `None` to abstain,
+    /// beside its trace.
+    pub(crate) fn answer(request: &JudgeRequest<'_>) -> (Option<Attributed>, JudgeTrace) {
+        let verdict = rule_verdict(&RoutingFacts::of(request.evidence));
+        let revision = Some(format!("{RULE_MODEL}@{RULE_VERSION}"));
+        let trace = JudgeTrace {
+            source: AuditAnswerSource::Rule,
+            answers: vec![
+                RawAnswer {
+                    label: verdict.map(|verdict| verdict.as_str().to_owned()),
+                    confidence: verdict.map(|_| 1.0),
+                };
+                request.regions()
+            ],
+            revision: revision.clone(),
+        };
+        let attributed = verdict.map(|verdict| Attributed {
             answers: vec![HunkVerdict::certain(verdict); request.regions()],
-            revision: Some(format!("{RULE_MODEL}@{RULE_VERSION}")),
-        })
+            revision,
+        });
+        (attributed, trace)
     }
 }
 

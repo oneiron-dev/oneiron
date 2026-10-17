@@ -1,12 +1,15 @@
 //! Held-out defect-injection audit: fixtures, the generic harness, and the pass-rate report.
 
+use serde::{Deserialize, Serialize};
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::codec::{AUDIT, next_evidence_sequence_in_txn};
+use super::calibration::{AuditBatch, AuditCase, record_unclear_floor_fit_in_txn};
+use super::codec::{AUDIT, AuditRow, next_evidence_sequence_in_txn};
 use super::judge::AttributionDecisions;
-use super::split::{classify_split, unclear_floor};
+use super::split::{classify_split_traced, unclear_floor};
 use super::types::{
     AttemptOutcome, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
 };
@@ -28,7 +31,7 @@ pub struct AuditFixture {
 }
 
 /// Aggregate result of one audit pass.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AttributionAuditReport {
     pub total: usize,
     /// Cases the judge answered correctly — including the cases where the
@@ -61,6 +64,20 @@ impl AttributionAuditReport {
     }
 }
 
+/// One persisted audit run: the receipt reference its floor fit cites, its
+/// aggregate report, and its batch kept whole.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttributionAuditRecord {
+    pub receipt: String,
+    pub report: AttributionAuditReport,
+    pub batch: AuditBatch,
+}
+
+/// The receipt reference of the attempt-lane audit row at `(at, sequence)`.
+fn audit_receipt(at: u64, sequence: u64) -> String {
+    format!("skill-attribution-audit:{at}:{sequence}")
+}
+
 /// Runs the built-in held-out audit against the deterministic tier, persists
 /// the report, and returns the pass-rate.
 ///
@@ -86,6 +103,10 @@ pub fn run_attribution_audit(vault: &Vault) -> Result<f32> {
 /// Deliberately not specialized to skill attribution — ED-03 reuses this shape
 /// for amendment evidence, so the harness stays generic over the evidence class
 /// by taking its fixtures as an argument.
+///
+/// The run keeps each case's raw answers, revision and id beside the report
+/// (OF-542), and the floor they argue for is one held-out check on
+/// `attribution_unclear_floor`, committed with the row.
 pub fn run_attribution_audit_with_decisions(
     vault: &Vault,
     fixtures: &[AuditFixture],
@@ -95,22 +116,32 @@ pub fn run_attribution_audit_with_decisions(
     let floor = unclear_floor(vault)?;
     let mut passed = 0;
     let mut abstained = 0;
+    let mut cases = Vec::with_capacity(fixtures.len());
     for fixture in fixtures {
         // The audit asks through the same split path production routes
-        // through, so a verdict the floor would hold scores as `unclear`.
+        // through, so a verdict the floor would hold scores as `unclear`:
+        // no attribution, which is an abstention.
         let request = JudgeRequest {
             lane: AttributionLane::Attempt,
             evidence: &fixture.evidence,
             hunks: &[],
             floor,
         };
-        let answer = classify_split(decisions, &request, &[])?.and_then(|(split, _)| split.sole());
+        let (split, trace) = classify_split_traced(decisions, &request, &[])?;
+        let answer = split
+            .and_then(|(split, _)| split.sole())
+            .filter(|verdict| *verdict != AttributionVerdict::Unclear);
         if answer.is_none() {
             abstained += 1;
         }
         if answer == fixture.expected {
             passed += 1;
         }
+        cases.push(AuditCase::new(
+            &fixture.evidence.receipt_ref,
+            fixture.expected,
+            trace,
+        ));
     }
     let report = AttributionAuditReport {
         total: fixtures.len(),
@@ -118,11 +149,23 @@ pub fn run_attribution_audit_with_decisions(
         abstained,
         at,
     };
+    let row = AuditRow::new(
+        report,
+        AuditBatch::fitted(AttributionLane::Attempt, floor, cases),
+    );
+    let now = vault.store.clock.now_recorded_at();
 
     vault.with_write_txn_grouped(|wtxn| {
         let sequence = next_evidence_sequence_in_txn(vault, wtxn)?;
-        AUDIT.put(&vault.store, wtxn, &(at, sequence), &report)?;
-        Ok(())
+        AUDIT.put(&vault.store, wtxn, &(at, sequence), &row)?;
+        record_unclear_floor_fit_in_txn(
+            vault,
+            wtxn,
+            &row.batch.fit,
+            &audit_receipt(at, sequence),
+            at,
+            now,
+        )
     })?;
 
     Ok(report)
@@ -130,11 +173,24 @@ pub fn run_attribution_audit_with_decisions(
 
 /// Every persisted audit report, oldest first.
 pub fn attribution_audit_reports(vault: &Vault) -> Result<Vec<AttributionAuditReport>> {
+    Ok(attribution_audit_records(vault)?
+        .into_iter()
+        .map(|record| record.report)
+        .collect())
+}
+
+/// Every persisted audit run with its batch and the receipt reference its
+/// floor fit cites, oldest first.
+pub fn attribution_audit_records(vault: &Vault) -> Result<Vec<AttributionAuditRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     Ok(AUDIT
         .scan(&vault.store, &rtxn)?
         .into_iter()
-        .map(|(_, report)| report)
+        .map(|((at, sequence), row)| AttributionAuditRecord {
+            receipt: audit_receipt(at, sequence),
+            report: row.report,
+            batch: row.batch,
+        })
         .collect())
 }
 

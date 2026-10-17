@@ -37,8 +37,6 @@ pub(super) const MAX_TOURNAMENT_EVIDENCE_REFS: usize = 64;
 
 pub(super) const MAX_TOURNAMENT_EVIDENCE_REF_BYTES: usize = 256;
 
-pub(super) const MAX_TOURNAMENT_BALLOTS: usize = 32;
-
 pub(super) const OF366_CLAIM_AUTHORING_LENSES: [(&str, &str); 4] = [
     ("groundedness", "claim_authoring"),
     ("overreach", "claim_authoring"),

@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value};
 
-use super::judge::{Attributed, AttributionDecisions, AttributionRules};
+use super::judge::{Attributed, AttributionDecisions, AttributionRules, JudgeTrace};
 use super::types::{
     AttributionLane, AttributionShare, AttributionSplit, AttributionVerdict, HunkVerdict,
     JudgeRequest, UnclearNote, UnclearReason,
@@ -47,18 +47,32 @@ pub(crate) fn classify_split(
     request: &JudgeRequest<'_>,
     masses: &[f64],
 ) -> Result<Option<(AttributionSplit, Option<String>)>> {
+    classify_split_traced(decisions, request, masses).map(|(split, _)| split)
+}
+
+/// [`classify_split`], beside the judge's raw answers before the floor held
+/// any: the held-out audit keeps them as its calibration batch (OF-542).
+///
+/// # Errors
+///
+/// As [`classify_split`].
+pub(crate) fn classify_split_traced(
+    decisions: Option<&AttributionDecisions<'_>>,
+    request: &JudgeRequest<'_>,
+    masses: &[f64],
+) -> Result<(Option<(AttributionSplit, Option<String>)>, JudgeTrace)> {
     if masses.len() != request.hunks.len() {
         return Err(Error::InvariantViolation("one edit mass per changed hunk"));
     }
-    let answered = match decisions {
+    let (answered, trace) = match decisions {
         Some(decisions) => decisions.answer(request)?,
         None => AttributionRules::answer(request),
     };
     let Some(Attributed { answers, revision }) = answered else {
-        return Ok(None);
+        return Ok((None, trace));
     };
-    split_from_answers(request.lane, masses, answers, request.floor)
-        .map(|split| Some((split, revision)))
+    let split = split_from_answers(request.lane, masses, answers, request.floor)?;
+    Ok((Some((split, revision)), trace))
 }
 
 /// A settled cause's split: its one label, certain, on every region.
@@ -126,24 +140,13 @@ fn split_from_answers(
         if weight <= 0.0 {
             continue;
         }
-        // A confidence that is not a number is no confidence: it holds even
-        // under a floor the owner pinned at zero.
-        let measured = answer.confidence.is_finite();
-        let confidence = if measured {
+        let confidence = if answer.confidence.is_finite() {
             answer.confidence.clamp(0.0, 1.0)
         } else {
             0.0
         };
         let note = bounded_note(answer.note);
-        let reason = if answer.verdict == AttributionVerdict::Unclear {
-            Some(UnclearReason::NoLabelFits)
-        } else if !answer.verdict.valid_in(lane) {
-            Some(UnclearReason::OutsideLane)
-        } else if !measured || confidence < floor {
-            Some(UnclearReason::BelowFloor)
-        } else {
-            None
-        };
+        let reason = held_reason(lane, answer.verdict, answer.confidence, floor);
         if matches!(
             reason,
             Some(UnclearReason::NoLabelFits | UnclearReason::BelowFloor)
@@ -183,6 +186,28 @@ fn split_from_answers(
         })
         .collect();
     Ok(AttributionSplit { shares, unclear })
+}
+
+/// Why one answer lands `unclear`, or `None` when its label stands: the judge
+/// said so, named a label its lane does not admit, or gave no usable
+/// confidence or one below `floor`. Equal to the floor stands.
+pub(super) fn held_reason(
+    lane: AttributionLane,
+    verdict: AttributionVerdict,
+    confidence: f32,
+    floor: f32,
+) -> Option<UnclearReason> {
+    if verdict == AttributionVerdict::Unclear {
+        Some(UnclearReason::NoLabelFits)
+    } else if !verdict.valid_in(lane) {
+        Some(UnclearReason::OutsideLane)
+    } else if !confidence.is_finite() || confidence.clamp(0.0, 1.0) < floor {
+        // A confidence that is not a number is no confidence: it holds even
+        // under a floor the owner pinned at zero.
+        Some(UnclearReason::BelowFloor)
+    } else {
+        None
+    }
 }
 
 #[expect(

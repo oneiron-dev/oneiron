@@ -15,7 +15,7 @@ use super::types::{
     DREAMER_TOURNAMENT_MAX_ROUNDS_K, DreamerTournamentBlindJudgeContext,
     DreamerTournamentBordaBallot, DreamerTournamentBranchVerdict, DreamerTournamentRun,
     DreamerTournamentRunResult, DreamerTournamentStopReason, DreamerTournamentSynthesisVerdict,
-    DreamerTournamentWinner, MAX_TOURNAMENT_BALLOTS, RankedCandidate, SynthesizedCandidate,
+    DreamerTournamentWinner, RankedCandidate, SynthesizedCandidate,
 };
 use super::validate::{invalid_tournament, validate_ballot, validate_run, validate_weave_parents};
 pub fn run_dreamer_claim_tournament(
@@ -220,9 +220,10 @@ fn blind_borda_rank(
     ballots: &[DreamerTournamentBordaBallot],
     candidate_count: usize,
 ) -> Result<Vec<RankedCandidate>> {
-    if ballots.is_empty() || ballots.len() > MAX_TOURNAMENT_BALLOTS {
+    // Every ballot counts: the scores are checked sums, so no count refuses.
+    if ballots.is_empty() {
         return Err(invalid_tournament(
-            "tournament blind Borda requires 1..=32 ballots",
+            "tournament blind Borda requires at least one ballot",
         ));
     }
     let mut judge_refs = BTreeSet::new();
