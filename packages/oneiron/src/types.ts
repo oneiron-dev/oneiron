@@ -46,8 +46,20 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
+  /** A quote on a project room's thread reply: a span of one MESSAGE in the room. */
+  quote?: QuoteSpan
   /** A new project room thread root's audience (32-hex ids); fixed once set. */
   threadAudience?: string[]
+}
+
+/** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
+export type QuoteSpan = {
+  /** The quoted MESSAGE (not the TURN that holds it), as 32 hex. */
+  message: string
+  /** First quoted scalar. */
+  start: number
+  /** One past the last quoted scalar. */
+  end: number
 }
 
 /** Receipt for one witnessed turn. */

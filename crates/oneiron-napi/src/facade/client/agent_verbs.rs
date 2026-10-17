@@ -226,6 +226,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn tasks_accept(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("tasks.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_witness(&self, turn: NapiWitnessTurnInput) -> napi::Result<NapiWitnessReceipt> {
         let turn = turn.into_engine()?;
         let output = self.inner.vault_witness(&turn).map_err(facade_error)?;
@@ -886,6 +892,135 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.records.erase_confirm", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_bind(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.bind", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_fork(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.fork", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_weave(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.weave", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_measure_search(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.measure_search", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_measure_held_out(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.measure_held_out", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_mark_invalid(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.mark_invalid", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_prune(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.prune", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_select(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.select", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_promotion_basis(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.promotion_basis", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_reserve_confirmation(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.reserve_confirmation", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_promote(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.promote", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_reserve_work(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.reserve_work", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_settle_work(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.settle_work", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_refund_work(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.refund_work", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_record_benchmark(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.record_benchmark", input)
             .map_err(facade_error)
     }
     #[napi]

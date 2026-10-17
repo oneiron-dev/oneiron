@@ -18,23 +18,30 @@
 //! before the model reads it, each `keep` line is asked for, and every other
 //! line is the model's to decide.
 //!
+//! A `keep` line no belief cites is recorded on the review's record as
+//! `keep_missed` (FIX 2240). The next Nightly review asks for those lines
+//! once more, the rest of the pad blanked; a line missed again stays a
+//! recorded miss and is not asked for a third time.
+//!
 //! The first review to finish in a calendar month also runs the NOTE
 //! tombstone review (`note/tombstone_review.rs`, FIX 2419).
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use rmpv::Value;
 
 use super::evidence::EvidenceLocator;
 use super::executor::ConsolidationExecutor;
 use super::executor::extraction::{
-    check_extraction_reply, decode_model_locator, entity_id_from_hex, extraction_reply,
+    PadAsk, check_extraction_reply, decode_model_locator, entity_id_from_hex, extraction_reply,
 };
 use super::provenance::PromotionCandidate;
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::step_charge::StepChargeTally;
 use super::support::{SCOPE_PROJECT_KEY, TURN_BODY_FACET_REF_KEY, invalid_consolidation};
 use super::value_projection::json_to_rmpv;
+use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, ClaimSubject, ScopedRead};
 use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
@@ -57,6 +64,9 @@ const SEEN: SideTable<EntityId, NoteReviewRecord, Named> =
 /// The importance at which a note's verdict is `promote` (ARCH-0032
 /// `dr:P16`: a scratchpad item promotes at `importance >= 0.75`).
 const PROMOTE_IMPORTANCE: f64 = 0.75;
+/// How many times an unchanged sealed pad's missed `keep` lines are asked
+/// for again after the first review (FIX 2240).
+const KEEP_REASKS: u8 = 1;
 
 /// The review's verdict on one NOTE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -78,6 +88,15 @@ struct NoteReviewRecord {
     verdict: NoteVerdict,
     /// The model's importance for the note itself, 0 to 1, when it gave one.
     importance: Option<f64>,
+    /// A sealed pad's `keep` lines no belief cites: each line's text as a
+    /// byte range of the markdown.
+    keep_missed: Vec<Range<usize>>,
+    /// Re-asks for `keep_missed` spent on this markdown, at most
+    /// [`KEEP_REASKS`].
+    keep_reasks: u8,
+    /// The review attempt that wrote this record: an attempt resumed after a
+    /// checkpoint never re-asks what it just asked.
+    attempt: AttemptId,
 }
 /// NOTEs per page. The cursor moves a page at a time, so a review cut by
 /// its deadline resumes where it stopped.
@@ -88,8 +107,12 @@ const PAGE: usize = 32;
 struct Note {
     id: EntityId,
     markdown: String,
-    /// A sealed scratchpad's review: whether a line is marked `keep`.
-    sealed_pad: Option<bool>,
+    /// A sealed scratchpad's review: how it asks for the pad's `keep` lines.
+    sealed_pad: Option<PadAsk>,
+    /// The text ranges of the `keep` lines this read asks a belief of.
+    keep: Vec<Range<usize>>,
+    /// On a re-ask, the record of the review whose misses it asks for.
+    reask_of: Option<NoteReviewRecord>,
     fingerprint: [u8; 32],
     facet: EntityId,
     project: EntityId,
@@ -143,7 +166,8 @@ impl ConsolidationExecutor<'_> {
             let page = ctx
                 .vault
                 .entities_by_type_page(ENTITY_TYPE_NOTE, after.as_ref(), PAGE)?;
-            for note in readable_notes(ctx.vault, &read, &page, &allowed, &after_seal)? {
+            for note in readable_notes(ctx.vault, &read, &page, &allowed, &after_seal, attempt_id)?
+            {
                 if let Some(stop) = self
                     .review_note(attempt, ctx, &run, &note, &mut charges)
                     .await?
@@ -277,9 +301,13 @@ impl ConsolidationExecutor<'_> {
             .and_then(serde_json::Value::as_f64)
             .filter(|importance| (0.0..=1.0).contains(importance));
         let mut candidates = Vec::new();
+        let mut cited = Vec::new();
         for item in &reply.candidates {
             match note_candidate(item, note, run) {
-                Ok(candidate) => candidates.push(candidate),
+                Ok((candidate, ranges)) => {
+                    candidates.push(candidate);
+                    cited.extend(ranges);
+                }
                 Err(reason) => tracing::warn!(
                     target: "oneiron::dreamer",
                     %reason,
@@ -288,13 +316,41 @@ impl ConsolidationExecutor<'_> {
                 ),
             }
         }
-        let verdict = if importance.is_some_and(|importance| importance >= PROMOTE_IMPORTANCE) {
-            NoteVerdict::Promote
-        } else if candidates.is_empty() {
-            NoteVerdict::Skip
-        } else {
-            NoteVerdict::Extract
+        // A keep line counts as kept when a written candidate cites its
+        // text, whatever the promotion gate then answers about that belief.
+        let keep_missed: Vec<Range<usize>> = note
+            .keep
+            .iter()
+            .filter(|line| !cited.iter().any(|range| cites(&note.markdown, range, line)))
+            .cloned()
+            .collect();
+        let (verdict, importance) = match &note.reask_of {
+            // A re-ask reads only the missed lines: the note's verdict and
+            // importance stay the first review's, unless the re-ask grounds
+            // a belief a skipped note did not.
+            Some(prior) if prior.verdict == NoteVerdict::Skip && !candidates.is_empty() => {
+                (NoteVerdict::Extract, prior.importance)
+            }
+            Some(prior) => (prior.verdict, prior.importance),
+            None if importance.is_some_and(|importance| importance >= PROMOTE_IMPORTANCE) => {
+                (NoteVerdict::Promote, importance)
+            }
+            None if candidates.is_empty() => (NoteVerdict::Skip, importance),
+            None => (NoteVerdict::Extract, importance),
         };
+        let keep_reasks = note
+            .reask_of
+            .as_ref()
+            .map_or(0, |prior| prior.keep_reasks.saturating_add(1));
+        if !keep_missed.is_empty() {
+            tracing::info!(
+                target: "oneiron::dreamer",
+                note = %note.id.to_hex(),
+                missed = keep_missed.len(),
+                asked_again = keep_reasks >= KEEP_REASKS,
+                "note review: keep lines grounded no belief"
+            );
+        }
         if !candidates.is_empty() {
             // A refusal is the gate's answer about one belief (a persona
             // belief, say, needs turns from two sessions), never a reason
@@ -318,6 +374,9 @@ impl ConsolidationExecutor<'_> {
                     fingerprint: note.fingerprint,
                     verdict,
                     importance,
+                    keep_missed,
+                    keep_reasks,
+                    attempt: run.attempt_id,
                 },
             )
         })?;
@@ -329,13 +388,16 @@ impl ConsolidationExecutor<'_> {
 /// of an Allowed kind or a sealed NOTE of an AfterSeal kind (a sealed pad
 /// read through its line marks), changed since their last review, and with a
 /// birth facet and one project for their beliefs. Anything else is skipped,
-/// never widened.
+/// never widened. An unchanged sealed pad is read again only for the
+/// re-ask of the `keep` lines its last review missed (FIX 2240), and never
+/// by the `attempt` that wrote that review.
 fn readable_notes(
     vault: &Vault,
     read: &ScopedRead<'_>,
     page: &[EntityId],
     allowed: &BTreeSet<String>,
     after_seal: &BTreeSet<String>,
+    attempt: AttemptId,
 ) -> Result<Vec<Note>> {
     let txn = super::turn_text::snapshot(vault)?;
     let mut notes = Vec::new();
@@ -353,16 +415,19 @@ fn readable_notes(
             continue;
         };
         let kind_name = decoded.kind.as_str();
-        let (markdown, sealed_pad) = if allowed.contains(kind_name.as_ref()) {
-            (decoded.markdown.clone(), None)
+        let (markdown, sealed_pad, keep) = if allowed.contains(kind_name.as_ref()) {
+            (decoded.markdown.clone(), None, Vec::new())
         } else if after_seal.contains(kind_name.as_ref())
             && crate::note::note_sealed_in_txn(&vault.store, &txn, *id)?
         {
             if vault.scratchpad_sealed_in_txn(&txn, *id)? {
                 let (text, keep) = crate::context_board::sealed_pad_review_text(&decoded.markdown);
-                (text, Some(keep))
+                let ask = PadAsk::First {
+                    keep: !keep.is_empty(),
+                };
+                (text, Some(ask), keep)
             } else {
-                (decoded.markdown.clone(), None)
+                (decoded.markdown.clone(), None, Vec::new())
             }
         } else {
             continue;
@@ -371,12 +436,23 @@ fn readable_notes(
             continue;
         }
         let fingerprint = *blake3::hash(decoded.markdown.as_bytes()).as_bytes();
-        if SEEN
+        let seen = SEEN
             .get(&vault.store, &txn, id)?
-            .is_some_and(|seen| seen.fingerprint == fingerprint)
-        {
-            continue;
-        }
+            .filter(|seen| seen.fingerprint == fingerprint);
+        let (markdown, sealed_pad, keep, reask_of) = match seen {
+            None => (markdown, sealed_pad, keep, None),
+            Some(seen)
+                if sealed_pad.is_some()
+                    && !seen.keep_missed.is_empty()
+                    && seen.keep_reasks < KEEP_REASKS
+                    && seen.attempt != attempt =>
+            {
+                let missed = seen.keep_missed.clone();
+                let text = crate::context_board::sealed_pad_reask_text(&decoded.markdown, &missed);
+                (text, Some(PadAsk::Missed), missed, Some(seen))
+            }
+            Some(_) => continue,
+        };
         let Some(facet) = crate::federation::record_scope::birth_facet(&vault.store, &txn, *id)?
         else {
             continue;
@@ -390,6 +466,8 @@ fn readable_notes(
             version: super::resources::document_version(*id, &body),
             markdown,
             sealed_pad,
+            keep,
+            reask_of,
             fingerprint,
             facet,
             project,
@@ -398,16 +476,16 @@ fn readable_notes(
     Ok(notes)
 }
 
-/// One reply candidate as a belief `note` grounds, or why it is not
-/// written. Every evidence ref must be a byte range of the note's markdown
-/// on character boundaries. A candidate citing anything else, or naming a
+/// One reply candidate as a belief `note` grounds, with the byte ranges it
+/// cites, or why it is not written. Every evidence ref must be a byte range
+/// of the note's markdown on character boundaries. A candidate citing anything else, or naming a
 /// correction or a relationship, is skipped: the review holds no prior head
 /// and a NOTE carries no relationship.
 fn note_candidate(
     item: &serde_json::Value,
     note: &Note,
     run: &DreamerRunContext,
-) -> Result<PromotionCandidate> {
+) -> Result<(PromotionCandidate, Vec<Range<usize>>)> {
     let named = |field: &str| item.get(field).is_some_and(|value| !value.is_null());
     if named("corrects") || named("rel") {
         return Err(invalid_consolidation(
@@ -439,6 +517,7 @@ fn note_candidate(
         .and_then(serde_json::Value::as_array)
         .filter(|refs| !refs.is_empty())
         .ok_or_else(|| invalid_consolidation("note candidate cites no evidence"))?;
+    let mut cited_ranges = Vec::with_capacity(refs.len());
     for cited in refs {
         let EvidenceLocator::TurnTextRange {
             source_id,
@@ -463,6 +542,7 @@ fn note_candidate(
                 "note candidate's evidence is not a range of the note",
             ));
         }
+        cited_ranges.push(start..end);
     }
     let mut fields = vec![(
         Value::from(TURN_BODY_FACET_REF_KEY),
@@ -492,7 +572,7 @@ fn note_candidate(
         facts.project,
         facts.topic.as_deref(),
     )?;
-    Ok(PromotionCandidate {
+    let promotion = PromotionCandidate {
         claim_id,
         candidate,
         evidence_turn_refs: vec![note.id],
@@ -507,5 +587,14 @@ fn note_candidate(
         },
         learned_at: run.now_ms,
         decisions: Vec::new(),
-    })
+    };
+    Ok((promotion, cited_ranges))
+}
+
+/// Whether a belief citing `range` cites the `keep` line whose text is
+/// `line`: the two share text that is not blank. Both are ranges of
+/// `markdown` on character boundaries.
+fn cites(markdown: &str, range: &Range<usize>, line: &Range<usize>) -> bool {
+    let (start, end) = (range.start.max(line.start), range.end.min(line.end));
+    start < end && !markdown[start..end].trim().is_empty()
 }

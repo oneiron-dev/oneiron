@@ -332,9 +332,26 @@ pub(crate) fn note_body_readable(
     };
     let context = kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?;
     Ok(match context {
-        ContextDefault::OwnerOnly | ContextDefault::ExplicitOnly => actor == Some(&body.author_ref),
+        ContextDefault::OwnerOnly | ContextDefault::ExplicitOnly => match actor {
+            Some(actor) => {
+                *actor == body.author_ref || reader_imported_note(store, txn, &body, *actor)?
+            }
+            None => false,
+        },
         ContextDefault::RelationshipScoped | ContextDefault::VaultReadable => true,
     })
+}
+
+/// Whether `body` came in through an import for `reader`: its author is a
+/// folder's import MACHINE that imports for that reader. Such a note reads
+/// as its importer's own, though the importer did not write it (OF-554).
+pub(crate) fn reader_imported_note(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    body: &NoteBody,
+    reader: EntityId,
+) -> Result<bool> {
+    Ok(import::note_importer_in_txn(store, txn, &body.author_ref)? == Some(reader))
 }
 
 /// Whether `body`'s kind is explicit-only: out of default context, and
