@@ -14,12 +14,6 @@ use crate::{EntityId, Vault};
 /// CAMPAIGN definition schema version.
 pub const CAMPAIGN_SCHEMA_VERSION: u32 = 1;
 
-/// Longest accepted campaign name, in bytes.
-///
-/// Names are stored in the entity body and echoed by every read, so an
-/// unbounded one is an unbounded row.
-pub const CAMPAIGN_NAME_MAX_BYTES: usize = 200;
-
 /// Lifecycle state of a campaign.
 ///
 /// Mirrors [`SavedQueryLifecycle`](crate::saved_query::SavedQueryLifecycle)'s archive-is-a-transition rule; a campaign
@@ -232,9 +226,6 @@ fn validate_campaign_definition(definition: &CampaignDefinition) -> Result<()> {
     let name = definition.name.trim();
     if name.is_empty() {
         return Err(invalid("campaign name must not be blank"));
-    }
-    if definition.name.len() > CAMPAIGN_NAME_MAX_BYTES {
-        return Err(invalid("campaign name exceeds the maximum length"));
     }
     if definition.name.chars().any(char::is_control) {
         return Err(invalid("campaign name must not contain control characters"));
