@@ -34,15 +34,6 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
         id: &EntityId,
         body: &[u8],
     ) -> Result<()>;
-    /// Stamps a pending REDACTION_AUDIT receipt's `sweep_complete_at`, the one field a stored
-    /// receipt may change (None to Some). The envelope is kept byte-exact and the body is
-    /// validated before the put.
-    fn port_redaction_receipt_sweep_complete(
-        &self,
-        txn: &mut Self::Write<'_>,
-        id: &EntityId,
-        completed_at: u64,
-    ) -> Result<()>;
     /// Installs the header of a retained soft-delete shell, never a body. The index rows stay the
     /// caller's.
     #[cfg(feature = "sync")]

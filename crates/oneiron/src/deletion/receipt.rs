@@ -27,9 +27,8 @@ impl RedactionScope {
 
 /// The pinned REDACTION_AUDIT body shape (`rmp_serde::to_vec_named`, field
 /// order = the pinned [`RECEIPT_BODY_KEYS`] order). `Deserialize` exists for
-/// the ONE-1087 sweep executor, whose receipt finalization is the SINGLE
-/// sanctioned mutation of an otherwise-immutable receipt: the monotone
-/// `sweep_complete_at` None→Some transition on the OWN node's receipt.
+/// the ONE-1087 sweep executor, which reads a receipt to append its linked
+/// completion row (OF-470, ARCH-0038 step 10); a stored receipt never changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RedactionAuditReceipt {
     pub(crate) request_id: String,
@@ -137,10 +136,8 @@ pub(crate) fn encode_redaction_audit_receipt(
     receipt_id: &EntityId,
     identity: &crate::identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
-    use ed25519_dalek::Signer;
-
     let envelope_learned_at = input.hard_purge_complete_at;
-    let mut receipt = RedactionAuditReceipt {
+    let receipt = RedactionAuditReceipt {
         request_id: input.request_id,
         scope: input.scope,
         reason: input.reason.as_str().to_owned(),
@@ -158,7 +155,22 @@ pub(crate) fn encode_redaction_audit_receipt(
         room_role: input.room_authority.map(|(_, role)| role),
         verification: BTreeMap::new(),
     };
+    sign_redaction_audit_receipt(receipt, receipt_id, envelope_learned_at, identity)
+}
 
+/// Signs `receipt` as the body of entity `receipt_id`, whose point-event
+/// envelope is stamped `envelope_learned_at`, and encodes it (OD-6). Any
+/// `verification` the receipt carries is replaced: the transcript tail is
+/// the body with `verification` EMPTY, then the four att_ entries go in.
+pub(super) fn sign_redaction_audit_receipt(
+    mut receipt: RedactionAuditReceipt,
+    receipt_id: &EntityId,
+    envelope_learned_at: u64,
+    identity: &crate::identity::DeviceIdentity,
+) -> Result<Vec<u8>> {
+    use ed25519_dalek::Signer;
+
+    receipt.verification.clear();
     // Transcript tail: the body bytes with verification EMPTY.
     let body_unsigned = rmp_serde::to_vec_named(&receipt)
         .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))?;
@@ -237,8 +249,8 @@ pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incomin
 /// (ONE-1134). Mirrors [`RedactionAuditReceipt`]'s `to_vec_named` encoding:
 /// one string-keyed MessagePack map carrying exactly these fields.
 ///
-/// Un-cfg'd since ONE-1087: the sweep executor's receipt finalization
-/// self-validates its rewritten body on EVERY build, not just sync ones.
+/// Un-cfg'd since ONE-1087: the sweep executor validates every receipt body
+/// it reads, and the completion row it appends, on EVERY build.
 const RECEIPT_BODY_KEYS: [&str; 13] = [
     "request_id",
     "scope",
