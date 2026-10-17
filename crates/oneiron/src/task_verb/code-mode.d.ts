@@ -16,7 +16,7 @@ declare function cancel(input: { task_ref: string }): Promise<unknown>;
 declare const connector: {
   list(input: { query?: string | null }): Promise<unknown>;
   outbound: {
-    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
+    schedule(input: { channel: string; content_ref?: string | null; dedupe_key?: string | null; idempotency_key?: string | null; job_ref?: string | null; mention?: { end: number; message: string; start: number; turn: string } | null; occurred_at?: number | null; on_behalf_of?: string | null; target: string; trigger: string; trigger_ref: string; verb: string }): Promise<unknown>;
   };
   status(input: { name: string }): Promise<unknown>;
 };
@@ -258,6 +258,9 @@ declare const vault: {
   };
   weave: {
     digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    link: {
+      wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
+    };
     report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
