@@ -20954,15 +20954,15 @@
      "kind": "src",
      "notable": [
       "DeckBody",
-      "DeckExport",
       "DeckReview",
       "ReevalWake"
      ],
      "path": "src/entity_doc/office.rs",
      "purpose": "The live deck body bound to a deck entity (OF-510; ARCH-0077 \"Multiplayer\", ARCH-0075 section 4)",
      "surface": {
-      "fn": 10,
-      "struct": 4
+      "fn": 4,
+      "struct": 3,
+      "type": 1
      }
     },
     {
@@ -30676,12 +30676,12 @@
      "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door…",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/office_body/pptx/doc.rs",
@@ -51363,7 +51363,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 139,
+   "over_bar": 140,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3104,
    "test_files": 903

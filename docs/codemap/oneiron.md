@@ -1648,7 +1648,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/entity_doc/message_stream.rs` | src | s | 3 crate-vis | — | MESSAGE terminal commits join the common EntityDoc storage transaction |
 | `src/entity_doc/metadata.rs` | src | s | 1 struct · 2 fn · 7 crate-vis | MetadataEdit | Editable record fields live in the owning document's meta map |
 | `src/entity_doc/mod.rs` | src | s | 2 mod · 9 re-export · 9 crate-vis | — | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
-| `src/entity_doc/office.rs` | src | s | 4 struct · 10 fn | DeckBody, DeckExport, DeckReview, ReevalWake | The live deck body bound to a deck entity (OF-510; ARCH-0077 "Multiplayer", ARCH-0075 section 4) |
+| `src/entity_doc/office.rs` | src | s | 3 struct · 4 fn · 1 type | DeckBody, DeckReview, ReevalWake | The live deck body bound to a deck entity (OF-510; ARCH-0077 "Multiplayer", ARCH-0075 section 4) |
 | `src/entity_doc/pins.rs` | src | m | 2 struct · 1 enum · 9 fn · 7 crate-vis | CitationPin, CursorResolution, PurgeReceipt | Causal citation floors, retained quotes and the owner's shallow-purge door |
 | `src/entity_doc/recovery.rs` | src | L | 3 crate-vis | — | Canonical recovery for generic EntityDoc owners: the current value, and the causal state its forks, pins… |
 | `src/entity_doc/registry.rs` | src | s | 3 struct · 8 fn · 5 crate-vis | EntityDocumentHead, EntityDocumentView, RegistryStatus | Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth |
@@ -2415,8 +2415,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/office_body/docx.rs` | src | m | 2 struct · 2 enum · 7 crate-vis | BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp | The DOCX body inside its Loro document, schema 1 |
 | `src/office_body/fork.rs` | src | s | 3 struct · 2 enum · 1 fn · 1 crate-vis | BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff | Three-way reads of a fork against the live body (ARCH-0077, "Machine work as fork and diff"): base is the… |
 | `src/office_body/mod.rs` | src | L | 7 struct · 2 enum · 17 fn · 5 re-export · 2 crate-vis | ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind +1 | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX, XLSX or… |
-| `src/office_body/pptx.rs` | src | m | 3 struct · 8 fn · 5 crate-vis | PptxBody, PptxExport, PptxReview | The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door… |
-| `src/office_body/pptx/doc.rs` | src | m | 9 crate-vis | — | The PPTX body inside its Loro document, schema 1 (ARCH-0077, "One deck, one document") |
+| `src/office_body/pptx.rs` | src | m | 3 struct · 9 fn · 5 crate-vis | PptxBody, PptxExport, PptxReview | The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door… |
+| `src/office_body/pptx/doc.rs` | src | L | 9 crate-vis | — | The PPTX body inside its Loro document, schema 1 (ARCH-0077, "One deck, one document") |
 | `src/office_body/xlsx.rs` | src | m | 4 struct · 1 enum · 7 crate-vis | BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp | The XLSX body inside its Loro document, schema 1 (ARCH-0075: "XLSX is a map keyed by sheet and address") |
 | `src/origin/change_index.rs` | src | s | 1 struct · 2 fn · 2 const · 1 crate-vis | OriginChange | Commit-hash keyed LEDGER change identities |
 | `src/origin/conflict_tree.rs` | src | s | 1 struct · 1 fn · 1 const | ConflictTreeExport | Draft-v1 `.jjconflict`-shape export |
