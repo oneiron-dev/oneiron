@@ -32,6 +32,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.kv.namespaces", post(vault_kv_namespaces))
         .route("/vault.weave.report", post(vault_weave_report))
         .route("/vault.weave.digest", post(vault_weave_digest))
+        .route("/vault.weave.lens", post(vault_weave_lens))
         .route("/vault.weave.link.wrong", post(vault_weave_link_wrong))
         .route("/vault.packs.put", post(vault_packs_put))
         .route(
@@ -86,6 +87,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.lenses.default", post(vault_lenses_default))
         .route("/vault.disclosure.offer", post(vault_disclosure_offer))
         .route("/vault.shares.create", post(vault_shares_create))
+        .route("/vault.shares.revoke", post(vault_shares_revoke))
+        .route("/vault.shares.view", post(vault_shares_view))
         .route("/vault.hooks.replay", post(vault_hooks_replay))
         .route("/vault.artifacts.view", post(vault_artifacts_view))
         .route("/vault.artifacts.export", post(vault_artifacts_export))
@@ -906,6 +909,24 @@ async fn vault_weave_digest(
         value,
     )?))
 }
+async fn vault_weave_lens(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.weave.lens")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.lens", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.weave.lens", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_weave_lens(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
 async fn vault_weave_link_wrong(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -1615,6 +1636,42 @@ async fn vault_shares_create(
         "vault.shares.create",
         value,
     )?))
+}
+async fn vault_shares_revoke(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shares.revoke")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shares.revoke", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.shares.revoke", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shares_revoke(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_shares_view(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.shares.view")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.shares.view", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.shares.view", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shares_view(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn vault_hooks_replay(
     auth: CoreAuth,
