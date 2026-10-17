@@ -35,6 +35,8 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
+    # A new project room thread root's audience; fixed once set.
+    thread_audience: NotRequired[list[str] | None]
 
 class WitnessReceipt(TypedDict):
     turn_short_id: str
