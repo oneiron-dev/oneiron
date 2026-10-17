@@ -10,6 +10,7 @@ use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::agent_health::{
     AgentHealthCoachDraft, AgentHealthCoachRoute, CoachHealthBrief, CoachHealthHost,
 };
+use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
@@ -19,6 +20,20 @@ use serde::Deserialize;
 
 use super::CHAT_ROLE;
 use crate::models::ModelRuntime;
+
+/// The Coach's own model role (AGM-5: the check runs on its own seat).
+const COACH_ROLE: ModelRole = ModelRole::Coach;
+
+/// The role the Coach's model calls run on: its own seat when the server
+/// configures one, else the chat seat. One hook, so a ruling that the Coach
+/// needs its own seat changes this line.
+pub(super) fn coach_role(runtime: &ModelRuntime) -> ModelRole {
+    if runtime.seat(COACH_ROLE).is_some() {
+        COACH_ROLE
+    } else {
+        CHAT_ROLE
+    }
+}
 use crate::server::SyncServer;
 
 /// The purpose the Coach's ask calls are metered and routed under.
@@ -80,7 +95,8 @@ struct HostModel<'a> {
 
 impl CoachHealthHost for HostModel<'_> {
     fn draft(&self, brief: &CoachHealthBrief) -> oneiron::Result<Option<AgentHealthCoachDraft>> {
-        let Some(seat) = self.runtime.seat(CHAT_ROLE) else {
+        let role = coach_role(self.runtime);
+        let Some(seat) = self.runtime.seat(role) else {
             return Ok(None);
         };
         let card = &brief.card;
@@ -124,7 +140,7 @@ impl CoachHealthHost for HostModel<'_> {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         };
-        let Ok(call) = self.runtime.admit_role(self.vault, CHAT_ROLE, request) else {
+        let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);
         };
         let response = self
