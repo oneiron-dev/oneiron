@@ -190,14 +190,15 @@ impl Vault {
             };
             let header = EntityMetadataHeader::parse(&raw)
                 .ok_or(Error::InvariantViolation("invalid export entity header"))?;
-            // Words a deletion withdrew leave with the export too (I1).
+            // Words a deletion withdrew, or whose recorded sources no longer
+            // stand, leave with the export too (I1).
             if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                 &self.store,
                 &txn,
                 id,
                 header.entity_type,
             )? || (raw.len() > ENTITY_METADATA_HEADER_LEN
-                && crate::ports::withdrawn_in_txn(&self.store, &txn, id)?)
+                && !crate::ports::raw_readable_in_txn(&self.store, &txn, id, &raw)?)
             {
                 continue;
             }
