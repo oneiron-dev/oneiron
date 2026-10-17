@@ -88,6 +88,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_QD_E, CONTENT),
     (&t::SYNC_QN_E, CONTENT),
     (&t::SYNC_REASSERT_MARKER, CONTENT),
+    // The sealed bundle's custody and cursors follow the live vault, as the
+    // sealed shelf's do.
+    (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
+    (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
+    (&t::SYNC_RESIDENCE_BUNDLE_STAGE, LIVE),
+    (&t::SYNC_RESIDENCE_BUNDLE_STAGE_PART, LIVE),
+    (&t::SYNC_RESIDENCE_BUNDLE_SWEPT, LIVE),
+    (&t::SYNC_RESIDENCE_BUNDLE_CURSOR, LIVE),
     (&t::SYNC_ROOM_FACT_DIRTY, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_BLOB, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_DOCUMENT, CONTENT),
