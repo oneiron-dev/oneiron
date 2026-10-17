@@ -127,11 +127,11 @@ pub(super) fn authority_structure<'a>(
 
 /// [`authority_structure`] as this install's store gate reads it, taking
 /// `local`'s anchors as its own.
-pub(super) fn authority_structure_under(
-    entries: &[AuthorityLogEntry],
+pub(super) fn authority_structure_under<'a>(
+    entries: impl IntoIterator<Item = &'a AuthorityLogEntry>,
     local: LocalRoots,
 ) -> AuthorityStructure {
-    let mut builder = StructureBuilder::under(local);
+    let mut builder: StructureBuilder<'a> = StructureBuilder::under(local);
     for entry in entries {
         builder.push(entry);
     }
