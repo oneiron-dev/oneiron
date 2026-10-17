@@ -168,6 +168,18 @@ impl SyncQueue {
         self.clear_through_inner(max_seq, true)
     }
 
+    /// Retires exactly the update entries `seqs`, delete-bearing rows and
+    /// their `d:` sidecars included, in one transaction. Residence ACK path
+    /// only: the home durably persisted each row's bytes (`RESIDENCE_ACK`),
+    /// or the row is one a device-only world keeps here and never sends.
+    pub fn retire_confirmed(&self, seqs: &[u64]) -> Result<()> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let _ = self.ensure_last_update_seq_metadata(&mut wtxn)?;
+        super::scrub::retire_queued_in_txn(&self.vault, &mut wtxn, seqs)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     fn clear_through_inner(&self, max_seq: u64, include_delete_bearing: bool) -> Result<()> {
         let rtxn = self.vault.store.env.read_txn()?;
         let delete_bearing = delete_bearing_seqs_in_txn(&self.vault, &rtxn)?;
