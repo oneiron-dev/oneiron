@@ -678,6 +678,16 @@
       "section": false
     },
     {
+      "name": "vault.weave.link.wrong",
+      "input": "crate::claim::WeaveWrongLinkRequest",
+      "output": "crate::claim::WeaveLinkCorrectionView",
+      "call": "memory.weave_wrong_link(None, &memory.embedded_owner(\"vault.weave.link.wrong\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
