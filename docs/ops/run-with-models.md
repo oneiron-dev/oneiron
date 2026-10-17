@@ -1039,20 +1039,30 @@ rungs = ["local:qwen3-vl-4b"]
 Its provider needs `image_input` among its capabilities. The answer is
 `{"asset_ref", "text", "receipt"}`.
 
-Add `"contract": {"kind": "box"}` to ask where something is instead
-("where is the mug in `image`?"). The same seat then answers as the decision
-ladder's Local rung (`LocalVisionModel`, a `DecisionModel` that reads
-images): it reads the whole image (a Box ask takes no `region`) and answers
-with a JSON schema shaped like System One's box answer. The answer is
-`{"asset_ref", "typed", "receipt"}`, where `typed` is the typed decision:
-`{"kind": "box", "value": {top, bottom, left, right}}` in 0–1 fractions of
-the image, or `"value": null` when the target is absent, with its
-confidence as `probability` and the decision's receipt (the Local rung's
-pin and the image's evidence version). The ask runs at the Local rung alone,
-on a 60-second clock, and queues no person. Only a Box contract is answered
-here. Each rung served and each pull (view,
-crop, zoom, ask_image) is a `served_form` receipt, so `vault.receipts` shows
-which rung each image got and whether the pixels were pulled afterwards.
+Add `"contract": {"kind": "box"}` (or `"point"`) to ask where something is
+instead ("where is the mug in `image`?"). The same seat then answers as the
+decision ladder's Local rung (`LocalVisionModel`, a `DecisionModel` that
+reads images). It reads the whole image (a Box or Point ask takes no
+`region`) and answers with a JSON schema shaped like System One's box
+answer; a Point is the box's centre. When the house decision read words a
+presence question, the ladder asks it first ("is the target in the
+image?"). A confident no answers "absent" without asking for coordinates.
+An answer still inside the band steps up to the System One seat
+(`[models.decisions.system_one]`) when one is bound.
+
+The answer is `{"asset_ref", "answer", "typed", "presence", "receipt"}`:
+- `answer` is the answer on the contract: `{"kind": "box", "value": {top,
+  bottom, left, right}}` in 0–1 fractions of the image (a Point's `value` is
+  `{x, y}`), `"value": null` when the target is absent, or an abstention.
+- `typed` is the decision that stands, with its confidence as `probability`
+  and its receipt (the rungs' pins and the image's evidence version).
+- `presence` is the presence step, when the coordinates stand on it.
+
+The ask runs on a 60-second clock and queues no person.
+
+Each rung served and each pull (view, crop, zoom, ask_image) is a
+`served_form` receipt, so `vault.receipts` shows which rung each image got and
+whether the pixels were pulled afterwards.
 
 The same seat answers `ai.verdict` over an image: name its view handle as
 `"image"` (the question calls it `image`). The pixels are pulled through the
