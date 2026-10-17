@@ -41939,7 +41939,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 16,
       "struct": 1
      }
@@ -42734,7 +42734,7 @@
      "purpose": "SyncQueue impl: push/drain/clear/prune",
      "surface": {
       "crate-vis": 2,
-      "fn": 12
+      "fn": 13
      }
     },
     {
