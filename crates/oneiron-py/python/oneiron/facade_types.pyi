@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 286 facade rows, 1085 declarations.
+Census: 286 facade rows, 1086 declarations.
 Inputs: 243 of 286 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 244 of 286 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -2333,9 +2333,15 @@ class SharedActExecutionReceipt(TypedDict):
     export: NotRequired[SharedActExport | None]
     authority_entry: NotRequired[str | None]
     completed_at: int
+class RemovalExportDelivery(TypedDict):
+    receipt_id: str
+    recipient: str
+    digest: str
+    delivered_at: int
+    expires_at: int
 class SharedActExecuted(TypedDict):
     receipt: SharedActExecutionReceipt
-    export: NotRequired[MemoryExport | None]
+    delivery: NotRequired[RemovalExportDelivery | None]
 class SharedReceiptRequest(TypedDict):
     receipt_id: str
 class SharedActOutcome(TypedDict):

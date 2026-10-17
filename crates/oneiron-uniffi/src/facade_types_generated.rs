@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 286 facade rows, 999 generated types.
+// UniFFI census: 286 facade rows, 1000 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 254.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -6282,13 +6282,29 @@ pub struct SharedActExecutionReceipt {
     pub completed_at: u64,
 }
 
+/// `oneiron::federation::shared_act::RemovalExportDelivery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RemovalExportDelivery {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+    #[serde(rename = "recipient")]
+    pub recipient: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "delivered_at")]
+    pub delivered_at: u64,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+}
+
 /// `oneiron::task_verb::sdk_shared::SharedActExecuted`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SharedActExecuted {
     #[serde(rename = "receipt")]
     pub receipt: SharedActExecutionReceipt,
-    #[serde(rename = "export", default, skip_serializing_if = "Option::is_none")]
-    pub export: Option<MemoryExport>,
+    #[serde(rename = "delivery", default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<RemovalExportDelivery>,
 }
 
 /// `oneiron::task_verb::sdk_shared::SharedReceiptRequest`.
@@ -11089,7 +11105,7 @@ pub struct ParticipantsRequest {
     pub limit: Option<u32>,
 }
 
-/// `oneiron::workspace_roster::join_consent::JoinSubject`.
+/// `oneiron_contracts::room_join::JoinSubject`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "id")]
 pub enum JoinSubject {
@@ -11736,7 +11752,7 @@ pub struct ProjectRosterWriteRequest {
     pub record: ProjectRecord,
 }
 
-/// `oneiron::workspace_roster::join_consent::ConsentPart`.
+/// `oneiron_contracts::room_join::ConsentPart`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConsentPart {
     #[serde(rename = "subject")]
@@ -11749,7 +11765,7 @@ pub enum ConsentPart {
     Admission,
 }
 
-/// `oneiron::workspace_roster::join_consent::RequiredParty`.
+/// `oneiron_contracts::room_join::RequiredParty`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RequiredParty {
     #[serde(rename = "subject")]
@@ -11770,7 +11786,7 @@ pub enum RequiredParty {
     },
 }
 
-/// `oneiron::workspace_roster::join_consent::ConsentNeed`.
+/// `oneiron_contracts::room_join::ConsentNeed`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentNeed {

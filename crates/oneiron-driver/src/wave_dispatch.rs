@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::agent_dispatch::FanoutStatement;
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use oneiron::task_verb::WaveDispatchGeneration;
 use oneiron::{EntityId, Result, Vault, WavePlanner, WriteActor};
@@ -73,6 +74,9 @@ pub(crate) struct WaveDispatchPass {
     pub(crate) next_cursor: Option<EntityId>,
     pub(crate) earliest_retry: Option<Duration>,
     pub(crate) item_failures: Vec<WaveHandoffFailure>,
+    /// The applied plan's frozen statement, when this quantum applied one.
+    /// `None` also when the port cannot price a plan, never a zero spend.
+    pub(crate) statement: Option<FanoutStatement>,
 }
 
 #[derive(Debug)]
@@ -193,9 +197,10 @@ impl WaveDispatchPump {
         if self.plan_pending {
             self.plan_pending = false;
             match host.run_plan_once(lease_owner, now) {
-                Ok(Some(_)) => {
+                Ok(Some(receipt)) => {
                     self.notify();
                     pass.progressed = true;
+                    pass.statement = receipt.statement;
                 }
                 Ok(None) => {}
                 // The planning attempt stays queued; its lease expiry retries it.
