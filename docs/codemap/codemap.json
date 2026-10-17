@@ -32529,11 +32529,43 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 5,
       "struct": 4,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_asks.rs",
+     "purpose": "The owner ask a held connector call queues (ONE-2510)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_pending.rs",
+     "purpose": "Expiry of held and pending-delivery connector calls (ONE-2510)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_resume.rs",
+     "purpose": "Resuming a held connector call the ledger already admitted (ONE-2510)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -32545,7 +32577,7 @@
      "path": "src/outbound_consent/execution.rs",
      "purpose": "Scoped-call execution, post-effect decision, and result transport",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 1
      }
@@ -51699,7 +51731,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 11,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52310,7 +52342,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3162,
+   "source_files": 3165,
    "test_files": 903
   },
   "oneiron-android": {
