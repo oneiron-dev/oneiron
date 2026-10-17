@@ -224,8 +224,10 @@ fn code_checker(settings: &CodeCheckSettings) -> Result<Arc<dyn CodeCheck>, Chec
 }
 
 /// Each executor step's model call, admitted like a chat turn against the
-/// vault's live model policy (its manifest and route, else the seat), then
-/// sent as a run on code mode's own budget: each provider call takes its own
+/// vault's live model policy (its manifest and route, else the seat), or,
+/// when a durable seat bound its model (a run's, a planned child's, a reader
+/// job's), on that model alone with no fallback; then sent as a run on code
+/// mode's own budget: each provider call takes its own
 /// permit and settles itself (its usage, or its reservation when it reports
 /// none or fails after it went out).
 struct CodeModeBackend {
@@ -241,17 +243,25 @@ const CODE_MODE_RUN: &str = "code-mode";
 impl LlmBackend for CodeModeBackend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let call = self
-                .models
-                .admit_role(&self.vault, CHAT_ROLE, request)
-                .map_err(|refusal| {
-                    tracing::warn!(%refusal, "a code-mode model call was refused");
-                    LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
-                })?;
+            let seat_bound = request.envelope.seat_effort.is_some();
+            let call = if seat_bound {
+                self.models
+                    .admit_seat_bound(&self.vault, CHAT_ROLE, request)
+            } else {
+                self.models.admit_role(&self.vault, CHAT_ROLE, request)
+            }
+            .map_err(|refusal| {
+                tracing::warn!(%refusal, "a code-mode model call was refused");
+                LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
+            })?;
             let run = self
                 .models
                 .undeclared_run(CODE_MODE_RUN, self.guard.clone());
-            call.ladder.generate(&run, call.request, None).await
+            if seat_bound {
+                call.ladder.generate_exact(&run, call.request, None).await
+            } else {
+                call.ladder.generate(&run, call.request, None).await
+            }
         })
     }
 
