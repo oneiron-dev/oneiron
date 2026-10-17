@@ -2,22 +2,31 @@
 //! why a memory appeared in the caller's session, and GET
 //! /v1/core/explain/gate/{receipt} why a write needed approval. Each answer
 //! carries only what the caller may read; anything else is a 404, the same
-//! as an unknown id.
+//! as an unknown id. The verb rows `vault.explain.memory` and
+//! `vault.explain.gate` are host doors over the same lookups, answering the
+//! same SDK replies, where anything else reads as none.
 
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::{Deserialize, Serialize};
+use oneiron::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND,
+    MemoryError, MemoryResult,
+};
+use oneiron::task_verb::sdk::{
+    ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest,
+};
+use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
 use super::super::{
-    CoreContextPackScoreEvidence, core_context_pack_score_evidence, core_engine_error,
-    parse_entity_id_param, scoped_read_for_core_auth,
+    CoreContextPackScoreEvidence, core_engine_error, parse_entity_id_param,
+    scoped_read_for_core_auth,
 };
 use super::{resolved_session_id, session_read_set};
 use crate::auth::{CoreAuth, CoreScope};
-use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError, ErrorCode};
 use crate::server::SyncServer;
 
 /// The session a memory explanation reads.
@@ -30,8 +39,10 @@ pub(crate) struct ExplainMemoryQuery {
     session_id: Option<String>,
 }
 
-/// Why one memory appeared in the caller's session.
-#[derive(Debug, Serialize, ToSchema)]
+/// Why one memory appeared in the caller's session: the OpenAPI mirror of
+/// [`ExplainMemoryReply`], which the route answers.
+#[derive(ToSchema)]
+#[allow(dead_code, reason = "OpenAPI mirror of the SDK reply")]
 pub(crate) struct ExplainMemoryResponse {
     /// Hex entity id.
     id: String,
@@ -54,8 +65,10 @@ pub(crate) struct ExplainMemoryResponse {
     score: Option<CoreContextPackScoreEvidence>,
 }
 
-/// One system notice a gate decision raised.
-#[derive(Debug, Serialize, ToSchema)]
+/// One system notice a gate decision raised: the OpenAPI mirror of
+/// [`oneiron::task_verb::sdk::ExplainGateNotice`].
+#[derive(ToSchema)]
+#[allow(dead_code, reason = "OpenAPI mirror of the SDK reply")]
 pub(crate) struct ExplainGateNotice {
     /// Notice type token.
     notice_type: String,
@@ -65,7 +78,9 @@ pub(crate) struct ExplainGateNotice {
 }
 
 /// Why a write needed approval: one gate decision as the caller may see it.
-#[derive(Debug, Serialize, ToSchema)]
+/// The OpenAPI mirror of [`ExplainGateReply`], which the route answers.
+#[derive(ToSchema)]
+#[allow(dead_code, reason = "OpenAPI mirror of the SDK reply")]
 pub(crate) struct ExplainGateResponse {
     /// `gate:<hex>` receipt id.
     receipt_id: String,
@@ -117,32 +132,39 @@ pub(crate) async fn core_explain_memory(
     State(server): State<Arc<SyncServer>>,
     Path(entity): Path<String>,
     Query(query): Query<ExplainMemoryQuery>,
-) -> Result<Json<ExplainMemoryResponse>, EnvelopedApiError> {
+) -> Result<Json<ExplainMemoryReply>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
-    let id = parse_entity_id_param(&entity, "entity")?;
-    let read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let Some(explained) =
+        explained_memory(&server, &auth, &entity, query.session_id.as_deref()).await?
+    else {
+        return Err(ApiError::not_found("served memory", Some(&entity)).into());
+    };
+    Ok(Json(explained))
+}
+
+/// Why `entity` appeared in the caller's session `session` (its active one
+/// when absent), read under the caller's own scoped read: the lookup the
+/// route and `vault.explain.memory` share. `None` when the session was not
+/// served it or the caller cannot read it now.
+async fn explained_memory(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    entity: &str,
+    session: Option<&str>,
+) -> Result<Option<ExplainMemoryReply>, ApiError> {
+    let id = parse_entity_id_param(entity, "entity")?;
+    let read = scoped_read_for_core_auth(&server.vault, auth)?;
     let caller = auth.principal_ref().unwrap_or(auth.principal()).trim();
-    let session = resolved_session_id(&server, caller, query.session_id.as_deref()).await?;
-    let explained = match session_read_set(&server, caller, session.as_deref()).await? {
+    let session = resolved_session_id(server, caller, session).await?;
+    let explained = match session_read_set(server, caller, session.as_deref()).await? {
         Some(reads) => server
             .vault
             .explain_served_memory(&read, &reads, id)
             .map_err(|error| core_engine_error("memory explanation failed", error))?,
         None => None,
     };
-    let Some(explained) = explained else {
-        return Err(ApiError::not_found("served memory", Some(&entity)).into());
-    };
-    Ok(Json(ExplainMemoryResponse {
-        id: explained.id.to_hex(),
-        run_id: explained.why.run_id,
-        rank: explained.why.rank,
-        neighbor: explained.why.neighbor,
-        tier: explained.why.tier,
-        hook: explained.why.hook,
-        score: explained.breakdown.map(core_context_pack_score_evidence),
-    }))
+    Ok(explained.map(ExplainMemoryReply::from))
 }
 
 /// Why a write needed approval: the gate decision behind receipt
@@ -165,35 +187,64 @@ pub(crate) async fn core_explain_gate(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(receipt): Path<String>,
-) -> Result<Json<ExplainGateResponse>, EnvelopedApiError> {
+) -> Result<Json<ExplainGateReply>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
-    let read = scoped_read_for_core_auth(&server.vault, &auth)?;
-    let Some(explained) = server
-        .vault
-        .explain_gate_receipt(&read, &receipt)
-        .map_err(|error| core_engine_error("gate explanation failed", error))?
-    else {
+    let Some(explained) = explained_gate(&server, &auth, &receipt)? else {
         return Err(ApiError::not_found("gate receipt", Some(&receipt)).into());
     };
-    Ok(Json(ExplainGateResponse {
-        receipt_id: explained.receipt_id,
-        decided_at: explained.decided_at,
-        outcome: explained.outcome,
-        reason_codes: explained.reason_codes,
-        receipt_reasons: explained.receipt_reasons,
-        notices: explained
-            .notices
-            .into_iter()
-            .map(|(notice_type, row_ref)| ExplainGateNotice {
-                notice_type,
-                row_ref,
-            })
-            .collect(),
-        actor_class: explained.actor_class,
-        actor_ref: explained.actor_ref,
-        content_kind: explained.content_kind,
-        policy_manifest_version: explained.policy_manifest_version,
-        claim_ref: explained.claim_ref,
-    }))
+    Ok(Json(explained))
+}
+
+/// The gate decision behind `receipt`, as the caller may see it: the lookup
+/// the route and `vault.explain.gate` share. `None` for no such receipt, or
+/// one the caller may not read.
+fn explained_gate(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    receipt: &str,
+) -> Result<Option<ExplainGateReply>, ApiError> {
+    let read = scoped_read_for_core_auth(&server.vault, auth)?;
+    Ok(server
+        .vault
+        .explain_gate_receipt(&read, receipt)
+        .map_err(|error| core_engine_error("gate explanation failed", error))?
+        .map(ExplainGateReply::from))
+}
+
+/// `vault.explain.memory`: why a memory appeared in the caller's session,
+/// from the lookup GET /v1/core/explain/memory/{entity} takes. A memory the
+/// session was not served, or the caller cannot read, reads as none.
+pub(crate) async fn vault_explain_memory(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ExplainMemoryRequest,
+) -> MemoryResult<Option<ExplainMemoryReply>> {
+    explained_memory(server, auth, &input.entity, input.session_id.as_deref())
+        .await
+        .map_err(explain_refusal)
+}
+
+/// `vault.explain.gate`: why a write needed approval, from the lookup GET
+/// /v1/core/explain/gate/{receipt} takes. A receipt the caller may not
+/// read reads as none.
+pub(crate) async fn vault_explain_gate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ExplainGateRequest,
+) -> MemoryResult<Option<ExplainGateReply>> {
+    explained_gate(server, auth, &input.receipt).map_err(explain_refusal)
+}
+
+/// A lookup's refusal in the facade's vocabulary: its code picks the memory
+/// code, its message and suggestions pass through.
+fn explain_refusal(error: ApiError) -> MemoryError {
+    let code = match error.code() {
+        ErrorCode::BadRequest => MEMORY_CODE_BAD_REQUEST,
+        ErrorCode::Unauthorized | ErrorCode::Forbidden => MEMORY_CODE_FORBIDDEN,
+        ErrorCode::NotFound => MEMORY_CODE_NOT_FOUND,
+        _ => MEMORY_CODE_INTERNAL,
+    };
+    let suggestions: Vec<&str> = error.suggestions().iter().map(String::as_str).collect();
+    MemoryError::new(code, error.message(), &suggestions)
 }

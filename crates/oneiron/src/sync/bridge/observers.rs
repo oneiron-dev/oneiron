@@ -524,6 +524,27 @@ pub(crate) fn register_room_turns_observer(
     )
 }
 
+/// Observer B for the base window's room fact map (FIX 1794): each room side
+/// row an import changes is merged into this vault's, and each cell it drops
+/// is cleared.
+pub(crate) fn register_room_facts_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let room_facts_map = doc.get_map(crate::sync::room_facts::ROOM_FACTS_MAP);
+    subscribe_map_observer(
+        doc,
+        &room_facts_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::room_facts::materialize_room_facts_from_delta,
+        ("room_facts", None),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(
