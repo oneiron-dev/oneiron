@@ -574,14 +574,14 @@ pub(crate) async fn handle_mcp_request(
             // OF-568: what the call reads, captured before it runs.
             let inputs =
                 crate::api::call_receipt::action_inputs(server, &tool, request.params.as_ref());
-            // OF-063: only a caller whose credential's principal is verified
-            // in the session keeps no record, judged on arrival and again
-            // before the receipt is written; a credential naming no
-            // principal (the configured root) keeps the unchecked rule.
-            let principal = actor
-                .auth
-                .as_ref()
-                .and_then(crate::api::call_receipt::request_principal);
+            // OF-063: only a caller whose principal is verified in the
+            // session keeps no record, judged on arrival and again before the
+            // receipt is written. The configured root maps to the actor it
+            // acts through (FIX 2271), the one its rows' surfaces bind.
+            let principal = crate::api::call_receipt::mcp_session_principal(
+                actor.auth.as_ref(),
+                actor.actor_ref,
+            );
             let anonymous =
                 crate::api::call_receipt::in_anonymous_session(server, headers, principal);
             let called: Result<Value, McpGatewayError> = async {

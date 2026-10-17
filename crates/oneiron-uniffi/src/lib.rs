@@ -158,6 +158,18 @@ impl Oneiron {
         }))
     }
 
+    /// Returns a NEW handle whose every verb runs inside the off-record
+    /// session `session_ref` names, bound to this handle's principal: the
+    /// app host's actor when embedded (OF-063). It grants nothing.
+    pub fn in_off_record_session(&self, session_ref: String) -> Result<Arc<Self>, OneironError> {
+        let inner = self.inner.in_off_record_session(&session_ref)?;
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: self.engine.clone(),
+        }))
+    }
+
     /// The lasting call receipt the last verb's reply stated, as
     /// `call:<32hex>`, whether it answered or refused.
     ///
