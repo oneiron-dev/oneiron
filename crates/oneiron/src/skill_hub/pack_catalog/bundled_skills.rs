@@ -47,11 +47,15 @@ pub(super) fn bundled_skill_packages(source: &PackSource) -> Result<Vec<(String,
 }
 
 impl Vault {
+    /// Imports each bundled skill of `source`. A `held` install (the pack
+    /// lands Candidate) leaves a skill its own removal retired as it is; the
+    /// install that turns the pack Active brings it back.
     pub(super) fn import_pack_skills_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         source: &PackSource,
         hub: &HubRef,
+        held: bool,
         at: u64,
     ) -> Result<(Vec<EntityId>, Vec<ImportedPackSkillSource>)> {
         let mut ids = Vec::new();
@@ -71,7 +75,9 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
-            self.revive_removed_pack_skill_in_txn(txn, &id, &source.manifest.name, at)?;
+            if !held {
+                self.revive_removed_pack_skill_in_txn(txn, &id, &source.manifest.name, at)?;
+            }
             // The final install/Candidate decision follows later in this same
             // transaction. Do not publish an intermediate Candidate receipt.
             skill_sources.push(ImportedPackSkillSource {
