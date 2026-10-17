@@ -997,7 +997,7 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 15
      }
     },
@@ -3526,6 +3526,7 @@
      "path": "src/autoreason_campaign/authoring.rs",
      "purpose": "The claim-authoring tournament as a strategy skill on an OF-351 campaign (OF-366)",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 8,
       "struct": 4
@@ -11358,7 +11359,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 11,
       "struct": 2
      }
@@ -38856,7 +38857,7 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 8
