@@ -2,7 +2,8 @@
 //! decoder produces.
 
 use super::endpoint_args::{
-    McpExecuteCodeToolArgs, McpReadResultToolArgs, McpSetupToolArgs, McpVerbToolArgs,
+    McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpReadResultToolArgs, McpSetupToolArgs,
+    McpVerbToolArgs,
 };
 use serde::Serialize;
 
@@ -32,6 +33,8 @@ pub enum McpValidatedToolArgs {
     ExecuteCode(Box<McpExecuteCodeToolArgs>),
     /// A direct read of one `execute_code` run's result, beside it.
     ReadResult(Box<McpReadResultToolArgs>),
+    /// One action of the app's table, on both endpoints (OF-181).
+    InvokeAction(Box<McpInvokeActionToolArgs>),
     /// ONE-1704 tool-first endpoint: one GENERATED tool per exported verb row.
     Verb(Box<McpVerbToolArgs>),
 }

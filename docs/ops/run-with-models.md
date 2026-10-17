@@ -372,6 +372,15 @@ proposals, with the cleanup view to restore any of them. Each proposal and
 your accept or reject count in the healer oversight receipts
 (`/v1/owner/healer/oversight`).
 
+The Coach's nightly room upkeep (`coach.room_upkeep`) reads only the rooms
+a grant lets the Coach read, and there only turn refs and times, never words.
+A room whose readable turns moved since its last pass gets its summary
+declared on the scope-summary path, when the Coach reads the room's whole
+conversation; the Dreamer writes the summary and nothing is posted. A thread
+with open TASKs that has been quiet for a day gets one Proposed
+`coach.room_upkeep.nudge` finding, addressed to the room's host, in the owner
+run tray. The Coach never speaks in a room; a nudge is the host's to voice.
+
 The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
 detectors (refused Dreamer consolidations, consent storms and denials,
 per-actor write drift) over the last day of Gate receipts, and the read-side
@@ -1075,9 +1084,17 @@ width is not its space's declared width.
 
 The verbs, each the owner's and checked against the vault's inference policy:
 
-- `GET /v1/ai/options?operation=image&inputs=text,image`: every row that
-  serves the call (text seats' rungs too), where it runs, what it takes, its
-  rates, and `media_units_left`.
+- `GET /v1/ai/options?operation=image&inputs=text,image`: every row the
+  caller could call now (text seats' rungs too), where it runs, what it
+  takes, its rates, `cost` (its price per million tokens as the vault's model
+  registry holds it; `null` when no registered row prices it), `units_left`
+  (what the meter its call spends has left: the raw routes' for a text row,
+  the media meter for the rest), and `media_units_left`. A caller the `ai.*`
+  doors refuse (anyone not owner-grade, a run's agent too) gets no rows. A row
+  the vault's inference policy refuses is left out, as is a rung whose
+  provider is down, whose one probation request is out, or that a limit
+  holds, until it is back. The facade's and MCP's `ai.options` list the same
+  rows.
 - `POST /v1/ai/image`, `/speech`, `/transcribe`, `/embed`:
   `{"prompt": "...", "input": [parts], "references": [parts], "params": {...},
   "model": "<row or seat id>"}`. A part is `{"kind": "text", "text": ...}` or
@@ -1382,6 +1399,20 @@ locates its target in a `no_accessibility_tree` screenshot. A Return, or
 typed text with a line break, takes the press of a send, and every effect's
 receipt screenshot has its password fields blacked out before it is held.
 The desktop rides the `oneiron.browser` pack and its grants.
+
+The owner can take a run's desktop over and hand it back. A program asks
+with `self.desktop.handover({reason})`, or the owner takes it unasked, at
+`/v1/owner/desktops`: `GET` lists the bound run desktops with who has each
+and the agent's ask; `POST take`, `screen` (the whole display as a PNG,
+unmasked, never kept), `input` (`{"run", "action": {"kind": "click" |
+"type" | "key" | "hotkey" | "scroll", ...}}` at that PNG's pixels) and
+`return` each take `{"run"}`. While the agent waits on its ask and while the
+owner holds the desktop, every desktop verb refuses `desktop_taken_over` (a
+batch stops `NEEDS_YOU`) and no receipt screenshot is taken. Handing it back
+writes the takeover's record (who, the ask, when it was taken and returned,
+how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
+agent's next desktop answer carries it as `takeover`. The desktop lives as
+long as the run's door: one `execute_code` entry, or a resident run.
 
 ## 11. When a provider refuses for a limit
 

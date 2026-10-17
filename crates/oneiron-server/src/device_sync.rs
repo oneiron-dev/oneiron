@@ -7,6 +7,11 @@
 //! backoff, so there is no second loop here. It attaches its outbound channel
 //! beside the server's relay to its own clients, never in place of it. Logs
 //! carry machine ids only, never a slip or a key.
+//!
+//! While the home connection is synced, the device also learns the models
+//! the owner's other nodes offer (OF-575): it asks them on each sync and then
+//! on a cadence, since no mesh signal says a peer's offer changed, and writes
+//! their own-server rows.
 
 use std::sync::Arc;
 
@@ -98,23 +103,123 @@ async fn open(
     )?;
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
+    let catalog = MeshCatalog {
+        vault: Arc::clone(&server.vault),
+        transport: mesh.transport(),
+        backend: None,
+    };
     tracing::info!(machine = %machine.to_hex(), %home, "device sync started");
     let task = tokio::spawn(async move {
-        let ran = connection
-            .run_observed(stop_rx, |event| match event {
+        // The observer is synchronous, so each status goes to the catalog
+        // loop; the channel closes when the connection's run ends.
+        let (statuses, status_rx) = tokio::sync::mpsc::unbounded_channel();
+        let observed = connection.run_observed(stop_rx, {
+            let home = home.clone();
+            move |event| match event {
                 SyncEvent::StatusChanged(status) => {
                     tracing::debug!(%home, ?status, "device sync");
+                    let _ = statuses.send(status);
                 }
                 SyncEvent::Error(error) => tracing::warn!(%home, %error, "device sync"),
                 _ => {}
-            })
-            .await;
+            }
+        });
+        let ((), ran) = tokio::join!(catalog.run(status_rx, &home), observed);
         match ran {
             Ok(()) => tracing::info!(%home, "device sync stopped"),
             Err(error) => tracing::warn!(%home, %error, "device sync ended"),
         }
     });
     Ok(DeviceSyncHost { stop, task })
+}
+
+/// How often a synced device asks the owner's other nodes for their models
+/// again. A catalog is pulled, never pushed: no mesh signal says a peer's
+/// roster entry or offer changed.
+#[cfg(feature = "mesh")]
+const MESH_CATALOG_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The device's view of the models the owner's other nodes offer
+/// ([`oneiron_llm_own_server::OwnServerBackend::refresh_from_mesh`]), over the
+/// mesh listener's own transport.
+#[cfg(feature = "mesh")]
+struct MeshCatalog {
+    vault: Arc<oneiron::Vault>,
+    transport: Arc<dyn oneiron_mesh_transport::MeshTransport>,
+    /// Built at the first refresh; a failed build is tried again at the next.
+    backend:
+        Option<oneiron_llm_own_server::OwnServerBackend<oneiron_llm_own_server::MeshLlmTransport>>,
+}
+
+#[cfg(feature = "mesh")]
+impl MeshCatalog {
+    /// Refreshes on each `Synced`, then every [`MESH_CATALOG_EVERY`] while
+    /// the connection stays synced. Ends when `statuses` closes, after any
+    /// refresh in flight: its catalog call runs on a task of its own, so a
+    /// dropped refresh would leave that call running past the mesh.
+    async fn run(
+        mut self,
+        mut statuses: tokio::sync::mpsc::UnboundedReceiver<oneiron::sync::SyncStatus>,
+        home: &str,
+    ) {
+        let mut synced = false;
+        let mut every = tokio::time::interval(MESH_CATALOG_EVERY);
+        every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                status = statuses.recv() => match status {
+                    None => return,
+                    Some(oneiron::sync::SyncStatus::Synced) => {
+                        synced = true;
+                        self.refresh(home).await;
+                        every.reset();
+                    }
+                    Some(_) => synced = false,
+                },
+                _ = every.tick(), if synced => self.refresh(home).await,
+            }
+        }
+    }
+
+    async fn refresh(&mut self, home: &str) {
+        use oneiron_llm_own_server::{MeshLlmTransport, OwnServerBackend, VaultLlmNodes};
+
+        if self.backend.is_none() {
+            let transport = MeshLlmTransport::new(
+                Arc::clone(&self.transport),
+                Arc::new(VaultLlmNodes(Arc::clone(&self.vault))),
+                tokio::runtime::Handle::current(),
+            );
+            match OwnServerBackend::from_registry(&self.vault, transport) {
+                Ok(backend) => self.backend = Some(backend),
+                Err(error) => {
+                    tracing::warn!(%home, %error, "mesh model catalog unavailable");
+                    return;
+                }
+            }
+        }
+        let Some(backend) = &self.backend else {
+            return;
+        };
+        match backend.refresh_from_mesh(&self.vault).await {
+            Ok(refresh) => {
+                if !refresh.conflicts.is_empty() {
+                    tracing::warn!(
+                        %home,
+                        conflicts = ?refresh.conflicts,
+                        "mesh model catalog kept the vault's own routes"
+                    );
+                }
+                tracing::debug!(
+                    %home,
+                    written = ?refresh.written,
+                    unreached = ?refresh.unreached,
+                    "mesh model catalog refreshed"
+                );
+            }
+            Err(error) => tracing::warn!(%home, %error, "mesh model catalog refresh failed"),
+        }
+    }
 }
 
 /// This install's MACHINE, when it may dial `home`: enrolled and live, not
