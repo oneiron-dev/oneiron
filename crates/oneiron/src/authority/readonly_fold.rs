@@ -8,7 +8,7 @@ use crate::{
     HostingPrivacyPosture,
     error::{Error, Result},
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The generation belongs to the snapshot, not to the most recent process-wide
@@ -74,7 +74,39 @@ pub(crate) struct AuthorityCachedFold {
     next_deadline_secs: Option<u64>,
     view: AuthorityView,
     /// What the fold of a later generation resumes from.
-    base: Option<Arc<super::fold_resume::FoldBase>>,
+    continuation: Option<Arc<AuthorityContinuation>>,
+}
+
+/// What a later generation's fold resumes from (OF-469): the last committed
+/// fold's base, and the store id of each row it folded, so that fold reads
+/// only the stored rows past it. It lives in this cache alone and reopens
+/// empty: no row, checkpoint or format carries it.
+pub(crate) struct AuthorityContinuation {
+    base: super::fold_resume::FoldBase,
+    ids: BTreeMap<crate::EntityId, AuthorityEntryHash>,
+}
+
+impl AuthorityContinuation {
+    fn of(base: super::fold_resume::FoldBase) -> Option<Self> {
+        let ids = base
+            .hashes()
+            .map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
+            .collect::<Option<_>>()?;
+        Some(Self { base, ids })
+    }
+}
+
+/// The stored log's fold past a continuation.
+enum AuthorityTailFold {
+    /// The fold, the next stale-roster deadline it holds, and what the next
+    /// generation's fold resumes from.
+    Complete {
+        view: AuthorityView,
+        next_deadline_secs: Option<u64>,
+        continuation: Option<AuthorityContinuation>,
+    },
+    /// History the fold needs and this vault does not hold: no fold answers.
+    NeedHistory(AuthorityHistoryRequest),
 }
 
 impl AuthorityCachedFold {
@@ -165,7 +197,7 @@ fn cache_fold_if_committed(
     key: AuthorityCacheKey,
     next_deadline_secs: Option<u64>,
     view: &AuthorityView,
-    base: Option<super::fold_resume::FoldBase>,
+    continuation: Option<AuthorityContinuation>,
 ) {
     // LMDB read transactions use a thread-local reader slot. Opening a
     // second read txn on this thread while the caller's snapshot is alive
@@ -185,7 +217,7 @@ fn cache_fold_if_committed(
                             key,
                             next_deadline_secs,
                             view: view.clone(),
-                            base: None,
+                            continuation: None,
                         }
                         .matches(committed)
                     })
@@ -198,7 +230,7 @@ fn cache_fold_if_committed(
             key,
             next_deadline_secs,
             view: view.clone(),
-            base: base.map(Arc::new),
+            continuation: continuation.map(Arc::new),
         });
     }
 }
@@ -247,14 +279,14 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         return Ok(fold);
     }
     // A miss resumes from the last committed generation's fold where it can.
-    let base = store
-        .authority_fold_cache
-        .lock()
-        .ok()
-        .and_then(|cache| cache.as_ref().and_then(|cached| cached.base.clone()));
-    let (view, next_deadline_secs, base) =
-        fold_view_for_key(store, posture, txn, key, base.as_deref())?;
-    cache_fold_if_committed(store, key, next_deadline_secs, &view, base);
+    let continuation = store.authority_fold_cache.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .and_then(|cached| cached.continuation.clone())
+    });
+    let (view, next_deadline_secs, continuation) =
+        fold_view_for_key(store, posture, txn, key, continuation.as_deref())?;
+    cache_fold_if_committed(store, key, next_deadline_secs, &view, continuation);
     Ok(view)
 }
 
@@ -275,21 +307,93 @@ pub(super) fn authority_view_under_pin_for_store_in_txn(
     Ok(fold_view_for_key(store, posture, txn, key, None)?.0)
 }
 
-/// The full fold behind `key`, resumed from `base` where it can be, the next
-/// stale-roster deadline it holds, and the base for the next generation.
+/// The full fold behind `key`, resumed past `baseline` where it can be, the
+/// next stale-roster deadline it holds, and what the next generation
+/// resumes from. History the vault no longer holds fails closed: no fold.
 fn fold_view_for_key(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
     key: AuthorityCacheKey,
-    base: Option<&super::fold_resume::FoldBase>,
-) -> Result<(
-    AuthorityView,
-    Option<u64>,
-    Option<super::fold_resume::FoldBase>,
-)> {
-    tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
-    let mut first_seen_at_secs = BTreeMap::new();
+    baseline: Option<&AuthorityContinuation>,
+) -> Result<(AuthorityView, Option<u64>, Option<AuthorityContinuation>)> {
+    match fold_authority_checkpoint_tail_in_txn(
+        store,
+        posture,
+        txn,
+        key,
+        baseline,
+        &BTreeSet::new(),
+    )? {
+        AuthorityTailFold::Complete {
+            view,
+            next_deadline_secs,
+            continuation,
+        } => Ok((view, next_deadline_secs, continuation)),
+        AuthorityTailFold::NeedHistory(_) => {
+            Err(Error::CorruptedIndex("authority history incomplete"))
+        }
+    }
+}
+
+/// The stored log's fold behind `key` past `baseline` (OF-469). The rows the
+/// baseline folded are not read again: only the stored rows past it are
+/// decoded and verified, and the fold resumes from the baseline where its
+/// guards let it, else folds the whole stored log. When a row the baseline
+/// folded, a row the local checkpoint covers or a `required` row is not
+/// stored here, no fold answers: the request names each, with every parent
+/// a stored row names and no stored row is, so one fetch closes each gap
+/// known so far. A gap below a stored row alone is no such miss: the fold
+/// holds the rows above it invalid, as it always has.
+fn fold_authority_checkpoint_tail_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    key: AuthorityCacheKey,
+    baseline: Option<&AuthorityContinuation>,
+    required: &BTreeSet<AuthorityEntryHash>,
+) -> Result<AuthorityTailFold> {
+    let mut held = BTreeSet::new();
+    let mut tail = Vec::new();
+    for id in authority_log_ids_in_txn(store, txn)? {
+        // The store id is the row's content hash, and a stored authority
+        // row's body never changes: the baseline already read this one.
+        if let Some(hash) = baseline.and_then(|baseline| baseline.ids.get(&id)) {
+            held.insert(*hash);
+            continue;
+        }
+        let entry = decode_authority_log_entry_body(&authority_log_body_in_txn(store, txn, &id)?)?;
+        let hash = authority_entry_hash(&entry)?;
+        held.insert(hash);
+        tail.push((hash, entry));
+    }
+    let checkpoint = super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)?;
+    let mut named = required.clone();
+    if let Some((_, covered)) = &checkpoint {
+        named.extend(covered.iter().copied());
+    }
+    if let Some(baseline) = baseline {
+        named.extend(baseline.ids.values().copied());
+    }
+    if !named.is_subset(&held) {
+        let baseline_parents = baseline
+            .into_iter()
+            .flat_map(|baseline| baseline.base.parents())
+            .filter(|(hash, _)| held.contains(*hash))
+            .flat_map(|(_, parents)| parents.iter().copied());
+        let tail_parents = tail
+            .iter()
+            .flat_map(|(_, entry)| entry.parent_hashes.iter().copied());
+        named.extend(baseline_parents.chain(tail_parents));
+        named.retain(|hash| !held.contains(hash));
+        return Ok(AuthorityTailFold::NeedHistory(AuthorityHistoryRequest {
+            vault_id: baseline
+                .and_then(|baseline| baseline.base.vault_id())
+                .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
+            checkpoint: checkpoint.map(|(head, _)| head),
+            missing: named,
+        }));
+    }
     // Read once: all entries in this fold share one snapshot clock and marker.
     let backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
         store,
@@ -297,22 +401,62 @@ fn fold_view_for_key(
         &authority_first_seen_backfill_key(),
     )?;
     let now_secs = key.now_secs;
-
-    let entries = authority_log_rows_in_txn(store, txn)?
-        .into_iter()
-        .map(|(_, body)| decode_authority_log_entry_body(&body))
-        .collect::<Result<Vec<_>>>()?;
-    for entry in &entries {
-        let hash = authority_entry_hash(entry)?;
-        let first_seen = readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
-        first_seen_at_secs.insert(hash, first_seen);
-    }
     // Peer consent roots ride BOTH folds. This one authorizes, and a fold
     // used for authorization must never be weaker OR stronger than the one
     // used for truth: omitting them here would silently reject a lifecycle
     // entry the full fold accepts.
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
+    if let Some(baseline) = baseline {
+        tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, rows = tail.len(), "authority fold past the cached base");
+        let tail: Vec<_> = tail.iter().map(|(hash, entry)| (*hash, entry)).collect();
+        let rows = baseline.base.rows_with(&tail);
+        let mut first_seen_at_secs = BTreeMap::new();
+        for row in &rows {
+            if let Some(hash) = row.hash {
+                let first_seen = readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
+                first_seen_at_secs.insert(hash, first_seen);
+            }
+        }
+        let observations =
+            super::sequence_observation::authority_local_observations_of_rows_in_txn(
+                store, txn, &rows,
+            )?;
+        if let Some((fold, base)) = super::fold_resume::fold_stored_tail(
+            super::fold_resume::StoredTail {
+                tail: &tail,
+                first_seen_at_secs: &first_seen_at_secs,
+                now_secs,
+                peer_consent_roots: &peer_consent_roots,
+                observations: &observations,
+                posture,
+                pin: key.pin.as_ref(),
+            },
+            &baseline.base,
+        ) {
+            let next_deadline_secs =
+                next_deadline(key, &fold, &base.projected_rows(), &first_seen_at_secs);
+            return Ok(AuthorityTailFold::Complete {
+                view: AuthorityView {
+                    fold: Arc::new(fold),
+                    generation: key.generation,
+                },
+                next_deadline_secs,
+                continuation: AuthorityContinuation::of(base),
+            });
+        }
+    }
+    tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
+    let entries = authority_log_rows_in_txn(store, txn)?
+        .into_iter()
+        .map(|(_, body)| decode_authority_log_entry_body(&body))
+        .collect::<Result<Vec<_>>>()?;
+    let mut first_seen_at_secs = BTreeMap::new();
+    for entry in &entries {
+        let hash = authority_entry_hash(entry)?;
+        let first_seen = readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
+        first_seen_at_secs.insert(hash, first_seen);
+    }
     let observations = authority_local_observations_in_txn(store, txn, &entries)?;
     let (fold, base) = super::fold_resume::fold_stored_log(
         super::fold_resume::StoredLog {
@@ -324,27 +468,40 @@ fn fold_view_for_key(
             posture,
             pin: key.pin.as_ref(),
         },
-        base,
+        None,
     );
-    // The fold's only clock-sensitive transition is stale-roster approval
-    // expiry, here and in the fold with no vouch that bounds this install's
-    // view. Slip TTL is checked by each caller against its own snapshot
-    // clock, not frozen into this authority view.
-    let next_deadline_secs = next_stale_roster_deadline(
-        &entries,
-        &fold,
-        &first_seen_at_secs,
-        now_secs,
+    let next_deadline_secs = next_deadline(key, &fold, &entries, &first_seen_at_secs);
+    Ok(AuthorityTailFold::Complete {
+        view: AuthorityView {
+            fold: Arc::new(fold),
+            generation: key.generation,
+        },
+        next_deadline_secs,
+        continuation: base.and_then(AuthorityContinuation::of),
+    })
+}
+
+/// The next second `fold` changes on its own. The fold's only
+/// clock-sensitive transition is stale-roster approval expiry, here and in
+/// the fold with no vouch that bounds this install's view. Slip TTL is
+/// checked by each caller against its own snapshot clock, not frozen into
+/// this authority view.
+fn next_deadline<E: std::borrow::Borrow<AuthorityLogEntry>>(
+    key: AuthorityCacheKey,
+    fold: &AuthorityFold,
+    rows: &[E],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+) -> Option<u64> {
+    next_stale_roster_deadline(
+        rows,
+        fold,
+        first_seen_at_secs,
+        key.now_secs,
         key.policy.stale_roster_window_secs,
     )
     .into_iter()
     .chain(fold.install.no_vouch_deadline)
-    .min();
-    let view = AuthorityView {
-        fold: Arc::new(fold),
-        generation: key.generation,
-    };
-    Ok((view, next_deadline_secs, base))
+    .min()
 }
 
 /// First-seen seconds for ONE entry inside a readonly fold, reproducing the
@@ -393,22 +550,38 @@ pub(super) fn authority_log_rows_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(crate::EntityId, Vec<u8>)>> {
-    let mut rows = Vec::new();
+    authority_log_ids_in_txn(store, txn)?
+        .into_iter()
+        .map(|id| Ok((id, authority_log_body_in_txn(store, txn, &id)?)))
+        .collect()
+}
+
+/// The store ids of the AUTHORITY_LOG rows, in id order, read from the type
+/// index alone.
+fn authority_log_ids_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<crate::EntityId>> {
+    let mut ids = Vec::new();
     for row in store.port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)? {
-        let id = row?;
-        let raw = store
-            .port_entity_record(txn, &id)?
-            .map(|row| row.encode())
-            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
-            return Err(Error::CorruptedIndex("type index row kind mismatch"));
-        }
-        let body = raw
-            .get(ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        rows.push((id, body.to_vec()));
+        ids.push(row?);
     }
-    Ok(rows)
+    Ok(ids)
+}
+
+/// The signed body of the AUTHORITY_LOG row the type index names at `id`.
+fn authority_log_body_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &crate::EntityId,
+) -> Result<Vec<u8>> {
+    let raw = store
+        .port_entity_record(txn, id)?
+        .map(|row| row.encode())
+        .ok_or(Error::CorruptedIndex("type index row without entity"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+        return Err(Error::CorruptedIndex("type index row kind mismatch"));
+    }
+    let body = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("entity header"))?;
+    Ok(body.to_vec())
 }

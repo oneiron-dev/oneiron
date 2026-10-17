@@ -79,11 +79,12 @@ pub(crate) type SyncSocket = WebSocketStream<SyncIo>;
 
 /// Opens `request`'s WebSocket on `dialer`'s carrier when there is one, else on
 /// TCP to the request's host. TCP carries `ws` only: this build has no TLS, so
-/// a `wss` URL is refused as `connect_async` refuses it.
+/// a `wss` URL is refused as `connect_async` refuses it. Returns the upgrade
+/// response's headers beside the socket: the home names itself there.
 pub(crate) async fn connect_sync_socket(
     request: impl IntoClientRequest + Unpin,
     dialer: Option<&dyn SyncDialer>,
-) -> Result<SyncSocket, WsError> {
+) -> Result<(SyncSocket, tokio_tungstenite::tungstenite::http::HeaderMap), WsError> {
     let request = request.into_client_request()?;
     let io = match dialer {
         Some(dialer) => SyncIo::Dialed(dialer.dial().await.map_err(WsError::Io)?),
@@ -106,6 +107,6 @@ pub(crate) async fn connect_sync_socket(
             )
         }
     };
-    let (socket, _) = tokio_tungstenite::client_async(request, io).await?;
-    Ok(socket)
+    let (socket, response) = tokio_tungstenite::client_async(request, io).await?;
+    Ok((socket, response.into_parts().0.headers))
 }

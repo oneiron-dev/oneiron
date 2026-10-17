@@ -212,6 +212,7 @@ fn file_content(
                 bytes: bytes.to_vec(),
                 media_type: lower,
             },
+            frame: None,
         };
         let images = (bytes.len() <= MAX_DECISION_IMAGE_BYTES)
             .then_some(image)
