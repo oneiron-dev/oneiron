@@ -175,7 +175,7 @@ pub(crate) use project::{
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub(crate) use rooms::{
-    ROOM_THREAD_KEY, RoomWitness, ThreadBinding, ThreadPlace, record_thread_admits_in,
+    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, record_thread_admits_in,
     require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
     thread_binding, thread_members_in, thread_root_readable_in, validate_private_audience_in,
 };

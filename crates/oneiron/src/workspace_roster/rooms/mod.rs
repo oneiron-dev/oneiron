@@ -59,7 +59,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
-pub(crate) use witness::{RoomWitness, admit_witness};
+pub(crate) use witness::admit_witness;
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
 /// (turn id).
