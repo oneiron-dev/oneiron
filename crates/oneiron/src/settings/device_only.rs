@@ -10,7 +10,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::ports::{DeletionMarker, EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::store::{ManifestDbs, Store};
 
 /// The worlds whose words a record carries. `unknown` where one of them
@@ -302,10 +302,7 @@ fn deletion_world(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<EntityId>> {
-    let Some(label) = store
-        .sync_state()
-        .get(txn, &format!("m:dw:{}", id.to_hex()))?
-    else {
+    let Some(label) = store.port_deletion_marker(txn, DeletionMarker::WindowAddress, id)? else {
         return Ok(None);
     };
     std::str::from_utf8(&label)

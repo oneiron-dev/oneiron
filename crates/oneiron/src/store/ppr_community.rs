@@ -10,7 +10,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{EdgeStoreInventory, EntityStoreRead};
+use crate::ports::{DeletionMarker, EdgeStoreInventory, EntityStoreRead, TombstoneStoreRead};
 use crate::ppr::read_graph_version;
 use crate::ppr_community::{
     CommunityEdge, CommunityGraphInput, CommunityMembership, CommunityRefreshReport,
@@ -154,10 +154,7 @@ impl Store {
     ) -> Result<bool> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if self
-            .sync_state
-            .get(txn, &crate::deletion::local_hard_delete_key(id))?
-            .is_some()
+        if self.port_deletion_marked(txn, DeletionMarker::HardDelete, id)?
             || self.entity_deletion_present_in_txn(txn, id, header.learned_at)?
         {
             return Ok(false);

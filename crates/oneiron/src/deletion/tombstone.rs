@@ -347,7 +347,9 @@ impl SideKey for PendingTombstoneKey {
 /// `sync_state` key prefix for local hard-delete markers.
 pub(crate) const LOCAL_HARD_DELETE_PREFIX: &str = "dt:";
 
-/// Builds the GLOBAL `dt:{entity_hex}` local hard-delete marker key.
+/// Builds the GLOBAL `dt:{entity_hex}` local hard-delete marker key, for a
+/// test that plants or probes one by hand.
+#[cfg(test)]
 pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
     format!("{LOCAL_HARD_DELETE_PREFIX}{}", id.to_hex())
 }
@@ -355,8 +357,7 @@ pub(crate) fn local_hard_delete_key(id: &EntityId) -> String {
 /// The typed local hard-delete marker table `deletion/`'s own reads and
 /// writes go through; `pub(crate)` because `recovery/` also reads this
 /// deletion-owned marker while reconstructing a canonical snapshot. Other
-/// modules keep using [`local_hard_delete_key`] plus their own raw
-/// `sync_state` access.
+/// modules read it through `TombstoneStoreRead::port_deletion_marker`.
 pub(crate) const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
@@ -385,8 +386,7 @@ pub(crate) fn stage_engine_row_hard_erasure_in_txn(
 /// Local evidence that a soft delete was applied. Unlike the temporary
 /// `pt:` propagation intent, this survives publication so an out-of-order
 /// proposal cancellation cannot become effective against a live entity.
-/// `pub(crate)` because `identity_topology/` reads it before a proposal
-/// cancellation settles.
+/// Other modules read it through `TombstoneStoreRead::port_deletion_marker`.
 pub(crate) const IDENTITY_SOFT_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_IDENTITY_SOFT_DELETE_MARKER);
 
@@ -441,8 +441,8 @@ pub(crate) fn archive_tombstone_key(id: &EntityId) -> String {
 }
 
 /// The typed cleanup-archive marker table this module's own reads and writes
-/// (other modules keep using [`archive_tombstone_key`] plus their own raw
-/// `sync_state` access).
+/// go through (other modules read it through
+/// `TombstoneStoreRead::port_deletion_marker`).
 pub(super) const ARCHIVE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_ARCHIVE_MARKER);
 

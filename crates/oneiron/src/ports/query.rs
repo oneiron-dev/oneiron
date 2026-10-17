@@ -62,6 +62,41 @@ pub trait EntityStoreRead: Transactions {
         txn: &'a Self::Read<'_>,
         ended_after: u64,
     ) -> Result<PortRows<'a, (EntityId, crate::TimeRange)>>;
+    /// Exact type-index membership: whether `id` is indexed under `kind`,
+    /// by key alone. No entity row is read.
+    fn port_entity_type_indexed(
+        &self,
+        txn: &Self::Read<'_>,
+        kind: u8,
+        id: &EntityId,
+    ) -> Result<bool>;
+    /// [`port_entity_raw`](Self::port_entity_raw) without the copy: `read`
+    /// sees the stored row in place, so a header check or a parse of a large
+    /// or secret body copies nothing. `None` when no row exists.
+    fn port_entity_with_raw<R, F>(
+        &self,
+        txn: &Self::Read<'_>,
+        id: &EntityId,
+        read: F,
+    ) -> Result<Option<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>;
+}
+
+/// Entity rows at a session's current write-segment position, for admission
+/// inside a staging batch: earlier staged puts are visible, later ops are not.
+/// The logical read view keeps the snapshot it took before the batch.
+pub trait EntityWriteSegmentRead: Transactions {
+    /// One segment snapshot answers every id, in order; `read` sees each row
+    /// in place, `None` where no row exists.
+    fn port_entities_at_write_segment<const N: usize, R, F>(
+        &self,
+        txn: &Self::Read<'_>,
+        ids: [&EntityId; N],
+        read: F,
+    ) -> Result<R>
+    where
+        F: FnOnce([Option<&[u8]>; N]) -> Result<R>;
 }
 
 /// Adjacency reads in storage order. The caller may stop after its own budget.
@@ -149,6 +184,23 @@ pub trait TombstoneStoreRead: Transactions {
         txn: &'a Self::Read<'_>,
         family: DeletionFamily,
     ) -> Result<PortRows<'a, (EntityId, crate::deletion::DecodedTombstoneValue)>>;
+    /// The stored value of one marker row, undecoded. No other family, window
+    /// or entity row is read.
+    fn port_deletion_marker(
+        &self,
+        txn: &Self::Read<'_>,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>>;
+    /// Presence of one marker row, by key alone.
+    fn port_deletion_marked(
+        &self,
+        txn: &Self::Read<'_>,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<bool> {
+        Ok(self.port_deletion_marker(txn, marker, id)?.is_some())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,6 +248,23 @@ pub trait ShortIdStoreRead: Transactions {
 pub enum DeletionFamily {
     Archive,
     HardDelete,
+}
+
+/// One per-row deletion family, keyed by the row id alone. Each answers for
+/// itself; [`DeletionState`] is the verdict the markers feed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeletionMarker {
+    /// `ac:`, a local archive; the row stays whole.
+    Archive,
+    /// `dt:`, a permanent local hard delete.
+    HardDelete,
+    /// `df:`, the stored row's applied deletion.
+    RowFence,
+    /// `it:deleted:`, an identity soft delete once applied.
+    IdentitySoftDelete,
+    /// `m:dw:`, the window address a deletion kept for the row
+    /// (`<month>@<world>`), so its tombstone is found after the body goes.
+    WindowAddress,
 }
 
 /// Stored job rows without a queue transition, for cleanup, admission and

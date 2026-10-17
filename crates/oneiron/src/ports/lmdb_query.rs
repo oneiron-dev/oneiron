@@ -166,6 +166,24 @@ impl<T: ManifestDbs> EntityStoreRead for T {
             }),
         ))
     }
+    fn port_entity_type_indexed(&self, txn: &RoTxn<'_>, kind: u8, id: &EntityId) -> Result<bool> {
+        let key = crate::store::Store::encode_type_key(kind, id);
+        Ok(self.type_index().get(txn, &key)?.is_some())
+    }
+    fn port_entity_with_raw<R, F>(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        read: F,
+    ) -> Result<Option<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        self.entities()
+            .get(txn, id.as_bytes())?
+            .map(|raw| read(&raw))
+            .transpose()
+    }
 }
 impl EntityStoreRead for Vault {
     fn port_entity_raw(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Option<Vec<u8>>> {
@@ -226,6 +244,39 @@ impl EntityStoreRead for Vault {
         after: Option<EntityId>,
     ) -> Result<PortRows<'a, EntityId>> {
         self.store.port_entity_ids_by_type(txn, kind, after)
+    }
+    fn port_entity_type_indexed(&self, txn: &RoTxn<'_>, kind: u8, id: &EntityId) -> Result<bool> {
+        self.store.port_entity_type_indexed(txn, kind, id)
+    }
+    fn port_entity_with_raw<R, F>(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        read: F,
+    ) -> Result<Option<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        self.store.port_entity_with_raw(txn, id, read)
+    }
+}
+impl super::EntityWriteSegmentRead for crate::store::SessionStoreView<'_> {
+    fn port_entities_at_write_segment<const N: usize, R, F>(
+        &self,
+        txn: &RoTxn<'_>,
+        ids: [&EntityId; N],
+        read: F,
+    ) -> Result<R>
+    where
+        F: FnOnce([Option<&[u8]>; N]) -> Result<R>,
+    {
+        // One snapshot at the current segment answers every id.
+        let entities = self.entity_rows_for_write()?;
+        let mut rows: [Option<std::borrow::Cow<'_, [u8]>>; N] = std::array::from_fn(|_| None);
+        for (row, id) in rows.iter_mut().zip(ids) {
+            *row = entities.get(txn, id.as_bytes())?;
+        }
+        read(rows.each_ref().map(Option::as_deref))
     }
 }
 pub(super) fn decode_record(raw: &[u8]) -> Result<EntityRecord> {

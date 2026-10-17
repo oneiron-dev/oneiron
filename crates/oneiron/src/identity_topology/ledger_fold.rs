@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
-use crate::side_table::HexId;
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -301,13 +301,11 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                                 &participant,
                             )?
                             .is_none()
-                                && store
-                                    .sync_state
-                                    .get(
-                                        rtxn,
-                                        &crate::deletion::local_hard_delete_key(&participant),
-                                    )?
-                                    .is_none()
+                                && !store.port_deletion_marked(
+                                    rtxn,
+                                    DeletionMarker::HardDelete,
+                                    &participant,
+                                )?
                             {
                                 accounted = false;
                                 break;
@@ -356,14 +354,14 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                                     IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
                                 )
                                 && op.participants().contains(participant)
-                                && (crate::deletion::IDENTITY_SOFT_DELETE_MARKER.contains(
-                                    store,
+                                && (store.port_deletion_marked(
                                     rtxn,
-                                    &HexId(*participant),
-                                )? || crate::deletion::HARD_DELETE_MARKER.contains(
-                                    store,
+                                    DeletionMarker::IdentitySoftDelete,
+                                    participant,
+                                )? || store.port_deletion_marked(
                                     rtxn,
-                                    &HexId(*participant),
+                                    DeletionMarker::HardDelete,
+                                    participant,
                                 )?)
                         }
                         _ => false,
@@ -390,13 +388,11 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                 }
                 None => {
                     sealed
-                        && store
-                            .sync_state
-                            .get(
-                                rtxn,
-                                &crate::deletion::local_hard_delete_key(&actor.entity_ref()),
-                            )?
-                            .is_some()
+                        && store.port_deletion_marked(
+                            rtxn,
+                            DeletionMarker::HardDelete,
+                            &actor.entity_ref(),
+                        )?
                 }
             },
         };

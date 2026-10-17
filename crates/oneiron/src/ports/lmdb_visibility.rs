@@ -1,7 +1,19 @@
 //! Transaction-local visibility ledger for canonical and composed session views.
-use super::{DeletionState, TombstoneStoreRead};
+use super::{DeletionMarker, DeletionState, TombstoneStoreRead};
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
+
+/// The `sync_state` table of one deletion family; each is keyed by the row id.
+fn marker_table(marker: DeletionMarker) -> SideTable<HexId, Vec<u8>, Raw> {
+    SideTable::new(match marker {
+        DeletionMarker::Archive => &side_table::DELETION_ARCHIVE_MARKER,
+        DeletionMarker::HardDelete => &side_table::DELETION_HARD_DELETE_MARKER,
+        DeletionMarker::RowFence => &side_table::DELETION_ROW_FENCE,
+        DeletionMarker::IdentitySoftDelete => &side_table::DELETION_IDENTITY_SOFT_DELETE_MARKER,
+        DeletionMarker::WindowAddress => &side_table::DELETION_WINDOW_LABEL,
+    })
+}
 impl<T: ManifestDbs> TombstoneStoreRead for T {
     fn port_tombstone_records<'a>(
         &self,
@@ -40,6 +52,24 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
             deleted,
             stale,
         })
+    }
+
+    fn port_deletion_marker(
+        &self,
+        txn: &RoTxn<'_>,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        marker_table(marker).get_bytes(self, txn, &HexId(*id))
+    }
+
+    fn port_deletion_marked(
+        &self,
+        txn: &RoTxn<'_>,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<bool> {
+        marker_table(marker).contains(self, txn, &HexId(*id))
     }
 }
 
@@ -85,5 +115,23 @@ impl TombstoneStoreRead for Vault {
 
     fn port_deletion_state(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<DeletionState> {
         self.store.port_deletion_state(txn, id)
+    }
+
+    fn port_deletion_marker(
+        &self,
+        txn: &RoTxn<'_>,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        self.store.port_deletion_marker(txn, marker, id)
+    }
+
+    fn port_deletion_marked(
+        &self,
+        txn: &RoTxn<'_>,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<bool> {
+        self.store.port_deletion_marked(txn, marker, id)
     }
 }

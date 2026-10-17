@@ -85,10 +85,12 @@ pub(crate) use sweep_queue::{
 pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
 #[cfg(all(test, feature = "sync"))]
 pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
+#[cfg(test)]
+pub(crate) use tombstone::local_hard_delete_key;
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER,
     LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, ROW_DELETION_FENCE, archive_tombstone_key,
-    local_hard_delete_key, stage_engine_row_hard_erasure_in_txn,
+    stage_engine_row_hard_erasure_in_txn,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 // The replay outcome is read by sync production (`sync::quarantine`) and by

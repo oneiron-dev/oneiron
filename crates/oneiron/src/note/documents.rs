@@ -392,20 +392,8 @@ pub(crate) fn load_doc(
 ) -> Result<Option<NoteDocument>> {
     super::verbs::note_core(vault, txn, note)?;
     super::ensure_citations_ready(&vault.store, txn, note)?;
-    let hex = head_in(&vault.store, txn, note)?.0.to_hex();
-    if vault
-        .store
-        .sync_state
-        .get(txn, &format!("d:e:{hex}"))?
-        .is_none()
-        && vault
-            .store
-            .sync_state
-            .prefix_iter(txn, &format!("u:e:{hex}:"))?
-            .next()
-            .transpose()?
-            .is_none()
-    {
+    let slot = crate::ports::DocumentSlot::of(head_in(&vault.store, txn, note)?.0);
+    if !crate::ports::DocumentRowStore::port_document_present(&vault.store, txn, slot)? {
         return Ok(None);
     }
     live_doc(vault, txn, note).map(Some)

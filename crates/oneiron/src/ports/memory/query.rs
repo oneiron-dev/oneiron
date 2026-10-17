@@ -133,6 +133,24 @@ impl EntityStoreRead for Memory {
                 .map(|(id, _)| Ok(*id)),
         ))
     }
+    fn port_entity_type_indexed(&self, txn: &Snapshot, kind: u8, id: &EntityId) -> Result<bool> {
+        let row = txn.entities.get(id);
+        Ok(row.is_some_and(|row| row.entity_type == kind))
+    }
+    fn port_entity_with_raw<R, F>(
+        &self,
+        txn: &Snapshot,
+        id: &EntityId,
+        read: F,
+    ) -> Result<Option<R>>
+    where
+        F: FnOnce(&[u8]) -> Result<R>,
+    {
+        txn.entities
+            .get(id)
+            .map(|row| read(&row.encode()))
+            .transpose()
+    }
 }
 
 impl EdgeStoreRead for Memory {
@@ -332,6 +350,31 @@ impl TombstoneStoreRead for Memory {
             deleted: txn.tombstones.contains_key(id),
             stale: txn.stale.contains(id),
         })
+    }
+
+    fn port_deletion_marker(
+        &self,
+        txn: &Snapshot,
+        marker: DeletionMarker,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        use crate::deletion::TombstoneReason as Reason;
+        let Some(value) = txn.tombstones.get(id) else {
+            return Ok(None);
+        };
+        // One tombstone stands for every marker its reason writes.
+        let marked = match marker {
+            DeletionMarker::Archive => value.reason == Reason::ArchivedByCleanup,
+            DeletionMarker::HardDelete => matches!(
+                value.reason,
+                Reason::UserHardDelete | Reason::GdprDelete | Reason::PolicyDelete
+            ),
+            DeletionMarker::RowFence => value.reason != Reason::ArchivedByCleanup,
+            DeletionMarker::IdentitySoftDelete => value.reason == Reason::UserDelete,
+            // The model keeps no sync windows.
+            DeletionMarker::WindowAddress => false,
+        };
+        Ok(marked.then(|| value.encode().to_vec()))
     }
 }
 

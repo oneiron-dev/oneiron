@@ -2,6 +2,7 @@
 
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use sha2::Digest;
 use std::collections::BTreeSet;
 
@@ -560,9 +561,7 @@ impl Vault {
             }
             if self
                 .store
-                .sync_state
-                .get(&txn, &crate::deletion::local_hard_delete_key(&id))?
-                .is_some()
+                .port_deletion_marked(&txn, DeletionMarker::HardDelete, &id)?
             {
                 return Err(Error::InvariantViolation(
                     "cannot share a hard-deleted brief",

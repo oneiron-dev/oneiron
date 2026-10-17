@@ -227,6 +227,14 @@ impl<T: ManifestDbs> DocumentRowStore for T {
             .collect()
     }
 
+    fn port_document_present(&self, txn: &RoTxn<'_>, slot: DocumentSlot) -> Result<bool> {
+        if SNAPSHOT.contains(self, txn, &slot)? {
+            return Ok(true);
+        }
+        let mut updates = UPDATES.iter_raw_from(self, txn, &slot_updates(slot))?;
+        Ok(updates.next().transpose()?.is_some())
+    }
+
     fn port_document_snapshot_slots(&self, txn: &RoTxn<'_>) -> Result<Vec<Option<DocumentSlot>>> {
         SNAPSHOT
             .iter_raw_from(self, txn, &[])?

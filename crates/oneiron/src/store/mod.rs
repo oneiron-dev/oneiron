@@ -110,9 +110,9 @@ pub mod ports {
         TombstoneStore, Transactions, safe_read_asset_text, safe_read_text,
     };
     pub use crate::ports::{
-        ChangeLogStoreRead, DeletionFamily, DeletionState, EdgeStoreRead, EntityStoreRead,
-        EntityTime, JobQueueRead, PortRows, RetrievalIndexRead, ShortIdStoreRead, TimeAxis,
-        TimelineQuery, TombstoneStoreRead,
+        ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead,
+        EntityStoreRead, EntityTime, EntityWriteSegmentRead, JobQueueRead, PortRows,
+        RetrievalIndexRead, ShortIdStoreRead, TimeAxis, TimelineQuery, TombstoneStoreRead,
     };
 }
 

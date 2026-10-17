@@ -147,6 +147,9 @@ pub(crate) trait DocumentRowStore: Transactions {
         txn: &Self::Read<'_>,
         slot: DocumentSlot,
     ) -> Result<Vec<PendingUpdate>>;
+    /// Whether the slot holds a snapshot or at least one pending update. Reads
+    /// no further than the first update.
+    fn port_document_present(&self, txn: &Self::Read<'_>, slot: DocumentSlot) -> Result<bool>;
     /// The slot of every stored snapshot, `None` for a key that names no slot.
     fn port_document_snapshot_slots(
         &self,

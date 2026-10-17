@@ -15,16 +15,7 @@ use crate::deletion::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, HexId, Raw, SideTable};
-
-/// The local hard-delete marker this run scans for the erased-id authority.
-/// `deletion::tombstone` owns the row family (see its `HARD_DELETE_MARKER`
-/// doc comment: other modules keep using `local_hard_delete_key` plus their
-/// own raw access) and is not reachable from here, so this binds the SAME
-/// declaration independently (two typed tables, one declaration). Key:
-/// hex32.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
+use crate::ports::{DeletionFamily, TombstoneStoreRead};
 
 /// Retry backoff cap: a failed job is retried no later than 24 h out, so
 /// the ≤30 d `deadline_at` SLA cannot be silently outwaited by backoff.
@@ -287,8 +278,8 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
     let mut erased: BTreeSet<EntityId> = BTreeSet::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for (HexId(id), _) in HARD_DELETE_MARKER
-            .iter_from(&vault.store, &rtxn, &[])?
+        for (id, _) in vault
+            .port_tombstone_records(&rtxn, DeletionFamily::HardDelete)?
             .flatten()
         {
             erased.insert(id);
