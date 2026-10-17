@@ -73,6 +73,26 @@ pub(crate) enum MediaEmbedRefusal {
     Vault(#[from] oneiron::Error),
 }
 
+impl MediaEmbedRefusal {
+    /// Whether the refusal is of the one document sent, by its content: text
+    /// that is not UTF-8, a rung that read its bytes as an invalid request or
+    /// filtered them, or answered no usable vector for them. Every other
+    /// refusal (no seat, policy, a provider that is down, a budget, a width)
+    /// is the space's, not the document's.
+    fn is_document_refusal(&self) -> bool {
+        matches!(
+            self,
+            Self::NotText
+                | Self::Malformed
+                | Self::Call(LlmError::Fatal(
+                    FatalLlmError::InvalidRequest
+                        | FatalLlmError::ContentFiltered
+                        | FatalLlmError::EmptyResponse
+                ))
+        )
+    }
+}
+
 impl From<MediaEmbedRefusal> for oneiron::Error {
     fn from(refusal: MediaEmbedRefusal) -> Self {
         match refusal {
@@ -444,19 +464,40 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     /// One call per input, each driven on the embedder's runtime from the
     /// blocking thread the engine calls on.
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> oneiron::Result<Vec<Vec<f32>>> {
+        inputs
+            .iter()
+            .map(|input| -> oneiron::Result<Vec<f32>> { Ok(self.embed_input(input)?) })
+            .collect()
+    }
+
+    /// [`Self::embed_media`], with a refusal of one document by its content
+    /// ([`MediaEmbedRefusal::is_document_refusal`]) as that input's outcome.
+    fn embed_each(
+        &self,
+        inputs: &[MediaEmbeddingInput<'_>],
+    ) -> oneiron::Result<Vec<Result<Vec<f32>, String>>> {
+        inputs
+            .iter()
+            .map(|input| match self.embed_input(input) {
+                Ok(vector) => Ok(Ok(vector)),
+                Err(refusal) if refusal.is_document_refusal() => Ok(Err(refusal.to_string())),
+                Err(refusal) => Err(refusal.into()),
+            })
+            .collect()
+    }
+}
+
+impl RuntimeMediaEmbedder {
+    /// One stored input to its vector, driven on the embedder's runtime.
+    fn embed_input(&self, input: &MediaEmbeddingInput<'_>) -> Result<Vec<f32>, MediaEmbedRefusal> {
         let runtime = self
             .runtime
             .as_ref()
             .ok_or(oneiron::Error::InvariantViolation(
                 "a media embedder's synchronous door has no runtime to drive its calls on",
             ))?;
-        inputs
-            .iter()
-            .map(|input| -> oneiron::Result<Vec<f32>> {
-                let part = media_part(input.kind, input.media_type, input.bytes.to_vec())?;
-                Ok(runtime.block_on(self.embed_one(part))?)
-            })
-            .collect()
+        let part = media_part(input.kind, input.media_type, input.bytes.to_vec())?;
+        runtime.block_on(self.embed_one(part))
     }
 }
 

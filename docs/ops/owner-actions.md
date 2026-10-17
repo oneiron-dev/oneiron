@@ -908,6 +908,10 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   than 10 probe families, or an interval across the margin, reads unknown. Unknown never swaps
   by itself: the move stays open and is checked again every 6 hours. Each swap, keep and undo
   leaves a short note in the inbox.
+- The media backfill skips any document a space's model refuses by its content (a format it
+  cannot read, a content filter) until the document changes, so one bad file never stalls a
+  space or a move. A model that refuses everything it is sent before it has embedded anything
+  is treated as down, and the backfill retries it.
 - `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
   full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
   `.../move/abandon` ends an open move without one. An undo works for 30 days after the swap.
