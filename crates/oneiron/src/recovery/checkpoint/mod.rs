@@ -724,13 +724,11 @@ impl Vault {
             return Err(codec_error());
         }
         // A signed authority row that fails its key-free checks (an owner
-        // root or a world-key record among them) is refused here as at every
-        // other write door, before any destination exists.
-        if image.databases["entities"]
-            .iter()
-            .any(|(_, blob)| malformed_entity_row(blob))
-        {
-            return Err(codec_error());
+        // root or a world-key record among them), and a FACET carrying PERSON
+        // identity, are refused here as at every other write door, before any
+        // destination exists.
+        for (_, blob) in &image.databases["entities"] {
+            validate_checkpoint_entity_row(blob)?;
         }
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
@@ -784,6 +782,12 @@ impl Vault {
                     db.put(txn, key, value)?;
                 }
             }
+            // The rows came back without a put: every entity kind is judged
+            // against the image's own registry, now readable in this
+            // transaction. A refusal discards the copy before it commits.
+            vault
+                .store
+                .validate_checkpoint_entity_kinds_in_txn(&*txn, &image.databases["entities"])?;
             if fork {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
             }
@@ -889,15 +893,18 @@ use test_hooks::{RestoreStep, fail_at, panic_if_armed};
 #[cfg(test)]
 mod tests;
 
-/// A row with no header, which the index rebuild refuses anyway, or an
-/// AUTHORITY_LOG row whose body the shared authority validator refuses, an
-/// empty one included: no authority row is a bodiless shell.
-fn malformed_entity_row(blob: &[u8]) -> bool {
-    crate::batch::EntityMetadataHeader::parse(blob).is_none_or(|header| {
-        header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
-            && crate::authority::validate_authority_log_entry_body_bytes(
-                &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            )
-            .is_err()
-    })
+/// Refuses a row with no header, which the index rebuild refuses anyway; a
+/// body the local identity refusal turns away; or an AUTHORITY_LOG row whose
+/// body the shared authority validator refuses, an empty one included: no
+/// authority row is a bodiless shell.
+fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
+    let header = crate::batch::EntityMetadataHeader::parse(blob).ok_or_else(codec_error)?;
+    let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    crate::batch::validate_local_identity_body(header.entity_type, body)?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG
+        && crate::authority::validate_authority_log_entry_body_bytes(body).is_err()
+    {
+        return Err(codec_error());
+    }
+    Ok(())
 }

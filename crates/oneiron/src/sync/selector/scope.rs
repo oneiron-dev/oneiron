@@ -535,14 +535,6 @@ pub(super) fn entity_selector_decision(
     {
         return None;
     }
-    // Companion-shaped FACETs are retired identity stores, not masks.
-    // Never let them leave as generic FACETs under any selector/grant.
-    if crate::companion::is_retired_identity_carrier(
-        header.entity_type,
-        &blob[ENTITY_METADATA_HEADER_LEN..],
-    ) {
-        return None;
-    }
     // Registration is mandatory even for an unfiltered selector. Unknown
     // bytes do not gain a scope from their numeric position.
     let identity = selector_range_of(header.entity_type).or_else(|| {

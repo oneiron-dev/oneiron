@@ -298,15 +298,6 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             continue;
         }
 
-        if skip_companion_register_sync_mirror(&raw) {
-            let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
-            if removed {
-                super::egress::require_history_free_window(vault, window_key)?;
-            }
-            wrote_any |= removed;
-            continue;
-        }
-
         // Presence alone decides for ordinary rows (delete-wins and remote
         // history are not rewritten here). ONE-1604-D1 adds one exception:
         // a validated local AUTHORITY_LOG row DOMINATES any occupant of its
@@ -395,7 +386,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     for id in base_edge_sources {
         if window_packing_excludes_entity(vault, &device_only, &id)?
             || !local_claim_sync_allowed(vault, &id)?
-            || local_entity_is_unsyncable_companion(vault, &id)?
+            || local_entity_is_unsyncable(vault, &id)?
         {
             continue;
         }
@@ -403,7 +394,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     }
 
     // PHASE 2 — edge backfill for every source that cleared phase 1's gates
-    // (egress door, tombstone, unsyncable-companion, missing local row). Ordered
+    // (egress door, tombstone, unsyncable, missing local row). Ordered
     // after ALL dominance sweeps, so an edge with local backing is always
     // re-inserted, whatever the `learned_at` order of its endpoints.
     for id in &backfill_sources {
@@ -432,7 +423,7 @@ pub(in crate::sync) fn reverse_rematerialize_with(
                 continue;
             }
             if !local_claim_sync_allowed(vault, &edge.target)?
-                || local_entity_is_unsyncable_companion(vault, &edge.target)?
+                || local_entity_is_unsyncable(vault, &edge.target)?
             {
                 continue;
             }
@@ -471,8 +462,8 @@ pub(in crate::sync) fn reverse_rematerialize_with(
                     || window_packing_excludes_entity(vault, &device_only, target)?
                     || !local_claim_sync_allowed(vault, &source)?
                     || !local_claim_sync_allowed(vault, target)?
-                    || local_entity_is_unsyncable_companion(vault, &source)?
-                    || local_entity_is_unsyncable_companion(vault, target)?
+                    || local_entity_is_unsyncable(vault, &source)?
+                    || local_entity_is_unsyncable(vault, target)?
                     || !super::types::edge_belongs_to_window(vault, &source, target, window_key)?
                 {
                     continue;
@@ -510,17 +501,6 @@ pub(in crate::sync) fn reverse_rematerialize_with(
         doc.commit_with(CommitOptions::new().origin(&origin));
     }
     Ok(count)
-}
-
-pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> bool {
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return false;
-    };
-    header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-        || crate::companion::is_retired_identity_carrier(
-            header.entity_type,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )
 }
 
 /// Local-only rows: diagnostics, and every credential (custody is sealed from
@@ -578,11 +558,11 @@ pub(super) fn quarantine_outbound_protected_tombstones(
     Ok(true)
 }
 
-fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<bool> {
+fn local_entity_is_unsyncable(vault: &Vault, id: &EntityId) -> Result<bool> {
     let Some(raw) = vault.get_raw_unsealed(id)? else {
         return Ok(false);
     };
-    Ok(skip_companion_register_sync_mirror(&raw))
+    Ok(is_unsyncable_secret_custody(&raw))
 }
 
 /// Removes an entity's already-present CRDT body and every incident edge.

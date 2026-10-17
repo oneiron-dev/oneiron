@@ -12,11 +12,12 @@ use crate::registry::{
     ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
 };
 use crate::sync::loro_support::{TombstoneIndex, map_for_each_value_bytes, map_get_bytes};
+use crate::sync::selector::validate_sync_identity_body;
 use crate::{Error, Result};
 
-/// Refuses diagnostic and secret-custody carriers before a full-window update
-/// can mutate the live document, materialize rows, persist bytes or fan out to
-/// another peer.
+/// Refuses diagnostic and secret-custody carriers and identity-shaped FACET
+/// bodies before a full-window update can mutate the live document,
+/// materialize rows, persist bytes or fan out to another peer.
 ///
 /// Inspect the incoming operation range, not just final map state: a put
 /// followed by a delete still carries the refused body in wire history.
@@ -89,8 +90,9 @@ fn validate_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
-    let local_only = |blob: &[u8]| {
-        EntityMetadataHeader::parse(blob).and_then(|header| match header.entity_type {
+    let carrier_refusal = |blob: &[u8]| -> Option<Error> {
+        let header = EntityMetadataHeader::parse(blob)?;
+        let refused = match header.entity_type {
             ENTITY_TYPE_DIAGNOSTIC => Some(Error::InvalidConfig(
                 "diagnostic observations are local-only".into(),
             )),
@@ -99,7 +101,12 @@ fn validate_window_update(
             // a live world's pad replicates with the base rows.
             ENTITY_TYPE_WORLD_KEY_PAD => vault.and_then(|vault| late_pad(vault, blob)),
             _ => None,
-        })
+        };
+        if refused.is_some() {
+            return refused;
+        }
+        let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+        validate_sync_identity_body(header.entity_type, body).err()
     };
     if let Some(key) = key {
         let witnesses = candidate.get_map("retained_claim_worlds");
@@ -158,7 +165,7 @@ fn validate_window_update(
         let mut misplaced = false;
         map_for_each_value_bytes(&candidate.get_map("entities"), |_, blob| {
             if refused.is_none() {
-                refused = blob.and_then(local_only);
+                refused = blob.and_then(carrier_refusal);
             }
             misplaced |= key.is_some_and(|key| {
                 blob.is_none_or(|blob| {
@@ -203,7 +210,7 @@ fn validate_window_update(
             let mut at_root = None;
             map_for_each_value_bytes(&root.get_map("entities"), |_, blob| {
                 if at_root.is_none() {
-                    at_root = blob.and_then(local_only);
+                    at_root = blob.and_then(carrier_refusal);
                 }
             });
             if let Some(error) = at_root {
@@ -306,7 +313,7 @@ fn validate_window_update(
         } else if op.container == entities {
             match value {
                 LoroValue::Binary(blob) => {
-                    if let Some(error) = local_only(&blob) {
+                    if let Some(error) = carrier_refusal(&blob) {
                         return Err(error);
                     }
                     if key.is_some_and(|key| {
