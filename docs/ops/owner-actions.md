@@ -1069,6 +1069,13 @@ locality. A space whose `@where` names no provider serving its rung embeds nothi
   With the text slot bound, a text query embeds through that space's text tower in the context
   pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
   holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
+  A `media` query (`{"space", "mime", "bytes_b64", "kinds"}`) seeds a search on its own: the
+  server embeds the bytes into that space through the `ai.embed` rung its id names and searches
+  that space's list. The context pack and the Context Board over HTTP, `/v1/core/query`, the
+  native MCP context pack, and `vault.recall` on every SDK take it. Recall refuses it at light
+  effort and in call mode, and refuses `kinds`. A client with no server (an embedded handle)
+  answers `MODEL_UNAVAILABLE` (`EMBEDDER_UNAVAILABLE` on the native context pack) and never
+  searches without the media.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
