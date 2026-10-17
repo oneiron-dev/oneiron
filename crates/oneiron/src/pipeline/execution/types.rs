@@ -44,8 +44,8 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) total_in_scope: usize,
     pub(super) empty_reason: Option<EmptyReason>,
     pub(super) signal_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
-    /// Media hits at or above their own space's RET-01 floor (OF-370).
-    pub(super) media_evidence: HashSet<EntityId>,
+    /// Media hits by their own space's RET-01 floor (OF-370).
+    pub(super) media_evidence: super::super::budget::MediaEvidence,
     pub(super) blend_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     /// The applied read-side multiplier per candidate, from the run's
     /// single decay-applying blend. Empty when no blend ran.
