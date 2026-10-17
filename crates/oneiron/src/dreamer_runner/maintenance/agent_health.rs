@@ -430,11 +430,7 @@ impl DialBook {
     /// One dispatch's dials; the vault's for none.
     fn of(&self, dispatch: Option<&Dispatched>) -> &Dials {
         dispatch
-            .and_then(|dispatch| {
-                self.scoped
-                    .get(&dispatch.project)?
-                    .get(&dispatch.type_node)
-            })
+            .and_then(|dispatch| self.scoped.get(&dispatch.project)?.get(&dispatch.type_node))
             .unwrap_or(&self.vault)
     }
 
@@ -553,9 +549,27 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         now,
     )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &book, since)?);
-    findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(cost_spike_findings(vault, &dispatched, &attempts, &book, since, now)?);
+    findings.extend(widen_denial_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        &book,
+        since,
+    )?);
+    findings.extend(unsupported_done_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        since,
+    )?);
+    findings.extend(cost_spike_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        &book,
+        since,
+        now,
+    )?);
     // A project or task type whose review is off keeps its findings unsaid.
     findings.retain(|finding| book.for_attempt(&dispatched, finding.attempt).review);
     // What each agent said itself, for its card.
@@ -606,7 +620,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
                 && !card.owner_copy
                 && now
                     >= card.opened_at.saturating_add(
-                        book.of(card.attempt.and_then(|attempt| dispatched.get(attempt.as_bytes())))
+                        book.of(card
+                            .attempt
+                            .and_then(|attempt| dispatched.get(attempt.as_bytes())))
                             .ttl_secs,
                     )
             {
@@ -1300,7 +1316,10 @@ fn widen_denial_findings(
             task: task_of(record),
             attempt: Some(record.id),
             evidence: vec![attempt],
-            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            window: (
+                record.claimed_at.unwrap_or(record.created_at),
+                record.updated_at,
+            ),
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
@@ -1352,7 +1371,10 @@ fn unsupported_done_findings(
             task: Some(task),
             attempt: Some(record.id),
             evidence: vec![attempt, task],
-            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            window: (
+                record.claimed_at.unwrap_or(record.created_at),
+                record.updated_at,
+            ),
             actual: count,
             dial: 0,
             measured: count,

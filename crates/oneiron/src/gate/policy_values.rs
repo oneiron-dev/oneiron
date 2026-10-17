@@ -5,6 +5,7 @@ use rmpv::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum PolicyValueKey {
+    ArtifactAnswerQuietSeconds,
     CommOptOutPosture,
     ProposalCheckThreshold,
     ProviderCooldownDefaultSeconds,
@@ -15,6 +16,7 @@ pub(super) enum PolicyValueKey {
 impl PolicyValueKey {
     fn parse(value: &str) -> Option<Self> {
         match value {
+            "artifact_answer_quiet_seconds" => Some(Self::ArtifactAnswerQuietSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
             "proposal_check_threshold" => Some(Self::ProposalCheckThreshold),
             "provider_cooldown_default_seconds" => Some(Self::ProviderCooldownDefaultSeconds),
@@ -26,6 +28,7 @@ impl PolicyValueKey {
     }
     pub(super) fn as_str(self) -> &'static str {
         match self {
+            Self::ArtifactAnswerQuietSeconds => "artifact_answer_quiet_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::ProposalCheckThreshold => "proposal_check_threshold",
             Self::ProviderCooldownDefaultSeconds => "provider_cooldown_default_seconds",
@@ -48,7 +51,9 @@ impl PolicyValueKey {
             // External effects carry no trusted origin yet, the meta-rule is
             // read at vault scope only, and an offer's cooldown is the
             // deployment's, never one world's.
-            Self::CommOptOutPosture
+            // A held answer's proposer is woken on the vault's clock.
+            Self::ArtifactAnswerQuietSeconds
+            | Self::CommOptOutPosture
             | Self::ProviderCooldownDefaultSeconds
             | Self::ProviderCooldownMaxSeconds
             | Self::ProviderCooldownMaxWaitSeconds
@@ -80,6 +85,7 @@ impl PolicyPrecedence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PolicyValue {
+    ArtifactAnswerQuietSeconds(u64),
     CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
     ProposalCheckThreshold(u64),
     ProviderCooldownDefaultSeconds(u64),
@@ -90,6 +96,11 @@ pub(super) enum PolicyValue {
 impl PolicyValue {
     fn restrict(self, other: Self) -> Self {
         match (self, other) {
+            // A longer quiet never wakes a proposer sooner than any trusted
+            // row asks.
+            (Self::ArtifactAnswerQuietSeconds(a), Self::ArtifactAnswerQuietSeconds(b)) => {
+                Self::ArtifactAnswerQuietSeconds(a.max(b))
+            }
             (Self::CommOptOutPosture(a), Self::CommOptOutPosture(b)) => {
                 Self::CommOptOutPosture(a.restrict(b))
             }
@@ -116,7 +127,8 @@ impl PolicyValue {
     pub(super) fn as_str(self) -> String {
         match self {
             Self::CommOptOutPosture(value) => value.as_str().to_owned(),
-            Self::ProposalCheckThreshold(value)
+            Self::ArtifactAnswerQuietSeconds(value)
+            | Self::ProposalCheckThreshold(value)
             | Self::ProviderCooldownDefaultSeconds(value)
             | Self::ProviderCooldownMaxSeconds(value)
             | Self::ProviderCooldownMaxWaitSeconds(value) => value.to_string(),
@@ -266,114 +278,119 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
     let Value::Array(rows) = value else {
         return None;
     };
-    let parsed: Vec<PolicyValueRow> = rows
-        .iter()
-        .map(|row| {
-            let Value::Map(entries) = row else {
-                return None;
-            };
-            if !(4..=6).contains(&entries.len())
-                || entries.iter().any(|(key, _)| {
-                    !matches!(
-                        key.as_str(),
-                        Some("row_ref" | "key" | "value" | "scope" | "why" | "override_parent")
-                    )
-                })
-            {
-                return None;
-            }
-            let row_ref = field(entries, "row_ref")?.as_str()?;
-            if row_ref.is_empty()
-                || row_ref.len() > 96
-                || !row_ref.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || matches!(byte, b'.' | b'_' | b'-')
-                })
-            {
-                return None;
-            }
-            let key = PolicyValueKey::parse(field(entries, "key")?.as_str()?)?;
-            let raw = field(entries, "value")?;
-            let value = match key {
-                PolicyValueKey::CommOptOutPosture => {
-                    PolicyValue::CommOptOutPosture(match raw.as_str()? {
-                        "escalate" => crate::gate::resolution::CommOptOutPosture::Escalate,
-                        "allow_with_receipt" => {
-                            crate::gate::resolution::CommOptOutPosture::AllowWithReceipt
-                        }
-                        _ => return None,
+    let parsed: Vec<PolicyValueRow> =
+        rows.iter()
+            .map(|row| {
+                let Value::Map(entries) = row else {
+                    return None;
+                };
+                if !(4..=6).contains(&entries.len())
+                    || entries.iter().any(|(key, _)| {
+                        !matches!(
+                            key.as_str(),
+                            Some("row_ref" | "key" | "value" | "scope" | "why" | "override_parent")
+                        )
                     })
-                }
-                PolicyValueKey::ProposalCheckThreshold => {
-                    PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)
-                }
-                PolicyValueKey::ProviderCooldownDefaultSeconds => {
-                    PolicyValue::ProviderCooldownDefaultSeconds(cooldown_seconds(raw)?)
-                }
-                PolicyValueKey::ProviderCooldownMaxSeconds => {
-                    PolicyValue::ProviderCooldownMaxSeconds(cooldown_seconds(raw)?)
-                }
-                PolicyValueKey::ProviderCooldownMaxWaitSeconds => {
-                    PolicyValue::ProviderCooldownMaxWaitSeconds(
-                        raw.as_u64()
-                            .filter(|seconds| *seconds <= PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS)?,
-                    )
-                }
-                PolicyValueKey::ScopePrecedence => {
-                    PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
-                }
-            };
-            let Value::Map(scope_entries) = field(entries, "scope")? else {
-                return None;
-            };
-            let scope = match field(scope_entries, "level")?.as_str()? {
-                "vault" if scope_entries.len() == 1 => PolicyRowScope::Vault,
-                level @ ("world" | "project" | "sub_project" | "thread")
-                    if scope_entries.len() == 2 =>
                 {
-                    let reference = field(scope_entries, "ref")?.as_str()?;
-                    let id = EntityId::from_hex(reference).ok()?;
-                    if id.to_hex() != reference {
-                        return None;
-                    }
-                    match level {
-                        "world" => PolicyRowScope::World(id),
-                        "project" => PolicyRowScope::Project(id),
-                        "sub_project" => PolicyRowScope::SubProject(id),
-                        _ => PolicyRowScope::Thread(id),
-                    }
+                    return None;
                 }
-                _ => return None,
-            };
-            let why = parse_optional_why(entries)?;
-            let override_parent = match entries
-                .iter()
-                .filter(|(k, _)| k.as_str() == Some("override_parent"))
-                .count()
-            {
-                0 => false,
-                1 => match field(entries, "override_parent")? {
-                    Value::Boolean(value) => *value,
+                let row_ref = field(entries, "row_ref")?.as_str()?;
+                if row_ref.is_empty()
+                    || row_ref.len() > 96
+                    || !row_ref.bytes().all(|byte| {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(byte, b'.' | b'_' | b'-')
+                    })
+                {
+                    return None;
+                }
+                let key = PolicyValueKey::parse(field(entries, "key")?.as_str()?)?;
+                let raw = field(entries, "value")?;
+                let value =
+                    match key {
+                        PolicyValueKey::ArtifactAnswerQuietSeconds => {
+                            PolicyValue::ArtifactAnswerQuietSeconds(raw.as_u64().filter(
+                                |seconds| *seconds <= ARTIFACT_ANSWER_QUIET_CEILING_SECONDS,
+                            )?)
+                        }
+                        PolicyValueKey::CommOptOutPosture => {
+                            PolicyValue::CommOptOutPosture(match raw.as_str()? {
+                                "escalate" => crate::gate::resolution::CommOptOutPosture::Escalate,
+                                "allow_with_receipt" => {
+                                    crate::gate::resolution::CommOptOutPosture::AllowWithReceipt
+                                }
+                                _ => return None,
+                            })
+                        }
+                        PolicyValueKey::ProposalCheckThreshold => {
+                            PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::ProviderCooldownDefaultSeconds => {
+                            PolicyValue::ProviderCooldownDefaultSeconds(cooldown_seconds(raw)?)
+                        }
+                        PolicyValueKey::ProviderCooldownMaxSeconds => {
+                            PolicyValue::ProviderCooldownMaxSeconds(cooldown_seconds(raw)?)
+                        }
+                        PolicyValueKey::ProviderCooldownMaxWaitSeconds => {
+                            PolicyValue::ProviderCooldownMaxWaitSeconds(raw.as_u64().filter(
+                                |seconds| *seconds <= PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS,
+                            )?)
+                        }
+                        PolicyValueKey::ScopePrecedence => {
+                            PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
+                        }
+                    };
+                let Value::Map(scope_entries) = field(entries, "scope")? else {
+                    return None;
+                };
+                let scope = match field(scope_entries, "level")?.as_str()? {
+                    "vault" if scope_entries.len() == 1 => PolicyRowScope::Vault,
+                    level @ ("world" | "project" | "sub_project" | "thread")
+                        if scope_entries.len() == 2 =>
+                    {
+                        let reference = field(scope_entries, "ref")?.as_str()?;
+                        let id = EntityId::from_hex(reference).ok()?;
+                        if id.to_hex() != reference {
+                            return None;
+                        }
+                        match level {
+                            "world" => PolicyRowScope::World(id),
+                            "project" => PolicyRowScope::Project(id),
+                            "sub_project" => PolicyRowScope::SubProject(id),
+                            _ => PolicyRowScope::Thread(id),
+                        }
+                    }
                     _ => return None,
-                },
-                _ => return None,
-            };
-            if override_parent
-                && (key == PolicyValueKey::ScopePrecedence || scope == PolicyRowScope::Vault)
-            {
-                return None;
-            }
-            Some(PolicyValueRow {
-                row_ref: row_ref.to_owned(),
-                key,
-                value,
-                scope,
-                why,
-                override_parent,
+                };
+                let why = parse_optional_why(entries)?;
+                let override_parent = match entries
+                    .iter()
+                    .filter(|(k, _)| k.as_str() == Some("override_parent"))
+                    .count()
+                {
+                    0 => false,
+                    1 => match field(entries, "override_parent")? {
+                        Value::Boolean(value) => *value,
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                if override_parent
+                    && (key == PolicyValueKey::ScopePrecedence || scope == PolicyRowScope::Vault)
+                {
+                    return None;
+                }
+                Some(PolicyValueRow {
+                    row_ref: row_ref.to_owned(),
+                    key,
+                    value,
+                    scope,
+                    why,
+                    override_parent,
+                })
             })
-        })
-        .collect::<Option<_>>()?;
+            .collect::<Option<_>>()?;
     let mut refs = std::collections::BTreeSet::new();
     if parsed.iter().any(|row| !refs.insert(row.row_ref.as_str())) {
         return None;
@@ -439,6 +456,27 @@ pub(super) fn shipped_default_proposal_check_threshold() -> u64 {
         .and_then(|row| row["value"].as_u64())
         .filter(|value| *value > 0)
         .expect("shipped proposal check threshold")
+}
+
+/// The longest a held answer's changed units may wait for quiet: a day.
+const ARTIFACT_ANSWER_QUIET_CEILING_SECONDS: u64 = 86_400;
+
+/// The shipped quiet interval before a held answer's proposer is woken to
+/// re-evaluate the units that changed under it (ARCH-0075 §4).
+pub(super) fn shipped_default_artifact_answer_quiet_seconds() -> u64 {
+    let defaults: serde_json::Value =
+        serde_json::from_str(include_str!("policy_value_defaults.json"))
+            .expect("valid shipped policy defaults");
+    defaults
+        .as_array()
+        .expect("shipped policy rows")
+        .iter()
+        .find(|row| {
+            row["key"] == "artifact_answer_quiet_seconds" && row["scope"]["level"] == "vault"
+        })
+        .and_then(|row| row["value"].as_u64())
+        .filter(|value| *value <= ARTIFACT_ANSWER_QUIET_CEILING_SECONDS)
+        .expect("shipped artifact answer quiet interval")
 }
 
 /// The longest rest a cooldown row may name: a provider's monthly window.

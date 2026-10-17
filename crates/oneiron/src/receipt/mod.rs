@@ -8,6 +8,7 @@
 mod authority_audit;
 mod brief_share;
 mod call;
+mod decision_asks;
 mod direct_dispatch;
 mod dispatch_observation;
 mod family;
@@ -41,6 +42,7 @@ pub use self::call::{
     CallTransport, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
     call_refusal_digest,
 };
+pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, FIELD_LEARNING_DECIDED_BY, FIELD_LEARNING_PATTERN,

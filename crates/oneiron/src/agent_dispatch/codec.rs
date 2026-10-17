@@ -535,13 +535,18 @@ pub(crate) fn attempt_task_type_ref(
     record_dispatch_input(record).map(|input| input.type_ref)
 }
 
-/// The OF-540 team-run stamp a queue row's dispatch payload froze, for the
-/// terminal attempt receipt and the TASK lifecycle bodies. `None` for a row
-/// that is not an agent dispatch and for a dispatch outside any team run.
+/// The OF-540 team-run stamp a queue row's payload froze, for the terminal
+/// attempt receipt and the TASK lifecycle bodies: an agent dispatch's, or
+/// the one an external TASK try froze at its accept. `None` for any other
+/// row and for work outside any team run.
 ///
 /// Strict, unlike the lineage reads: a malformed stamp (or input map) on an
-/// agent-dispatch payload is an error, never a quiet "no team".
+/// agent-dispatch or external-try payload is an error, never a quiet "no
+/// team".
 pub(crate) fn attempt_team_stamp(record: &AttemptRecord) -> Result<Option<super::TeamRunStamp>> {
+    if record.kind == crate::task_verb::TASK_EXTERNAL_ATTEMPT_KIND {
+        return Ok(crate::task_verb::decode_external_task_attempt(&record.payload)?.team);
+    }
     if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return Ok(None);
     }

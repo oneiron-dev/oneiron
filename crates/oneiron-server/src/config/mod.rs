@@ -15,9 +15,11 @@ mod limits;
 mod lookup;
 pub mod merge;
 pub mod models;
+pub mod native_mail;
 pub mod oneironer;
 mod recall;
 pub mod remote_embedder;
+mod self_heal;
 pub mod serve_args;
 pub mod server_config;
 mod skills;
@@ -43,10 +45,12 @@ pub use merge::{
     resolve_serve_config_with_sources,
 };
 pub use models::ModelsConfig;
+pub use native_mail::NativeMailConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };
 pub use recall::RecallConfig;
+pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
 pub use skills::SkillsConfig;

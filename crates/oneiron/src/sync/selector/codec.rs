@@ -20,6 +20,7 @@ use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
 use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
+use crate::provenance::birth::WithheldKey;
 use crate::sync::row_birth::BirthReach;
 
 /// Current selector payload schema version.
@@ -298,8 +299,9 @@ pub fn filtered_window_doc(
 
 /// Destination-aware selector export. The transport supplies a proven machine,
 /// never the selector's actor id; the proof is rechecked in the export snapshot.
-/// Rows' births go only to a machine of this vault's that proved itself; any
-/// other peer is another vault's, and gets none (OF-491).
+/// Rows' births go whole only to a machine of this vault's that proved
+/// itself; any other peer is another vault's, and gets them rewritten, each
+/// ref the copy does not carry masked (OF-491, Q26 = B).
 pub fn filtered_window_doc_for_peer(
     vault: &Vault,
     source: &LoroDoc,
@@ -308,9 +310,13 @@ pub fn filtered_window_doc_for_peer(
     selector: &SyncSelector,
     peer: crate::authority::PeerMachine,
 ) -> Result<LoroDoc> {
+    let withheld;
     let reach = match peer {
         crate::authority::PeerMachine::Proven { .. } => BirthReach::OwnMachines,
-        crate::authority::PeerMachine::Unknown => BirthReach::OtherVault,
+        crate::authority::PeerMachine::Unknown => {
+            withheld = WithheldKey::for_destination(vault, selector.grant_id.as_bytes())?;
+            BirthReach::OtherVault(&withheld)
+        }
     };
     let position = authorize_selector_export(
         vault,
@@ -417,6 +423,8 @@ pub fn guest_share_envelope_body(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
+    // A guest is another vault: its births go masked under its grant's key.
+    let withheld = WithheldKey::for_destination(vault, selector.grant_id.as_bytes())?;
     let filtered = filter_window_doc(
         vault,
         source,
@@ -424,9 +432,9 @@ pub fn guest_share_envelope_body(
         selector,
         &position,
         Withhold::Unknown,
-        BirthReach::OtherVault,
+        BirthReach::OtherVault(&withheld),
     )?;
-    let stripped = strip_guest_share_metadata(&filtered, key)?;
+    let stripped = strip_guest_share_metadata(&filtered, key, &withheld)?;
     let update = stripped
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
