@@ -512,7 +512,9 @@ pub(super) fn window_message(
 /// tombstone, so a summary written after the deletion is born withdrawn and
 /// the run's later seals still advance: a purged newest epoch, which stands
 /// for every call before it, withdraws each epoch after it rather than
-/// parking the run.
+/// parking the run. A run read through a room's view still refuses a purged
+/// source: its overlay mint stages a dependency row per source and has none
+/// to stage for a row that is gone.
 pub(super) fn served_sources(
     dbs: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
@@ -525,9 +527,14 @@ pub(super) fn served_sources(
     }
     let mut sources = Vec::new();
     for id in found {
-        if crate::ports::EntityStoreRead::port_entity_record(dbs, rtxn, &id)?.is_some()
-            || crate::ports::TombstoneStoreRead::port_deletion_state(dbs, rtxn, &id)?.deleted
-        {
+        if crate::ports::EntityStoreRead::port_entity_record(dbs, rtxn, &id)?.is_some() {
+            sources.push(id);
+        } else if crate::ports::TombstoneStoreRead::port_deletion_state(dbs, rtxn, &id)?.deleted {
+            if dbs.is_union() {
+                return Err(crate::Error::InvariantViolation(
+                    "a record the run was served has been purged",
+                ));
+            }
             sources.push(id);
         }
     }
