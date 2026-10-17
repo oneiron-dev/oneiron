@@ -35,6 +35,9 @@ pub(super) struct Seed {
     pub mode: MessageWriteMode,
     pub idle_timeout_ms: u64,
     pub continuation: bool,
+    /// The reply a Retry's new MESSAGE answers again: its terminal
+    /// transaction links the two by a `regenerates` edge.
+    pub regenerates: Option<EntityId>,
     /// The accepted text as of the last checkpoint: what the stream's
     /// `pending` holds, so for a continuation the suffix past its committed
     /// base. Empty in a resident stream's state, whose `pending` is the live

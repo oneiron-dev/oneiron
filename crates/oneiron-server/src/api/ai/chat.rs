@@ -943,6 +943,9 @@ pub(crate) struct Answer {
 pub(crate) enum AnswerOpen {
     /// A new MESSAGE in the turn this names.
     Turn(WitnessTurn),
+    /// A Retry's new MESSAGE in the turn this names, answering `source`
+    /// again: its terminal links the two by a `regenerates` edge.
+    Retry { turn: WitnessTurn, source: EntityId },
     /// More of an existing MESSAGE, after its saved text.
     Continue(EntityId),
 }
@@ -994,6 +997,9 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         let memory = answer_memory(&vault, agent, session_key);
         match &open {
             AnswerOpen::Turn(turn) => memory.begin_message_stream(turn, Some(mode)),
+            AnswerOpen::Retry { turn, source } => {
+                memory.begin_message_regeneration(turn, *source, Some(mode))
+            }
             AnswerOpen::Continue(message) => memory.begin_message_continuation(message, Some(mode)),
         }
     });

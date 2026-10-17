@@ -188,13 +188,23 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
     .map_err(|stop| stop.to_string())?;
     let open = match action.action {
         TurnAction::Continue => AnswerOpen::Continue(action.message),
-        TurnAction::Retry => AnswerOpen::Turn(witness_turn(
-            &action.conversation.to_hex(),
-            None,
-            WitnessAuthor::Companion,
-            String::new(),
-            vault.now_recorded_at(),
-        )),
+        // On a DAG conversation the reply's TURN is appended first, a sibling
+        // of the old one that leaves HEAD where it is; elsewhere the reply's
+        // stream mints it.
+        TurnAction::Retry => {
+            let turn = blocking(|| vault.memory(actor, class).turn_action_retry_turn(&action))
+                .map_err(|error| error.to_string())?;
+            AnswerOpen::Retry {
+                turn: witness_turn(
+                    &action.conversation.to_hex(),
+                    turn,
+                    WitnessAuthor::Companion,
+                    String::new(),
+                    vault.now_recorded_at(),
+                ),
+                source: action.message,
+            }
+        }
     };
     let answering = begin_answer(
         ai,

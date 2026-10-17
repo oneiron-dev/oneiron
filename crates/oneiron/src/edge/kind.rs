@@ -175,4 +175,8 @@ edge_kinds! {
     AddressedTo = 29 => "addressed_to",
     /// Reply pointer, independent of the canonical parent.
     RepliesTo = 30 => "replies_to",
+    /// This MESSAGE is a new attempt at the target MESSAGE's answer: a Retry
+    /// reply names the reply it answers again. It never suppresses the old
+    /// reply and is never traversed.
+    Regenerates = 31 => "regenerates",
 }

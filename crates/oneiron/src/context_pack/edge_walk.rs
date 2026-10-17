@@ -174,6 +174,7 @@ pub(super) fn walk_edges(
                         | EdgeKind::SpawnedBy
                         | EdgeKind::AddressedTo
                         | EdgeKind::RepliesTo
+                        | EdgeKind::Regenerates
                 ) {
                     continue;
                 }
