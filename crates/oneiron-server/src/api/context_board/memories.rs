@@ -454,7 +454,8 @@ impl PinsReceipt {
         })
         .await
         .map_err(|_| ApiError::internal_server_error("disclosure receipt task failed"))?
-        .map_err(|error| core_engine_error("disclosure receipt failed", error))
+        .map_err(|error| core_engine_error("disclosure receipt failed", error))?;
+        Ok(())
     }
 }
 
