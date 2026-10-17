@@ -4,19 +4,32 @@
 //! key bytes. A reply is two: the JSON [`ReplyHeader`] and the stripped body.
 //! Each segment is a 4-byte big-endian length, then its bytes. The key travels
 //! raw, with no encoded copy, and is read into a buffer wiped on drop.
+//!
+//! A reply whose shape streams ([`crate::Shape::streams`]) can run past one
+//! segment, so its body comes as chunks: the header, then one segment per
+//! chunk of at most [`STREAM_CHUNK`] bytes, then an empty segment and a JSON
+//! trailer that says whether the body ended clean or was cut, and why. The
+//! daemon keeps the chunks only once the trailer says clean.
 
 use std::io;
 
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::Zeroizing;
 
-use crate::{CallHeader, Refusal, ReplyHeader};
+use crate::{CallHeader, Failure, Refusal, ReplyHeader};
 
 /// The frame protocol's version.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The largest request or reply body, the server transport's own bound.
 pub const MAX_BODY: usize = 16 << 20;
+
+/// The largest streamed reply body, a binary one ([`crate::Shape::streams`]).
+pub const MAX_STREAM: usize = 512 << 20;
+
+/// The largest chunk of a streamed reply.
+pub(crate) const STREAM_CHUNK: usize = 1 << 20;
 
 /// The largest key.
 pub const MAX_SECRET: usize = 4096;
@@ -104,9 +117,76 @@ pub(crate) async fn write_reply<W: AsyncWrite + Unpin>(
 pub(crate) async fn read_reply<R: AsyncRead + Unpin>(
     reader: &mut R,
 ) -> io::Result<(ReplyHeader, Zeroizing<Vec<u8>>)> {
-    let header = read_segment(reader, MAX_HEADER).await?;
-    let header: ReplyHeader =
-        serde_json::from_slice(&header).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+    let header = read_reply_header(reader).await?;
     let body = read_segment(reader, MAX_BODY).await?;
     Ok((header, body))
+}
+
+/// Reads a reply's header: a streamed reply's chunks follow it.
+pub(crate) async fn read_reply_header<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<ReplyHeader> {
+    let header = read_segment(reader, MAX_HEADER).await?;
+    serde_json::from_slice(&header).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+}
+
+/// The trailer after a streamed reply's last chunk.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamEnd {
+    /// Why the body was cut, or `None` when it ended clean.
+    failure: Option<Failure>,
+}
+
+/// Writes a streamed reply's header.
+pub(crate) async fn write_stream_header<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    header: &ReplyHeader,
+) -> io::Result<()> {
+    let header = serde_json::to_vec(header).map_err(io::Error::other)?;
+    write_segment(writer, &header).await?;
+    writer.flush().await
+}
+
+/// Writes one chunk of a streamed reply: not empty, at most
+/// [`STREAM_CHUNK`] bytes.
+pub(crate) async fn write_chunk<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    chunk: &[u8],
+) -> io::Result<()> {
+    if chunk.is_empty() || chunk.len() > STREAM_CHUNK {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    write_segment(writer, chunk).await?;
+    writer.flush().await
+}
+
+/// Ends a streamed reply: clean, or cut for `failure`.
+pub(crate) async fn write_stream_end<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    failure: Option<Failure>,
+) -> io::Result<()> {
+    let end = serde_json::to_vec(&StreamEnd { failure }).map_err(io::Error::other)?;
+    write_segment(writer, &[]).await?;
+    write_segment(writer, &end).await?;
+    writer.flush().await
+}
+
+/// Reads the next chunk of a streamed reply, or `None` at its end.
+pub(crate) async fn read_chunk<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<Option<Zeroizing<Vec<u8>>>> {
+    let chunk = read_segment(reader, STREAM_CHUNK).await?;
+    Ok((!chunk.is_empty()).then_some(chunk))
+}
+
+/// Reads the trailer after a streamed reply's last chunk: `None` when the
+/// body ended clean, or why it was cut.
+pub(crate) async fn read_stream_end<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> io::Result<Option<Failure>> {
+    let end = read_segment(reader, MAX_HEADER).await?;
+    serde_json::from_slice::<StreamEnd>(&end)
+        .map(|end| end.failure)
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
 }
