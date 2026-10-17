@@ -18884,18 +18884,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AppliedMaintenance",
-      "MaintenanceRevert"
+      "MaintenanceRevert",
+      "MaintenanceTarget"
      ],
      "path": "src/dreamer_runner/maintenance/applied.rs",
      "purpose": "Dreamer maintenance that applies at once (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
-      "const": 2,
-      "crate-vis": 3,
-      "fn": 2,
+      "const": 3,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -19091,7 +19093,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "IdentityActNow",
@@ -19113,7 +19115,7 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "enum": 4,
       "fn": 8,
       "struct": 10
@@ -19158,13 +19160,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/proposals.rs",
      "purpose": "The shared Generated writer for deterministic maintenance findings",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -19192,7 +19194,7 @@
      "path": "src/dreamer_runner/maintenance/representation/context.rs",
      "purpose": "Actor-scoped evidence and owner-authored voice reads, with exact revision pins",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 2
      }
@@ -19207,7 +19209,7 @@
       "RepresentationSourceRef"
      ],
      "path": "src/dreamer_runner/maintenance/representation/mod.rs",
-     "purpose": "Evidence-citing user-voice proposals",
+     "purpose": "Evidence-citing user-voice plans",
      "surface": {
       "const": 1,
       "crate-vis": 2,
@@ -19218,7 +19220,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PrematerializedDraft",
@@ -19228,7 +19230,7 @@
      "path": "src/dreamer_runner/maintenance/representation/proposal.rs",
      "purpose": "Pre-materialized author seam and durable maintenance execution",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -19292,7 +19294,7 @@
      "purpose": "Relationship stewardship (ARCH-0026, Forward and relationships)",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 4,
       "struct": 4
      }
@@ -51555,7 +51557,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -54144,7 +54146,7 @@
      "path": "src/engine.rs",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…",
      "surface": {
-      "fn": 6
+      "fn": 10
      }
     },
     {
@@ -59886,14 +59888,15 @@
      "notable": [
       "OneironAppHost",
       "OneironEngine",
+      "OneironEngineConnection",
       "OneironReply",
       "OneironSecretSink"
      ],
      "path": "src/lib/engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault…",
      "surface": {
-      "fn": 8,
-      "struct": 4
+      "fn": 13,
+      "struct": 5
      }
     },
     {
@@ -63285,6 +63288,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "InProcessReply",
+      "InProcessRequest",
+      "InProcessTransport"
+     ],
+     "path": "src/in_process.rs",
+     "purpose": "A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket…",
+     "surface": {
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/invocation.rs",
      "purpose": "Client invocation ids (ARCH-0080 §3, OF-580)",
@@ -63321,7 +63340,7 @@
      "surface": {
       "fn": 16,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 2
      }
     },
@@ -63357,7 +63376,7 @@
      "path": "src/remote/mod.rs",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -63397,6 +63416,16 @@
      "path": "src/remote/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/remote/wire.rs",
+     "purpose": "The transport seam under [`RemoteClient`] (OF-237): what carries a request this client signed, and the reply…",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -63484,6 +63513,13 @@
      "layout": "file",
      "purpose": "The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7)"
     },
+    "in_process": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket…"
+    },
     "invocation": {
      "files": 1,
      "impl_vault": false,
@@ -63506,7 +63542,7 @@
      "purpose": "Own-server raw LLM transport over the SDK's single authenticated HTTP client"
     },
     "remote": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63515,7 +63551,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 14,
+   "source_files": 16,
    "test_files": 8
   },
   "oneiron-retrieval": {
@@ -69577,7 +69613,9 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BlockingConnection",
       "BlockingEngine",
+      "EmbeddedConnection",
       "EmbeddedEngine",
       "EmbeddedReply",
       "EmbeddedRequest"
@@ -69585,8 +69623,9 @@
      "path": "src/embedded/engine.rs",
      "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
      "surface": {
-      "fn": 20,
-      "struct": 4
+      "const": 1,
+      "fn": 28,
+      "struct": 6
      }
     },
     {
@@ -73697,11 +73736,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AppHostCallbacks",
       "EmbeddedEngine",
+      "EngineConnection",
       "EngineHeader",
       "EngineLimits",
       "EngineReply",
@@ -73710,8 +73750,8 @@
      "path": "src/embedded_engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…",
      "surface": {
-      "fn": 6,
-      "struct": 5,
+      "fn": 11,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -74875,7 +74915,7 @@
     "embedded_engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…"
     },
