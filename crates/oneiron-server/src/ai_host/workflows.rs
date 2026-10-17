@@ -13,6 +13,9 @@
 //! wrap-up warning; with no spend left it is held before its model call, its
 //! saved results kept and its checkpoint recorded, resumable and never failed
 //! (OF-532, OF-541); the engine pump settles each leaf's lease.
+//! A leaf that ran binds its execution context while its lease still holds,
+//! on the host's decision ladder once the host installed one, so its pack
+//! receipt closes attributed (OF-540).
 //!
 //! On the same signal it asks each queued project question (OF-501): a
 //! person's turn queued it by reference, and it runs here, off that turn, on
@@ -27,6 +30,7 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint};
 use oneiron::failure_ladder::FailureLadderOutcome;
+use oneiron::llm::decision::HeldLadder;
 use tokio::sync::{broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
@@ -45,6 +49,8 @@ pub(super) struct WorkflowPump {
     thread: std::thread::JoinHandle<()>,
     /// The host's typed project question, once the host holds a ladder for it.
     detection: Arc<OnceLock<ProjectDetection>>,
+    /// The host's decision ladder, whose judge a leaf's attribution names.
+    attribution: Arc<OnceLock<HeldLadder>>,
 }
 
 impl WorkflowPump {
@@ -56,6 +62,8 @@ impl WorkflowPump {
         let (stop, stopped) = watch::channel(false);
         let detection = Arc::new(OnceLock::new());
         let questions = Arc::clone(&detection);
+        let attribution = Arc::new(OnceLock::new());
+        let judges = Arc::clone(&attribution);
         // Waiting from the moment the pump exists, so a status read right
         // after start never sees the pre-start state.
         status.update(|status| status.workflows = WorkStatus::waiting());
@@ -75,12 +83,15 @@ impl WorkflowPump {
                         return;
                     }
                 };
-                pump(&runtime, &vault, &runner, &status, &questions, stopped);
+                pump(
+                    &runtime, &vault, &runner, &status, &questions, &judges, stopped,
+                );
             })?;
         Ok(Self {
             stop,
             thread,
             detection,
+            attribution,
         })
     }
 
@@ -91,6 +102,15 @@ impl WorkflowPump {
     #[allow(dead_code)] // No in-tree host builds the project question's ladder yet.
     pub(super) fn with_project_detection(&self, detection: ProjectDetection) -> bool {
         self.detection.set(detection).is_ok()
+    }
+
+    /// Installs the host's decision ladder for leaf attribution: from the next
+    /// leaf on, each one that ran binds its execution context, judged on it.
+    /// Until then leaves close unattributed. `false` when one is installed
+    /// already.
+    #[allow(dead_code)] // The host's attach installs it once it staffs its ladder.
+    pub(super) fn with_attribution_ladder(&self, judges: HeldLadder) -> bool {
+        self.attribution.set(judges).is_ok()
     }
 
     /// Asks the pump to stop between steps, without waiting.
@@ -111,6 +131,7 @@ fn pump(
     runner: &StepRunner,
     status: &StatusCell,
     detection: &OnceLock<ProjectDetection>,
+    attribution: &OnceLock<HeldLadder>,
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
@@ -119,7 +140,7 @@ fn pump(
             return;
         }
         ask_project_questions(vault, detection, &stopped);
-        let open = match pump_once(runtime, vault, runner, status, &stopped) {
+        let open = match pump_once(runtime, vault, runner, status, attribution, &stopped) {
             Ok(open) => open,
             Err(error) => {
                 tracing::error!(%error, "workflow pump pass failed");
@@ -151,6 +172,7 @@ fn pump_once(
     vault: &Vault,
     runner: &StepRunner,
     status: &StatusCell,
+    attribution: &OnceLock<HeldLadder>,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
     let held = match vault.release_annotation_holds() {
@@ -224,7 +246,11 @@ fn pump_once(
                             )));
                         }
                     }
-                    match runner.run(runtime, vault, step, context) {
+                    let ran = runner.run(runtime, vault, step, context);
+                    // OF-540: bound before the engine completes the leaf or
+                    // its failure is settled, while the lease still holds.
+                    bind_attribution(vault, step.attempt.id, attribution);
+                    match ran {
                         Ok(output) => Ok(output),
                         // The meter ran out inside the model call: held as
                         // at the boundary, from the checkpoint before the
@@ -352,6 +378,25 @@ fn ask_project_questions(
                 return;
             }
         }
+    }
+}
+
+/// Binds the execution context of the leaf `attempt` that just ran. One that
+/// cannot bind leaves the leaf to close unattributed; its work stands.
+fn bind_attribution(vault: &Vault, attempt: AttemptId, attribution: &OnceLock<HeldLadder>) {
+    static UNINSTALLED: std::sync::Once = std::sync::Once::new();
+    let Some(judges) = attribution.get() else {
+        UNINSTALLED.call_once(|| {
+            tracing::warn!(
+                "a workflow leaf ran before the host installed its decision ladder; it closes unattributed"
+            );
+        });
+        return;
+    };
+    if let Err(error) =
+        oneiron::skill_attribution::bind_agent_run_attribution(vault, attempt, LEASE_OWNER, judges)
+    {
+        tracing::warn!(%error, ?attempt, "a workflow leaf's pack attribution did not bind");
     }
 }
 
