@@ -17742,6 +17742,8 @@ pub struct DeckOracleRequest {
 pub struct DeckPreviewRequest {
     #[serde(rename = "artifact_ref")]
     pub artifact_ref: String,
+    #[serde(rename = "fork_ref", default, skip_serializing_if = "Option::is_none")]
+    pub fork_ref: Option<String>,
     #[serde(rename = "slides")]
     pub slides: Vec<u64>,
 }

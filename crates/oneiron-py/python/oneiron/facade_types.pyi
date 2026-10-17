@@ -6140,6 +6140,7 @@ class DeckOracleRequest(TypedDict):
     receipt: OracleReceipt
 class DeckPreviewRequest(TypedDict):
     artifact_ref: str
+    fork_ref: NotRequired[str | None]
     slides: list[int]
 class DeckPreviewSlide(TypedDict):
     slide: int

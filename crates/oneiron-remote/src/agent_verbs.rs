@@ -4720,7 +4720,7 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.body.deck.oracle", value)
     }
-    /// The asked slides of a deck's head, drawn by the host's review renderer (provisional).
+    /// The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional).
     pub fn vault_artifacts_body_deck_preview(
         &self,
         input: &oneiron::office_body::DeckPreviewRequest,
