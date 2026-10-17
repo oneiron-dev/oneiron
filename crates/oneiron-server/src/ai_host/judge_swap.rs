@@ -1,17 +1,19 @@
 //! The Coach's judge-swap upkeep on this server (OF-184). Its kept
 //! judgments are the replay judge's decision journal, and the registered
-//! judge's ladder answers them again; the engine rules the swap. No third
-//! judge breaks ties here yet: the configured models name no model family.
+//! judge's ladder answers them again; the engine rules the swap. A tie is
+//! broken by the first served model whose family is neither judge's, asked
+//! alone on its own ladder.
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
-use oneiron::Vault;
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
+use oneiron::llm::ModelId;
 use oneiron::llm::decision::{DecisionAnswer, Reversibility, TypedDecision};
 use oneiron::skill_optimize::{
     HeldOutReplayNotes, JudgeShadowAnswer, JudgeShadowCase, JudgeShadowHost,
 };
 
+use crate::decision_host::MODEL_DIAL;
 use crate::replay_judge::{JournalRow, ServeReplayJudge};
 use crate::server::SyncServer;
 
@@ -26,7 +28,7 @@ pub(super) fn run(
         return Ok(());
     };
     let host = JournalShadow {
-        vault: server.vault(),
+        server,
         judge,
         rows: RefCell::new(BTreeMap::new()),
     };
@@ -37,7 +39,7 @@ pub(super) fn run(
 
 /// The journal's judgments, keyed by case, as the engine reads them.
 struct JournalShadow<'a> {
-    vault: &'a Vault,
+    server: &'a SyncServer,
     judge: &'static ServeReplayJudge,
     rows: RefCell<BTreeMap<String, JournalRow>>,
 }
@@ -46,7 +48,7 @@ impl JudgeShadowHost for JournalShadow<'_> {
     fn kept_cases(&self, limit: usize) -> oneiron::Result<Vec<JudgeShadowCase>> {
         let mut rows = self.rows.borrow_mut();
         let mut cases = Vec::new();
-        for row in crate::replay_judge::journal(self.vault, limit)?
+        for row in crate::replay_judge::journal(self.server.vault(), limit)?
             .into_iter()
             .rev()
         {
@@ -102,6 +104,64 @@ impl JudgeShadowHost for JournalShadow<'_> {
             answer: decision.answer,
         }))
     }
+
+    /// The first served model whose known family is neither judge's, asked
+    /// the kept question alone on its own ladder. `None` when either judge's
+    /// family is unknown, no such model is served, or it abstains.
+    fn tie_break(
+        &self,
+        case: &JudgeShadowCase,
+        incumbent: &str,
+        candidate: &str,
+    ) -> oneiron::Result<Option<JudgeShadowAnswer>> {
+        let (Some(old), Some(new)) = (model_of(incumbent), model_of(candidate)) else {
+            return Ok(None);
+        };
+        let Some(third) = self
+            .server
+            .models_outside_families(&[&old, &new])?
+            .into_iter()
+            .next()
+        else {
+            return Ok(None);
+        };
+        let rows = self.rows.borrow();
+        let Some(row) = rows.get(&case.case_ref) else {
+            return Ok(None);
+        };
+        let ladder = match self.server.decision_ladder_for_model(&third) {
+            Ok(ladder) => ladder,
+            Err(error) => {
+                tracing::debug!(%error, model = %third, "no third judge's ladder");
+                return Ok(None);
+            }
+        };
+        let decisions = self.judge.decisions();
+        let decision = ladder.ladder().run(
+            &row.question,
+            decisions.principal,
+            &row.decision.evidence,
+            &case.state,
+            MODEL_DIAL,
+            &decisions.bands,
+            Reversibility::ReversibleRead,
+            decisions.deadline,
+        )?;
+        if matches!(decision.answer, DecisionAnswer::Abstain) {
+            return Ok(None);
+        }
+        Ok(judge_of(&decision).map(|judge| JudgeShadowAnswer {
+            judge,
+            answer: decision.answer,
+        }))
+    }
+}
+
+/// The model a judge names, `model@version` split at its last `@`.
+fn model_of(judge: &str) -> Option<ModelId> {
+    judge
+        .rsplit_once('@')
+        .and_then(|(model, _)| ModelId::new(model).ok())
 }
 
 /// The rung that answered, `model@version`.
