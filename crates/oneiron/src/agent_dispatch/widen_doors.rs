@@ -196,6 +196,7 @@ pub(crate) fn widen_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>
             receipt_ref: None,
             payload_ref: Some(proposal_id),
             concern: None,
+            diary_review: None,
         });
     }
     Ok(items)

@@ -413,6 +413,7 @@ fn mcp_call_receipt(
     actor: &McpResolvedActor,
     tool: String,
     request_digest: String,
+    inputs: Option<oneiron::receipt::ActionInputs>,
     anonymous: bool,
     called: Result<Value, McpGatewayError>,
 ) -> Result<Value, McpGatewayError> {
@@ -451,6 +452,7 @@ fn mcp_call_receipt(
             outcome,
             request_digest,
             result_digest,
+            inputs,
             served: Vec::new(),
         },
     );
@@ -546,6 +548,9 @@ pub(crate) async fn handle_mcp_request(
                 .to_owned();
             let request_digest =
                 oneiron::receipt::call_json_digest(request.params.as_ref().unwrap_or(&Value::Null));
+            // OF-568: what the call reads, captured before it runs.
+            let inputs =
+                crate::api::call_receipt::action_inputs(server, &tool, request.params.as_ref());
             // OF-063: only a caller whose credential's principal is verified
             // in the session keeps no record, judged on arrival and again
             // before the receipt is written; a credential naming no
@@ -586,7 +591,15 @@ pub(crate) async fn handle_mcp_request(
             });
             let anonymous = anonymous
                 || crate::api::call_receipt::in_anonymous_session(server, headers, principal);
-            mcp_call_receipt(server, &actor, tool, request_digest, anonymous, called)
+            mcp_call_receipt(
+                server,
+                &actor,
+                tool,
+                request_digest,
+                inputs,
+                anonymous,
+                called,
+            )
         }
         _ => Err(McpGatewayError::new(
             -32601,
