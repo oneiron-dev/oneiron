@@ -52,13 +52,7 @@ pub(crate) trait PortableSideTable: Sync {
     fn stored(&self, store: &Store, txn: &RoTxn<'_>, key: &[u8]) -> Result<Option<Vec<u8>>>;
 
     /// Writes one row through the table.
-    fn restore(
-        &self,
-        store: &Store,
-        wtxn: &mut RwTxn<'_>,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<()>;
+    fn restore(&self, store: &Store, wtxn: &mut RwTxn<'_>, key: &[u8], value: &[u8]) -> Result<()>;
 }
 
 impl<K: SideKey, V, C: SideCodec<V>> PortableSideTable for SideTable<K, V, C> {
@@ -84,13 +78,7 @@ impl<K: SideKey, V, C: SideCodec<V>> PortableSideTable for SideTable<K, V, C> {
         self.get_bytes(store, txn, &typed)
     }
 
-    fn restore(
-        &self,
-        store: &Store,
-        wtxn: &mut RwTxn<'_>,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<()> {
+    fn restore(&self, store: &Store, wtxn: &mut RwTxn<'_>, key: &[u8], value: &[u8]) -> Result<()> {
         let typed = K::decode_key(key).ok_or_else(|| invalid("side row key"))?;
         let value = self.decode_value(value)?;
         self.put(store, wtxn, &typed, &value)
@@ -116,7 +104,9 @@ fn lent(family: ArchiveSideFamily) -> Result<LentSideTable> {
     lent_tables()
         .into_iter()
         .find(|table| table.decl().name == name)
-        .ok_or(Error::InvariantViolation("archive side table not lent by its owner"))
+        .ok_or(Error::InvariantViolation(
+            "archive side table not lent by its owner",
+        ))
 }
 
 /// One allowlisted side table, in restore order: within each family its
@@ -298,9 +288,12 @@ impl ArchiveSideFamily {
         match self {
             Self::BlobVersion => spec(&t::BLOB_ARTIFACT_VERSION, &[Id, U64], MessagePack, Blob),
             Self::BlobAssetRef => spec(&t::BLOB_ARTIFACT_ASSET_REF, &[H, Id], Empty, Blob),
-            Self::BlobBornFrom => {
-                spec(&t::BLOB_ARTIFACT_BORN_FROM, &[Source, Id, U64], MessagePack, Blob)
-            }
+            Self::BlobBornFrom => spec(
+                &t::BLOB_ARTIFACT_BORN_FROM,
+                &[Source, Id, U64],
+                MessagePack,
+                Blob,
+            ),
             Self::BlobHighwater => spec(&t::BLOB_ARTIFACT_HIGHWATER, &[Id], U64Be, Blob),
             Self::BlobHead => spec(&t::BLOB_ARTIFACT_HEAD, &[Id], MessagePack, Blob),
             Self::LfsChunkMark => spec(&t::ORIGIN_LFS_CHUNK_MARK, &[Id], Hash, Lfs),
@@ -312,48 +305,72 @@ impl ArchiveSideFamily {
             Self::LfsDeleted => spec(&t::ORIGIN_LFS_DELETED, &[H], Empty, Lfs),
             Self::LfsCdc => spec(&t::ORIGIN_LFS_CDC_SEED, &[], U64Le, Lfs),
             Self::CodebaseSnapshot => spec(&t::CODEBASE_SNAPSHOT, &[Id], MessagePack, Codebase),
-            Self::CodebaseCustody => {
-                spec(&t::SECRET_SNAPSHOT_CODEBASE_CUSTODY, &[Text], MessagePack, Codebase)
-            }
+            Self::CodebaseCustody => spec(
+                &t::SECRET_SNAPSHOT_CODEBASE_CUSTODY,
+                &[Text],
+                MessagePack,
+                Codebase,
+            ),
             Self::CodebaseRepo => spec(&t::CODEBASE_REPO_INDEX, &[Text, Nul, Id], Empty, Codebase),
-            Self::CodebaseProject => {
-                spec(&t::CODEBASE_PROJECT_INDEX, &[Text, Nul, Id], Empty, Codebase)
-            }
+            Self::CodebaseProject => spec(
+                &t::CODEBASE_PROJECT_INDEX,
+                &[Text, Nul, Id],
+                Empty,
+                Codebase,
+            ),
             Self::CodebaseFork => spec(&t::CODEBASE_FORK_INDEX, &[H, Nul, Id], Empty, Codebase),
             Self::CodebaseScope => spec(&t::CODEBASE_SCOPE_INDEX, &[H, Nul, Id], Empty, Codebase),
             Self::CodeRevisionRecord => {
                 spec(&t::CODE_REVISION_RECORD, &[Id], MessagePack, CodeRevision)
             }
-            Self::CodeRevisionIntegrity => {
-                spec(&t::CODE_REVISION_INTEGRITY, &[Id], MessagePack, CodeRevision)
-            }
+            Self::CodeRevisionIntegrity => spec(
+                &t::CODE_REVISION_INTEGRITY,
+                &[Id],
+                MessagePack,
+                CodeRevision,
+            ),
             Self::CodeRevisionProposal => {
                 spec(&t::CODE_REVISION_PROPOSAL, &[Id], MessagePack, CodeRevision)
             }
-            Self::CodeRevisionPromotion => {
-                spec(&t::CODE_REVISION_PROMOTION, &[Id], MessagePack, CodeRevision)
-            }
-            Self::CodeRevisionSession => {
-                spec(&t::CODE_REVISION_SESSION_INDEX, &[Id, Id], Empty, CodeRevision)
-            }
-            Self::CodeRevisionParent => {
-                spec(&t::CODE_REVISION_PARENT_INDEX, &[Id, Id], Empty, CodeRevision)
-            }
+            Self::CodeRevisionPromotion => spec(
+                &t::CODE_REVISION_PROMOTION,
+                &[Id],
+                MessagePack,
+                CodeRevision,
+            ),
+            Self::CodeRevisionSession => spec(
+                &t::CODE_REVISION_SESSION_INDEX,
+                &[Id, Id],
+                Empty,
+                CodeRevision,
+            ),
+            Self::CodeRevisionParent => spec(
+                &t::CODE_REVISION_PARENT_INDEX,
+                &[Id, Id],
+                Empty,
+                CodeRevision,
+            ),
             Self::CodeRevisionFork => {
                 spec(&t::CODE_REVISION_FORK, &[Id], MessagePack, CodeRevision)
             }
-            Self::CodeRevisionForkParent => {
-                spec(&t::CODE_REVISION_FORK_PARENT_INDEX, &[Id, Id], Empty, CodeRevision)
-            }
+            Self::CodeRevisionForkParent => spec(
+                &t::CODE_REVISION_FORK_PARENT_INDEX,
+                &[Id, Id],
+                Empty,
+                CodeRevision,
+            ),
             Self::CodeRevisionFrontier => {
                 spec(&t::CODE_REVISION_FRONTIER, &[Id], MessagePack, CodeRevision)
             }
             Self::CodeDocumentIngress => {
                 spec(&t::CODE_DOCUMENT_INGRESS, &[Id], MessagePack, CodeDocument)
             }
-            Self::CodeDocumentFrontier => {
-                spec(&t::CODE_DOCUMENT_FRONTIER, &[H, H], MessagePack, CodeDocument)
-            }
+            Self::CodeDocumentFrontier => spec(
+                &t::CODE_DOCUMENT_FRONTIER,
+                &[H, H],
+                MessagePack,
+                CodeDocument,
+            ),
             Self::CodeDocumentPath => spec(&t::CODE_DOCUMENT_PATH, &[H], Hash, CodeDocument),
             Self::CodeDocumentGeneration => {
                 spec(&t::CODE_DOCUMENT_GENERATION, &[H], U64Be, CodeDocument)
@@ -514,9 +531,8 @@ impl SideRowBytes {
                 Some(ArchiveSideValue::Hash(bytes_to_hex_lower(bytes)))
             }
             (Form::LfsObject, bytes) if bytes.len() == 2 * ENTITY_ID_LEN + 16 => {
-                let word = |at: usize| {
-                    <[u8; 8]>::try_from(&bytes[at..at + 8]).map(u64::from_le_bytes)
-                };
+                let word =
+                    |at: usize| <[u8; 8]>::try_from(&bytes[at..at + 8]).map(u64::from_le_bytes);
                 Some(ArchiveSideValue::LfsObject(ArchiveLfsObject {
                     asset: bytes_to_hex_lower(&bytes[..ENTITY_ID_LEN]),
                     size_bytes: word(ENTITY_ID_LEN).map_err(|_| invalid("lfs object"))?,
@@ -847,9 +863,7 @@ impl SideContext {
                     }
                 }
                 ArchiveSideFamily::CodebaseFork => {
-                    if let (Some(fork), Some(snapshot)) =
-                        (array_at::<32>(key, 0), id_at(key, 33))
-                    {
+                    if let (Some(fork), Some(snapshot)) = (array_at::<32>(key, 0), id_at(key, 33)) {
                         let first = context.codebase_by_fork.entry(fork).or_insert(snapshot);
                         *first = (*first).min(snapshot);
                     }

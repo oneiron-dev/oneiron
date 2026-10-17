@@ -114,6 +114,7 @@ pub use entity_erase::{
 };
 pub use export::{
     EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, ExportReceipt, MemoryExport,
+    MemoryExportReceipt,
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,

@@ -47,7 +47,7 @@ mod okf_bundle;
 mod vault_archive;
 mod vault_document;
 pub use export_value::{ExportBody, ExportBodyFile, ExportValue};
-pub(crate) use vault_document::serialize_vault_snapshot;
+pub(crate) use vault_document::{DocumentTail, DocumentWriter};
 
 mod source_tree;
 pub(crate) use source_tree::export_source_tree;

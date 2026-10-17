@@ -78,8 +78,29 @@ impl WholeVaultDocumentManifest {
     }
 }
 
-/// An archive payload and its standalone validating manifest. Fields are private:
-/// only the serializer can produce the credential-nulling proof on this result.
+/// An export written to a caller's file (FIX 2766): the manifest it carries
+/// and the diaries it read. The archive is the caller's file; no byte of it
+/// is held here. Fields are private: only the serializer produces one.
+#[derive(Debug, Clone)]
+pub struct WholeVaultExportReceipt {
+    pub(crate) manifest: WholeVaultDocumentManifest,
+    /// OF-490: the diaries this export read, for the vault's own log.
+    pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
+}
+
+impl WholeVaultExportReceipt {
+    pub fn diary_reads(&self) -> &[super::ExportDiaryRead] {
+        &self.diary_reads
+    }
+    pub fn manifest(&self) -> &WholeVaultDocumentManifest {
+        &self.manifest
+    }
+}
+
+/// An archive payload in memory and its standalone validating manifest, for a
+/// door that answers in one frame; it is built through a spool file (FIX
+/// 2766). Fields are private: only the serializer can produce the
+/// credential-nulling proof on this result.
 #[derive(Debug, Clone)]
 pub struct WholeVaultExport {
     pub(crate) bytes: Vec<u8>,

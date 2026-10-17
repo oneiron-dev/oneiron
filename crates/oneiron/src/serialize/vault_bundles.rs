@@ -1,7 +1,9 @@
 //! Build portable facets after every native body has passed credential nulling.
 use super::{ExportBody, export_source_tree};
 use crate::agent_def::KnowledgeFormat;
-use crate::batch::export::{AgentBundleOmission, ExportAgentBundle, WholeVaultDocument};
+use crate::batch::export::{
+    AgentBundleOmission, ExportAgentBundle, ExportEntity, WholeVaultDocument,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
@@ -15,21 +17,42 @@ pub(crate) fn populate_agent_bundles(
     bindings: &BTreeMap<EntityId, String>,
     knowledge: KnowledgeFormat,
 ) -> Result<()> {
-    let skills = document
-        .skills
+    let skills = skill_records(document.skills.iter().map(|bundle| &bundle.entity));
+    let agents: Vec<_> = document
+        .evidence_ledger
+        .entities
         .iter()
-        .filter_map(|bundle| {
-            let id = EntityId::from_hex(&bundle.entity.id).ok()?;
-            let body = bundle.entity.body.to_bytes().ok()?;
-            let record = crate::skill::decode_skill_record(&body).ok()?;
-            Some((id, record))
-        })
-        .collect::<Vec<_>>();
+        .filter(|row| row.entity_type == ENTITY_TYPE_AGENT_DEF)
+        .collect();
+    document.agent_packs = agent_bundles(&agents, &skills, &document.claims, bindings, knowledge)?;
+    Ok(())
+}
+
+/// Each skill row's decoded record, for resolving the skills an agent names.
+pub(crate) fn skill_records<'a>(
+    rows: impl Iterator<Item = &'a ExportEntity>,
+) -> Vec<(EntityId, crate::skill::SkillRecord)> {
+    rows.filter_map(|row| {
+        let id = EntityId::from_hex(&row.id).ok()?;
+        let body = row.body.to_bytes().ok()?;
+        let record = crate::skill::decode_skill_record(&body).ok()?;
+        Some((id, record))
+    })
+    .collect()
+}
+
+/// The portable facets of `agents` (AGENT_DEF rows, in document order), from
+/// the skill records and the claims they select their knowledge from. A
+/// streamed export (FIX 2766) passes only the claims about these agents.
+pub(crate) fn agent_bundles(
+    agents: &[&ExportEntity],
+    skills: &[(EntityId, crate::skill::SkillRecord)],
+    claims: &[ExportEntity],
+    bindings: &BTreeMap<EntityId, String>,
+    knowledge: KnowledgeFormat,
+) -> Result<Vec<ExportAgentBundle>> {
     let mut bundles = Vec::new();
-    for row in &document.evidence_ledger.entities {
-        if row.entity_type != ENTITY_TYPE_AGENT_DEF {
-            continue;
-        }
+    for row in agents {
         let id = EntityId::from_hex(&row.id)?;
         let mut bundle = ExportAgentBundle {
             entity_id: row.id.clone(),
@@ -43,8 +66,8 @@ pub(crate) fn populate_agent_bundles(
             .ok()
             .and_then(|b| crate::agent_def::decode_agent_definition(&b).ok());
         if let Some(definition) = definition {
-            if let Some(refs) = crate::agent_def::resolve_agent_skill_refs(&definition, &skills) {
-                let selected = crate::agent_def::select_agent_knowledge(&id, &document.claims);
+            if let Some(refs) = crate::agent_def::resolve_agent_skill_refs(&definition, skills) {
+                let selected = crate::agent_def::select_agent_knowledge(&id, claims);
                 let files = crate::agent_def::agent_pack_files_in(
                     knowledge,
                     &id,
@@ -73,6 +96,5 @@ pub(crate) fn populate_agent_bundles(
         }
         bundles.push(bundle);
     }
-    document.agent_packs = bundles;
-    Ok(())
+    Ok(bundles)
 }

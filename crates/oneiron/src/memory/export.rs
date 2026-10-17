@@ -1,6 +1,8 @@
 //! Full-vault memory export: the whole-vault archive (OF-222). Export is never
 //! gated and is never a backup; backups stay the vault's encrypted snapshot.
 
+use std::io::{Read, Seek, SeekFrom, Write};
+
 use serde::{Deserialize, Serialize};
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
@@ -67,6 +69,17 @@ pub struct MemoryExport {
     pub digest: String,
 }
 
+/// One export written to the caller's file (FIX 2766): its format, length and
+/// BLAKE3, as its receipt records them. The archive is the caller's file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryExportReceipt {
+    /// The archive manifest's `format`.
+    pub format: String,
+    pub bytes: u64,
+    /// BLAKE3 of the archive, lowercase hex.
+    pub digest: String,
+}
+
 mod archive_base64 {
     use base64::Engine as _;
     use serde::{Deserialize, Deserializer, Serializer};
@@ -102,6 +115,24 @@ impl Memory<'_> {
         proof: &VerifiedSlip,
     ) -> MemoryResult<MemoryExport> {
         self.export_routed(opts, Some(proof))
+    }
+
+    /// [`Self::export`] written to `sink` as it is built (FIX 2766): a vault
+    /// larger than memory exports, and the archive is never held whole.
+    pub fn export_to<W: Read + Write + Seek>(
+        &self,
+        opts: &ExportOptions,
+        sink: W,
+    ) -> MemoryResult<MemoryExportReceipt> {
+        render_export_to(
+            self.vault,
+            opts,
+            &self.actor.to_hex(),
+            self.locality,
+            WriteActor::new(self.actor, EdgeActorClass::Human),
+            |txn| self.export_admitted_in_txn(txn, None),
+            sink,
+        )
     }
 
     fn export_routed(
@@ -248,6 +279,9 @@ fn validate_verified_owner(
     Ok(())
 }
 
+/// One export in one frame, for a door that answers with the whole archive:
+/// built through a spool file under the vault's staging directory (FIX 2766)
+/// and read back whole only here.
 fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
@@ -256,13 +290,37 @@ fn render_export(
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<MemoryExport> {
+    let mut spool = vault.archive_spool_file()?;
+    let receipt = render_export_to(vault, opts, by, locality, reader, admit, &mut spool)?;
+    spool.seek(SeekFrom::Start(0)).map_err(crate::Error::from)?;
+    let mut archive = Vec::new();
+    spool.read_to_end(&mut archive).map_err(crate::Error::from)?;
+    Ok(MemoryExport {
+        format: receipt.format,
+        archive,
+        digest: receipt.digest,
+    })
+}
+
+/// One export written to `sink` as it is built (FIX 2766): the archive is
+/// never held whole, and its digest and length are read back from `sink`
+/// for the export's receipt.
+fn render_export_to<W: Read + Write + Seek>(
+    vault: &Vault,
+    opts: &ExportOptions,
+    by: &str,
+    locality: CallerLocality,
+    reader: WriteActor,
+    admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    sink: W,
+) -> MemoryResult<MemoryExportReceipt> {
     let name = opts.format.as_deref().unwrap_or(EXPORT_TARGET_ARCHIVE);
     let include_secrets = opts.include_secrets.unwrap_or(true);
-    let export = match name {
+    let (mut sink, export) = match name {
         EXPORT_TARGET_ARCHIVE => {
-            vault.export_whole_vault_with_admission(locality, include_secrets, reader, admit)?
+            vault.export_whole_vault_with_admission(locality, include_secrets, reader, admit, sink)?
         }
-        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, reader, admit)?,
+        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, reader, admit, sink)?,
         _ => {
             return Err(MemoryError::bad_request_with(
                 format!("unknown export format {name:?}"),
@@ -270,15 +328,15 @@ fn render_export(
             ));
         }
     };
-    let format = export.manifest.format.clone();
-    let digest = blake3::hash(&export.bytes).to_hex().to_string();
+    let format = export.manifest().format.clone();
+    let (bytes, digest) = written_digest(&mut sink).map_err(crate::Error::from)?;
     let receipt = ExportReceipt {
         at: vault.store.clock.now_recorded_at(),
         format: name.to_owned(),
-        bytes: export.bytes.len() as u64,
+        bytes,
         digest: digest.clone(),
         by: by.to_owned(),
-        diary_reads: export.diary_reads,
+        diary_reads: export.diary_reads().to_vec(),
     };
     // Export is never gated: a vault that cannot take one more write (a full
     // map, a failing disk) still hands the owner their data, and says so.
@@ -297,11 +355,19 @@ fn render_export(
     }) {
         tracing::warn!(%error, "whole-vault export served without its receipt");
     }
-    Ok(MemoryExport {
+    Ok(MemoryExportReceipt {
         format,
-        archive: export.bytes,
+        bytes,
         digest,
     })
+}
+
+/// The length and BLAKE3 of what `sink` holds, read back from its start.
+fn written_digest<R: Read + Seek>(sink: &mut R) -> std::io::Result<(u64, String)> {
+    sink.seek(SeekFrom::Start(0))?;
+    let mut hasher = blake3::Hasher::new();
+    let bytes = std::io::copy(sink, &mut hasher)?;
+    Ok((bytes, hasher.finalize().to_hex().to_string()))
 }
 
 fn export_forbidden() -> MemoryError {

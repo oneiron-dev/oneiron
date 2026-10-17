@@ -7,10 +7,11 @@
 //! credential-nulled document as the archive, and carries no custody secret.
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::io::Write as _;
+use std::io::{Seek, Write};
 
 use serde_json::{Map, Value};
 
+use crate::batch::export::{ArchiveRecordKind, RecordSpool};
 use crate::error::{Error, Result};
 
 /// The OKF spec version this bundle follows.
@@ -37,75 +38,114 @@ struct Concept {
     description: String,
     timestamp: String,
     entity_type: u8,
-    body: Value,
 }
 
-/// The bundle as one ZIP: `index.md`, one `index.md` per kind, and one
-/// concept per entity.
-pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec<u8>> {
+/// The bundle as one ZIP written to `sink`: `index.md`, one `index.md` per
+/// kind, and one concept per entity. It is cut from the document's spooled
+/// rows (FIX 2766): each concept's row is read back when it is rendered, so
+/// only titles, links and citations are held.
+pub(super) fn write_okf_bundle<W: Write + Seek>(
+    sink: W,
+    groups: &mut BTreeMap<String, RecordSpool>,
+    exported_at: u64,
+) -> Result<W> {
     let mut concepts = Vec::new();
-    let rows = section(document, &["evidence_ledger", "entities"])
-        .chain(section(document, &["claims"]))
-        .chain(section(document, &["skills"]).filter_map(|bundle| bundle.get("entity")));
-    for row in rows {
-        concepts.push(concept(row)?);
-    }
-    concepts.sort_by(|a, b| a.path.cmp(&b.path));
-    let titles: BTreeMap<&str, (&str, &str)> = concepts
-        .iter()
-        .map(|c| (c.id.as_str(), (c.title.as_str(), c.path.as_str())))
-        .collect();
-
-    let mut links: BTreeMap<&str, Vec<(String, &str)>> = BTreeMap::new();
-    for edge in section(document, &["evidence_ledger", "edges"]) {
-        let (Some(source), Some(target), Some(kind)) = (
-            edge.get("source").and_then(Value::as_str),
-            edge.get("target").and_then(Value::as_str),
-            edge.get("kind").and_then(Value::as_u64),
-        ) else {
-            continue;
-        };
-        let name = u8::try_from(kind)
-            .ok()
-            .and_then(crate::edge::EdgeKind::try_from_u8)
-            .map_or_else(
-                || format!("edge {kind}"),
-                |kind| kind.name().replace('_', " "),
-            );
-        links.entry(source).or_default().push((name, target));
-    }
-    let mut citations: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
-    for envelope in section(document, &["derivation_envelopes"]) {
-        if let (Some(id), Some(evidence)) = (
-            envelope.get("id").and_then(Value::as_str),
-            envelope.get("evidence"),
+    let mut links: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    let mut citations: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for (path, spool) in groups.iter_mut() {
+        let kind = spool.kind;
+        if !matches!(
+            kind,
+            ArchiveRecordKind::Entity
+                | ArchiveRecordKind::Claim
+                | ArchiveRecordKind::Skill
+                | ArchiveRecordKind::Edge
+                | ArchiveRecordKind::DerivationEnvelope
         ) {
-            match plain(evidence) {
-                Value::Array(items) => citations.entry(id).or_default().extend(items),
-                Value::Null => {}
-                item => citations.entry(id).or_default().push(item),
+            continue;
+        }
+        let mut rows = spool.rows()?;
+        while let Some((at, row)) = rows.next_row()? {
+            match kind {
+                ArchiveRecordKind::Edge => {
+                    let (Some(source), Some(target), Some(edge_kind)) = (
+                        row.get("source").and_then(Value::as_str),
+                        row.get("target").and_then(Value::as_str),
+                        row.get("kind").and_then(Value::as_u64),
+                    ) else {
+                        continue;
+                    };
+                    let name = u8::try_from(edge_kind)
+                        .ok()
+                        .and_then(crate::edge::EdgeKind::try_from_u8)
+                        .map_or_else(
+                            || format!("edge {edge_kind}"),
+                            |kind| kind.name().replace('_', " "),
+                        );
+                    links
+                        .entry(source.to_owned())
+                        .or_default()
+                        .push((name, target.to_owned()));
+                }
+                ArchiveRecordKind::DerivationEnvelope => {
+                    if let (Some(id), Some(evidence)) =
+                        (row.get("id").and_then(Value::as_str), row.get("evidence"))
+                    {
+                        match plain(evidence) {
+                            Value::Array(items) => {
+                                citations.entry(id.to_owned()).or_default().extend(items);
+                            }
+                            Value::Null => {}
+                            item => citations.entry(id.to_owned()).or_default().push(item),
+                        }
+                    }
+                }
+                _ => {
+                    let entity = if kind == ArchiveRecordKind::Skill {
+                        row.get("entity").ok_or_else(encode_failed)?
+                    } else {
+                        &row
+                    };
+                    // The body is read again when the concept is rendered.
+                    concepts.push((concept(entity)?, path.clone(), at));
+                }
             }
         }
     }
+    concepts.sort_by(|a, b| a.0.path.cmp(&b.0.path));
+    let titles: BTreeMap<&str, (&str, &str)> = concepts
+        .iter()
+        .map(|(c, _, _)| (c.id.as_str(), (c.title.as_str(), c.path.as_str())))
+        .collect();
 
     let stamp = rfc3339(exported_at);
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let mut zip = zip::ZipWriter::new(sink);
     let options = zip::write::FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .large_file(true);
-    let mut member = |name: &str, text: &str| -> Result<()> {
+    let member = |zip: &mut zip::ZipWriter<W>, name: &str, text: &str| -> Result<()> {
         zip.start_file(name, options).map_err(|_| encode_failed())?;
         zip.write_all(text.as_bytes()).map_err(|_| encode_failed())
     };
 
     let mut kinds: BTreeMap<&str, Vec<&Concept>> = BTreeMap::new();
-    for concept in &concepts {
+    for (concept, group, at) in &concepts {
         kinds
             .entry(concept.kind.as_str())
             .or_default()
             .push(concept);
+        let spool = groups.get_mut(group).ok_or_else(encode_failed)?;
+        let row: Value =
+            serde_json::from_slice(&spool.line_at(*at)?).map_err(|_| encode_failed())?;
+        let row = if spool.kind == ArchiveRecordKind::Skill {
+            row.get("entity").cloned().unwrap_or(Value::Null)
+        } else {
+            row
+        };
+        let body = row.get("body").map(plain_body).unwrap_or(Value::Null);
         let text = render_concept(
             concept,
+            &body,
             links
                 .get(concept.id.as_str())
                 .map(Vec::as_slice)
@@ -116,7 +156,7 @@ pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec
                 .unwrap_or_default(),
             &titles,
         );
-        member(&concept.path, &text)?;
+        member(&mut zip, &concept.path, &text)?;
     }
     for (kind, list) in &kinds {
         let mut text = frontmatter(
@@ -136,7 +176,7 @@ pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec
                 concept.description
             );
         }
-        member(&format!("{kind}/index.md"), &text)?;
+        member(&mut zip, &format!("{kind}/index.md"), &text)?;
     }
     let mut root = frontmatter(
         "Index",
@@ -157,8 +197,8 @@ pub(super) fn write_okf_bundle(document: &Value, exported_at: u64) -> Result<Vec
             list.len()
         );
     }
-    member("index.md", &root)?;
-    Ok(zip.finish().map_err(|_| encode_failed())?.into_inner())
+    member(&mut zip, "index.md", &root)?;
+    zip.finish().map_err(|_| encode_failed())
 }
 
 fn concept(row: &Value) -> Result<Concept> {
@@ -197,13 +237,13 @@ fn concept(row: &Value) -> Result<Concept> {
         description,
         timestamp: rfc3339(learned_at),
         entity_type,
-        body,
     })
 }
 
 fn render_concept(
     concept: &Concept,
-    links: &[(String, &str)],
+    body: &Value,
+    links: &[(String, String)],
     citations: &[Value],
     titles: &BTreeMap<&str, (&str, &str)>,
 ) -> String {
@@ -220,13 +260,11 @@ fn render_concept(
     );
     let _ = writeln!(text, "# {}\n", concept.title);
     let main_key = TEXT_KEYS.iter().copied().find(|key| {
-        concept
-            .body
-            .get(*key)
+        body.get(*key)
             .and_then(Value::as_str)
             .is_some_and(|text| !text.trim().is_empty())
     });
-    let main = match &concept.body {
+    let main = match body {
         Value::String(body) => Some(body.as_str()),
         body => main_key
             .and_then(|key| body.get(key))
@@ -235,7 +273,7 @@ fn render_concept(
     if let Some(main) = main {
         let _ = writeln!(text, "{}\n", main.trim_end());
     }
-    if let Value::Object(fields) = &concept.body {
+    if let Value::Object(fields) = body {
         let rest: Vec<_> = fields
             .iter()
             .filter(|(key, value)| !value.is_null() && Some(key.as_str()) != main_key)
@@ -251,7 +289,7 @@ fn render_concept(
     if !links.is_empty() {
         let _ = writeln!(text, "# Links\n");
         for (kind, target) in links {
-            match titles.get(target) {
+            match titles.get(target.as_str()) {
                 Some((title, path)) => {
                     let _ = writeln!(text, "- {kind}: [{}](/{path})", link_text(title));
                 }
@@ -411,14 +449,6 @@ fn rfc3339(seconds: u64) -> String {
             || "1970-01-01T00:00:00Z".to_owned(),
             |stamp| stamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         )
-}
-
-fn section<'a>(document: &'a Value, path: &[&str]) -> impl Iterator<Item = &'a Value> {
-    let mut cursor = Some(document);
-    for key in path {
-        cursor = cursor.and_then(|value| value.get(*key));
-    }
-    cursor.and_then(Value::as_array).into_iter().flatten()
 }
 
 fn encode_failed() -> Error {

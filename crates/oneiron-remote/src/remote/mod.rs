@@ -28,7 +28,7 @@ use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::caps::{MAX_REMOTE_EXPORT_BYTES, MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
+use crate::caps::{MAX_REMOTE_REQUEST_BYTES, MAX_REMOTE_RESPONSE_BYTES};
 use crate::error::{bad_request, forbidden, transport_error};
 
 // OF-469: a pinned authority checkpoint, fetched for adoption.
@@ -87,7 +87,6 @@ pub(crate) struct RemoteClient {
     holder: Option<Box<(CapabilitySlip, SigningKey)>>,
     /// The network, or a server this process runs.
     wire: Wire,
-    export_limit: usize,
     /// The room turn every verb runs in, named to the server per request.
     room_turn: Option<oneiron::EntityId>,
     /// The off-record session every verb runs inside, named to the server
@@ -118,7 +117,6 @@ impl Clone for RemoteClient {
             authorization: self.authorization.clone(),
             holder: self.holder.clone(),
             wire: self.wire.clone(),
-            export_limit: self.export_limit,
             room_turn: self.room_turn,
             off_record_session: self.off_record_session.clone(),
             last_receipt_ref: std::sync::Mutex::new(None),
@@ -164,7 +162,6 @@ impl RemoteClient {
                 export_agent,
                 stream_agent,
             },
-            export_limit: MAX_REMOTE_EXPORT_BYTES,
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
@@ -186,7 +183,6 @@ impl RemoteClient {
             authorization: bearer_header(bearer)?,
             holder: slip_holder(bearer, holder)?,
             wire: Wire::InProcess(transport),
-            export_limit: MAX_REMOTE_EXPORT_BYTES,
             room_turn: None,
             off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
@@ -327,11 +323,11 @@ impl RemoteClient {
             return Err(read_error_envelope(reply.body, status));
         }
         // The ordinary facade has a strict success-body ceiling. Export alone
-        // streams JSON directly into its required result, under its own
-        // larger ceiling: there is no second whole-body buffer. The
+        // streams JSON directly into its required result, with no second
+        // whole-body buffer and no code-only ceiling (rule 5). The
         // export-specific total timeout still refuses a stalled peer.
         if verb == "vault.export" {
-            read_export(reply.body, reply.content_length, status, self.export_limit)
+            read_export(reply.body, status)
         } else {
             read_json(reply.body, status, verb)
         }

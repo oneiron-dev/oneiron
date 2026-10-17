@@ -1,13 +1,15 @@
 //! Snapshot enumeration for whole-vault export. No raw bytes leave this module
 //! except as input to the serializer's mandatory credential-nulling transform,
-//! and a stored file the whole-vault archive carries as it is (OF-222).
+//! and a stored file the whole-vault archive carries as it is (OF-222). Each
+//! row goes to the serializer as it is read (FIX 2766): the snapshot holds
+//! ids and indexes, never the vault's bodies.
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use super::{
-    ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryHold, ExportDiaryLedger,
-    ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportManifest, ExportScope,
-    ExportSecretsNulledManifest, WholeVaultExport, carries_embedding_setup,
-    whole_vault_export_excludes_entity,
+    ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
+    ExportManifest, ExportScope, ExportSecretsNulledManifest, WholeVaultExport,
+    WholeVaultExportReceipt, carries_embedding_setup, whole_vault_export_excludes_entity,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -16,39 +18,9 @@ use crate::edge::{EdgeActorClass, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
+use crate::serialize::{DocumentTail, DocumentWriter};
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
-
-pub(crate) struct ExportSnapshot {
-    pub(crate) entities: Vec<ExportSnapshotEntity>,
-    pub(crate) edges: Vec<ExportEdge>,
-    pub(crate) adapters: Vec<ExportAdapterDescriptor>,
-    pub(crate) storage: ExportManifest,
-    pub(crate) exported_at: u64,
-    pub(crate) skill_packages: BTreeMap<EntityId, crate::skill_hub::HubPackage>,
-    pub(crate) agent_fork_hashes: BTreeMap<EntityId, String>,
-    pub(crate) pack_sources: BTreeMap<EntityId, crate::skill_hub::pack_catalog::PackSource>,
-    pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
-    pub(crate) archived_receipts: BTreeMap<EntityId, BTreeMap<String, super::ExportReceiptSource>>,
-    pub(crate) run_results: Vec<ExportSnapshotRun>,
-    pub(crate) result_bodies: BTreeMap<[u8; 32], ExportSnapshotBody>,
-    pub(crate) diary_reads: Vec<ExportDiaryRead>,
-    pub(crate) diary_holds: Vec<ExportDiaryHold>,
-    pub(crate) secrets: Vec<ArchiveSecretCustody>,
-    pub(crate) secrets_included: bool,
-    /// OF-370: the vault's embedding setup, when this export carries it.
-    pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
-    /// OF-222: a whole-vault archive carries each stored file an ASSET body is
-    /// as it is stored; a records archive and OKF keep today's cut.
-    pub(crate) attaches_files: bool,
-    /// OF-013: a whole-vault archive carries every session's epoch floor; a
-    /// records archive and OKF carry none.
-    pub(crate) epoch_floors: Vec<super::ExportEpochFloor>,
-    /// FIX 2768: the side-table rows that index the carried records, read in
-    /// this snapshot; only a whole-vault archive carries them, as only it
-    /// carries the files they resolve.
-    pub(crate) side_rows: Vec<super::SideRowBytes>,
-}
 
 /// One run's result manifests, as its replay record names them, each with
 /// why the egress door withholds the run's occurrence of it, if it does.
@@ -67,19 +39,30 @@ pub(crate) struct ExportSnapshotBody {
     pub(crate) body: std::result::Result<Vec<u8>, &'static str>,
 }
 
+/// One live row as the snapshot reads it, with what it carries beside it.
 pub(crate) struct ExportSnapshotEntity {
     pub(crate) id: EntityId,
     pub(crate) short_ref: Option<String>,
     pub(crate) header: EntityMetadataHeader,
     pub(crate) body: Vec<u8>,
     pub(crate) tainted: bool,
+    /// A SKILL's stored source package.
+    pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
+    /// The pack source an ASSET body is.
+    pub(crate) pack_source: Option<crate::skill_hub::pack_catalog::PackSource>,
+    /// The task receipts a CLAIM cites, by id.
+    pub(crate) task_receipts: BTreeMap<String, crate::receipt::ReceiptRecord>,
+    /// A CLAIM's archived receipt sources.
+    pub(crate) archived_receipts: Option<BTreeMap<String, super::ExportReceiptSource>>,
 }
 
 impl Vault {
     /// Exports all live base entities and their graph as the whole-vault
-    /// archive (OF-222), not a retrieval selection. Live off-record overlay
-    /// rows, deleted shells, archive tombstones, credential custody rows and
-    /// unpublished LFS chunks are excluded. No caller can disable nulling.
+    /// archive (OF-222), not a retrieval selection, in memory: for a door
+    /// that answers in one frame. [`Self::export_whole_vault_to`] writes it
+    /// to a file instead. Live off-record overlay rows, deleted shells,
+    /// archive tombstones, credential custody rows and unpublished LFS chunks
+    /// are excluded. No caller can disable nulling.
     ///
     /// The owner's own archive carries custody secret values unless
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
@@ -87,12 +70,26 @@ impl Vault {
     ///
     /// Its diary reads are the vault owner's (OF-490).
     pub fn export_whole_vault(&self, include_secrets: bool) -> Result<WholeVaultExport> {
+        self.export_in_memory(|vault, spool| vault.export_whole_vault_to(include_secrets, spool))
+    }
+
+    /// [`Self::export_whole_vault`] written to `sink` as it is built (FIX
+    /// 2766): the rows are spooled under the vault's staging directory and
+    /// copied into the ZIP one member and one file at a time, so a vault
+    /// larger than memory exports.
+    pub fn export_whole_vault_to<W: Write + Seek>(
+        &self,
+        include_secrets: bool,
+        sink: W,
+    ) -> Result<WholeVaultExportReceipt> {
         self.export_whole_vault_with_admission(
             CallerLocality::OnDevice,
             include_secrets,
             owner_reader()?,
             |_| Ok(()),
+            sink,
         )
+        .map(|(_, receipt)| receipt)
     }
 
     /// The archive of exactly `records` and the graph between them, for a
@@ -105,14 +102,19 @@ impl Vault {
         records: &BTreeSet<EntityId>,
         reader: WriteActor,
     ) -> Result<WholeVaultExport> {
-        self.export_archive_snapshot(
-            CallerLocality::OffDevice,
-            Some(records),
-            ExportCut::Archive,
-            false,
-            reader,
-            |_| Ok(()),
-        )
+        self.export_in_memory(|vault, spool| {
+            vault
+                .export_archive_snapshot(
+                    CallerLocality::OffDevice,
+                    Some(records),
+                    ExportCut::Archive,
+                    false,
+                    reader,
+                    |_| Ok::<_, Error>(()),
+                    spool,
+                )
+                .map(|(_, receipt)| receipt)
+        })
     }
 
     /// "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
@@ -121,16 +123,23 @@ impl Vault {
     /// custody secret and does not re-import as a vault. The same diary reads
     /// and credential nulling as the archive apply.
     pub fn export_okf(&self) -> Result<WholeVaultExport> {
-        self.export_okf_with_admission(CallerLocality::OnDevice, owner_reader()?, |_| Ok(()))
+        self.export_in_memory(|vault, spool| vault.export_okf_to(spool))
     }
 
-    pub(crate) fn export_okf_with_admission<E: From<Error>>(
+    /// [`Self::export_okf`] written to `sink` as it is built (FIX 2766).
+    pub fn export_okf_to<W: Write + Seek>(&self, sink: W) -> Result<WholeVaultExportReceipt> {
+        self.export_okf_with_admission(CallerLocality::OnDevice, owner_reader()?, |_| Ok(()), sink)
+            .map(|(_, receipt)| receipt)
+    }
+
+    pub(crate) fn export_okf_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
         locality: CallerLocality,
         reader: WriteActor,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
-    ) -> std::result::Result<WholeVaultExport, E> {
-        self.export_archive_snapshot(locality, None, ExportCut::Okf, false, reader, admit)
+        sink: W,
+    ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
+        self.export_archive_snapshot(locality, None, ExportCut::Okf, false, reader, admit, sink)
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME
@@ -140,13 +149,14 @@ impl Vault {
     /// world keeps here (DEC-0005), so no edge, package or receipt of one
     /// follows; one whose world cannot be read stays too.
     /// `reader` is whose diary reads the export makes (OF-490).
-    pub(crate) fn export_whole_vault_with_admission<E: From<Error>>(
+    pub(crate) fn export_whole_vault_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
         locality: CallerLocality,
         include_secrets: bool,
         reader: WriteActor,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
-    ) -> std::result::Result<WholeVaultExport, E> {
+        sink: W,
+    ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
         self.export_archive_snapshot(
             locality,
             None,
@@ -154,10 +164,30 @@ impl Vault {
             include_secrets,
             reader,
             admit,
+            sink,
         )
     }
 
-    fn export_archive_snapshot<E: From<Error>>(
+    /// An export built through a spool file and read back whole, for a door
+    /// that answers in one frame.
+    fn export_in_memory(
+        &self,
+        export: impl FnOnce(&Self, &mut std::fs::File) -> Result<WholeVaultExportReceipt>,
+    ) -> Result<WholeVaultExport> {
+        let mut spool = self.archive_spool_file()?;
+        let receipt = export(self, &mut spool)?;
+        spool.seek(SeekFrom::Start(0))?;
+        let mut bytes = Vec::new();
+        spool.read_to_end(&mut bytes)?;
+        Ok(WholeVaultExport {
+            bytes,
+            manifest: receipt.manifest,
+            diary_reads: receipt.diary_reads,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn export_archive_snapshot<W: Write + Seek, E: From<Error>>(
         &self,
         locality: CallerLocality,
         only: Option<&BTreeSet<EntityId>>,
@@ -165,7 +195,8 @@ impl Vault {
         include_secrets: bool,
         reader: WriteActor,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
-    ) -> std::result::Result<WholeVaultExport, E> {
+        sink: W,
+    ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
         )?;
@@ -173,25 +204,39 @@ impl Vault {
         let _bodies = self.pin_all_result_bodies();
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
+        let scope = match (only, cut) {
+            (Some(_), _) => ExportScope::Records,
+            (None, ExportCut::Archive) => ExportScope::WholeVault,
+            (None, ExportCut::Okf) => ExportScope::Okf,
+        };
+        let adapters = crate::ingest::INGEST_SOURCE_REGISTRY
+            .source_configs()
+            .map(|config| ExportAdapterDescriptor {
+                source_id: config.source_id.to_owned(),
+                adapter_skill_id: config.adapter_skill.map(|a| a.skill_id.to_owned()),
+                adapter_version: config.adapter_skill.map(|a| a.version.to_owned()),
+            })
+            .collect();
+        // The agents' ids come first, so the claims each agent's portable
+        // knowledge is selected from are kept as they pass, and no others.
+        let agent_ids = crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            &rtxn,
+            crate::registry::ENTITY_TYPE_AGENT_DEF,
+            None,
+        )?
+        .collect::<Result<BTreeSet<_>>>()?;
+        let mut writer =
+            DocumentWriter::new(self, cut, scope == ExportScope::WholeVault, adapters, agent_ids)?;
         // A run names no world, so a caller off this device gets no run's
         // results: none of a device-local world's may leave it (DEC-0005).
-        let (run_results, result_bodies) = if locality == CallerLocality::OnDevice
-            && only.is_none()
-            && cut == ExportCut::Archive
-        {
-            self.export_run_results_in_txn(&rtxn)?
-        } else {
-            (Vec::new(), BTreeMap::new())
-        };
+        if locality == CallerLocality::OnDevice && only.is_none() && cut == ExportCut::Archive {
+            self.export_run_results_in_txn(&rtxn, &mut writer)?;
+        }
         let device_only = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
-        let mut entities = Vec::new();
         let mut included = BTreeSet::new();
-        let mut skill_packages = BTreeMap::new();
         let mut agent_fork_hashes = BTreeMap::new();
-        let mut task_receipts = BTreeMap::new();
-        let mut archived_receipts = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::new(reader)?;
-        let mut secrets = Vec::new();
         for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
@@ -228,13 +273,15 @@ impl Vault {
                         &id,
                     )?
                     .map(|(name, hash)| format!("{name}:{hash:02x}"));
-                    secrets.extend(archive_custody_secret(
+                    if let Some(secret) = archive_custody_secret(
                         &id,
                         handle,
                         &raw[ENTITY_METADATA_HEADER_LEN..],
                         locality == CallerLocality::OnDevice,
                         include_secrets,
-                    )?);
+                    )? {
+                        writer.secret(&secret)?;
+                    }
                 }
                 continue;
             }
@@ -276,6 +323,7 @@ impl Vault {
             {
                 continue;
             }
+            let mut skill_package = None;
             if header.entity_type == crate::registry::ENTITY_TYPE_SKILL
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
@@ -283,7 +331,23 @@ impl Vault {
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
-                skill_packages.insert(id, package);
+                skill_package = Some(package);
+            }
+            // A pack source is the ASSET body itself, read as the pack
+            // catalog reads it.
+            let mut pack_source = None;
+            if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
+                && let Some(source) = crate::skill_hub::pack_catalog::decode_source_body(
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?
+            {
+                if source.entity_id()? != id {
+                    return Err(Error::InvalidConfig(
+                        "pack source: stored source identity drift".to_owned(),
+                    )
+                    .into());
+                }
+                pack_source = Some(source);
             }
             if header.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
                 && let Some(hash) =
@@ -294,15 +358,18 @@ impl Vault {
             let tainted =
                 !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &rtxn, &id)?
                     .is_empty();
+            let mut task_receipts = BTreeMap::new();
+            let mut archived_receipts = None;
             if !tainted
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && let Ok(claim) =
                     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
             {
-                archived_receipts.insert(
-                    id,
-                    crate::receipt::archived_receipt_sources_in_txn(&self.store, &rtxn, &id)?,
-                );
+                archived_receipts = Some(crate::receipt::archived_receipt_sources_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &id,
+                )?);
                 for receipt_id in super::receipt_sources::task_receipt_refs(&claim) {
                     if !task_receipts.contains_key(&receipt_id)
                         && let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(
@@ -344,22 +411,25 @@ impl Vault {
             } else {
                 std::borrow::Cow::Borrowed(body)
             };
-            entities.push(ExportSnapshotEntity {
+            writer.entity(ExportSnapshotEntity {
                 id,
                 short_ref,
                 header,
                 body: body.into_owned(),
                 tainted,
-            });
+                skill_package,
+                pack_source,
+                task_receipts,
+                archived_receipts,
+            })?;
         }
-        let mut edges = Vec::new();
         for entry in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&self.store, &rtxn)? {
             let (key, value) = entry?;
             let edge = parse_strict_edge_record(&key, &value)?;
             if !included.contains(&edge.source) || !included.contains(&edge.target) {
                 continue;
             }
-            edges.push(ExportEdge {
+            writer.edge(&ExportEdge {
                 source: edge.source.to_hex(),
                 kind: edge.kind as u8,
                 target: edge.target.to_hex(),
@@ -373,28 +443,10 @@ impl Vault {
                     .decoded
                     .provenance
                     .map(|p| [p.confirmation_status as u8, p.actor_class as u8]),
-            });
+            })?;
         }
-        let adapters = crate::ingest::INGEST_SOURCE_REGISTRY
-            .source_configs()
-            .map(|config| ExportAdapterDescriptor {
-                source_id: config.source_id.to_owned(),
-                adapter_skill_id: config.adapter_skill.map(|a| a.skill_id.to_owned()),
-                adapter_version: config.adapter_skill.map(|a| a.version.to_owned()),
-            })
-            .collect();
-        let pack_sources = self
-            .pack_sources_in_txn(&rtxn)?
-            .into_iter()
-            .filter(|(id, _)| included.contains(id))
-            .collect();
         // OF-370: a whole-vault archive carries the embedding setup, read in
         // this snapshot; a records archive and OKF carry none.
-        let scope = match (only, cut) {
-            (Some(_), _) => ExportScope::Records,
-            (None, ExportCut::Archive) => ExportScope::WholeVault,
-            (None, ExportCut::Okf) => ExportScope::Okf,
-        };
         let embedding_setup = if carries_embedding_setup(scope) {
             Some(super::embedding_setup_in_txn(&self.store, &rtxn)?)
         } else {
@@ -403,7 +455,6 @@ impl Vault {
         // OF-013: the floors travel so an import never numbers an epoch under
         // one a purge removed. A floor whose session a device-local world
         // keeps stays here, as the session's own row does.
-        let mut epoch_floors = Vec::new();
         if scope == ExportScope::WholeVault {
             for (session, epoch, turn_end) in
                 crate::compaction::epoch_floors_in_txn(&self.store, &rtxn)?
@@ -420,60 +471,44 @@ impl Vault {
                 })? {
                     continue;
                 }
-                epoch_floors.push(super::ExportEpochFloor {
+                writer.epoch_floor(&super::ExportEpochFloor {
                     session: session.to_hex(),
                     epoch,
                     turn_end,
-                });
+                })?;
             }
-        }
-        // FIX 2768: each carried record's side rows go with it, read in this
-        // snapshot; a vault-wide row only to a caller on this device.
-        let side_rows = if scope == ExportScope::WholeVault {
-            super::archive_side_rows_in_txn(
+            // FIX 2768: each carried record's side rows go with it, read in
+            // this snapshot; a vault-wide row only to a caller on this device.
+            for row in super::archive_side_rows_in_txn(
                 &self.store,
                 &rtxn,
                 &included,
                 locality == CallerLocality::OnDevice,
-            )?
-        } else {
-            Vec::new()
-        };
+            )? {
+                writer.side_row(row)?;
+            }
+        }
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.
         let (diary_reads, diary_holds, unlogged) = diaries.finish(self);
-        if !unlogged.is_empty() {
-            let gone: BTreeSet<String> = unlogged.iter().map(EntityId::to_hex).collect();
-            entities.retain(|entity| !unlogged.contains(&entity.id));
-            edges.retain(|edge| !gone.contains(&edge.source) && !gone.contains(&edge.target));
-        }
-        crate::serialize::serialize_vault_snapshot(
-            ExportSnapshot {
-                entities,
-                edges,
-                adapters,
-                storage,
-                exported_at: crate::unix_seconds_now(),
-                skill_packages,
-                agent_fork_hashes,
-                pack_sources,
-                task_receipts,
-                archived_receipts,
-                run_results,
-                result_bodies,
-                diary_reads,
-                diary_holds,
-                secrets,
-                secrets_included: include_secrets && only.is_none() && cut == ExportCut::Archive,
-                embedding_setup,
-                attaches_files: scope == ExportScope::WholeVault,
-                epoch_floors,
-                side_rows,
-            },
-            cut,
-        )
-        .map_err(E::from)
+        writer
+            .finish(
+                DocumentTail {
+                    storage,
+                    exported_at: crate::unix_seconds_now(),
+                    agent_fork_hashes,
+                    diary_reads,
+                    diary_holds,
+                    unlogged,
+                    secrets_included: include_secrets
+                        && only.is_none()
+                        && cut == ExportCut::Archive,
+                    embedding_setup,
+                },
+                sink,
+            )
+            .map_err(E::from)
     }
 
     /// The run result closure (OF-190 B++): every run's manifests, each
@@ -482,32 +517,30 @@ impl Vault {
     /// receipt beside the occurrence it describes. A withheld
     /// occurrence keeps its mark and names no body, so one clean occurrence
     /// of the same bytes neither clears it nor ships its body for it. A body
-    /// no row holds any longer is withheld as absent.
+    /// no row holds any longer is withheld as absent. Each body goes to the
+    /// writer as it is read.
     fn export_run_results_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
-    ) -> Result<(
-        Vec<ExportSnapshotRun>,
-        BTreeMap<[u8; 32], ExportSnapshotBody>,
-    )> {
-        let mut runs = Vec::new();
-        let mut bodies = BTreeMap::new();
+        writer: &mut DocumentWriter<'_>,
+    ) -> Result<()> {
+        let mut bodies = BTreeSet::new();
         for (run_id, outputs) in self.code_run_result_manifests_in_txn(rtxn)? {
             let mut occurrences = Vec::with_capacity(outputs.len());
             for output in outputs {
                 let withheld =
                     super::whole_vault_export_withholds_result(self, rtxn, run_id, &output)?;
-                if withheld.is_none() && !bodies.contains_key(&output.raw_blake3) {
+                if withheld.is_none() && bodies.insert(output.raw_blake3) {
                     let body = self
                         .code_run_result_body_in_txn(rtxn, &output)?
                         .ok_or("absent");
-                    bodies.insert(
+                    writer.result_body(
                         output.raw_blake3,
                         ExportSnapshotBody {
                             bytes: output.raw_len,
                             body,
                         },
-                    );
+                    )?;
                 }
                 occurrences.push((output, withheld));
             }
@@ -523,13 +556,13 @@ impl Vault {
                         .map(|(_, withheld)| (receipt, *withheld))
                 })
                 .collect();
-            runs.push(ExportSnapshotRun {
+            writer.run(ExportSnapshotRun {
                 run_id,
                 outputs: occurrences,
                 receipts,
-            });
+            })?;
         }
-        Ok((runs, bodies))
+        Ok(())
     }
 }
 

@@ -1,8 +1,10 @@
 //! Validating archive import through ordinary admission doors, never sync replay.
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Seek};
 
 use super::{
-    ExportEdge, ExportEntity, ExportRunResults, WholeVaultDocument, WholeVaultImportReceipt,
+    ArchiveFiles, ExportEdge, ExportEntity, ExportRunResults, WholeVaultDocument,
+    WholeVaultImportReceipt,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -26,7 +28,17 @@ impl Vault {
     /// assemble into, without writing anything. The returned data remains
     /// untrusted. A manifest is not an approval grant.
     pub fn read_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
-        let archive = super::read_vault_archive(bytes)?;
+        self.read_whole_vault_archive_from(std::io::Cursor::new(bytes))
+    }
+
+    /// [`Self::read_whole_vault_archive`] from a file or other seekable
+    /// source, read member by member (FIX 2766): the archive is never held
+    /// whole, and its attached files stay in it.
+    pub fn read_whole_vault_archive_from<R: Read + Seek>(
+        &self,
+        source: R,
+    ) -> Result<WholeVaultDocument> {
+        let archive = super::read_vault_archive(source)?;
         archive.document.validate(self, &archive.files)?;
         Ok(archive.document)
     }
@@ -51,7 +63,18 @@ impl Vault {
     /// slots this vault lacks; it never overwrites this vault's own setup, and
     /// a conflict with it is reported, never a refusal of the import.
     pub fn import_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(bytes, None)
+        self.import_whole_vault_archive_from(std::io::Cursor::new(bytes))
+    }
+
+    /// [`Self::import_whole_vault_archive`] from a file or other seekable
+    /// source, read member by member (FIX 2766): no archive member, row
+    /// group or file map is held whole, each attached file is read when its
+    /// row goes in, and the import is still one atomic write transaction.
+    pub fn import_whole_vault_archive_from<R: Read + Seek>(
+        &self,
+        source: R,
+    ) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_archive_as(source, None)
     }
 
     /// Imports with a current local actor authenticated by the host. Never use
@@ -63,20 +86,31 @@ impl Vault {
         bytes: &[u8],
         actor: &WriteActor,
     ) -> Result<WholeVaultImportReceipt> {
-        self.import_whole_vault_archive_as(bytes, Some(actor))
+        self.import_whole_vault_archive_from_with_actor(std::io::Cursor::new(bytes), actor)
     }
 
-    fn import_whole_vault_archive_as(
+    /// [`Self::import_whole_vault_archive_with_actor`] from a seekable source,
+    /// read member by member (FIX 2766).
+    pub fn import_whole_vault_archive_from_with_actor<R: Read + Seek>(
         &self,
-        bytes: &[u8],
+        source: R,
+        actor: &WriteActor,
+    ) -> Result<WholeVaultImportReceipt> {
+        self.import_whole_vault_archive_as(source, Some(actor))
+    }
+
+    fn import_whole_vault_archive_as<R: Read + Seek>(
+        &self,
+        source: R,
         actor: Option<&WriteActor>,
     ) -> Result<WholeVaultImportReceipt> {
         let super::VaultArchive {
             mut document,
             secrets,
             files,
-        } = super::read_vault_archive(bytes)?;
-        document.validate(self, &files)?;
+        } = super::read_vault_archive(source)?;
+        let files: &dyn ArchiveFiles = &files;
+        document.validate(self, files)?;
         if actor.is_none()
             && document
                 .entities()
@@ -98,7 +132,7 @@ impl Vault {
             .collect::<Result<_>>()?;
         // Run result bodies are written whole before any row names them; the
         // rows commit with the rest below, or not at all.
-        let staged_results = stage_run_results(self, &document.run_results, &files)?;
+        let staged_results = stage_run_results(self, &document.run_results, files)?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -149,7 +183,7 @@ impl Vault {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
                 }
-                if matches_archived_row(row, &existing, &files)? {
+                if matches_archived_row(row, &existing, files)? {
                     validate_existing_source(
                         self,
                         &wtxn,
@@ -159,7 +193,7 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(row, models, &files)?;
+                let body = imported_body(row, models, files)?;
                 if matches_row(
                     row,
                     &existing,
@@ -177,7 +211,15 @@ impl Vault {
                 return Err(invalid("import ID collides with different entity data"));
             }
             self.store.validate_public_entity_type(row.entity_type)?;
-            pending.insert(id, (row, imported_body(row, models, &files)?));
+            // Only the row and what it waits on stay pending (FIX 2766): its
+            // body is built again when it goes in, and a file body, which
+            // waits on nothing, is read from the archive only then.
+            let waits_on = if matches!(row.body, ExportBody::File(_)) {
+                Vec::new()
+            } else {
+                dependencies(row.entity_type, &imported_body(row, models, files)?)?
+            };
+            pending.insert(id, (row, waits_on));
         }
         let mut inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
         let mut inserted_entities = pending.len() + model_imports.inserted;
@@ -194,16 +236,9 @@ impl Vault {
             let provenance_ready = provenance.ready(&blocked)?;
             let ready: Vec<_> = pending
                 .iter()
-                .filter_map(
-                    |(id, (row, body))| match dependencies(row.entity_type, body) {
-                        Ok(refs) if refs.iter().all(|reference| !blocked.contains(reference)) => {
-                            Some(Ok(*id))
-                        }
-                        Ok(_) => None,
-                        Err(error) => Some(Err(error)),
-                    },
-                )
-                .collect::<Result<_>>()?;
+                .filter(|(_, (_, refs))| refs.iter().all(|reference| !blocked.contains(reference)))
+                .map(|(id, _)| *id)
+                .collect();
             if ready.is_empty() && expression_ready.is_empty() && provenance_ready.is_empty() {
                 return Err(invalid("cyclic import subject or fork dependencies"));
             }
@@ -224,9 +259,10 @@ impl Vault {
                 inserted_ids.extend(inserted);
             }
             for id in ready {
-                let (row, body) = pending
+                let (row, _) = pending
                     .remove(&id)
                     .ok_or(Error::InvariantViolation("import queue lost row"))?;
+                let body = imported_body(row, models, files)?;
                 let occurred = TimeRange {
                     start: row.occurred_start,
                     end: row.occurred_end,
@@ -351,9 +387,7 @@ impl Vault {
                 &self.store,
                 &mut wtxn,
                 &document.side_tables,
-                &mut |file: &crate::serialize::ExportBodyFile| {
-                    file.resolve(&files).map(<[u8]>::to_vec)
-                },
+                &mut |file: &crate::serialize::ExportBodyFile| file.read(files),
             )?;
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
@@ -408,7 +442,7 @@ impl Vault {
 fn stage_run_results(
     vault: &Vault,
     results: &ExportRunResults,
-    files: &BTreeMap<String, Vec<u8>>,
+    files: &dyn ArchiveFiles,
 ) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
     let released: BTreeSet<&str> = results
         .bodies
@@ -428,15 +462,17 @@ fn stage_run_results(
         if !released.contains(blake3.as_str()) {
             continue;
         }
-        let Some(body) = files.get(blake3.as_str()) else {
+        if files.file_len(blake3).is_none() {
             continue;
-        };
-        if body.len() as u64 != output.bytes || *blake3::hash(body).as_bytes() != digest {
+        }
+        // One body at a time, read from the archive as it is staged.
+        let body = files.read_file(blake3)?;
+        if body.len() as u64 != output.bytes || *blake3::hash(&body).as_bytes() != digest {
             return Err(invalid("run result body does not match its digest"));
         }
         staged.insert(
             digest,
-            vault.stage_code_run_output(output.path.clone(), body)?,
+            vault.stage_code_run_output(output.path.clone(), &body)?,
         );
     }
     Ok(staged)
@@ -780,16 +816,13 @@ pub(super) fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody)
 /// [`matches_row`] for the row as the archive carries it. A file body
 /// (OF-222) matches only the very bytes it names; any other stored row under
 /// its id is a collision, never read through a lossy form.
-fn matches_archived_row(
-    row: &ExportEntity,
-    raw: &[u8],
-    files: &BTreeMap<String, Vec<u8>>,
-) -> Result<bool> {
+fn matches_archived_row(row: &ExportEntity, raw: &[u8], files: &dyn ArchiveFiles) -> Result<bool> {
     let ExportBody::File(file) = &row.body else {
         return Ok(matches_row(row, raw, &row.body));
     };
     if matches_header(row, raw)
-        && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(file.resolve(files)?)
+        && raw.len() as u64 == ENTITY_METADATA_HEADER_LEN as u64 + file.bytes()
+        && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(file.read(files)?.as_slice())
     {
         return Ok(true);
     }
@@ -811,7 +844,7 @@ fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
 fn imported_body(
     row: &ExportEntity,
     models: &BTreeMap<EntityId, EntityId>,
-    files: &BTreeMap<String, Vec<u8>>,
+    files: &dyn ArchiveFiles,
 ) -> Result<Vec<u8>> {
     let bytes = row.body.to_bytes_in(files)?;
     match row.entity_type {

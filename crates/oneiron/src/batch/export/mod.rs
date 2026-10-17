@@ -7,13 +7,15 @@ pub use credential_filter::{
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
 mod archive_read;
 mod archive_side_tables;
+mod archive_spool;
 mod archive_types;
-pub(crate) use archive_read::{VaultArchive, read_vault_archive};
+pub(crate) use archive_read::{ArchiveFiles, VaultArchive, read_vault_archive};
 pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
     ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason,
 };
 pub(crate) use archive_side_tables::{LentSideTable, SideRowBytes, archive_side_rows_in_txn};
+pub(crate) use archive_spool::{FileSpool, RecordSpool};
 pub use archive_types::*;
 mod export_authority;
 mod export_diary;
@@ -60,7 +62,7 @@ mod expression_import;
 #[cfg(test)]
 mod expression_import_tests;
 mod provenance_import;
-pub(crate) use document_snapshot::{ExportSnapshot, ExportSnapshotBody, ExportSnapshotRun};
+pub(crate) use document_snapshot::{ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun};
 pub use document_types::*;
 #[cfg(test)]
 mod document_tests;
@@ -68,6 +70,7 @@ mod document_tests;
 mod bundle_types;
 mod bundle_validation;
 pub use bundle_types::*;
+pub(crate) use bundle_validation::OmissionLedger;
 #[cfg(test)]
 mod bundle_tests;
 
