@@ -26806,7 +26806,7 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 15,
+      "const": 16,
       "crate-vis": 12,
       "enum": 2,
       "fn": 11,
@@ -37383,7 +37383,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/vault_meta_s_z.rs",
@@ -40889,6 +40889,23 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "ContributionCandidate",
+      "ContributionCheckRecord",
+      "ContributionFork",
+      "ContributionPair"
+     ],
+     "path": "src/skill_attribution/contribution.rs",
+     "purpose": "Contribution checks (ARCH-0037 #lineage-credit, ARCH-0053): whether one loaded skill contributed to a run's…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/host.rs",
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
@@ -40952,7 +40969,7 @@
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 8,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -40964,6 +40981,7 @@
      "path": "src/skill_attribution/pack_learning.rs",
      "purpose": "The manifest-to-learning bridge",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -53594,7 +53612,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53869,7 +53887,7 @@
    },
    "over_bar": 179,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3269,
+   "source_files": 3270,
    "test_files": 902
   },
   "oneiron-android": {
