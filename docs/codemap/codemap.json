@@ -10474,7 +10474,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "struct": 6,
       "type": 1
      }
@@ -10651,7 +10651,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 1
      }
@@ -10731,7 +10731,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 4,
       "re-export": 10
      }
@@ -10882,7 +10882,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/run_verb_call.rs",
+     "purpose": "The four memory run rows as typed calls, outside the sandbox (OF-181)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
+      "AgentSpawnInput",
       "LeaderAdviceInput",
       "LeaderPatternInput",
       "MemoryClaimInput",
@@ -10892,6 +10903,9 @@
       "MemoryTimeRange",
       "ReaderSpawnInput",
       "SkillCallInput",
+      "SpawnCare",
+      "SpawnKnob",
+      "SpawnPattern",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskWaitSetRequest"
@@ -10900,8 +10914,9 @@
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "struct": 11
+      "enum": 4,
+      "fn": 1,
+      "struct": 12
      }
     },
     {
@@ -49659,7 +49674,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50907,7 +50922,7 @@
    },
    "over_bar": 137,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3074,
+   "source_files": 3075,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62291,7 +62306,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/action_routes.rs",
