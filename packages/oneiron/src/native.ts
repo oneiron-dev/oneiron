@@ -57,6 +57,8 @@ vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
+vaultWeaveLens(input: unknown): unknown
+vaultWeaveLinkWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
@@ -89,6 +91,8 @@ vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
 vaultDisclosureOffer(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
+vaultSharesRevoke(input: unknown): unknown
+vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
@@ -153,6 +157,12 @@ aiVideo(input: unknown): unknown
 aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
 aiVerdict(input: unknown): unknown
+vaultGraphAsk(input: unknown): unknown
+vaultQuestionsCreate(input: unknown): unknown
+vaultQuestionsEdit(input: unknown): unknown
+vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsRead(input: unknown): unknown
+vaultQuestionsAnswers(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
 vaultCommit(input: unknown): unknown

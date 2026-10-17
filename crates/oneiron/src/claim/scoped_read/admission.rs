@@ -283,7 +283,9 @@ impl<'a> ScopedRead<'a> {
     /// their clearances can have narrowed, so this snapshot's clearance meets
     /// into the turn. A member it does not bind yet rebuilds the room from
     /// this snapshot and conjoins it. Either way a refresh narrows the turn,
-    /// for this read and every later one, and never widens it.
+    /// for this read and every later one, and never widens it. A thread's
+    /// ceiling (`turn.branch`) re-proves standing on that thread instead,
+    /// which its Ready receipt gives an agent off the room (OF-529).
     fn room_ceiling_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -292,7 +294,24 @@ impl<'a> ScopedRead<'a> {
         let Some(roster) = crate::context_board::room_roster_in(self.vault, txn, turn.room)? else {
             return Ok(None);
         };
-        if !crate::context_board::room_reader_in(self.vault, txn, turn.room, &roster, turn.caller)? {
+        let reads = match turn.branch {
+            Some(thread) => crate::context_board::thread_reader_in(
+                self.vault,
+                txn,
+                turn.room,
+                thread,
+                &roster,
+                turn.caller,
+            )?,
+            None => crate::context_board::room_reader_in(
+                self.vault,
+                txn,
+                turn.room,
+                &roster,
+                turn.caller,
+            )?,
+        };
+        if !reads {
             return Ok(None);
         }
         let mut held = self
@@ -307,9 +326,19 @@ impl<'a> ScopedRead<'a> {
             }
             return Ok(Some(Arc::clone(current)));
         }
-        let Some(now) =
-            crate::context_board::room_ceiling_in(self.vault, txn, turn.room, turn.caller)?
-        else {
+        let now = match turn.branch {
+            Some(thread) => crate::context_board::thread_ceiling_in(
+                self.vault,
+                txn,
+                turn.room,
+                thread,
+                turn.caller,
+            )?,
+            None => {
+                crate::context_board::room_ceiling_in(self.vault, txn, turn.room, turn.caller)?
+            }
+        };
+        let Some(now) = now else {
             return Ok(None);
         };
         self.room_ceilings_built
@@ -630,10 +659,7 @@ impl ScopedRead<'_> {
         if row.entity_type != crate::registry::ENTITY_TYPE_TASK {
             return Ok(false);
         }
-        let worlds_only = crate::federation::Scope {
-            facets: crate::federation::ScopeAxis::All,
-            ..granted.clone()
-        };
+        let worlds_only = super::actor_key::world_only(granted.worlds.clone());
         let raw = row.encode();
         let inside = match self.session_view {
             Some(view) => task_inside_credential(view, txn, *id, &raw, &worlds_only)?,
@@ -682,11 +708,11 @@ impl ScopedRead<'_> {
         // replayed with no stamp is no less outside a credential that cannot
         // read base (Astra #1388b P2).
         if row.entity_type != ENTITY_TYPE_CLAIM {
+            let ceiling = super::actor_key::world_only(granted.worlds.clone());
             return Ok(self
                 .record_world_in(txn, id, row.entity_type, &row.body)?
                 .is_none_or(|world| {
-                    let world = world.unwrap_or_else(crate::claim::base_world_id);
-                    !granted.worlds.contains(&crate::federation::ScopeId(world))
+                    !super::actor_key::record_world_scope(world).is_narrowing_of(&ceiling)
                 }));
         }
         // A claim with no decodable world names none, as a read that asked

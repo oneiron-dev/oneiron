@@ -20,11 +20,13 @@ mod ledgers;
 mod lens;
 mod pack_attribution;
 mod projection;
+mod questions;
 mod record;
 mod reference_refusal;
 mod send_receipt_txn;
 mod served_form;
 mod session;
+mod share_doors;
 
 #[cfg(test)]
 mod tests;
@@ -74,11 +76,17 @@ pub use self::projection::{
     ReceiptProjectionIntent, ReceiptProjectionRun, project_receipts_by_brief,
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
+pub use self::questions::{
+    GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskDeclined, GraphAskOutcome,
+    GraphAskRequest, GraphAskSelection, QuestionAnswersRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
+};
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, record_reference_refusal, record_reference_refusals,
 };
 pub use self::served_form::{PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
+pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 
 pub(crate) use self::direct_dispatch::record as record_direct_dispatch_receipt;
 pub(crate) use self::dispatch_observation::{

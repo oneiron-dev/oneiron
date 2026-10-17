@@ -55,7 +55,9 @@ pub fn refresh_question(
         question,
         trigger,
         now,
-        &mut |record, unit, _, body| answerer(record, unit, body).map(|p| Some(Proposed::Proposal(p))),
+        &mut |record, unit, _, body| {
+            answerer(record, unit, body).map(|p| Some(Proposed::Proposal(p)))
+        },
     )
 }
 
@@ -123,7 +125,12 @@ fn refresh_with(
             let txn = vault.store.env.read_txn()?;
             source(vault, &txn, principal, actor, unit)?
         };
-        let Some(SourceRow { kind, raw, frontier }) = snapshot else {
+        let Some(SourceRow {
+            kind,
+            raw,
+            frontier,
+        }) = snapshot
+        else {
             continue;
         };
         let Some(proposal) = answerer(&record, unit, kind, &raw[ENTITY_METADATA_HEADER_LEN..])?
@@ -366,30 +373,38 @@ fn graph_proposal(
     } else {
         Vec::new()
     };
+    let audio = if answerer.reads_audio() && kind == crate::registry::ENTITY_TYPE_ASSET {
+        let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+        graph_ask::unit_audio(&lane, &context)?
+    } else {
+        Vec::new()
+    };
     let question = &record.definition.question;
-    Ok(match answerer.decide(question, &context, &images)? {
-        None => None,
-        Some(GraphDecision::Prediction(prediction)) => {
-            graph_ask::validate_prediction(question, &prediction)?;
-            let paired = prediction
-                .paired
-                .map(|reading| reading.bind(prediction.provider.clone()))
-                .into_iter()
-                .collect();
-            Some(Proposed::Proposal(AnswerProposal {
-                answer: prediction.answer,
-                probability: Some(prediction.probability),
-                providers: vec![prediction.provider],
-                paired,
-            }))
-        }
-        Some(GraphDecision::Decision(decision)) => {
-            graph_ask::validate_decision(question, record.principal, &decision)?;
-            Some(Proposed::Decision(Box::new(graph_ask::decided(
-                &context, &images, *decision,
-            ))))
-        }
-    })
+    Ok(
+        match answerer.decide(question, &context, &images, &audio)? {
+            None => None,
+            Some(GraphDecision::Prediction(prediction)) => {
+                graph_ask::validate_prediction(question, &prediction)?;
+                let paired = prediction
+                    .paired
+                    .map(|reading| reading.bind(prediction.provider.clone()))
+                    .into_iter()
+                    .collect();
+                Some(Proposed::Proposal(AnswerProposal {
+                    answer: prediction.answer,
+                    probability: Some(prediction.probability),
+                    providers: vec![prediction.provider],
+                    paired,
+                }))
+            }
+            Some(GraphDecision::Decision(decision)) => {
+                graph_ask::validate_decision(question, record.principal, &decision)?;
+                Some(Proposed::Decision(Box::new(graph_ask::decided(
+                    &context, &images, &audio, *decision,
+                ))))
+            }
+        },
+    )
 }
 
 /// The principal as the writer of its own question's answers.
@@ -497,9 +512,12 @@ fn validate_decided(
     decision: &TypedDecision,
 ) -> Result<()> {
     graph_ask::validate_decision(&record.definition.question, principal, decision)?;
-    if decision.receipt.providers.iter().any(|p| {
-        p.rung < record.definition.dial.first || p.rung > record.definition.dial.ceiling
-    }) {
+    if decision
+        .receipt
+        .providers
+        .iter()
+        .any(|p| p.rung < record.definition.dial.first || p.rung > record.definition.dial.ceiling)
+    {
         return Err(Error::InvalidConfig(
             "invalid standing question answer".into(),
         ));

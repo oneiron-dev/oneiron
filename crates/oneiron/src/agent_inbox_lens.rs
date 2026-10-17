@@ -2,14 +2,17 @@
 //!
 //! ApprovalRequired is a projection of existing identity-stamped held-send
 //! receipts. No mailbox, renderer, or independent approval store is created.
+//! Concern rows are the Coach's open agent-health cards (OF-568).
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use crate::Vault;
+use crate::dreamer_runner::maintenance::agent_health::AgentHealthTone;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::self_heal::AgentHealthSignal;
 
 pub const AGENT_INBOX_LENS_SCHEMA_VERSION: u64 = 1;
 
@@ -21,6 +24,18 @@ pub enum AgentInboxItemKind {
     Conversation,
     ApprovalRequired,
     CoordinationUpdate,
+    /// An agent-health card (ARCH-0063 concern cards): under "Waiting on
+    /// you" with its own mark, grouped per agent by its subject.
+    Concern,
+}
+
+/// What a concern row is about: the agent the card is on, its signal and
+/// its tone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentInboxConcern {
+    pub subject: EntityId,
+    pub signal: AgentHealthSignal,
+    pub tone: AgentHealthTone,
 }
 
 /// One receiving identity on a row and the actor it is bound to.
@@ -47,6 +62,8 @@ pub struct AgentInboxLensItem {
     pub occurred_at: u64,
     pub receipt_ref: Option<String>,
     pub payload_ref: Option<String>,
+    /// Present exactly on a Concern row.
+    pub concern: Option<AgentInboxConcern>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +145,10 @@ impl Vault {
             }
         }
         items.extend(self.inbound_inbox_items(None)?);
+        // Concern rows carry no thread, so folding leaves each its own row.
+        items.extend(
+            crate::dreamer_runner::maintenance::agent_health::agent_health_inbox_items(self)?,
+        );
         // Filter after folding, so a filtered conversation still names every
         // identity on its thread.
         let mut items = fold_threads(items);
@@ -295,6 +316,7 @@ fn project_receipts(
                 .get("payload_ref")
                 .or_else(|| receipt.fields.get("content_ref"))
                 .cloned(),
+            concern: None,
         });
     }
     sort_page(&mut items, &query);

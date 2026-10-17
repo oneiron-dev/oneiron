@@ -32,6 +32,8 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) suppression_receipt: Option<ReceiptRecord>,
     /// The booking-page grant calendar admission bound to this invite, if any.
     pub(super) authorization: crate::outbound_chokepoint::PreparedAuthorization,
+    /// A second actor the mutation speaks for (OF-427).
+    pub(super) co_actor: Option<crate::outbound_chokepoint::CoActorAdmission>,
 }
 
 pub(super) fn execute_admitted<S: OutboundExecutionSink>(
@@ -52,6 +54,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         admission_ceiling,
         suppression_receipt,
         authorization,
+        co_actor,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
@@ -73,6 +76,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         } else {
             None
         },
+        co_actor,
     };
     let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
     let mut transport = DispatchChokepointTransport::new(vault, request, verb_contract, sink);
