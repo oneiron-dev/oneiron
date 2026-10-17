@@ -72,7 +72,6 @@ impl FederationPeer {
     /// (FIX 360): the selector is revalidated, then the authority lane
     /// classifies that grant's member and scope. No standing refuses; it is
     /// never a member.
-    #[allow(dead_code)] // The admission call sites are the sync lane's (FIX 360).
     pub(in crate::sync) fn membership(
         &self,
         vault: &Vault,
