@@ -46,6 +46,7 @@ use super::highway_types::{
     AttemptHandle, TaskCallReceipt, TaskHandle, TaskLifecycleRecord, TaskOutcome, TaskPhase,
     TaskReport, TaskReportBody, TaskVia,
 };
+use super::lifecycle_receipt;
 use super::report_journal::{self, ReportIdentity};
 use super::runner_done::RunnerDoneAnswer;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
@@ -130,6 +131,9 @@ pub(super) struct ReportTxn<'a, 't> {
     judged: Option<RunnerDoneAnswer>,
     /// The report's journal identity, when it names a try.
     journal: Option<ReportIdentity>,
+    /// The id this report keeps its lifecycle receipt under when its write
+    /// applies; `None` in a session that keeps no record.
+    receipt_id: Option<String>,
 }
 
 impl ReportTxn<'_, '_> {
@@ -140,6 +144,7 @@ impl ReportTxn<'_, '_> {
             refused: Vec::new(),
             judged: None,
             journal: None,
+            receipt_id: None,
         }
     }
 }
@@ -156,12 +161,20 @@ impl<'a, 't> ReportTxn<'a, 't> {
             refused: Vec::new(),
             judged,
             journal: None,
+            receipt_id: None,
         }
     }
 
     /// This report, journaled under `journal` when it names a try.
     fn journaled(mut self, journal: Option<ReportIdentity>) -> Self {
         self.journal = journal;
+        self
+    }
+
+    /// This report, keeping its lifecycle receipt under `receipt_id` when
+    /// its write applies.
+    fn receipted(mut self, receipt_id: Option<String>) -> Self {
+        self.receipt_id = receipt_id;
         self
     }
 }
@@ -176,12 +189,14 @@ struct ReportCommit {
 }
 
 /// What one report's write commits: its door, TASK, fence handle and
-/// journal identity, and the receipt it answers with.
+/// journal identity, the receipt it answers with, and the id its lifecycle
+/// receipt is kept under.
 struct StagedReport<'r> {
     via: &'r TaskVia,
     task_ref: EntityId,
     attempt: Option<&'r AttemptHandle>,
     journal: Option<&'r ReportIdentity>,
+    receipt_id: Option<String>,
     lifecycle: TaskLifecycleRecord,
     related: Vec<TaskHandle>,
     asked_up: Option<TaskAskHandle>,
@@ -426,8 +441,9 @@ impl Memory<'_> {
                 }
                 let lifecycle =
                     self.work_lifecycle(via, task_ref, &key, report.attempt.as_ref(), &body, now);
+                let receipt_id = self.report_receipt_id(task_ref, &key, now)?;
                 self.report_work(
-                    &mut ReportTxn::own().journaled(journal),
+                    &mut ReportTxn::own().journaled(journal).receipted(receipt_id),
                     via,
                     task_ref,
                     &key,
@@ -468,8 +484,11 @@ impl Memory<'_> {
             &report.body,
             now,
         );
+        let receipt_id = self.report_receipt_id(task_ref, &key, now)?;
         self.report_work(
-            &mut ReportTxn::runner(wtxn, judged).journaled(journal),
+            &mut ReportTxn::runner(wtxn, judged)
+                .journaled(journal)
+                .receipted(receipt_id),
             via,
             task_ref,
             &key,
@@ -479,6 +498,30 @@ impl Memory<'_> {
             lifecycle,
             now,
         )
+    }
+
+    /// The id one work report keeps its lifecycle receipt under, `None`
+    /// when this surface keeps no record. A journaled report's replay answers
+    /// the receipt it journaled, so the id needs only to be its own.
+    fn report_receipt_id(
+        &self,
+        task_ref: EntityId,
+        key: &str,
+        now: u64,
+    ) -> MemoryResult<Option<String>> {
+        if !self.keeps_lifecycle() {
+            return Ok(None);
+        }
+        lifecycle_receipt::receipt_id(
+            "report",
+            &[
+                task_ref.as_bytes(),
+                self.actor().as_bytes(),
+                key.as_bytes(),
+                &now.to_be_bytes(),
+            ],
+        )
+        .map(Some)
     }
 
     /// The receipt skeleton of one work report.
@@ -516,13 +559,32 @@ impl Memory<'_> {
         key: &str,
         now: u64,
     ) -> MemoryResult<TaskCallReceipt> {
-        let acked = self.tasks_ack_core(task_ref)?;
         let mut lifecycle =
             self.lifecycle_record(via, "report", "acked", Some(task_ref), None, now);
         lifecycle
             .fields
             .insert("report_key".to_owned(), key.to_owned());
         lifecycle.fields.insert("body".to_owned(), "ack".to_owned());
+        // An acknowledgement that dismisses a failure keeps its lifecycle in
+        // the dismissal's transaction; one that changes nothing keeps none.
+        let receipt_id = self.report_receipt_id(task_ref, key, now)?;
+        let mut receipt_ref = None;
+        let acked = self.tasks_ack_core(task_ref, |wtxn| {
+            if let Some(id) = receipt_id {
+                let mut dismissed = lifecycle.clone();
+                dismissed
+                    .fields
+                    .insert("acked".to_owned(), true.to_string());
+                receipt_ref = Some(lifecycle_receipt::stamp_record_in(
+                    self.vault(),
+                    wtxn,
+                    &dismissed,
+                    id,
+                    None,
+                )?);
+            }
+            Ok(())
+        })?;
         lifecycle
             .fields
             .insert("acked".to_owned(), acked.acked.to_string());
@@ -533,7 +595,7 @@ impl Memory<'_> {
             handle: TaskHandle::Task { task_ref },
             related: Vec::new(),
             outcome: TaskOutcome::Reported { phase },
-            receipt_ref: None,
+            receipt_ref,
             lifecycle: Some(lifecycle),
             idempotent_replay: false,
         })
@@ -1456,6 +1518,7 @@ impl Memory<'_> {
             task_ref,
             attempt,
             journal: rt.journal.as_ref(),
+            receipt_id: rt.receipt_id.clone(),
             lifecycle,
             related,
             asked_up,
@@ -1501,6 +1564,7 @@ impl Memory<'_> {
             task_ref,
             attempt,
             journal,
+            receipt_id,
             mut lifecycle,
             related,
             asked_up,
@@ -1544,7 +1608,7 @@ impl Memory<'_> {
             | TaskPhase::Asked { .. } => "reported",
         }
         .to_owned();
-        let receipt = TaskCallReceipt {
+        let mut receipt = TaskCallReceipt {
             handle: attempt.map_or(TaskHandle::Task { task_ref }, |attempt| {
                 TaskHandle::Attempt(*attempt)
             }),
@@ -1557,6 +1621,11 @@ impl Memory<'_> {
             lifecycle: Some(lifecycle),
             idempotent_replay: false,
         };
+        // The lifecycle lands with the move, and the journal keeps the
+        // receipt naming it, so a replay answers the same reference.
+        if let Some(id) = receipt_id {
+            lifecycle_receipt::stamp_in(self.vault(), wtxn, &mut receipt, id, None)?;
+        }
         if let Some(identity) = journal {
             report_journal::put_in(self.vault(), wtxn, identity, &receipt)?;
         }
