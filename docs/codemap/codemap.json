@@ -1033,7 +1033,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -44911,7 +44911,7 @@
       "const": 9,
       "crate-vis": 1,
       "enum": 5,
-      "fn": 54,
+      "fn": 55,
       "re-export": 2,
       "struct": 6
      }
