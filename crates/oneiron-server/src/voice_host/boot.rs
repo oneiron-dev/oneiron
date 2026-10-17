@@ -39,13 +39,16 @@ use super::{
 };
 use crate::auth::{BindingProof, CoreAuth, CoreScope};
 use crate::config::models::VoiceSettings;
-use crate::managed::ManagedShutdown;
+use crate::managed::{ManagedShutdown, ShutdownSignal};
 use crate::server::SyncServer;
 
 /// The agent that answers a call, as the chat route's default.
 const DEFAULT_AGENT: &str = "sys.default";
 /// How long a connection may take to say hello.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often a call's slip is checked again: a slip revoked mid-call ends
+/// the call within this.
+const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 /// Brain events the host holds before the brain waits.
 const BRAIN_QUEUE: usize = 256;
 
@@ -68,8 +71,9 @@ pub(crate) struct VoiceBoot {
 
 impl VoiceBoot {
     /// Off unless `settings` names a socket. A socket that cannot be bound
-    /// (a missing or shared directory, an occupied path, a platform with no
-    /// descriptor-relative bind) is logged and leaves voice off.
+    /// (a missing or shared directory, an occupied path, a path past the
+    /// platform's socket length, a platform other than Linux or macOS) is
+    /// logged and leaves voice off.
     pub(crate) fn start(
         server: &Arc<SyncServer>,
         settings: Option<&VoiceSettings>,
@@ -233,6 +237,7 @@ async fn call(
     let brain = ChatBrain::new(ChatBrainBindings {
         ai: server.ai.clone(),
         vault: Arc::clone(vault),
+        auth: auth.clone(),
         instructions,
         payer,
         out,
@@ -264,7 +269,30 @@ async fn call(
         .take()
         .map_err(failed)?
         .ok_or_else(|| failed("connection already claimed"))?;
-    connection.serve_until(host, shutdown.triggered()).await
+    // The slip passed the door once, at hello; it is checked again through
+    // the call, and a revoked one ends it as the server's stop would.
+    let stopping = shutdown.triggered();
+    let vault = Arc::clone(vault);
+    let stop: ShutdownSignal = Box::pin(async move {
+        tokio::select! {
+            () = stopping => {}
+            () = revoked(&auth, &vault) => {
+                tracing::info!("voice: the call's credential was revoked; ending the call");
+            }
+        }
+    });
+    connection.serve_until(host, stop).await
+}
+
+/// Resolves once the call's credential is no longer live.
+async fn revoked(auth: &CoreAuth, vault: &Vault) {
+    let mut every = tokio::time::interval(LIVENESS_EVERY);
+    loop {
+        every.tick().await;
+        if !auth.credential_is_live(vault) {
+            return;
+        }
+    }
 }
 
 /// The first frame, read a byte at a time so nothing after it is taken

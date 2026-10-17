@@ -302,6 +302,18 @@ export class Oneiron {
       /** Exact segment namespace enumeration. Empty namespaces are not retained. */
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
+    campaign: {
+      program: {
+        /** Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns. */
+        create: (input: Facade.CreateCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramCreate(input) as Facade.CampaignProgramRecord),
+        /** One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now. */
+        read: (input: Facade.CampaignProgramReadRequest): Facade.CampaignProgramReadResult => this.#call(() => this.#client.vaultCampaignProgramRead(input) as Facade.CampaignProgramReadResult),
+        /** Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops. */
+        update: (input: Facade.UpdateCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramUpdate(input) as Facade.CampaignProgramRecord),
+        /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
+        archive: (input: Facade.ArchiveCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramArchive(input) as Facade.CampaignProgramRecord),
+      },
+    },
     weave: {
       /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
       report: (input: Facade.WeaveReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveReport(input) as Facade.WeaveReportView),
@@ -318,6 +330,14 @@ export class Oneiron {
           /** The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays. */
           wrong: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveOwnerLinkWrong(input) as Facade.WeaveLinkCorrectionView),
         },
+        item: {
+          /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
+          wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveOwnerItemWrong(input) as Facade.WeaveItemCorrectionView),
+        },
+      },
+      item: {
+        /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
+        wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
     },
     packs: {

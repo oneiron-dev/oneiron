@@ -47,11 +47,17 @@ both bindings and their export-census tests in one change.
 - `vault.kv.delete`
 - `vault.kv.search`
 - `vault.kv.namespaces`
+- `vault.campaign.program.create`
+- `vault.campaign.program.read`
+- `vault.campaign.program.update`
+- `vault.campaign.program.archive`
 - `vault.weave.report`
 - `vault.weave.digest`
 - `vault.weave.lens`
 - `vault.weave.link.wrong`
 - `vault.weave.owner.link.wrong`
+- `vault.weave.item.wrong`
+- `vault.weave.owner.item.wrong`
 - `vault.packs.put`
 - `vault.packs.setup.prepare`
 - `vault.packs.setup.get`

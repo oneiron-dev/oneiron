@@ -10,7 +10,7 @@ use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::llm::ModelId;
 use oneiron::llm::decision::{DecisionAnswer, Reversibility, TypedDecision};
 use oneiron::skill_optimize::{
-    HeldOutReplayNotes, JudgeShadowAnswer, JudgeShadowCase, JudgeShadowHost,
+    HeldOutReplayNotes, JudgeShadowAnswer, JudgeShadowCase, JudgeShadowHost, judgment_kind,
 };
 
 use crate::decision_host::MODEL_DIAL;
@@ -71,6 +71,7 @@ impl JudgeShadowHost for JournalShadow<'_> {
                 source_family: source_family(&row, &state),
                 judge,
                 answer: row.decision.answer.clone(),
+                kind: judgment_kind(&row.revision, &row.question, &state),
                 question,
                 asked_at: row.at,
                 state,
@@ -85,7 +86,7 @@ impl JudgeShadowHost for JournalShadow<'_> {
         let Some(row) = rows.get(&case.case_ref) else {
             return Ok(None);
         };
-        let decisions = self.judge.decisions();
+        let decisions = self.judge.configured_decisions();
         let decision = decisions.ladder.run(
             &row.question,
             decisions.principal,
