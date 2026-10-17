@@ -1,7 +1,7 @@
 //! What a vault holds in memory for verb hooks: the process switch, the
 //! cached binding list, the sandbox, the loaded bodies, the invocations in
-//! flight and the ids the doors claimed for their clients. Nothing here is
-//! stored.
+//! flight, the ids the doors claimed for their clients and the host's
+//! credential check. Nothing here is stored.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -14,6 +14,7 @@ use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
 use crate::{EntityId, Result, Vault};
 
 use super::InvocationId;
+use super::credential::CredentialCheck;
 use crate::runtime_hooks::HookBodyRuntime;
 
 /// How long a cached binding list stands without a change notice: a binding
@@ -49,6 +50,9 @@ pub(crate) struct VerbHookState {
     /// The process's one sandbox: the host's, when it installed one before
     /// the first hooked call, else built on that call.
     runtime: OnceLock<std::result::Result<Arc<dyn HookBodyRuntime>, String>>,
+    /// The host's check that runs a credential caller's settled call again;
+    /// serve installs it once, before its hook runner starts.
+    credential: OnceLock<CredentialCheck>,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
@@ -254,6 +258,11 @@ impl VerbHookState {
         Some(self.mark(invocation))
     }
 
+    /// The host's credential check, if it installed one.
+    pub(super) fn credential_check(&self) -> Option<CredentialCheck> {
+        self.credential.get().cloned()
+    }
+
     fn mark(&self, invocation: InvocationId) -> InFlightMark {
         InFlightMark {
             set: Arc::clone(&self.in_flight),
@@ -420,6 +429,15 @@ impl Vault {
     /// has built its own, this does nothing.
     pub fn install_hook_runtime(&self, runtime: Arc<dyn HookBodyRuntime>) {
         let _ = self.verb_hook_state.runtime.set(Ok(runtime));
+    }
+
+    /// Installs the host's check that runs a credential caller's call again
+    /// once its hook's ask settles proceed (ARCH-0080 §3 Ask). Serve installs
+    /// it before its hook runner starts; a second install does nothing.
+    /// Without one, a credential call saves no way to run again, and one
+    /// saved earlier is refused.
+    pub fn install_verb_ask_credential_check(&self, check: Arc<dyn super::VerbAskCredentialCheck>) {
+        let _ = self.verb_hook_state.credential.set(check);
     }
 
     /// Claims `invocation`, which a client named, for the request that
