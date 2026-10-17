@@ -333,7 +333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `cdp` | file | 1 | m | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
-| `desktop` | file | 1 | L | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
+| `desktop` | file | 1 | XL | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
 | `driver` | file | 1 | m | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
 | `library` | file | 1 | m | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
 | `mcp` | file | 1 | s | MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader… |

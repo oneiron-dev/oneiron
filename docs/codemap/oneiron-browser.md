@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/cdp.rs` | src | m | 6 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
-| `src/desktop.rs` | src | L | 2 struct · 7 fn | DesktopGuest, DesktopSession | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
+| `src/desktop.rs` | src | XL | 2 struct · 7 fn | DesktopGuest, DesktopSession | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
 | `src/driver.rs` | src | m | 11 crate-vis | — | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
 | `src/lib.rs` | src | L | 35 struct · 7 enum · 2 trait · 10 fn · 11 const · 5 re-export | BatchInput, BatchOutput, BatchStep, BrowserDriver, BrowserError, ClickInput, CropInput, DecideStep +36 | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
 | `src/library.rs` | src | m | 11 struct · 1 enum · 1 trait · 3 fn · 3 const · 2 crate-vis | LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRunInput, LibraryRunOutput, ProposeInput +5 | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
