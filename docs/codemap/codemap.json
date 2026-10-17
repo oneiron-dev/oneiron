@@ -988,7 +988,7 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 7,
       "struct": 3,
@@ -46537,6 +46537,7 @@
       "ConsultExpiryReport",
       "ConsultFanOutReceipt",
       "ConsultFanOutSpec",
+      "ConsultMeasuredSpend",
       "ConsultResultInput",
       "ConsultResultKind",
       "TaskResultReceipt"
@@ -46546,7 +46547,7 @@
      "surface": {
       "crate-vis": 10,
       "enum": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -46810,7 +46811,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 2,
       "re-export": 24
      }
@@ -46892,7 +46893,7 @@
      "path": "src/task_verb/project_tradeoff.rs",
      "purpose": "A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -46975,7 +46976,7 @@
      "path": "src/task_verb/report_journal.rs",
      "purpose": "The per-attempt report journal (OF-220)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
