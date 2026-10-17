@@ -667,6 +667,25 @@ impl OfficialSeatRegistry {
             .ok_or_else(|| ByoaError::UnknownSeatAdapter(name.to_owned()))
     }
 
+    /// The adapter serving `route`, when this build has one. A Grok
+    /// subscription has none, by design.
+    #[must_use]
+    pub fn adapter_for_route(
+        &self,
+        route: OfficialSeatRoute,
+    ) -> Option<Arc<dyn OfficialSeatAdapter>> {
+        self.adapters
+            .values()
+            .find(|adapter| adapter.route() == route)
+            .map(Arc::clone)
+    }
+
+    /// Every registered adapter name, in name order.
+    #[must_use]
+    pub fn names(&self) -> Vec<&str> {
+        self.adapters.keys().map(String::as_str).collect()
+    }
+
     /// Every official seat this build knows. There is no Grok-subscription
     /// adapter and no token-scraping adapter, by design.
     pub fn standard() -> Self {

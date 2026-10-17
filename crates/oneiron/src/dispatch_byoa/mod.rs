@@ -42,6 +42,10 @@
 //! is [`crate::attempt_queue::AttemptState::Abandoned`], not failed, and still
 //! points at the last exhaust it produced.
 
+mod dreamer_provider;
+pub use dreamer_provider::{
+    OfficialDreamerSeat, OfficialSeatDreamerProvider, register_official_dreamer_providers,
+};
 mod provider;
 pub use provider::{
     CLAUDE_CODE_PROGRAM, CODEX_PROGRAM, ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter,

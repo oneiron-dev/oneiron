@@ -5,16 +5,36 @@
 //! the verifier flag below is hashed into a PKCE challenge on the spot and
 //! the verifier itself is never written anywhere.
 
-use std::io::{self, Write as _};
+use std::io::{self, Read as _, Write as _};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::cli::SeatLoginPlanArgs;
+use crate::cli::{SeatLoginPlanArgs, SeatRunnerPolicyArgs};
 use crate::runtime::seat_login::{
-    SeatSettings, seat_login_surface, seat_route_catalog, siwc_authorize_request,
+    RunnerSeatPolicySettings, SeatSettings, runner_policy_surface, runner_provider_catalog,
+    seat_login_surface, seat_route_catalog, siwc_authorize_request,
 };
 
 pub fn seat_routes() -> anyhow::Result<()> {
     print_json(&seat_route_catalog())
+}
+
+pub fn seat_runners() -> anyhow::Result<()> {
+    print_json(&runner_provider_catalog())
+}
+
+pub fn seat_runner_policy(args: SeatRunnerPolicyArgs) -> anyhow::Result<()> {
+    let raw = if args.settings.to_str() == Some("-") {
+        let mut raw = String::new();
+        io::stdin().lock().read_to_string(&mut raw)?;
+        raw
+    } else {
+        std::fs::read_to_string(&args.settings)
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", args.settings.display()))?
+    };
+    let settings: RunnerSeatPolicySettings =
+        serde_json::from_str(&raw).map_err(|error| anyhow::anyhow!("runner policy: {error}"))?;
+    let surface = runner_policy_surface(&settings).map_err(anyhow::Error::msg)?;
+    print_json(&surface)
 }
 
 pub fn seat_login_plan(args: SeatLoginPlanArgs) -> anyhow::Result<()> {
