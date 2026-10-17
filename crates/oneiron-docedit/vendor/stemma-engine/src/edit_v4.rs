@@ -621,6 +621,9 @@ pub enum Op {
     SetFormat {
         target: NodeId,
         expect: String,
+        /// 1-based copy of `expect` to format when the text repeats.
+        #[serde(default)]
+        occurrence: Option<usize>,
         #[serde(default)]
         semantic_hash: Option<String>,
         marks: FormatMarks,
@@ -2252,6 +2255,7 @@ const OP_FIELDS: &[(&str, &[&str])] = &[
         &[
             "target",
             "expect",
+            "occurrence",
             "semantic_hash",
             "marks",
             "color",
@@ -4503,6 +4507,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
         Op::SetFormat {
             target,
             expect,
+            occurrence,
             semantic_hash,
             marks,
             color,
@@ -4579,6 +4584,7 @@ fn translate_op(op_index: usize, op: Op) -> Result<EditStep, AdapterError> {
             Ok(EditStep::SetRunFormatting {
                 block_id: target,
                 expect,
+                occurrence,
                 semantic_hash,
                 marks: set,
                 style,

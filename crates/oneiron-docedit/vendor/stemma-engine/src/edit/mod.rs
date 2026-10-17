@@ -360,6 +360,9 @@ pub enum EditStep {
         /// Substring of the paragraph's visible text to format. Anchors the
         /// edit so a stale caller fails rather than formatting the wrong text.
         expect: String,
+        /// 1-based copy of a repeated `expect` to format, counted the way the
+        /// ambiguity check counts them. Absent, a repeated `expect` refuses.
+        occurrence: Option<usize>,
         /// Optional full-block semantic hash precondition.
         semantic_hash: Option<String>,
         /// Boolean-mark patch over the matched span. Each mark has independent
@@ -11572,6 +11575,7 @@ pub(crate) fn apply_transaction_with_notes(
             EditStep::SetRunFormatting {
                 block_id,
                 expect,
+                occurrence,
                 semantic_hash,
                 marks,
                 style,
@@ -11591,6 +11595,7 @@ pub(crate) fn apply_transaction_with_notes(
                     &mut doc,
                     block_id,
                     expect,
+                    *occurrence,
                     semantic_hash.as_deref(),
                     *marks,
                     style,

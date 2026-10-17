@@ -4,19 +4,22 @@
 //! block ids in document order, so concurrent moves converge. Root `blocks` maps
 //! each id to its block: kind, heading level, role token, whether it was
 //! imported, its lock, and either one `text` per paragraph or one text per
-//! table cell under `cells` (`row:col`). A deleted block leaves `order` and keeps
-//! its entry, so a three-way read can still name it. Imported blocks keep the
-//! package's block ids; a new paragraph gets a minted one.
+//! table cell under `cells` (`row:col`). A paragraph's inline marks are Loro
+//! text marks on its `text`, keyed by [`DocxMark::key`] with the value `true`.
+//! A deleted block leaves `order` and keeps its entry, so a three-way read can
+//! still name it. Imported blocks keep the package's block ids; a new paragraph
+//! gets a minted one.
 
 use super::invalid;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use loro::{
-    Container, LoroDoc, LoroMap, LoroMovableList, LoroText, LoroValue, UpdateOptions,
-    ValueOrContainer,
+    Container, ExpandType, LoroDoc, LoroMap, LoroMovableList, LoroText, LoroValue, StyleConfig,
+    TextDelta, UpdateOptions, ValueOrContainer,
 };
 use oneiron_docedit::docx_body::{
-    DocxAnchor, DocxBlock, DocxBlockKind, DocxChange, DocxLock, DocxParagraph,
+    DocxAnchor, DocxBlock, DocxBlockKind, DocxChange, DocxLock, DocxMark, DocxParagraph, DocxRun,
+    canonical_runs,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -52,6 +55,9 @@ pub struct BodyBlock {
     /// Read-only: its content would not survive a whole-paragraph replace.
     pub locked: bool,
     pub text: String,
+    /// The paragraph's text as runs of one mark set each, joining to `text`;
+    /// empty for other blocks.
+    pub runs: Vec<DocxRun>,
     /// `(row, col)` to text, for a table.
     pub cells: BTreeMap<(usize, usize), String>,
 }
@@ -103,10 +109,21 @@ pub enum DocxBodyOp {
         block: String,
         after: Option<String>,
     },
+    /// Turn one inline mark on or off over `len` characters of a paragraph
+    /// from `at`. Turning subscript on turns superscript off there, and the
+    /// reverse: a run sits at one baseline.
+    Mark {
+        block: String,
+        at: usize,
+        len: usize,
+        mark: DocxMark,
+        on: bool,
+    },
 }
 
 /// Write the imported blocks into a fresh document.
 pub(super) fn import(doc: &LoroDoc, blocks: &[DocxBlock]) -> Result<()> {
+    mark_styles(doc);
     let office = doc.get_map(OFFICE);
     office.insert(KIND, "docx").map_err(loro)?;
     office.insert("schema", i64::from(SCHEMA)).map_err(loro)?;
@@ -141,11 +158,18 @@ pub(super) fn import(doc: &LoroDoc, blocks: &[DocxBlock]) -> Result<()> {
         match block.kind {
             DocxBlockKind::Paragraph | DocxBlockKind::Heading(_) => {
                 bounded(&block.text)?;
-                entry
+                let text = entry
                     .insert_container(TEXT, LoroText::new())
-                    .map_err(loro)?
-                    .insert(0, &block.text)
                     .map_err(loro)?;
+                text.insert(0, &block.text).map_err(loro)?;
+                let mut at = 0;
+                for run in &block.runs {
+                    let end = at + run.text.chars().count();
+                    for mark in &run.marks {
+                        text.mark(at..end, mark.key(), true).map_err(loro)?;
+                    }
+                    at = end;
+                }
             }
             DocxBlockKind::Table => {
                 let cells = entry
@@ -194,11 +218,12 @@ pub(super) fn read(doc: &LoroDoc) -> Result<DocxBody> {
             Some("opaque") => BodyBlockKind::Opaque,
             _ => return Err(invalid("block kind")),
         };
-        let text = match kind {
-            BodyBlockKind::Paragraph | BodyBlockKind::Heading(_) => loro_text(&entry, TEXT)
-                .ok_or_else(|| invalid("paragraph text"))?
-                .to_string(),
-            _ => String::new(),
+        let (text, runs) = match kind {
+            BodyBlockKind::Paragraph | BodyBlockKind::Heading(_) => {
+                let body = loro_text(&entry, TEXT).ok_or_else(|| invalid("paragraph text"))?;
+                (body.to_string(), runs(&body)?)
+            }
+            _ => (String::new(), Vec::new()),
         };
         let mut cells = BTreeMap::new();
         if kind == BodyBlockKind::Table {
@@ -219,6 +244,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<DocxBody> {
             ),
             locked: string(&entry, LOCK).is_some(),
             text,
+            runs,
             cells,
         });
     }
@@ -336,8 +362,66 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
                 order.mov(from, to).map_err(loro)?;
             }
         }
+        DocxBodyOp::Mark {
+            block,
+            at,
+            len,
+            mark,
+            on,
+        } => {
+            let body =
+                loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
+            let end = at
+                .checked_add(*len)
+                .filter(|end| *len > 0 && *end <= body.len_unicode())
+                .ok_or_else(|| invalid("mark range"))?;
+            mark_styles(doc);
+            if *on {
+                body.mark(*at..end, mark.key(), true).map_err(loro)?;
+                if let Some(other) = mark.baseline_pair() {
+                    body.unmark(*at..end, other.key()).map_err(loro)?;
+                }
+            } else {
+                body.unmark(*at..end, mark.key()).map_err(loro)?;
+            }
+        }
     }
     Ok(())
+}
+
+/// Loro configures bold, italic and underline only; every mark of the body
+/// grows over text typed at its end, as Word's run formatting does.
+fn mark_styles(doc: &LoroDoc) {
+    doc.config_default_text_style(Some(StyleConfig {
+        expand: ExpandType::After,
+    }));
+}
+
+/// A paragraph's text as canonical runs; a mark the body does not know fails
+/// closed.
+fn runs(text: &LoroText) -> Result<Vec<DocxRun>> {
+    let mut runs = Vec::new();
+    for delta in text.to_delta() {
+        let TextDelta::Insert { insert, attributes } = delta else {
+            return Err(invalid("paragraph text delta"));
+        };
+        let mut marks = Vec::new();
+        for (key, value) in attributes.into_iter().flatten() {
+            if value == LoroValue::Bool(true) {
+                marks.push(DocxMark::from_key(&key).ok_or_else(|| invalid("text mark"))?);
+            }
+        }
+        runs.push(DocxRun {
+            text: insert,
+            marks,
+        });
+    }
+    Ok(canonical_runs(runs))
+}
+
+/// Whether any run carries a mark.
+fn marked(runs: &[DocxRun]) -> bool {
+    runs.iter().any(|run| !run.marks.is_empty())
 }
 
 /// The changes that turn the imported `base` into `current`, in the order the
@@ -361,10 +445,21 @@ pub(super) fn changes(base: &DocxBody, current: &DocxBody) -> Result<Vec<DocxCha
         let before = &base.blocks[*base_index
             .get(block.id.as_str())
             .ok_or_else(|| invalid("an imported block the import never had"))?];
-        if block.locked && (block.text != before.text || block.cells != before.cells) {
+        if block.locked
+            && (block.text != before.text
+                || block.runs != before.runs
+                || block.cells != before.cells)
+        {
             return Err(invalid("a read-only block changed"));
         }
-        if block.text != before.text {
+        if marked(&block.runs) || marked(&before.runs) {
+            if block.runs != before.runs {
+                changes.push(DocxChange::SetRuns {
+                    block: block.id.clone(),
+                    runs: block.runs.clone(),
+                });
+            }
+        } else if block.text != before.text {
             changes.push(DocxChange::SetText {
                 block: block.id.clone(),
                 text: block.text.clone(),
@@ -416,6 +511,11 @@ pub(super) fn changes(base: &DocxBody, current: &DocxBody) -> Result<Vec<DocxCha
             run.push(DocxParagraph {
                 role: block.role.clone(),
                 text: block.text.clone(),
+                runs: if marked(&block.runs) {
+                    block.runs.clone()
+                } else {
+                    Vec::new()
+                },
             });
         }
     }

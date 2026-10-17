@@ -158,7 +158,8 @@ fn side(base: &DocxBody, side: &DocxBody) -> Vec<BlockChange> {
         if !staying.contains(&position) {
             changes.push(change(block, ChangeKind::Moved));
         }
-        if block.text != old.text {
+        // A mark change is a text change: both edit the paragraph's runs.
+        if block.text != old.text || block.runs != old.runs {
             changes.push(change(block, ChangeKind::Text));
         }
         if block.cells != old.cells {

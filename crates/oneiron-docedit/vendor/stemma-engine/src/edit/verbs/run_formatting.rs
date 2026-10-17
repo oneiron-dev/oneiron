@@ -59,6 +59,7 @@ pub(crate) fn apply(
     doc: &mut CanonDoc,
     block_id: &NodeId,
     expect: &str,
+    occurrence: Option<usize>,
     semantic_hash: Option<&str>,
     marks: InlineMarkSet,
     style: &RunStyleEdit,
@@ -141,6 +142,7 @@ pub(crate) fn apply(
         para,
         block_id,
         expect,
+        occurrence,
         marks,
         style,
         revision,
@@ -174,6 +176,7 @@ fn apply_to_paragraph(
     para: &mut ParagraphNode,
     block_id: &NodeId,
     expect: &str,
+    occurrence: Option<usize>,
     marks: InlineMarkSet,
     style: &RunStyleEdit,
     revision: &RevisionInfo,
@@ -195,16 +198,24 @@ fn apply_to_paragraph(
         })
         .collect();
 
-    if matches.len() > 1 {
-        return Err(EditError::AmbiguousFormatTarget {
-            block_id: block_id.clone(),
-            expected: expect.to_string(),
-            occurrences: matches.len(),
-            step_index,
-        });
-    }
+    // A named copy picks among the matches; a copy the paragraph does not hold
+    // reads as a mismatch below.
+    let chosen = match occurrence {
+        Some(copy) => copy
+            .checked_sub(1)
+            .and_then(|index| matches.into_iter().nth(index)),
+        None if matches.len() > 1 => {
+            return Err(EditError::AmbiguousFormatTarget {
+                block_id: block_id.clone(),
+                expected: expect.to_string(),
+                occurrences: matches.len(),
+                step_index,
+            });
+        }
+        None => matches.into_iter().next(),
+    };
 
-    if let Some(target) = matches.into_iter().next() {
+    if let Some(target) = chosen {
         let segment = &para.segments[target.segment_index];
         let existing_revisions = formatting_changes_in_span(&segment.inlines, &target.span);
         let (tracking_status, container_revision) = tracking_context(&segment.status);

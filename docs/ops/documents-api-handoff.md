@@ -53,10 +53,10 @@ let manifest = done.manifest(); // name, media type, size and BLAKE3 of each out
 | Op | Inputs | Args besides inputs | Reply | Output | Native door |
 |---|---|---|---|---|---|
 | `contract.describe` | none | none | `described` | none | `contract::describe` |
-| `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: id, kind, role, text, cells, lock | none | `read_docx_blocks` |
+| `docx.read` | `document` | `limits` (DOCX) | `docx_blocks`: id, kind, role, text, runs (text, marks), cells, lock | none | `read_docx_blocks` |
 | `docx.revise` | `document` | `transaction` (stemma tracked-change grammar), `limits` | `docx_revised`: the transaction with its date pinned, notes | `document` | `prepare_revision_transaction`, `revise_with_notes` |
 | `docx.validate` | `document` | optional `transaction`, `limits` | `checked` | none | `validate_revision_transaction`, `validate_blocking_with_limits` |
-| `docx.project` | `source` | `changes` (set_text, set_cell, move, insert, delete), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
+| `docx.project` | `source` | `changes` (set_text, set_runs, set_cell, move, insert, delete; a mark change on kept text lands as a tracked formatting change), `revision` (author, RFC 3339 date, group), `limits` | `written` | `document` | `project_docx` |
 | `xlsx.read` | `workbook` | `limits` (package) | `xlsx_book`: sheets, cells, names, styles, locks | none | `read_xlsx_cells` |
 | `xlsx.project` | `source` | `changes` (cell, set_name, delete_name), `limits` | `written` | `workbook` | `project_xlsx` |
 | `xlsx.mark_full_calc` | `workbook` | `limits` | `written` | `workbook` | `mark_full_calc` |
