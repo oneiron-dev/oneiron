@@ -358,8 +358,11 @@ struct ObservedFactory {
     /// ladder and promotes through its auto check. Until the server staffs
     /// it, a pass runs on the shipped, unstaffed ladder.
     decisions: Arc<std::sync::OnceLock<DecisionHost>>,
+    /// The bound server: the standing-question pump's, and the connector
+    /// responder's chat budget and LINE plan.
     question_timer: QuestionTimer,
-    /// The server's runtime, which the Coach's drafts block on.
+    /// The server's runtime, which the Coach's drafts and the connector
+    /// responder's model calls block on.
     serve: tokio::runtime::Handle,
     admission: PassAdmission,
 }
@@ -457,6 +460,19 @@ impl ObservedFactory {
         }
         if let Some(host) = host {
             factory = factory.with_decisions(host.consolidation_decisions()?);
+        }
+        // A subscribed Slack or LINE message wakes the agent it addressed,
+        // which answers on the chat seat through the served sink (OF-519).
+        // With no chat seat the wake is delivered and nothing answers.
+        if self.runtime.seat(super::CHAT_ROLE).is_some() {
+            factory = factory.with_connector_event_responder(Box::new(
+                super::connector_event::ServedConnectorResponder::new(
+                    Arc::clone(&self.vault),
+                    Arc::clone(&self.runtime),
+                    self.serve.clone(),
+                    Arc::clone(&self.question_timer),
+                ),
+            ));
         }
         self.inner = Some(factory);
         Ok(())
