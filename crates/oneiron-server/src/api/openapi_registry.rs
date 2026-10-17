@@ -292,6 +292,7 @@ use utoipa::OpenApi;
         ContextPackBudgetControls,
         ContextPackReaderControls,
         super::ContextPackMediaQuery,
+        super::ContextPackQueryAffect,
         ContextBoardMemoriesControls,
         ContextBoardMemoriesSlotControls,
         ContextBoardSessionControls,

@@ -72,6 +72,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
+    (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHORT_ID_ALIAS, CONTENT),
     (&t::SHORT_ID_GRAMMAR_VERSION, CONTENT),
     (&t::SHORT_ID_COUNTER, CONTENT),
@@ -228,6 +229,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED, CONTENT),
     (&t::VAULT_IDENTITY_LOCAL, LIVE),
     // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_ESCROW_SPOOLED, LIVE),
     (&t::VAULT_KEY_STATE, LIVE),
     (&t::VAULT_KEY_WRAP, LIVE),
     (&t::VOICE_OWNER_REF, LIVE),
