@@ -356,7 +356,8 @@ fn mcp_task_in_world(
 }
 
 /// Narrows the TASKS rows to the credential's registered world/facet and its
-/// verified slip, then renders what is left.
+/// verified slip, then renders what is left. A TASK one of `pins` names that
+/// the scope admitted but the render cap left off is still shown.
 ///
 /// The narrowing runs BEFORE the render cap, so the window and its overflow
 /// footer count only rows this credential may see. The returned count is the
@@ -368,6 +369,7 @@ pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
     rows: oneiron::context_board::TasksSectionRows,
+    pins: &[oneiron::context_board::HookPin],
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
@@ -394,12 +396,15 @@ pub(super) fn mcp_scoped_tasks_section(
             bare_jobs.push(job);
         }
     }
-    let section = oneiron::context_board::TasksSectionRows {
+    let rows = oneiron::context_board::TasksSectionRows {
         intents,
         bare_jobs,
         source_exhausted: rows.source_exhausted,
-    }
-    .render();
+    };
+    let mut section = rows.render();
+    // A hook-pinned TASK the scope admitted but the render cap left off is
+    // shown, as on the HTTP board (OF-579).
+    section.pin_hook_tasks(&rows.intents, pins);
     Ok((section, omitted))
 }
 
