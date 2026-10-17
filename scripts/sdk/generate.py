@@ -567,7 +567,7 @@ def mcp_input_dispatch(row):
     name, method = row['name'], row['name'].replace('.', '_')
     decode = f'let input: {rust_type(row["input"])} = serde_json::from_value(input).map_err(|_| invalid())?;\n'
     if row.get('context') == 'board':
-        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
+        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
     body = ''
     if name == 'describe':
         # describe(self) renders the authenticated run brief, the same door REST takes.
@@ -612,7 +612,7 @@ def mcp_input_dispatch(row):
             # scope and frame-epoch checks.
             body += ('if let Some(key) = input.key.clone() {\n'
                      '    let frame_epoch = input.frame_epoch;\n'
-                     '    return execute_mcp_board_verb(server, actor, served, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
+                     '    return execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
                      '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
             body += ('if input.task_ref.is_none() && !input.self_target {\n'
@@ -660,9 +660,10 @@ async fn execute_mcp_agent_verb(
         args: &McpVerbToolArgs,
         actor: &McpCallContext,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-        execute_agent_verb_input(server, args.tool.name, input, actor, None, served).await
+        execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
     }
 
 fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
@@ -679,7 +680,9 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
 /// Every row the result was derived from is listed in `served`: those its
-/// input names, and those the verb's reads picked themselves.
+/// input names, and those the verb's reads picked themselves. A board read
+/// leaves the hook blocks its answer shows in `board_hooks`; the caller spends
+/// them once the answer is out (OF-579).
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -687,9 +690,10 @@ pub(crate) async fn execute_agent_verb_input(
         actor: &McpCallContext,
         origin: Option<oneiron::memory::HostWriteOrigin>,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
-        let produced = execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served).await;
+        let produced = execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served, board_hooks).await;
         served.extend(producers.take());
         produced
     }
@@ -706,6 +710,7 @@ async fn execute_agent_verb_listing(
         origin: Option<oneiron::memory::HostWriteOrigin>,
         producers: &oneiron::memory::ProducerRows,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
@@ -734,7 +739,7 @@ async fn execute_agent_verb_listing(
         None
     };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
-    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
+    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served, board_hooks).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     Ok((output, source, carrier, epoch))
     }
@@ -747,6 +752,7 @@ async fn execute_agent_verb_row(
         actor: &McpCallContext,
         memory: oneiron::Memory<'_>,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + 'match tool {\n'
