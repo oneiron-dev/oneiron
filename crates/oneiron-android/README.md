@@ -45,6 +45,10 @@ arms or clears (`null`) the app's timer, and `ready()` reports the server up.
 ```kotlin
 val engine = EmbeddedEngine(context.filesDir.resolve("memory").absolutePath, host)
 val reply = engine.request("GET", "/.well-known/oneiron", listOf("authorization" to bearer.toByteArray()))
+engine.openConnection().use { socket ->
+    socket.send("GET /ws HTTP/1.1\r\nhost: localhost\r\nauthorization: Bearer $bearer\r\nconnection: upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\nsec-websocket-key: $key\r\n\r\n".toByteArray())
+    val head = socket.receive()  // the 101, then the server's frames on later receives
+}
 engine.vault().use { vault -> vault.get("0102030405060708090a0b0c0d0e0f10") }
 engine.stop()  // backgrounding: drain, stop every worker, keep the vault open
 engine.wake()  // the timer fired: serve again over the same vault, run what is due
@@ -53,9 +57,14 @@ engine.close()
 
 `request` is one buffered HTTP/1.1 exchange: headers pass through (bring your
 own auth), a 4xx/5xx is a reply, and `/ws`, other upgrades and a reply body
-over 64 MiB throw. `vault()` shares the engine's open vault and never reopens
-the path. Every engine method blocks: call it from an app thread, never from
-an `AppHost` callback (the engine calls those on its own threads, and a call
+over 64 MiB throw. `openConnection()` holds a connection of the app's own
+instead: one in-process stream the server serves as a socket's connection,
+HTTP/1.1 with upgrades, so `/ws` and streamed replies ride it. `send` writes
+bytes, `receive` returns the next bytes the server wrote (at most 64 KiB, empty
+once the connection ended) and `close` ends the app's side, returning a
+blocked `receive`; a `stop` drains it, so after `wake` open another. `vault()`
+shares the engine's open vault and never reopens the path. Every engine method
+blocks: call it from an app thread, never from an `AppHost` callback (the engine calls those on its own threads, and a call
 back into it throws), and call `close()` before letting it go.
 
 ## Native-host Kotlin proof

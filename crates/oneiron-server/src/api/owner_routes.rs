@@ -72,6 +72,7 @@ mod secret_reveal_routes;
 mod secret_use_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
+mod steer_routes;
 mod vault_key_routes;
 mod weave_routes;
 mod widen_proposal_routes;
@@ -154,6 +155,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(secret_reveal_routes::routes())
         .merge(secret_found_routes::routes())
         .merge(secret_lift_routes::routes())
+        .merge(steer_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }
@@ -197,6 +199,20 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
         .vault()
         .bind_owner_credential(owner, slip.clone())
         .map_err(|_| refused())
+}
+
+/// The owner door for a route that runs one SDK row: the proof, and the
+/// owner's actor its verb hooks run as (`crate::owner::hooked_row`).
+pub(crate) fn hooked_owner(
+    auth: &CoreAuth,
+    server: &SyncServer,
+) -> Result<(AuthenticatedOwner, oneiron::EntityId), ApiError> {
+    let proof = owner(auth, server)?;
+    let actor = auth
+        .principal_ref()
+        .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+        .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+    Ok((proof, actor))
 }
 
 fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {

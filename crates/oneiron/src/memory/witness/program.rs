@@ -15,10 +15,12 @@ use super::validation::{
 };
 use super::{distinct_message_orders, witness_message_envelope};
 
+use std::cell::Cell;
 use std::collections::HashSet;
 
 use rmpv::Value;
 
+use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
@@ -168,6 +170,46 @@ pub(super) struct WitnessAdmission<'p> {
     /// Per message, in plan order: an exact retry of a stored row, which
     /// stages nothing.
     pub(super) message_exists: Vec<bool>,
+}
+
+/// The writer's lane a reply's typed assertions are read through in the
+/// write transaction (OF-063), and the slot the first pointer it cannot read
+/// leaves the aborted writer in.
+#[derive(Clone, Copy)]
+struct AssertionRead<'a, 'l> {
+    lane: &'a ScopedRead<'l>,
+    refused: &'a Cell<Option<String>>,
+}
+
+/// The pointer of the first record `assertions` names that `lane` does not
+/// read in `txn`, cited before created: a malformed id, a missing row and an
+/// unreadable one are one answer. Every id is judged in the one snapshot.
+fn unread_assertion_in(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    assertions: &WitnessAssertions,
+) -> MemoryResult<Option<String>> {
+    let lists = [
+        ("cited", &assertions.cited),
+        ("created", &assertions.created),
+    ];
+    let mut named = Vec::new();
+    for (list, records) in lists {
+        for (index, record) in records.iter().enumerate() {
+            let id = EntityId::from_hex(&record.id).ok();
+            named.push((format!("/assertions/{list}/{index}/id"), id));
+        }
+    }
+    let ids: Vec<EntityId> = named.iter().filter_map(|(_, id)| *id).collect();
+    let mut readable = lane.entities_readable_in_txn(txn, &ids)?.into_iter();
+    for (pointer, id) in named {
+        // A malformed id takes no readable slot: its pointer fails as it is.
+        let read = id.is_some() && readable.next().unwrap_or(false);
+        if !read {
+            return Ok(Some(pointer));
+        }
+    }
+    Ok(None)
 }
 
 impl WitnessAdmission<'_> {
@@ -383,6 +425,18 @@ impl Memory<'_> {
         } else {
             crate::gate::record_references::witness_prose_unlinked(self, turn)
         };
+        // OF-063 (FIX 1225/1670): the records a reply asserts it cited or
+        // created are read through the writer's own lane, opened here since
+        // it takes its own snapshot and so never runs inside the writer. A
+        // turn that asserts nothing opens none. `refused` carries the first
+        // pointer the lane cannot read out of the aborted writer.
+        let silent = turn.assertions.cited.is_empty() && turn.assertions.created.is_empty();
+        let assertion_lane = if silent {
+            None
+        } else {
+            Some(self.read_lane(ClaimReadStatus::Recorded)?)
+        };
+        let refused = Cell::new(None);
         let plan = self.plan_witness(turn, &landing, door, admit)?;
         let held = match &landing {
             Landing::Base { held, .. } => *held,
@@ -426,10 +480,15 @@ impl Memory<'_> {
                                 person_author.filter(|_| plan.imported.is_none())
                             }
                         };
+                    let assertions = assertion_lane.as_ref().map(|lane| AssertionRead {
+                        lane,
+                        refused: &refused,
+                    });
                     self.admit_witness_in_txn(
                         &plan,
                         &self.vault.store,
                         wtxn,
+                        assertions,
                         person_author,
                         quoted.as_ref(),
                         thread.as_ref(),
@@ -450,14 +509,29 @@ impl Memory<'_> {
                     let rostered = room_speech.is_some();
                     let person_author =
                         self.overlay_guards_in_txn(&plan, overlay, rostered, wtxn)?;
-                    let admission = self.admit_witness_in_txn(
-                        &plan,
-                        &overlay.read_view()?,
-                        wtxn,
-                        person_author,
-                        None,
-                        None,
-                    )?;
+                    let admission = {
+                        // The writer's own key reads the composed room view,
+                        // as recall's session lane does; both drop here.
+                        let view = overlay.read_view()?;
+                        let session_lane = assertion_lane.as_ref().map(|lane| {
+                            self.vault
+                                .scoped_read_in_session(lane.actor_key().clone(), &view)
+                                .with_claim_status(ClaimReadStatus::Recorded)
+                        });
+                        let assertions = session_lane.as_ref().map(|lane| AssertionRead {
+                            lane,
+                            refused: &refused,
+                        });
+                        self.admit_witness_in_txn(
+                            &plan,
+                            &view,
+                            wtxn,
+                            assertions,
+                            person_author,
+                            None,
+                            None,
+                        )?
+                    };
                     // A stored private thread's TURN takes words from its
                     // audience alone, as on base.
                     if let AdmittedTurn::Existing(record) = &admission.turn
@@ -584,7 +658,13 @@ impl Memory<'_> {
                 route.revalidate()?;
             }
             Ok(landed)
-        })?;
+        });
+        // A refused assertion is receipted only now, on its own write, once
+        // the turn's writer has aborted.
+        if let Some(pointer) = refused.take() {
+            return Err(self.settle_refused_assertion(&pointer));
+        }
+        let landed = landed?;
 
         let answer = match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
@@ -623,6 +703,24 @@ impl Memory<'_> {
             crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
         }
         answer
+    }
+
+    /// Receipts a refused assertion on its own write, as a refused typed ref
+    /// is (`admit_row_references`), and returns the refusal; if the receipt
+    /// cannot be written, the store's error instead. Inside an anonymous
+    /// off-record session the refusal stands with no receipt.
+    fn settle_refused_assertion(&self, pointer: &str) -> MemoryError {
+        let facts = crate::receipt::ReferenceRefusalFacts {
+            actor: self.actor,
+            actor_class: self.actor_class,
+            row: crate::gate::record_references::WITNESS_PROSE_ROW,
+            field: pointer.to_owned(),
+            outcome: crate::receipt::ReferenceOutcome::Refused,
+        };
+        match crate::receipt::receipt_reference_refusals(self, &[facts]) {
+            Ok(recorded) => crate::gate::record_references::invented_reference(pointer, recorded),
+            Err(error) => error.into(),
+        }
     }
 
     fn plan_witness<'t>(
@@ -721,16 +819,33 @@ impl Memory<'_> {
     /// base landing, the composed room view for an overlay one). A minted TURN
     /// carries `person_author` as its immutable byline, `quoted`, a room
     /// thread reply's proven quote, in its first body (OF-460), and `thread`,
-    /// its thread binding (FIX 2951).
+    /// its thread binding (FIX 2951). `assertions` reads the reply's cited
+    /// and created records first, when it names any (OF-063).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the shared admission joins both landings' in-transaction inputs"
+    )]
     fn admit_witness_in_txn<'p>(
         &self,
         plan: &'p WitnessPlan<'_>,
         dbs: &impl ManifestDbs,
         wtxn: &heed::RoTxn<'_>,
+        assertions: Option<AssertionRead<'_, '_>>,
         person_author: Option<EntityId>,
         quoted: Option<&crate::conversation_dag::QuotedReply>,
         thread: Option<&crate::workspace_roster::ThreadBinding>,
     ) -> MemoryResult<WitnessAdmission<'p>> {
+        // OF-063 (FIX 1225/1670): every record the reply asserts is read in
+        // THIS snapshot before any row stages. The first the writer cannot
+        // read refuses the turn; its pointer leaves the writer in `refused`.
+        if let Some(read) = assertions
+            && let Some(pointer) = unread_assertion_in(read.lane, wtxn, &plan.turn.assertions)?
+        {
+            read.refused.set(Some(pointer));
+            return Err(MemoryError::bad_request(
+                "a record the reply asserts does not resolve for this writer",
+            ));
+        }
         // ONE-1686 (RT-04): the approval-ceiling door, before ANY row stages.
         // The policy manifest is resolved from THIS transaction's snapshot, so
         // the ceiling that authorizes the rows is the one the commit lands

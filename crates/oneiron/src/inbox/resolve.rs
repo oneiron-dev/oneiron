@@ -464,7 +464,7 @@ fn accept_member_with_amendment_in_txn(
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
     let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
-    let (delta, receipt_reasons) = if amended_approval {
+    let (delta, delta_reasons) = if amended_approval {
         captured_amendment_delta(&approved_body(&reviewed)?, &approved)
     } else {
         (None, Vec::new())
@@ -550,8 +550,12 @@ fn accept_member_with_amendment_in_txn(
                 INBOX_REASON_BUNDLE_ACCEPT
             }
             .to_owned(),
-        ],
-        receipt_reasons,
+        ]
+        .into_iter()
+        // A Δ the door could not measure is stamped as a reason code.
+        .chain(delta_reasons)
+        .collect(),
+        receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
         actor_class: original.actor_class,
         actor_ref: original.actor_ref,

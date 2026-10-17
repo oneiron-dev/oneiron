@@ -160,6 +160,9 @@ pub enum Command {
     /// Create pairing links and revoke slips.
     #[command(subcommand)]
     Token(TokenCommand),
+    /// Enrol this machine with its home, so `serve` dials it.
+    #[command(subcommand)]
+    Device(DeviceCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
     /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
@@ -514,6 +517,33 @@ pub struct TokenPairArgs {
     /// The paired slip's lifetime in seconds.
     #[arg(long = "lifetime-secs", default_value_t = 365 * 24 * 60 * 60)]
     pub lifetime_secs: u64,
+
+    /// Make the link add the machine that redeems it, with your answer for
+    /// it: `yours`, `work_school` or `rented`. `oneiron device enrol`
+    /// redeems such a link on that machine. Only the owner, in person,
+    /// answers for a machine.
+    #[arg(long, value_parser = ["yours", "work_school", "rented"])]
+    pub machine: Option<String>,
+}
+
+/// This machine and its home.
+#[derive(Subcommand)]
+pub enum DeviceCommand {
+    /// Enrol this stopped vault's machine with its home, from the one-line
+    /// link `oneiron token pair --machine yours` printed there, read from
+    /// stdin. Stores the home, the paired credential and the checkpoint pin
+    /// beside this install's keys; `serve` then dials the home.
+    Enrol(Box<DeviceEnrolArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct DeviceEnrolArgs {
+    /// Path to the LMDB vault directory.
+    pub path: PathBuf,
+
+    /// Config file the vault runs with. Defaults to the XDG path.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }
 
 /// A local agent's read credential, minted through the same host-rooted
@@ -991,6 +1021,11 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
         Command::Token(TokenCommand::Agent(args)) => commands::token_agent(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
+        // Blocking: the enrolment is redeemed over blocking HTTP.
+        Command::Device(DeviceCommand::Enrol(args)) => {
+            crate::logging::off_runtime("device enrol", move || commands::device_enrol(*args))
+                .await?
+        }
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
         Command::Wake(args) => crate::wake_adapters::command(args),

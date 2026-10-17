@@ -181,6 +181,7 @@ impl Memory<'_> {
             action: action.cloned(),
             thread_audience,
             saved: String::new(),
+            assertions: turn.assertions.clone(),
         };
         let handle = MessageStreamHandle {
             message: id,
@@ -477,6 +478,7 @@ impl Memory<'_> {
                         .ok_or(Error::CorruptedIndex("message order"))?,
                 }],
                 occurred_at: self.vault.now_recorded_at(),
+                assertions: Default::default(),
             }
         };
         self.begin_message_stream(&turn, mode)

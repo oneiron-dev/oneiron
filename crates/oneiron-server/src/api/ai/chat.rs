@@ -28,7 +28,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::conversation::TurnActionAttempt;
+use oneiron::conversation::{OutputMark, TurnActionAttempt};
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
 use oneiron::memory::{
@@ -63,6 +63,7 @@ use crate::api::facade::{self, DoorClaim};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
+use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 
 /// The seeded definition that speaks when a request names no agent.
 const DEFAULT_AGENT: &str = "sys.default";
@@ -195,6 +196,9 @@ impl TurnCredential {
 
 /// Recorded on the assistant MESSAGE a revoked credential's turn leaves.
 const REVOKED: &str = "credential_revoked";
+/// Recorded on the assistant MESSAGE the newcomer barrier stopped: an
+/// attendee entered its conversation while it was being written.
+const NEWCOMER: &str = "attendee_entered";
 
 fn revoked_line() -> Vec<u8> {
     line(&ChatLine::Error {
@@ -319,6 +323,7 @@ pub(crate) fn witness_turn(
             order: 0,
         }],
         occurred_at: at,
+        assertions: Default::default(),
     }
 }
 
@@ -995,6 +1000,10 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         credential,
         keepalive,
     } = answer;
+    // The newcomer barrier (OF-365 P5): marked before the reply's stream
+    // opens, so no delta goes out into its conversation once an attendee
+    // entered it from here on.
+    let mark = vault.container_output_mark();
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
     let begun = crate::server::blocking(|| {
@@ -1014,6 +1023,8 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         }
         Err(error) => return Err(AnswerRefused::Engine(error.to_string())),
     };
+    let container = answer_container(&vault, &open);
+    let wakes = container.map(|_| vault.subscribe_task_updates());
 
     // The turn is a run on the vault's budget policy for this actor, one line
     // per turn. Each rung the call reaches is admitted on its own permit and
@@ -1080,6 +1091,9 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         saved: Arc::clone(&saved),
         keepalive,
         turn,
+        mark,
+        container,
+        wakes,
     };
     tokio::spawn(async move {
         let result = produce(producer).await;
@@ -1107,6 +1121,24 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         subscription,
         outcome,
     })
+}
+
+/// The conversation a reply is written into: its TURN's, or the continued
+/// MESSAGE's. `None` when it lies in none, or cannot be placed.
+fn answer_container(vault: &Vault, open: &AnswerOpen) -> Option<EntityId> {
+    let record = match open {
+        AnswerOpen::Turn(turn) | AnswerOpen::Retry { turn, .. } => {
+            EntityId::from_hex(turn.turn_ref.as_deref()?).ok()?
+        }
+        AnswerOpen::Continue(message) => *message,
+    };
+    vault
+        .record_container(record)
+        .inspect_err(
+            |error| tracing::warn!(%error, "chat: the reply's conversation was not placed"),
+        )
+        .ok()
+        .flatten()
 }
 
 pub(crate) fn chat_request(seat: &Seat, messages: Vec<LlmMessage>) -> LlmRequest {
@@ -1220,6 +1252,12 @@ struct Producer {
     saved: Arc<Mutex<Option<MessageStreamReceipt>>>,
     keepalive: std::time::Duration,
     turn: TurnGuard,
+    /// Taken before the reply's stream opened: no delta goes out into
+    /// `container` once an attendee entered it since.
+    mark: OutputMark,
+    container: Option<EntityId>,
+    /// Committed TASKs, while the reply listens for an entry.
+    wakes: EntryWakes,
 }
 
 /// Drives the model stream into the presence plane and the bus. The run
@@ -1240,6 +1278,9 @@ async fn produce(producer: Producer) -> Result<(), String> {
         saved,
         keepalive,
         mut turn,
+        mark,
+        container,
+        mut wakes,
     } = producer;
     let memory = answer_memory(&vault, agent, session_key);
     let cancel = |reason: StreamCancelReason| {
@@ -1257,12 +1298,30 @@ async fn produce(producer: Producer) -> Result<(), String> {
         cancel(StreamCancelReason::Custom(REVOKED.into()));
         Err("the turn's credential was revoked".to_owned())
     };
+    // The newcomer barrier: the reply was assembled for the audience before
+    // the entry. Its MESSAGE keeps what it saved and is cancelled; the next
+    // turn is assembled afresh.
+    let newcomer = || {
+        cancel(StreamCancelReason::Custom(NEWCOMER.into()));
+        Err("an attendee entered the conversation".to_owned())
+    };
     let mut keepalive = tokio::time::interval(keepalive);
     keepalive.reset();
     loop {
         let item = tokio::select! {
             item = stream.next() => item,
             () = turn.stopping() => return fail("the server is stopping".into()),
+            woke = next_entry_wake(&mut wakes) => {
+                if let Some(container) = container
+                    && !matches!(
+                        entry_wake(&vault, container, woke, &mut wakes),
+                        EntryWake::Quiet
+                    )
+                {
+                    return newcomer();
+                }
+                continue;
+            }
             _ = keepalive.tick() => {
                 if !credential.live() {
                     return revoked();
@@ -1280,6 +1339,12 @@ async fn produce(producer: Producer) -> Result<(), String> {
             Ok(event) => event,
             Err(error) => return fail(format!("model stream failed: {error:?}")),
         };
+        // The publish arm, before any delta or the terminal goes out: an
+        // attendee entered the conversation since the reply was marked,
+        // whatever its wake says.
+        if container.is_some_and(|container| !vault.container_output_admits(mark, container)) {
+            return newcomer();
+        }
         if matches!(event, LlmStreamEvent::Done { .. }) {
             // The run settled the answer before it arrived: the provider
             // spent it whether or not the answer is saved.

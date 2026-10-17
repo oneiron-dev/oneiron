@@ -2,15 +2,10 @@
 //! ARCH-0027: "The first adapter reads a Markdown and PDF folder").
 //!
 //! Only the text layer is read. A scanned PDF holds no text to give, and no
-//! OCR runs here, so it reads as blank. Every stream the load or a page
-//! decodes is bounded, so a small compressed stream cannot inflate without
-//! limit.
-
-/// The largest PDF an import reads, as stored.
-pub const MAX_PDF_BYTES: u64 = 16 * 1024 * 1024;
-
-/// The most pages read from one PDF.
-const MAX_PDF_PAGES: usize = 1_000;
+//! OCR runs here, so it reads as blank. A PDF of any size and any page count
+//! is read (rule 5): the only bound is the codec's. Every stream the load or
+//! a page decodes is bounded, so a small compressed stream cannot inflate
+//! without limit; a page past that bound is left out, and the rest is read.
 
 /// The most one stream, or one page's content, decodes to.
 const MAX_DECODED_STREAM: usize = 8 * 1024 * 1024;
@@ -20,23 +15,28 @@ const MAX_DECODED_STREAM: usize = 8 * 1024 * 1024;
 pub enum PdfTextError {
     #[error("the file is not a PDF")]
     NotPdf,
-    #[error("the PDF is larger than an import reads")]
-    TooLarge,
     #[error("the PDF is encrypted")]
     Encrypted,
     #[error("the PDF could not be read")]
     Unreadable,
 }
 
+/// A PDF's text, and what of it could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfText {
+    /// The text of every page, in page order.
+    pub text: String,
+    /// Pieces left out: a page whose content decodes past the codec's bound,
+    /// or a font or run of text the reader cannot map.
+    pub unread: usize,
+}
+
 /// The text of every page of `bytes`, in page order.
 ///
 /// # Errors
-/// A file that is not a PDF, is past [`MAX_PDF_BYTES`] or the page bound,
-/// is encrypted under a password, or does not parse.
-pub fn pdf_text(bytes: &[u8]) -> Result<String, PdfTextError> {
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_PDF_BYTES {
-        return Err(PdfTextError::TooLarge);
-    }
+/// A file that is not a PDF, is encrypted under a password, or does not
+/// parse.
+pub fn pdf_text(bytes: &[u8]) -> Result<PdfText, PdfTextError> {
     if !bytes.starts_with(b"%PDF-") {
         return Err(PdfTextError::NotPdf);
     }
@@ -54,10 +54,15 @@ pub fn pdf_text(bytes: &[u8]) -> Result<String, PdfTextError> {
         return Err(PdfTextError::Encrypted);
     }
     let pages = document.get_pages().into_keys().collect::<Vec<_>>();
-    if pages.len() > MAX_PDF_PAGES {
-        return Err(PdfTextError::TooLarge);
+    let mut read = PdfText {
+        text: String::new(),
+        unread: 0,
+    };
+    for chunk in document.extract_text_chunks_with_limit(&pages, MAX_DECODED_STREAM) {
+        match chunk {
+            Ok(chunk) => read.text.push_str(&chunk),
+            Err(_) => read.unread += 1,
+        }
     }
-    document
-        .extract_text_with_limit(&pages, MAX_DECODED_STREAM)
-        .map_err(|_| PdfTextError::Unreadable)
+    Ok(read)
 }

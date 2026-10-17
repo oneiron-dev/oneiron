@@ -322,6 +322,7 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
             thread_audience,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+            assertions: Default::default(),
         })
     }
 }

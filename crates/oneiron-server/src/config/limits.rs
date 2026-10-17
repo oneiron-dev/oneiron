@@ -254,6 +254,10 @@ impl LimitsConfig {
             ask_reminders,
             answer_provenance_refs,
             ask_wait_identities,
+            import_folder_text_bytes,
+            import_folder_notes,
+            import_decoded_messages,
+            import_decoded_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -309,6 +313,10 @@ impl LimitsConfig {
             (EngineLimit::AskReminders, ask_reminders),
             (EngineLimit::AnswerProvenanceRefs, answer_provenance_refs),
             (EngineLimit::AskWaitIdentities, ask_wait_identities),
+            (EngineLimit::ImportFolderTextBytes, import_folder_text_bytes),
+            (EngineLimit::ImportFolderNotes, import_folder_notes),
+            (EngineLimit::ImportDecodedMessages, import_decoded_messages),
+            (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -434,4 +442,8 @@ pub(super) struct LimitsConfigOverride {
     pub(super) ask_reminders: Option<u64>,
     pub(super) answer_provenance_refs: Option<u64>,
     pub(super) ask_wait_identities: Option<u64>,
+    pub(super) import_folder_text_bytes: Option<u64>,
+    pub(super) import_folder_notes: Option<u64>,
+    pub(super) import_decoded_messages: Option<u64>,
+    pub(super) import_decoded_bytes: Option<u64>,
 }

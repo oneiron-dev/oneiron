@@ -20,7 +20,7 @@ use std::sync::Arc;
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
-    BudgetLine, HostAccount, LeaseUnit, RunAdmission, RunDeclaration, RunReceiptSink,
+    HostAccount, PayerPerson, RunAdmission, RunDeclaration, RunReceiptSink,
 };
 use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
@@ -78,8 +78,8 @@ pub use declared::DeclaredRun;
 pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
-pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub(crate) use media::RungVoices;
+pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
 pub(crate) use raw::{InjectedRuns, RawInference};
 pub(crate) use receipts::ServerReceipts;
@@ -182,6 +182,25 @@ impl ModelRuntime {
     #[must_use]
     pub fn undeclared_run(&self, run: impl Into<String>, meter: BudgetGuard) -> RunAdmission {
         undeclared_run(run, meter, self.host.clone(), Arc::clone(&self.receipts))
+    }
+
+    /// [`Self::undeclared_run`] for a call a room's root spend scope pays
+    /// for (OF-531): each permit binds `payer`, which the host resolved
+    /// before the run began. `None` is the vault owner's run.
+    #[must_use]
+    pub fn funded_run(
+        &self,
+        run: impl Into<String>,
+        meter: BudgetGuard,
+        payer: Option<PayerPerson>,
+    ) -> RunAdmission {
+        raw::funded_run(
+            run,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+            payer,
+        )
     }
 
     /// A declared run (ARCH-0053 `#run-declaration`) on its own line, over
@@ -537,12 +556,7 @@ pub fn undeclared_run(
     host: Option<Arc<HostAccount>>,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> RunAdmission {
-    let line = BudgetLine {
-        limit_units: meter.read().limit_units,
-        reserve_units: meter.reserve_units(),
-        unit: LeaseUnit::tokens(),
-    };
-    RunAdmission::with_meter(run, RunDeclaration::undeclared(line), meter, host, receipts)
+    raw::funded_run(run, meter, host, receipts, None)
 }
 
 /// One provider's wire backend. Each sends one request per call (its
