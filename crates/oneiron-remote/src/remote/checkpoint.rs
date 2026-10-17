@@ -41,19 +41,15 @@ impl RemoteClient {
             .map_err(|error| {
                 transport_error(format!("could not build the checkpoint URL: {error}"))
             })?;
-        let response = self
-            .export_agent
-            .get(url)
-            .headers(self.credential_headers()?)
-            .header(ACCEPT, HeaderValue::from_static("application/json"))
-            .send()
-            .map_err(|error| transport_error(describe_send_failure(&error)))?;
-        let status = response.status();
+        let mut headers = self.credential_headers()?;
+        accept_json(&mut headers);
+        let reply = self.send(Method::GET, url, headers, None, true)?;
+        let status = reply.status;
         if !status.is_success() {
-            return Err(read_error_envelope(response, status));
+            return Err(read_error_envelope(reply.body, status));
         }
         let bytes =
-            read_capped(response, MAX_BUNDLE_RESPONSE_BYTES).map_err(|failure| match failure {
+            read_capped(reply.body, MAX_BUNDLE_RESPONSE_BYTES).map_err(|failure| match failure {
                 ReadFailure::TooLarge => transport_error(format!(
                     "the server's checkpoint exceeded the {MAX_BUNDLE_RESPONSE_BYTES}-byte read ceiling"
                 )),

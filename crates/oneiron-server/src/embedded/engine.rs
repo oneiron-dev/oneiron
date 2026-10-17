@@ -8,7 +8,10 @@
 //! handles through `OneironClient::attach`, again for each new handle, and
 //! never opens the path a second time. [`EmbeddedEngine::request`] carries
 //! one buffered HTTP/1.1 exchange; `/ws` and streamed bodies are not served
-//! through it.
+//! through it. [`EmbeddedEngine::connect`] opens a connection the app holds
+//! instead: a raw byte stream into the same serve channel, served as a
+//! socket's connection is, upgrades included, so `/ws` and a streamed reply
+//! ride it.
 //!
 //! [`EmbeddedEngine::stop`] is the app backgrounding: connections drain,
 //! every worker stops, the vault stays open and the app's timer stays armed.
@@ -34,9 +37,9 @@ use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use oneiron_vault_contract::host::HostLimits;
 use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
-use tokio::io::DuplexStream;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, ReadHalf, WriteHalf};
 use tokio::runtime::{Handle, Runtime};
-use tokio::sync::{Mutex, Notify, mpsc, oneshot};
+use tokio::sync::{Mutex, Notify, mpsc, oneshot, watch};
 use zeroize::Zeroizing;
 
 use crate::commands::{OpenedServedVault, open_served_vault};
@@ -47,6 +50,9 @@ use crate::owner::schedule::OwnerHost;
 const ENGINE_CONNECTION_BACKLOG: usize = 16;
 /// Bytes one in-process connection buffers in each direction.
 const ENGINE_DUPLEX_BUFFER_BYTES: usize = 64 * 1024;
+/// The most bytes one [`EmbeddedConnection::receive`] returns: what the
+/// connection buffers in one direction.
+pub const ENGINE_RECEIVE_CHUNK_BYTES: usize = ENGINE_DUPLEX_BUFFER_BYTES;
 /// The largest reply body a buffered request collects; a bigger one is an
 /// error naming this cap.
 const ENGINE_REPLY_BODY_CAP_BYTES: usize = 64 * 1024 * 1024;
@@ -307,15 +313,30 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// Sends one request over a fresh connection and collects the whole
     /// reply. Refused while the engine is stopped.
     pub async fn request(&self, request: EmbeddedRequest) -> anyhow::Result<EmbeddedReply> {
-        let connector = self
-            .state
+        exchange(&self.connector().await?, request).await
+    }
+
+    /// Opens a connection the app holds: one fresh stream on the channel
+    /// [`Self::request`] uses, which the server serves as a socket's
+    /// connection, HTTP/1.1 with upgrades. The app writes the request (a
+    /// `GET /ws` with its upgrade headers, or any other) and, after a `101`,
+    /// the upgraded protocol; it reads what the server writes. Refused while
+    /// the engine is stopped. A stop drains it as it drains a socket's
+    /// connection, so after a wake the app connects again.
+    pub async fn connect(&self) -> anyhow::Result<EmbeddedConnection> {
+        let stream = dial(&self.connector().await?).await?;
+        Ok(EmbeddedConnection::new(stream))
+    }
+
+    /// The channel the running serve body takes connections on.
+    async fn connector(&self) -> anyhow::Result<mpsc::Sender<DuplexStream>> {
+        self.state
             .lock()
             .await
             .serving
             .as_ref()
             .map(|serving| serving.connector.clone())
-            .ok_or_else(|| anyhow::anyhow!("the embedded engine is stopped; wake it first"))?;
-        exchange(&connector, request).await
+            .ok_or_else(|| anyhow::anyhow!("the embedded engine is stopped; wake it first"))
     }
 
     /// The app's timer fired, or a push arrived: run what is due. A stopped
@@ -375,17 +396,24 @@ impl<A> Drop for EmbeddedEngine<A> {
     }
 }
 
+/// A fresh duplex stream: the server's end handed to the engine's channel,
+/// the app's end returned.
+async fn dial(connector: &mpsc::Sender<DuplexStream>) -> anyhow::Result<DuplexStream> {
+    let (client, server) = tokio::io::duplex(ENGINE_DUPLEX_BUFFER_BYTES);
+    connector
+        .send(server)
+        .await
+        .map_err(|_| anyhow::anyhow!("the embedded engine stopped taking connections"))?;
+    Ok(client)
+}
+
 /// One exchange over a fresh duplex stream handed to the engine's channel.
 async fn exchange(
     connector: &mpsc::Sender<DuplexStream>,
     request: EmbeddedRequest,
 ) -> anyhow::Result<EmbeddedReply> {
     let request = http_request(request)?;
-    let (client, server) = tokio::io::duplex(ENGINE_DUPLEX_BUFFER_BYTES);
-    connector
-        .send(server)
-        .await
-        .map_err(|_| anyhow::anyhow!("the embedded engine stopped taking connections"))?;
+    let client = dial(connector).await?;
     let (mut sender, connection) =
         hyper::client::conn::http1::handshake::<_, Body>(TokioIo::new(client)).await?;
     tokio::spawn(async move {
@@ -449,6 +477,110 @@ async fn reply_body(body: Incoming) -> anyhow::Result<Vec<u8>> {
         collected.extend_from_slice(&chunk);
     }
     Ok(collected)
+}
+
+/// One connection an app holds to its engine ([`EmbeddedEngine::connect`]):
+/// bytes both ways over one in-process stream the server serves as a
+/// socket's connection.
+///
+/// A send and a receive may wait at once, from two tasks. [`Self::close`]
+/// ends the app's side: a waiting receive returns empty, a waiting send is
+/// refused, and the server reads the end of the stream.
+pub struct EmbeddedConnection {
+    reader: Mutex<ReadHalf<DuplexStream>>,
+    writer: Mutex<WriteHalf<DuplexStream>>,
+    closed: watch::Sender<bool>,
+}
+
+impl EmbeddedConnection {
+    fn new(stream: DuplexStream) -> Self {
+        let (reader, writer) = tokio::io::split(stream);
+        Self {
+            reader: Mutex::new(reader),
+            writer: Mutex::new(writer),
+            closed: watch::Sender::new(false),
+        }
+    }
+
+    /// Writes all of `bytes` to the server. Refused once closed, or once the
+    /// server has ended the connection.
+    pub async fn send(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        let mut closed = self.closed.subscribe();
+        let mut writer = self.writer.lock().await;
+        tokio::select! {
+            written = async {
+                writer.write_all(bytes).await?;
+                writer.flush().await
+            } => written.context("the embedded engine ended the connection"),
+            _ = closed.wait_for(|closed| *closed) => {
+                Err(anyhow::anyhow!("the engine connection is closed"))
+            }
+        }
+    }
+
+    /// The next bytes the server wrote, at most
+    /// [`ENGINE_RECEIVE_CHUNK_BYTES`]; it waits until some arrive. Empty once
+    /// the server has ended the connection or this side has closed it.
+    pub async fn receive(&self) -> anyhow::Result<Vec<u8>> {
+        let mut closed = self.closed.subscribe();
+        let mut reader = self.reader.lock().await;
+        let mut buffer = vec![0; ENGINE_RECEIVE_CHUNK_BYTES];
+        tokio::select! {
+            read = reader.read(&mut buffer) => {
+                let read = read.context("the embedded engine's connection broke off")?;
+                buffer.truncate(read);
+                Ok(buffer)
+            }
+            _ = closed.wait_for(|closed| *closed) => Ok(Vec::new()),
+        }
+    }
+
+    /// Ends the app's side: no send after it, a waiting receive returns
+    /// empty, and the server reads the end of the stream. Closing again does
+    /// nothing.
+    pub async fn close(&self) {
+        if self.closed.send_replace(true) {
+            return;
+        }
+        // A server that already ended the connection has nothing left to
+        // read, so a failed shutdown changes nothing.
+        let _ = self.writer.lock().await.shutdown().await;
+    }
+}
+
+/// An [`EmbeddedConnection`] from a [`BlockingEngine`], whose calls block an
+/// app thread on that engine's runtime.
+///
+/// Every method is refused from inside an async runtime
+/// ([`ensure_app_thread`]). A send and a receive may block two app threads at
+/// once, and a close from a third returns the waiting receive. No call holds
+/// a lock on the engine while it waits, so the engine's stop or close goes
+/// ahead and ends the connection: a receive then returns empty and a send is
+/// refused.
+pub struct BlockingConnection {
+    connection: EmbeddedConnection,
+    runtime: Handle,
+}
+
+impl BlockingConnection {
+    /// [`EmbeddedConnection::send`].
+    pub fn send(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        ensure_app_thread()?;
+        self.runtime.block_on(self.connection.send(bytes))
+    }
+
+    /// [`EmbeddedConnection::receive`].
+    pub fn receive(&self) -> anyhow::Result<Vec<u8>> {
+        ensure_app_thread()?;
+        self.runtime.block_on(self.connection.receive())
+    }
+
+    /// [`EmbeddedConnection::close`].
+    pub fn close(&self) -> anyhow::Result<()> {
+        ensure_app_thread()?;
+        self.runtime.block_on(self.connection.close());
+        Ok(())
+    }
 }
 
 /// An engine and the runtime it runs on, while it runs.
@@ -520,6 +652,17 @@ impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
     /// [`EmbeddedEngine::request`].
     pub fn request(&self, request: EmbeddedRequest) -> anyhow::Result<EmbeddedReply> {
         self.with_running(|running| running.runtime.block_on(running.engine.request(request)))
+    }
+
+    /// [`EmbeddedEngine::connect`], as a [`BlockingConnection`] on this
+    /// engine's runtime. Refused once closed.
+    pub fn connect(&self) -> anyhow::Result<BlockingConnection> {
+        self.with_running(|running| {
+            Ok(BlockingConnection {
+                connection: running.runtime.block_on(running.engine.connect())?,
+                runtime: running.runtime.handle().clone(),
+            })
+        })
     }
 
     /// [`EmbeddedEngine::wake`].

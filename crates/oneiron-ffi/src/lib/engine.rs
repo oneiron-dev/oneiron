@@ -12,7 +12,8 @@
 use std::{ffi::c_void, path::Path, ptr, sync::Arc, time::SystemTime};
 
 use oneiron_server::embedded::{
-    BlockingEngine, EmbeddedRequest, embedded_serve_config, host_limits, unix_millis,
+    BlockingConnection, BlockingEngine, EmbeddedRequest, embedded_serve_config, host_limits,
+    unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -90,7 +91,18 @@ impl OneironReply {
 ///
 /// Release the handle with `oneiron_engine_free` exactly once.
 pub struct OneironEngine {
-    engine: BlockingEngine<CAppHost>,
+    /// Shared with each connection, which keeps it until it is freed.
+    engine: Arc<BlockingEngine<CAppHost>>,
+}
+
+/// Opaque handle of one connection the app holds to its engine, returned by
+/// `oneiron_engine_connection_open`.
+///
+/// Release the handle with `oneiron_engine_connection_free` exactly once.
+pub struct OneironEngineConnection {
+    connection: BlockingConnection,
+    /// The engine it belongs to, kept until this handle is freed.
+    _engine: Arc<BlockingEngine<CAppHost>>,
 }
 
 fn with_engine<R>(
@@ -104,6 +116,20 @@ fn with_engine<R>(
     // `oneiron_engine_start` and not yet freed by `oneiron_engine_free`.
     let engine = unsafe { &*engine };
     f(engine)
+}
+
+fn with_connection<R>(
+    connection: *mut OneironEngineConnection,
+    f: impl FnOnce(&OneironEngineConnection) -> Result<R, OneironStatus>,
+) -> Result<R, OneironStatus> {
+    if connection.is_null() {
+        return Err(OneironStatus::NullArg);
+    }
+    // SAFETY: `connection` is a non-null handle previously returned by
+    // `oneiron_engine_connection_open` and not yet freed by
+    // `oneiron_engine_connection_free`.
+    let connection = unsafe { &*connection };
+    f(connection)
 }
 
 /// The app's table, shared by every host the engine builds; `release` runs
@@ -263,14 +289,17 @@ pub unsafe extern "C" fn oneiron_engine_start(
             let engine = BlockingEngine::start(host, config, limits).map_err(engine_failure)?;
             write_out(
                 out_engine,
-                Box::into_raw(Box::new(OneironEngine { engine })),
+                Box::into_raw(Box::new(OneironEngine {
+                    engine: Arc::new(engine),
+                })),
             )
         })())
     })
 }
 
 /// Send the engine one buffered HTTP/1.1 request and collect the whole
-/// reply.
+/// reply. For `/ws` or a streamed reply, open a connection instead
+/// (`oneiron_engine_connection_open`).
 ///
 /// `method` and `path` (origin form, such as `/.well-known/oneiron`) are UTF-8.
 /// `headers` holds zero or more `name: value` lines, each ended by CRLF, sent
@@ -453,5 +482,140 @@ pub unsafe extern "C" fn oneiron_engine_free(engine: *mut OneironEngine) -> Onei
         // `oneiron_engine_start` and not previously freed.
         let engine = unsafe { Box::from_raw(engine) };
         status(engine.engine.close().map_err(engine_failure))
+    })
+}
+
+/// Open a connection the app holds to the engine's server: one in-process
+/// stream it serves as a socket's connection, HTTP/1.1 with upgrades.
+///
+/// Write the request with `oneiron_engine_connection_send` (a `GET /ws`
+/// with its upgrade headers holds `/ws`; after the `101`, send the upgraded
+/// protocol's frames, and bring your own auth) and read what the server
+/// writes with `oneiron_engine_connection_receive`. A stopped engine fails
+/// `EngineError`; a stop drains the connection as it drains a socket's, so
+/// after `oneiron_engine_wake` open another. On success `out_connection`
+/// receives a handle to release with `oneiron_engine_connection_free` exactly
+/// once. The handle keeps the engine's memory, not its serving: once
+/// `oneiron_engine_free` has stopped the engine, a receive answers empty and
+/// a send fails `EngineError`.
+///
+/// # Safety
+///
+/// `engine` is null or a live handle from `oneiron_engine_start`, not freed
+/// during the call. A non-null `out_connection` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_connection_open(
+    engine: *mut OneironEngine,
+    out_connection: *mut *mut OneironEngineConnection,
+) -> OneironStatus {
+    ffi_guard(|| {
+        if let Err(status) = write_out(out_connection, ptr::null_mut()) {
+            return status;
+        }
+        status(with_engine(engine, |handle| {
+            let connection = handle.engine.connect().map_err(engine_failure)?;
+            write_out(
+                out_connection,
+                Box::into_raw(Box::new(OneironEngineConnection {
+                    connection,
+                    _engine: Arc::clone(&handle.engine),
+                })),
+            )
+        }))
+    })
+}
+
+/// Write all of `bytes` to the server, blocking until the connection has
+/// taken them. `bytes` may be empty with a null pointer. A closed
+/// connection, or one the server has ended, fails `EngineError`.
+///
+/// # Safety
+///
+/// `connection` is null or a live handle from
+/// `oneiron_engine_connection_open`, not freed during the call. A non-null
+/// `bytes.ptr` covers `bytes.len` readable bytes for the whole call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_connection_send(
+    connection: *mut OneironEngineConnection,
+    bytes: OneironByteSlice,
+) -> OneironStatus {
+    ffi_guard(|| {
+        status(with_connection(connection, |handle| {
+            with_optional_slice(bytes.ptr, bytes.len, |bytes| {
+                handle
+                    .connection
+                    .send(bytes.unwrap_or_default())
+                    .map_err(engine_failure)
+            })
+        }))
+    })
+}
+
+/// The next bytes the server wrote, at most 64 KiB, into `out_buffer`,
+/// blocking until some arrive. An empty buffer means the server has ended
+/// the connection or it was closed. Release a non-empty buffer with
+/// `oneiron_buffer_free`.
+///
+/// # Safety
+///
+/// `connection` is null or a live handle from
+/// `oneiron_engine_connection_open`, not freed during the call. A non-null
+/// `out_buffer` is writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_connection_receive(
+    connection: *mut OneironEngineConnection,
+    out_buffer: *mut OneironBuffer,
+) -> OneironStatus {
+    ffi_guard(|| {
+        if let Err(status) = write_out(out_buffer, OneironBuffer::empty()) {
+            return status;
+        }
+        status(with_connection(connection, |handle| {
+            let bytes = handle.connection.receive().map_err(engine_failure)?;
+            write_out(out_buffer, buffer_from_vec(bytes))
+        }))
+    })
+}
+
+/// End the app's side of the connection: a receive blocked on another
+/// thread returns empty, later sends fail, and the server reads the end of
+/// the stream. The handle stays valid until `oneiron_engine_connection_free`;
+/// closing again does nothing.
+///
+/// # Safety
+///
+/// `connection` is null or a live handle from
+/// `oneiron_engine_connection_open`, not freed during the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_connection_close(
+    connection: *mut OneironEngineConnection,
+) -> OneironStatus {
+    ffi_guard(|| {
+        status(with_connection(connection, |handle| {
+            handle.connection.close().map_err(engine_failure)
+        }))
+    })
+}
+
+/// Close the connection as `oneiron_engine_connection_close` does and free
+/// the handle, releasing its share of the engine.
+///
+/// # Safety
+///
+/// `connection` is null or a live handle from
+/// `oneiron_engine_connection_open` that no other call is using and that is
+/// never used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_connection_free(
+    connection: *mut OneironEngineConnection,
+) -> OneironStatus {
+    ffi_guard(|| {
+        if connection.is_null() {
+            return OneironStatus::NullArg;
+        }
+        // SAFETY: the pointer is a live handle returned by
+        // `oneiron_engine_connection_open` and not previously freed.
+        let connection = unsafe { Box::from_raw(connection) };
+        status(connection.connection.close().map_err(engine_failure))
     })
 }

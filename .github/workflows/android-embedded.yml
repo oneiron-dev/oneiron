@@ -3,7 +3,17 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: ['crates/oneiron-android/**', '.github/workflows/android-embedded.yml']
+    # The engine-feature graphs (OF-237) reach the UniFFI binding, the shared
+    # SDK, the server and its host contract, so those paths run the compile
+    # job too.
+    paths:
+      - 'crates/oneiron-android/**'
+      - 'crates/oneiron-uniffi/**'
+      - 'crates/oneiron-remote/**'
+      - 'crates/oneiron-server/**'
+      - 'crates/oneiron-vault-contract/**'
+      - 'Cargo.lock'
+      - '.github/workflows/android-embedded.yml'
   workflow_dispatch:
   # Engine and build-file changes are covered nightly (owner 2026-09-26: scoped CI).
   schedule:
@@ -61,3 +71,42 @@ jobs:
         with:
           name: android-embedded-test-results
           path: crates/oneiron-android/kotlin/build/reports/androidTests
+  engine-compile:
+    # OF-237: compile-only evidence that the default-off `engine` graphs build
+    # for the phone target, one package per invocation so neither feature
+    # selector is ambiguous. `cargo check --lib` only: nothing is linked,
+    # packaged or run, and there is no test stage.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["macos-latest"]' || '["self-hosted","macos","arm64"]') }}
+    timeout-minutes: 60
+    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Enforce runner cache budget
+        run: scripts/ci/cap-target-cache.sh
+      - name: Android aarch64 toolchain
+        run: |
+          sdkmanager 'ndk;27.2.12479018'
+          rustup target add aarch64-linux-android
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Check the engine graphs for aarch64-linux-android
+        run: |
+          # The NDK ships its LLVM prebuilt per build host.
+          case "$(uname -s)" in
+            Linux) NDK_HOST=linux-x86_64 ;;
+            Darwin) NDK_HOST=darwin-x86_64 ;;
+            *) echo "no Android NDK prebuilt for $(uname -s)"; exit 1 ;;
+          esac
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$NDK_HOST/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android26-clang"
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android26-clang"
+          export CXX_aarch64_linux_android="$NDK_BIN/aarch64-linux-android26-clang++"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          cargo check --locked --lib -p oneiron-android --features engine --target aarch64-linux-android
+          cargo check --locked --lib -p oneiron-uniffi --features engine --target aarch64-linux-android

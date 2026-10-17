@@ -5,7 +5,9 @@
 //!
 //! One [`OneironClient`] with two backends and ONE semantic switch between
 //! them. `open` binds an embedded vault; `connect` binds a remote
-//! `oneiron-server`. Every public verb below enters through the same
+//! `oneiron-server`, and `connect_in_process` binds one this process runs
+//! through an [`InProcessTransport`], the remote backend with no socket
+//! (OF-237). Every public verb below enters through the same
 //! dispatcher, so the N-API and PyO3 layers convert language values into
 //! engine DTOs, call this client, and convert the result back. Neither of them
 //! branches on backend, holds a route table, or contains an HTTP client.
@@ -37,6 +39,8 @@ mod agent_verbs;
 mod caps;
 mod embedded;
 mod error;
+// OF-237: a served client over a server this process runs.
+mod in_process;
 mod invocation;
 mod lens_frames;
 pub mod llm;
@@ -57,6 +61,7 @@ pub use crate::caps::{
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
+pub use crate::in_process::{InProcessReply, InProcessRequest, InProcessTransport};
 pub use crate::invocation::pending_invocation;
 pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
 use crate::remote::RemoteClient;
@@ -260,12 +265,13 @@ impl OneironClient {
         matches!(self.backend, Backend::Remote(_))
     }
 
-    /// The origin a connected handle talks to; `None` when embedded.
+    /// The origin a connected handle talks to; `None` when embedded, and
+    /// for a handle served in process, which dials no origin.
     #[must_use]
     pub fn base_url(&self) -> Option<&str> {
         match &self.backend {
             Backend::Embedded(_) => None,
-            Backend::Remote(remote) => Some(remote.base_url()),
+            Backend::Remote(remote) => remote.base_url(),
         }
     }
 

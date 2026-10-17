@@ -16,7 +16,9 @@
  * process with the app's OneironAppHost callbacks; oneiron_engine_request
  * sends it one buffered HTTP/1.1 request, oneiron_engine_vault shares its
  * open vault with the storage functions, and oneiron_engine_free stops it in
- * order. Engine calls block: make them from app threads, never from a
+ * order. oneiron_engine_connection_open opens a connection the app holds
+ * (HTTP/1.1 with upgrades, so `/ws`), with _send, _receive, _close and _free.
+ * Engine calls block: make them from app threads, never from a
  * callback. The library exports these only when built with the `engine`
  * cargo feature.
  */
@@ -77,6 +79,14 @@ typedef enum OneironStatus {
  * Release the handle with `oneiron_engine_free` exactly once.
  */
 typedef struct OneironEngine OneironEngine;
+
+/**
+ * Opaque handle of one connection the app holds to its engine, returned by
+ * `oneiron_engine_connection_open`.
+ *
+ * Release the handle with `oneiron_engine_connection_free` exactly once.
+ */
+typedef struct OneironEngineConnection OneironEngineConnection;
 
 /**
  * Where a `keychain` callback answers, through `oneiron_secret_sink_write`.
@@ -301,7 +311,8 @@ enum OneironStatus oneiron_engine_start(const uint8_t *path_ptr,
 
 /**
  * Send the engine one buffered HTTP/1.1 request and collect the whole
- * reply.
+ * reply. For `/ws` or a streamed reply, open a connection instead
+ * (`oneiron_engine_connection_open`).
  *
  * `method` and `path` (origin form, such as `/.well-known/oneiron`) are UTF-8.
  * `headers` holds zero or more `name: value` lines, each ended by CRLF, sent
@@ -384,6 +395,83 @@ enum OneironStatus oneiron_engine_vault(struct OneironEngine *engine,
  * other call is using and that is never used again.
  */
 enum OneironStatus oneiron_engine_free(struct OneironEngine *engine);
+
+/**
+ * Open a connection the app holds to the engine's server: one in-process
+ * stream it serves as a socket's connection, HTTP/1.1 with upgrades.
+ *
+ * Write the request with `oneiron_engine_connection_send` (a `GET /ws`
+ * with its upgrade headers holds `/ws`; after the `101`, send the upgraded
+ * protocol's frames, and bring your own auth) and read what the server
+ * writes with `oneiron_engine_connection_receive`. A stopped engine fails
+ * `EngineError`; a stop drains the connection as it drains a socket's, so
+ * after `oneiron_engine_wake` open another. On success `out_connection`
+ * receives a handle to release with `oneiron_engine_connection_free` exactly
+ * once. The handle keeps the engine's memory, not its serving: once
+ * `oneiron_engine_free` has stopped the engine, a receive answers empty and
+ * a send fails `EngineError`.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call. A non-null `out_connection` is writable.
+ */
+enum OneironStatus oneiron_engine_connection_open(struct OneironEngine *engine,
+                                                  struct OneironEngineConnection **out_connection);
+
+/**
+ * Write all of `bytes` to the server, blocking until the connection has
+ * taken them. `bytes` may be empty with a null pointer. A closed
+ * connection, or one the server has ended, fails `EngineError`.
+ *
+ * # Safety
+ *
+ * `connection` is null or a live handle from
+ * `oneiron_engine_connection_open`, not freed during the call. A non-null
+ * `bytes.ptr` covers `bytes.len` readable bytes for the whole call.
+ */
+enum OneironStatus oneiron_engine_connection_send(struct OneironEngineConnection *connection,
+                                                  struct OneironByteSlice bytes);
+
+/**
+ * The next bytes the server wrote, at most 64 KiB, into `out_buffer`,
+ * blocking until some arrive. An empty buffer means the server has ended
+ * the connection or it was closed. Release a non-empty buffer with
+ * `oneiron_buffer_free`.
+ *
+ * # Safety
+ *
+ * `connection` is null or a live handle from
+ * `oneiron_engine_connection_open`, not freed during the call. A non-null
+ * `out_buffer` is writable.
+ */
+enum OneironStatus oneiron_engine_connection_receive(struct OneironEngineConnection *connection,
+                                                     struct OneironBuffer *out_buffer);
+
+/**
+ * End the app's side of the connection: a receive blocked on another
+ * thread returns empty, later sends fail, and the server reads the end of
+ * the stream. The handle stays valid until `oneiron_engine_connection_free`;
+ * closing again does nothing.
+ *
+ * # Safety
+ *
+ * `connection` is null or a live handle from
+ * `oneiron_engine_connection_open`, not freed during the call.
+ */
+enum OneironStatus oneiron_engine_connection_close(struct OneironEngineConnection *connection);
+
+/**
+ * Close the connection as `oneiron_engine_connection_close` does and free
+ * the handle, releasing its share of the engine.
+ *
+ * # Safety
+ *
+ * `connection` is null or a live handle from
+ * `oneiron_engine_connection_open` that no other call is using and that is
+ * never used again.
+ */
+enum OneironStatus oneiron_engine_connection_free(struct OneironEngineConnection *connection);
 
 /**
  * Free a Rust-owned byte buffer returned by this crate.

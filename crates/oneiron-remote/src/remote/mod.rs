@@ -14,16 +14,17 @@
 //! bearer.
 
 use std::io::Read;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use oneiron::authority::CapabilitySlip;
 use oneiron::memory::MemoryError;
-use reqwest::Url;
 use reqwest::blocking::Client;
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap, HeaderValue,
 };
+use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -35,6 +36,8 @@ mod checkpoint;
 mod origin;
 mod pairing;
 mod response;
+// OF-237: the network or an in-process server under one signing path.
+mod wire;
 
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
@@ -42,6 +45,7 @@ use self::response::{
     ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
     read_export, serialize_request,
 };
+use self::wire::Wire;
 
 /// Path prefix every facade verb hangs off.
 const FACADE_PREFIX: &str = "v1/core/facade";
@@ -65,6 +69,10 @@ const INVOCATION_HEADER: &str = "x-oneiron-invocation";
 /// Connect timeout: finite, so a black-holed address fails instead of hanging.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The origin a served client's URLs are built on (OF-237). Only the path and
+/// query cross the in-process transport; nothing dials this.
+const IN_PROCESS_ORIGIN: &str = "http://localhost/";
+
 /// Total request timeout, sized for a 32 MiB blob round trip.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// Full-vault exports can be much larger than one ordinary verb response.
@@ -75,12 +83,9 @@ pub(crate) struct RemoteClient {
     base_url: Url,
     authorization: HeaderValue,
     holder: Option<Box<(CapabilitySlip, SigningKey)>>,
-    agent: Client,
-    // Export is a single large document. Keep an export-specific total timeout
-    // and byte ceiling, not the ordinary verbs' short timeout and 64 MiB.
-    export_agent: Client,
+    /// The network, or a server this process runs.
+    wire: Wire,
     export_limit: usize,
-    stream_agent: reqwest::Client,
     /// The room turn every verb runs in, named to the server per request.
     room_turn: Option<oneiron::EntityId>,
     /// The call receipt the last verb's reply stated, success or refusal
@@ -96,7 +101,7 @@ pub(crate) struct RemoteClient {
 impl std::fmt::Debug for RemoteClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RemoteClient")
-            .field("base_url", &self.base_url.as_str())
+            .field("base_url", &self.base_url())
             .finish_non_exhaustive()
     }
 }
@@ -107,10 +112,8 @@ impl Clone for RemoteClient {
             base_url: self.base_url.clone(),
             authorization: self.authorization.clone(),
             holder: self.holder.clone(),
-            agent: self.agent.clone(),
-            export_agent: self.export_agent.clone(),
+            wire: self.wire.clone(),
             export_limit: self.export_limit,
-            stream_agent: self.stream_agent.clone(),
             room_turn: self.room_turn,
             last_receipt_ref: std::sync::Mutex::new(None),
         }
@@ -137,18 +140,7 @@ impl RemoteClient {
             .timeout(EXPORT_TIMEOUT)
             .build()
             .map_err(|error| transport_error(format!("could not build export client: {error}")))?;
-        let holder = match holder {
-            Some(key) => {
-                let slip = CapabilitySlip::from_token(bearer).map_err(|_| {
-                    bad_request(
-                        "the credential's slip is not a v2 slip token",
-                        &["Pair again and pass the credential exactly as pair returned it."],
-                    )
-                })?;
-                Some(Box::new((slip, key)))
-            }
-            None => None,
-        };
+        let holder = slip_holder(bearer, holder)?;
         let stream_agent = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
@@ -158,12 +150,35 @@ impl RemoteClient {
                 transport_error(format!("could not build streaming client: {error}"))
             })?;
         Ok(Self {
-            stream_agent,
             base_url,
             authorization,
             holder,
-            agent,
-            export_agent,
+            wire: Wire::Http {
+                agent,
+                export_agent,
+                stream_agent,
+            },
+            export_limit: MAX_REMOTE_EXPORT_BYTES,
+            room_turn: None,
+            last_receipt_ref: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// [`Self::connect`] to a server this process runs, through `transport`
+    /// (OF-237): the same credential headers, holder proof, room turn,
+    /// invocation and readers, with no socket and no agent. Makes no request.
+    pub(crate) fn in_process(
+        transport: Arc<dyn crate::InProcessTransport>,
+        bearer: &str,
+        holder: Option<SigningKey>,
+    ) -> Result<Self, MemoryError> {
+        let base_url = Url::parse(IN_PROCESS_ORIGIN)
+            .map_err(|_| transport_error("could not name the in-process origin"))?;
+        Ok(Self {
+            base_url,
+            authorization: bearer_header(bearer)?,
+            holder: slip_holder(bearer, holder)?,
+            wire: Wire::InProcess(transport),
             export_limit: MAX_REMOTE_EXPORT_BYTES,
             room_turn: None,
             last_receipt_ref: std::sync::Mutex::new(None),
@@ -208,9 +223,13 @@ impl RemoteClient {
         Ok(headers)
     }
 
-    /// The origin this client talks to, for diagnostics.
-    pub(crate) fn base_url(&self) -> &str {
-        self.base_url.as_str()
+    /// The origin this client talks to, for diagnostics; `None` for a
+    /// server this process runs, which has no origin of its own.
+    pub(crate) fn base_url(&self) -> Option<&str> {
+        match self.wire {
+            Wire::Http { .. } => Some(self.base_url.as_str()),
+            Wire::InProcess(_) => None,
+        }
     }
 
     /// The call receipt the last verb's reply stated (OF-538): its
@@ -252,51 +271,42 @@ impl RemoteClient {
         self.note_receipt_ref(None);
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
-        let mut credential = self.turn_headers()?;
-        credential.insert(
+        let mut headers = self.turn_headers()?;
+        headers.insert(
             INVOCATION_HEADER,
             HeaderValue::from_str(&invocation.to_hex())
                 .map_err(|_| transport_error("could not name the invocation"))?,
         );
-        let body = encode_request(body, &mut credential);
-        let response = (if long_running(verb) {
-            &self.export_agent
-        } else {
-            &self.agent
-        })
-        .post(url)
-        .headers(credential)
-        .header(ACCEPT, HeaderValue::from_static("application/json"))
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .body(body)
-        .send()
-        .map_err(|error| transport_error(describe_send_failure(&error)))?;
+        let body = encode_request(body, &mut headers);
+        accept_json(&mut headers);
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let reply = self.send(Method::POST, url, headers, Some(body), long_running(verb))?;
         // Read before the body: success and refusal state it alike, and the
         // typed return keeps its shape.
         self.note_receipt_ref(
-            response
-                .headers()
+            reply
+                .headers
                 .get(RECEIPT_REF_HEADER)
                 .and_then(|value| value.to_str().ok())
                 .filter(|value| value.starts_with(RECEIPT_REF_PREFIX))
                 .map(str::to_owned),
         );
 
-        let status = response.status();
+        let status = reply.status;
         // A 202 is a verb hook's pending ask: the verb did not run, and the
         // body is the refusal naming the ask and this call's invocation
         // (ARCH-0080 §3), which `OneironClient::retry` resends it under.
-        if !status.is_success() || status == reqwest::StatusCode::ACCEPTED {
-            return Err(read_error_envelope(response, status));
+        if !status.is_success() || status == StatusCode::ACCEPTED {
+            return Err(read_error_envelope(reply.body, status));
         }
         // The ordinary facade has a strict success-body ceiling. Export alone
         // streams JSON directly into its required result, under its own
         // larger ceiling: there is no second whole-body buffer. The
         // export-specific total timeout still refuses a stalled peer.
         if verb == "vault.export" {
-            read_export(response, status, self.export_limit)
+            read_export(reply.body, reply.content_length, status, self.export_limit)
         } else {
-            read_json(response, status, verb)
+            read_json(reply.body, status, verb)
         }
     }
 
@@ -311,21 +321,16 @@ impl RemoteClient {
     ) -> Result<crate::LensFrameEventReply, MemoryError> {
         let url = self.lens_frame_url(card_id, true)?;
         let body = serialize_request(request)?;
-        let response = self
-            .agent
-            .post(url)
-            .headers(self.turn_headers()?)
-            .header(ACCEPT, HeaderValue::from_static("application/json"))
-            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-            .body(body)
-            .send()
-            .map_err(|error| transport_error(describe_send_failure(&error)))?;
-        let status = response.status();
+        let mut headers = self.turn_headers()?;
+        accept_json(&mut headers);
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let reply = self.send(Method::POST, url, headers, Some(body), false)?;
+        let status = reply.status;
         // A model round trip answers 202 with its queued callback. Any other
         // 202 is a refusal as on a verb: a verb hook the dispatched tool met
         // asked first, and the body names the ask.
-        if status == reqwest::StatusCode::ACCEPTED {
-            let body: serde_json::Value = read_json(response, status, "a lens frame event")?;
+        if status == StatusCode::ACCEPTED {
+            let body: serde_json::Value = read_json(reply.body, status, "a lens frame event")?;
             if body.get("callbackId").is_some() {
                 return serde_json::from_value(body).map_err(|error| {
                     transport_error(format!(
@@ -343,9 +348,9 @@ impl RemoteClient {
             );
         }
         if !status.is_success() {
-            return Err(read_error_envelope(response, status));
+            return Err(read_error_envelope(reply.body, status));
         }
-        read_json(response, status, "a lens frame event")
+        read_json(reply.body, status, "a lens frame event")
     }
 
     /// `DELETE /v1/core/lens-frames/{card_id}` (OF-181): closes a card this
@@ -355,18 +360,14 @@ impl RemoteClient {
         card_id: &str,
     ) -> Result<crate::CloseLensFrameReply, MemoryError> {
         let url = self.lens_frame_url(card_id, false)?;
-        let response = self
-            .agent
-            .delete(url)
-            .headers(self.turn_headers()?)
-            .header(ACCEPT, HeaderValue::from_static("application/json"))
-            .send()
-            .map_err(|error| transport_error(describe_send_failure(&error)))?;
-        let status = response.status();
+        let mut headers = self.turn_headers()?;
+        accept_json(&mut headers);
+        let reply = self.send(Method::DELETE, url, headers, None, false)?;
+        let status = reply.status;
         if !status.is_success() {
-            return Err(read_error_envelope(response, status));
+            return Err(read_error_envelope(reply.body, status));
         }
-        read_json(response, status, "a lens frame close")
+        read_json(reply.body, status, "a lens frame close")
     }
 
     /// A card's route: the lens-frames prefix, the card id as ONE
@@ -411,7 +412,7 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent
+        self.stream_agent()?
             .post(url)
             .timeout(REQUEST_TIMEOUT)
             .headers(credential)
@@ -445,7 +446,7 @@ impl RemoteClient {
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
         let bytes = encode_request(bytes, &mut credential);
-        self.stream_agent
+        self.stream_agent()?
             .post(url)
             .headers(credential)
             .header(CONTENT_TYPE, "application/json")
@@ -463,6 +464,15 @@ impl RemoteClient {
             })
     }
 
+    /// The streaming agent the own-server LLM transport posts on. A served
+    /// client has none: that transport only ever connects over the network.
+    fn stream_agent(&self) -> Result<&reqwest::Client, oneiron::LlmError> {
+        match &self.wire {
+            Wire::Http { stream_agent, .. } => Ok(stream_agent),
+            Wire::InProcess(_) => Err(oneiron::FatalLlmError::InvalidRequest.into()),
+        }
+    }
+
     /// Joins the canonical verb path onto the normalized origin.
     ///
     /// Built through `Url::join` against a base whose path always ends in `/`,
@@ -475,6 +485,30 @@ impl RemoteClient {
     }
 }
 
+/// The slip and connection key a holder signs each request's proof with,
+/// parsed once from `bearer`; `None` for a bare bearer such as the host
+/// secret. Its claims are never read.
+fn slip_holder(
+    bearer: &str,
+    holder: Option<SigningKey>,
+) -> Result<Option<Box<(CapabilitySlip, SigningKey)>>, MemoryError> {
+    let Some(key) = holder else {
+        return Ok(None);
+    };
+    let slip = CapabilitySlip::from_token(bearer).map_err(|_| {
+        bad_request(
+            "the credential's slip is not a v2 slip token",
+            &["Pair again and pass the credential exactly as pair returned it."],
+        )
+    })?;
+    Ok(Some(Box::new((slip, key))))
+}
+
+/// Every route this client calls answers JSON.
+fn accept_json(headers: &mut HeaderMap) {
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+}
+
 /// Verbs whose one answer can take minutes, so they ride the export client's
 /// total timeout: the whole-vault export, and an embedding-space move's check,
 /// which runs the vault's probes through both spaces with no server deadline
@@ -485,20 +519,19 @@ fn long_running(verb: &str) -> bool {
 
 /// Decodes a success body read under the ordinary response ceiling; `what`
 /// names the call in a refusal.
-fn read_json<R: DeserializeOwned>(
-    response: reqwest::blocking::Response,
-    status: reqwest::StatusCode,
+fn read_json<R: DeserializeOwned, B: Read>(
+    body: B,
+    status: StatusCode,
     what: &str,
 ) -> Result<R, MemoryError> {
-    let bytes =
-        read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| match failure {
-            ReadFailure::TooLarge => transport_error(format!(
-                "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-            )),
-            ReadFailure::Io(message) => {
-                transport_error(format!("the server's response was truncated: {message}"))
-            }
-        })?;
+    let bytes = read_capped(body, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| match failure {
+        ReadFailure::TooLarge => transport_error(format!(
+            "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
+        )),
+        ReadFailure::Io(message) => {
+            transport_error(format!("the server's response was truncated: {message}"))
+        }
+    })?;
     serde_json::from_slice(&bytes).map_err(|error| {
         transport_error(format!(
             "the server answered {status} for {what} with a body this call could not decode: {error}"

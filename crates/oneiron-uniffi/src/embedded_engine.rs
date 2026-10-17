@@ -3,24 +3,32 @@
 //!
 //! [`EmbeddedEngine::start`] opens the vault the way `oneiron serve` does,
 //! with the app's [`AppHostCallbacks`] as its host, and returns once the
-//! app's `ready` has run. [`EmbeddedEngine::client`] attaches an [`Oneiron`]
-//! handle to that same open vault, as often as the app asks; it never opens
-//! the path again. [`EmbeddedEngine::request`] sends the server one
-//! buffered HTTP/1.1 request.
+//! app's `ready` has run. [`EmbeddedEngine::client`] binds an [`Oneiron`]
+//! handle served by that server under the caller's own credential: each verb
+//! POSTs the facade route through the server's Router over the in-process
+//! transport (`oneiron_remote::InProcessTransport`), host doors included.
+//! [`EmbeddedEngine::local_client`] attaches a handle to the same open vault
+//! instead, bound to the embedded owner actor; neither opens the path again.
+//! [`EmbeddedEngine::request`] sends the server one buffered HTTP/1.1
+//! request, and [`EmbeddedEngine::open_connection`] opens an
+//! [`EngineConnection`] the app holds, for `/ws` and streamed replies.
 //!
 //! The engine owns a multi-thread Tokio runtime and blocks on it from the
 //! calling thread. Call its methods from app threads, never from inside an
 //! [`AppHostCallbacks`] method: those calls are refused. Every handle from
-//! `client` (and their `as_actor` / `in_room_turn` children) keeps the
-//! engine alive. Call `close` from an app thread to stop it in order; an
-//! engine released unclosed closes the same way on the releasing thread.
+//! `client` or `local_client` (and their `as_actor` / `in_room_turn`
+//! children), and every connection, keeps the engine alive. Call `close`
+//! from an app thread to stop it in order; an engine released unclosed
+//! closes the same way on the releasing thread.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use oneiron_remote::{InProcessReply, InProcessRequest, InProcessTransport};
 use oneiron_server::embedded::{
-    BlockingEngine, EmbeddedRequest, embedded_serve_config, host_limits, unix_millis,
+    BlockingConnection, BlockingEngine, EmbeddedRequest, embedded_serve_config, host_limits,
+    unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -149,10 +157,32 @@ impl EmbeddedEngine {
         }))
     }
 
+    /// A NEW handle served by this engine's own server under `key`, the
+    /// caller's credential, passed verbatim: the credential `pair` returned,
+    /// or the host secret (the keychain's `auth_secret`) as a bare bearer.
+    /// Every verb, `retry` and lens-frame call is the request a connected
+    /// handle sends, credential and holder proof, room turn and invocation
+    /// included, carried through the server's Router in process, so the
+    /// host-door rows answer as on any server and the server decides each
+    /// call from `key`. `as_actor` refuses on it, as on a connected handle.
+    /// It keeps the engine alive and makes no request; a stopped engine
+    /// refuses its verbs until `wake`.
+    pub fn client(self: Arc<Self>, key: String) -> Result<Arc<Oneiron>, OneironError> {
+        let transport = Arc::new(EngineTransport(Arc::clone(&self)));
+        let inner = oneiron_remote::OneironClient::connect_in_process(transport, &key)?;
+        Ok(Arc::new(Oneiron {
+            inner,
+            engine: Some(self),
+        }))
+    }
+
     /// A NEW handle on the engine's own vault, bound to the embedded owner
-    /// actor; it keeps the engine alive. Ask again for each handle the app
-    /// needs: each attaches anew, none reopens the path.
-    pub fn client(self: Arc<Self>) -> Result<Arc<Oneiron>, OneironError> {
+    /// actor, as `Oneiron.open` binds one: its verbs answer through the vault
+    /// itself, not the server, so the host-door rows only a server's state
+    /// answers refuse on it (use `client` for those). It keeps the engine
+    /// alive. Ask again for each handle the app needs: each attaches anew,
+    /// none reopens the path.
+    pub fn local_client(self: Arc<Self>) -> Result<Arc<Oneiron>, OneironError> {
         let vault = self.engine.vault().map_err(engine_failure)?;
         let inner =
             oneiron_remote::OneironClient::attach(self.engine.path(), vault, &self.options)?;
@@ -162,8 +192,22 @@ impl EmbeddedEngine {
         }))
     }
 
+    /// Opens a connection the app holds to the engine's server: one
+    /// in-process stream it serves as a socket's connection, HTTP/1.1 with
+    /// upgrades, so a `GET /ws` with its upgrade headers holds `/ws` on it
+    /// and a streamed reply arrives as it is written. Refused while stopped;
+    /// a stop drains it as it drains a socket's, so after `wake` open
+    /// another. The connection keeps the engine alive.
+    pub fn open_connection(self: Arc<Self>) -> Result<Arc<EngineConnection>, OneironError> {
+        let connection = self.engine.connect().map_err(engine_failure)?;
+        Ok(Arc::new(EngineConnection {
+            connection,
+            _engine: self,
+        }))
+    }
+
     /// Sends one request and returns the whole reply. Streaming and `/ws`
-    /// are not served through it.
+    /// are not served through it; open a connection for those.
     pub fn request(&self, request: EngineRequest) -> Result<EngineReply, OneironError> {
         let reply = self
             .engine
@@ -206,6 +250,67 @@ impl EmbeddedEngine {
     /// later call.
     pub fn close(&self) -> Result<(), OneironError> {
         self.engine.close().map_err(engine_failure)
+    }
+}
+
+/// One connection the app holds to its engine's server
+/// ([`EmbeddedEngine::open_connection`]): bytes both ways. The app writes the
+/// HTTP/1.1 request (bringing its own auth) and, after a `101`, the upgraded
+/// protocol's frames; it reads what the server writes. A `send` and a
+/// `receive` may block two app threads at once, and `close` from a third
+/// returns the blocked `receive`. It keeps the engine alive; once the engine
+/// stops or closes, `receive` returns empty and `send` refuses.
+#[derive(uniffi::Object)]
+pub struct EngineConnection {
+    connection: BlockingConnection,
+    _engine: Arc<EmbeddedEngine>,
+}
+
+#[uniffi::export]
+impl EngineConnection {
+    /// Writes all of `bytes` to the server, blocking until the connection
+    /// has taken them. Refused once closed, or once the server has ended the
+    /// connection.
+    pub fn send(&self, bytes: Vec<u8>) -> Result<(), OneironError> {
+        self.connection.send(&bytes).map_err(engine_failure)
+    }
+
+    /// The next bytes the server wrote, at most 64 KiB, blocking until some
+    /// arrive. Empty once the server has ended the connection or `close`
+    /// has run.
+    pub fn receive(&self) -> Result<Vec<u8>, OneironError> {
+        self.connection.receive().map_err(engine_failure)
+    }
+
+    /// Ends the app's side: a blocked `receive` returns empty, a later
+    /// `send` refuses, and the server reads the end of the stream. Closing
+    /// again does nothing.
+    pub fn close(&self) -> Result<(), OneironError> {
+        self.connection.close().map_err(engine_failure)
+    }
+}
+
+/// The engine's own server as a served handle's transport: each exchange is
+/// one buffered request through the engine, as `request` sends it.
+struct EngineTransport(Arc<EmbeddedEngine>);
+
+impl InProcessTransport for EngineTransport {
+    fn exchange(&self, request: InProcessRequest) -> Result<InProcessReply, String> {
+        let reply = self
+            .0
+            .engine
+            .request(EmbeddedRequest {
+                method: request.method,
+                path: request.path,
+                headers: request.headers,
+                body: request.body,
+            })
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(InProcessReply {
+            status: reply.status,
+            headers: reply.headers,
+            body: reply.body,
+        })
     }
 }
 

@@ -23,7 +23,9 @@ header = """
  * process with the app's OneironAppHost callbacks; oneiron_engine_request
  * sends it one buffered HTTP/1.1 request, oneiron_engine_vault shares its
  * open vault with the storage functions, and oneiron_engine_free stops it in
- * order. Engine calls block: make them from app threads, never from a
+ * order. oneiron_engine_connection_open opens a connection the app holds
+ * (HTTP/1.1 with upgrades, so `/ws`), with _send, _receive, _close and _free.
+ * Engine calls block: make them from app threads, never from a
  * callback. The library exports these only when built with the `engine`
  * cargo feature.
  */
@@ -53,6 +55,7 @@ include = [
   "OneironSecretSink",
   "OneironReply",
   "OneironEngine",
+  "OneironEngineConnection",
   "oneiron_buffer_free",
   "oneiron_edge_info_array_free",
   "oneiron_scored_entity_array_free",
@@ -87,4 +90,9 @@ include = [
   "oneiron_engine_stop",
   "oneiron_engine_vault",
   "oneiron_engine_free",
+  "oneiron_engine_connection_open",
+  "oneiron_engine_connection_send",
+  "oneiron_engine_connection_receive",
+  "oneiron_engine_connection_close",
+  "oneiron_engine_connection_free",
 ]

@@ -6,8 +6,11 @@
 //! nest and have no verb-table row. A card's frame lives only on the server
 //! that rendered it (`vault.lenses.default`), held under the credential's
 //! principal and locality, so only the connected handle that rendered a card
-//! drives it. An embedded handle holds no frame and refuses both calls; this
-//! crate keeps no second frame store.
+//! drives it. A handle served in process (`connect_in_process`, OF-237) is
+//! one: both calls cross its transport to the server this process runs, with
+//! the same headers and the same replies, a queued callback included. An
+//! embedded handle holds no frame and refuses both calls; this crate keeps no
+//! second frame store.
 //!
 //! The bodies are the server's wire shapes, camelCase as it spells them.
 
@@ -76,6 +79,7 @@ fn embedded_refusal() -> MemoryError {
         "lens frames live on the server that rendered the card; connect to it",
         &[
             "Connect to the oneiron-server that rendered the card and send its events through that handle.",
+            "In an app that runs its engine in process, render and send through a handle the engine serves (EmbeddedEngine.client).",
         ],
     )
 }
@@ -87,7 +91,8 @@ impl OneironClient {
     /// (closed, evicted, or held before a restart) refuses `NOT_FOUND`:
     /// render the lens again. A model round-trip action queues its callback
     /// for the agent that emitted the card; a card no agent emitted refuses
-    /// `INVALID_STATE`. An embedded handle refuses `BAD_REQUEST`.
+    /// `INVALID_STATE`. A handle served in process sends it to the server
+    /// this process runs; an embedded handle refuses `BAD_REQUEST`.
     pub fn lens_frame_event(
         &self,
         card_id: &str,
