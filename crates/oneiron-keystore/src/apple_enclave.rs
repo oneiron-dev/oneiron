@@ -6,7 +6,7 @@
 //!
 //! - One enclave key per keychain service, found by its label and made on first
 //!   use: `AfterFirstUnlockThisDeviceOnly`, usable for private-key operations
-//!   only, never synchronizable.
+//!   only. An enclave key never synchronizes; it cannot leave the enclave.
 //! - Its items sit under the service name with `.enclave` appended, apart from
 //!   the platform tier's. Switching tiers reads nothing the other tier wrote: the
 //!   install starts empty slots, as a new machine does.
@@ -99,7 +99,6 @@ impl SecureEnclaveKeychain {
             .set_label(self.key_label.clone())
             .set_token(Token::SecureEnclave)
             .set_location(Location::DataProtectionKeychain)
-            .set_synchronizable(false)
             .set_access_control(access);
         SecKey::new(&options).map_err(|e| enclave(e.code()))
     }
