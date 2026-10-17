@@ -16,17 +16,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/child.rs` | src | m | 1 struct · 3 fn | ChildBroker | The same-user broker (ARCH-0069 `#broker-same-user-open`) |
 | `src/child/tests.rs` | test | s | — | — | A live child that let its channel go is not taken as ready (Astra on #1416): the daemon replaces it, or… |
 | `src/cli.rs` | src | s | 1 fn | — | `oneiron-broker serve --socket <path> --client-uid <uid> [--extra-roots <pem>]… [--timeout-secs <n>]`: the… |
-| `src/client.rs` | src | s | 3 struct · 6 fn | BrokerClient, BrokerConnection, BrokerReply | The daemon's side of the socket |
+| `src/client.rs` | src | s | 4 struct · 1 enum · 9 fn | BrokerClient, BrokerConnection, BrokerReply, BrokerStream, StreamPart | The daemon's side of the socket |
 | `src/digest.rs` | src | s | 2 fn | — | The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth… |
 | `src/error.rs` | src | s | 3 enum | BrokerError, Failure, Refusal | Why a call stopped |
-| `src/frame.rs` | src | s | 3 const · 6 crate-vis | — | The wire between the daemon and the broker, one connection per call |
-| `src/lib.rs` | src | s | 1 enum · 1 fn · 2 mod · 10 re-export | Isolation | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) |
+| `src/form.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | FormData | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
+| `src/frame.rs` | src | s | 4 const · 13 crate-vis | — | The wire between the daemon and the broker, one connection per call |
+| `src/lib.rs` | src | s | 1 enum · 1 fn · 2 mod · 11 re-export | Isolation | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) |
 | `src/peer.rs` | src | s | 7 crate-vis | — | Who this process is, and closing its memory to processes of its own uid |
-| `src/send.rs` | src | s | 1 struct · 3 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
+| `src/send.rs` | src | m | 1 struct · 5 crate-vis | SendPolicy | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
 | `src/serve.rs` | src | s | 1 struct · 1 fn · 1 const · 1 crate-vis | ServeConfig | The broker's side of the socket: one call per connection, from the daemon's uid only |
 | `src/serve/tests.rs` | test | m | — | — | The broker end to end, on a real Unix socket against the local TLS fake: one send with the key, the… |
-| `src/shape.rs` | src | s | 1 enum · 5 fn | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, where the model selector… |
+| `src/shape.rs` | src | m | 1 enum · 7 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
 | `src/shape/tests.rs` | test | s | — | — | The selector parser's refusals, as `#door-reads-model` and the broker design list them: the parser reads the… |
-| `src/strip.rs` | src | m | 1 fn · 1 const · 2 crate-vis | — | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
+| `src/strip.rs` | src | m | 1 fn · 1 const · 7 crate-vis | — | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
 | `src/strip/tests.rs` | test | m | — | — | The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it… |
 | `src/testing.rs` | src | s | 3 struct · 8 fn | FakeProvider, FakeReply, SeenRequest | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |

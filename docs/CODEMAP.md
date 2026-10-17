@@ -18,7 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
-| [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 14 | 5 | 0 |
+| [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 15 | 5 | 0 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 8 | 0 | 2 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
 | [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 9 | 0 | 0 |
@@ -315,11 +315,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `client` | file | 1 | s | The daemon's side of the socket |
 | `digest` | file | 1 | s | The request digest (ARCH-0069 `#broker-digest`): blake3 over the method, the path, the sorted non-auth… |
 | `error` | file | 1 | s | Why a call stopped |
+| `form` | file | 1 | s | `multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which… |
 | `frame` | file | 1 | s | The wire between the daemon and the broker, one connection per call |
 | `peer` | file | 1 | s | Who this process is, and closing its memory to processes of its own uid |
-| `send` | file | 1 | s | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
+| `send` | file | 1 | m | The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply… |
 | `serve` | file+dir | 2 | s | The broker's side of the socket: one call per connection, from the daemon's uid only |
-| `shape` | file+dir | 2 | s | The shape rows: for each wire protocol the broker speaks, the method, the path, where the model selector… |
+| `shape` | file+dir | 2 | m | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
 | `strip` | file+dir | 2 | m | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
 | `testing` | file | 1 | s | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |
 
