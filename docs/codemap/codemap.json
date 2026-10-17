@@ -14201,7 +14201,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 22
      }
     },
@@ -14516,7 +14516,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -29955,7 +29955,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 3,
       "fn": 4,
       "re-export": 9,
@@ -30219,7 +30219,7 @@
      "path": "src/note/kinds.rs",
      "purpose": "Vault-resident PACK descriptor records; the shipped kinds are data, not variants",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 4,
       "struct": 1
@@ -46814,7 +46814,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArchivedEntity",
@@ -46915,7 +46915,7 @@
      "path": "src/vault_cleanup/retention.rs",
      "purpose": "Owner-adjustable completed-TASK retention",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
