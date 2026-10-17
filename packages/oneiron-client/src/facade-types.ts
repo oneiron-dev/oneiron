@@ -279,7 +279,7 @@ export type WeaveReportRequest = { sections: WeaveSectionInput[] }
 /** `oneiron::memory::reads::ClaimView` */
 export type ClaimView = { claim_ref: string; short_ref?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; approval: string; lifecycle: string; source?: string | null; world_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; salience?: number | null; stale: boolean; claim?: RecordRef | null }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveItemView` */
-export type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number }
+export type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveSectionView` */
 export type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[] }
 /** `oneiron::claim::scoped_read::weave_serve::WeaveReportView` */
