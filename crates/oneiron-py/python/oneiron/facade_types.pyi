@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 309 facade rows, 1208 declarations.
+Census: 309 facade rows, 1211 declarations.
 Inputs: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -5704,18 +5704,31 @@ class AssetRef(TypedDict):
     hash: Digest
     kind: StepAssetKind
     description: str
-ChartKind = Literal["bar", "line", "pie"]
+class HeldMedia(TypedDict):
+    part: str
+    hash: Digest
+ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
 class ChartSeries(TypedDict):
     name: str
     values: list[float | None]
+    family: NotRequired[ChartKind | None]
+    x: NotRequired[list[float | None] | None]
+ChartSource = Literal["workbook", "literal", "cached"]
 ConnectorPreset = Literal["straight", "elbow", "curved"]
 class ConnectorEnd(TypedDict):
     node: NodeId
     site: int
+class SmartArtNode(TypedDict):
+    text: str
+    level: int
 class NodePayloadPictureBody(TypedDict):
     image: AssetRef
 class NodePayloadPicture(TypedDict):
     picture: NodePayloadPictureBody
+class NodePayloadHeldPictureBody(TypedDict):
+    media: HeldMedia
+class NodePayloadHeldPicture(TypedDict):
+    held_picture: NodePayloadHeldPictureBody
 class NodePayloadTableBody(TypedDict):
     header: list[str]
     rows: list[list[str | None]]
@@ -5725,15 +5738,29 @@ class NodePayloadChartBody(TypedDict):
     family: ChartKind
     categories: list[str]
     series: list[ChartSeries]
+    source: NotRequired[ChartSource]
 class NodePayloadChart(TypedDict):
     chart: NodePayloadChartBody
 class NodePayloadConnectorBody(TypedDict):
-    preset: ConnectorPreset
+    preset: NotRequired[ConnectorPreset | None]
     start: NotRequired[ConnectorEnd | None]
     end: NotRequired[ConnectorEnd | None]
 class NodePayloadConnector(TypedDict):
     connector: NodePayloadConnectorBody
-NodePayload = NodePayloadPicture | NodePayloadTable | NodePayloadChart | NodePayloadConnector
+class NodePayloadSmartArtBody(TypedDict):
+    nodes: list[SmartArtNode]
+class NodePayloadSmartArt(TypedDict):
+    smart_art: NodePayloadSmartArtBody
+class NodePayloadOleBody(TypedDict):
+    prog_id: NotRequired[str | None]
+    preview: NotRequired[HeldMedia | None]
+class NodePayloadOle(TypedDict):
+    ole: NodePayloadOleBody
+class NodePayloadCustomGeometryBody(TypedDict):
+    paths: int
+class NodePayloadCustomGeometry(TypedDict):
+    custom_geometry: NodePayloadCustomGeometryBody
+NodePayload = NodePayloadPicture | NodePayloadHeldPicture | NodePayloadTable | NodePayloadChart | NodePayloadConnector | NodePayloadSmartArt | NodePayloadOle | NodePayloadCustomGeometry
 class Run(TypedDict):
     text: str
     bold: NotRequired[bool | None]
