@@ -216,7 +216,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
             ("id", entity_id_value(result.id)),
             ("disposition", Value::from(result.disposition.as_str())),
         ]),
-        SelfDispatchOutcome::TaskAsk(result) => super::coordination_codec::ask_value(result),
+        SelfDispatchOutcome::TaskAsk(result) => super::coordination_codec::ask_value(result)?,
         SelfDispatchOutcome::TaskAskStatus(result) => {
             super::coordination_codec::status_value(result)?
         }
