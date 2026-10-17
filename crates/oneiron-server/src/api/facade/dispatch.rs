@@ -1226,6 +1226,94 @@ async fn vault_members_leave(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_members_invitations(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.invitations")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitations", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.members.invitations", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_invitations(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_members_accept(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.accept")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.accept", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.members.accept", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_accept(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_members_decline(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.decline")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.decline", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.members.decline", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_decline(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_members_withdraw_invitation(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.members.withdraw_invitation")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.members.withdraw_invitation", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.members.withdraw_invitation", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_withdraw_invitation(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -3720,6 +3808,12 @@ pub(crate) async fn call_verb(
         "vault.members.change" => vault_members_change(server, call, input).await,
         "vault.members.remove" => vault_members_remove(server, call, input).await,
         "vault.members.leave" => vault_members_leave(server, call, input).await,
+        "vault.members.invitations" => vault_members_invitations(server, call, input).await,
+        "vault.members.accept" => vault_members_accept(server, call, input).await,
+        "vault.members.decline" => vault_members_decline(server, call, input).await,
+        "vault.members.withdraw_invitation" => {
+            vault_members_withdraw_invitation(server, call, input).await
+        }
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.authority.handoff_alarms" => {
             vault_authority_handoff_alarms(server, call, input).await
@@ -3898,6 +3992,8 @@ pub(crate) async fn call_verb(
         | "self.folds"
         | "tasks.refuse"
         | "self.skills.call"
+        | "self.team.start"
+        | "self.team.record"
         | "self.spawn"
         | "tasks.wait" => Err(context_required(verb, VerbContext::Run)),
         _ => Err(unknown_verb(verb)),

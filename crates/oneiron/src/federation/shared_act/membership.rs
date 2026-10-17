@@ -2,7 +2,12 @@
 //! ordinary member changes an Admin's named power makes at once. Each rewrites
 //! or deletes FEDERATION_GRANT records in the caller's writer and, given the
 //! host's slip issuer, revokes the capability slips of whoever lost a role.
-//! Removal is access revocation, never a group rekey.
+//! Removal is access revocation, never a group rekey. A new member joins only
+//! by accepting an invitation (`invitation`).
+mod invitation;
+
+pub use invitation::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
+
 use super::{
     Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
     invalid, live_owners, non_root,
@@ -290,8 +295,10 @@ impl Vault {
         Ok(receipt)
     }
 
-    /// Add `member`, a live person with no membership here, at a non-root
-    /// role, or the creation preset's default member role when `None`.
+    /// Invite `member`, a live person with no membership here, at a non-root
+    /// role, or the creation preset's default member role when `None`. No
+    /// grant is written until they accept ([`Vault::accept_shared_invitation`]);
+    /// the receipt's `MemberInvited` names the invitation.
     pub fn add_shared_member(
         &self,
         admin: &AuthenticatedOwner,
@@ -303,7 +310,7 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
-            |txn, _, now| {
+            |txn, inviter, now| {
                 let preset = self
                     .shared_vault_creation_in_txn(txn)?
                     .and_then(|row| row.preset);
@@ -318,16 +325,7 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                let grants = self.set_member_role_in_txn(txn, vault_id, member, role, now)?;
-                Ok(Effect {
-                    change: SharedVaultChange::MemberAdded {
-                        member: member.to_hex(),
-                        role,
-                    },
-                    grants,
-                    revoked_slips: Vec::new(),
-                    notify: BTreeSet::from([member]),
-                })
+                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, now)
             },
         )
     }

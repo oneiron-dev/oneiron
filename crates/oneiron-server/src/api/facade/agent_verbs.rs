@@ -55,6 +55,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.members.change", post(facade_route))
         .route("/vault.members.remove", post(facade_route))
         .route("/vault.members.leave", post(facade_route))
+        .route("/vault.members.invitations", post(facade_route))
+        .route("/vault.members.accept", post(facade_route))
+        .route("/vault.members.decline", post(facade_route))
+        .route("/vault.members.withdraw_invitation", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.authority.handoff_alarms", post(facade_route))
         .route(
