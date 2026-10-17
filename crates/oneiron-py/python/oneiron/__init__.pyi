@@ -513,6 +513,8 @@ class Oneiron:
         def structural(self) -> "Oneiron._VaultStructuralVerbs": ...
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
+        @property
+        def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
             """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
         @property
@@ -1057,6 +1059,9 @@ class Oneiron:
     class _VaultHabitsVerbs:
         def checkin(self, input: Facade.HabitCheckinInput) -> Facade.EntityRefReceipt:
             """Appends one immutable check-in under a Habit TASK."""
+    class _VaultEsignVerbs:
+        def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
+            """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
     class _VaultConsolidationVerbs:
         def enqueue(self, spec: Facade.ConsolidationEnqueueRequest) -> Facade.DreamerAttemptRef:
             """Enqueues one consolidation attempt and returns its durable job reference."""

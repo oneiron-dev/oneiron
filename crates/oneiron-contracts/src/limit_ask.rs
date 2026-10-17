@@ -90,11 +90,16 @@ pub enum EngineLimit {
     /// continuation parts included. Past it the folder is read and imported
     /// whole.
     ImportFolderNotes,
+    /// Bytes one signature image decode (`POST /sign/image`) may allocate,
+    /// its decoded raster included: the decoder's own alloc bound is set from
+    /// it. An image whose header declares a raster past it asks whether
+    /// everything is okay, and is decoded whole.
+    SignatureDecodeBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -114,6 +119,7 @@ impl EngineLimit {
         Self::LinePushMonthly,
         Self::ImportFolderTextBytes,
         Self::ImportFolderNotes,
+        Self::SignatureDecodeBytes,
     ];
 
     /// The config key that sets the row.
@@ -138,6 +144,7 @@ impl EngineLimit {
             Self::LinePushMonthly => "line.monthly_push_allowance",
             Self::ImportFolderTextBytes => "limits.import_folder_text_bytes",
             Self::ImportFolderNotes => "limits.import_folder_notes",
+            Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
         }
     }
 
@@ -164,6 +171,7 @@ impl EngineLimit {
             Self::LinePushMonthly => 200,
             Self::ImportFolderTextBytes => 256 << 20,
             Self::ImportFolderNotes => 100_000,
+            Self::SignatureDecodeBytes => 1 << 30,
         }
     }
 }

@@ -1336,6 +1336,11 @@ export_facade! {
     let output = client.vault_artifacts_create(&input)?;
     crate::codec::lift_record("vault.artifacts.create", &output)
 };
+"vault.esign.create" => fn vault_esign_create(&self, input: EsignCreateRequest) -> EsignDraftView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignCreateRequest = crate::codec::lower_record("vault.esign.create", input)?;
+    let output = client.vault_esign_create(&input)?;
+    crate::codec::lift_record("vault.esign.create", &output)
+};
 "vault.conversations.create" => fn vault_conversations_create(&self, input: ConversationCreateInput) -> CoreEntityWriteReceipt = |client| {
     let input: oneiron::core_write::ConversationCreateInput = crate::codec::lower_record("vault.conversations.create", input)?;
     let output = client.vault_conversations_create(&input)?;

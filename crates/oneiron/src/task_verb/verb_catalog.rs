@@ -309,6 +309,7 @@ pub enum AgentVerb {
     VaultHabitsCheckin,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
+    VaultEsignCreate,
     VaultConversationsCreate,
     VaultConversationsTurnsCreate,
     VaultConversationsRecordsAppend,
@@ -656,6 +657,7 @@ impl AgentVerb {
         Self::VaultHabitsCheckin,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
+        Self::VaultEsignCreate,
         Self::VaultConversationsCreate,
         Self::VaultConversationsTurnsCreate,
         Self::VaultConversationsRecordsAppend,
@@ -1010,6 +1012,7 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
+            Self::VaultEsignCreate => "vault.esign.create",
             Self::VaultConversationsCreate => "vault.conversations.create",
             Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
             Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
@@ -1318,6 +1321,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -1672,6 +1676,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2084,6 +2089,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2311,6 +2317,7 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultEsignCreate
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2675,6 +2682,7 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultEsignCreate => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -3023,6 +3031,7 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultEsignCreate => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -3869,6 +3878,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsCreate => {
                 "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."
+            }
+            Self::VaultEsignCreate => {
+                "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."
             }
             Self::VaultConversationsCreate => {
                 "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."

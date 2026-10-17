@@ -275,6 +275,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.habits.checkin", post(facade_route))
         .route("/vault.claims.admit", post(facade_route))
         .route("/vault.artifacts.create", post(facade_route))
+        .route("/vault.esign.create", post(facade_route))
         .route("/vault.conversations.create", post(facade_route))
         .route("/vault.conversations.turns.create", post(facade_route))
         .route("/vault.conversations.records.append", post(facade_route))

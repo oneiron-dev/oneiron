@@ -919,6 +919,10 @@ export class Oneiron {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
     },
+    esign: {
+      /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
+      create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
+    },
     /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
     batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),
     consolidation: {
