@@ -109,7 +109,7 @@ pub(crate) fn drop_sealed_labels_in_txn(
     let prefix = format!("{LABEL_PREFIX}{shelf_prefix}");
     let mut keys = Vec::new();
     for row in store.sync_state.prefix_iter(wtxn, &prefix)? {
-        keys.push(row?.0.to_owned());
+        keys.push(row?.0.to_string());
     }
     for key in keys {
         store.sync_state.delete(wtxn, &key)?;
