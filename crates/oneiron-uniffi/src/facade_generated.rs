@@ -5,6 +5,11 @@ export_facade! {
     let output = client.report(&input)?;
     crate::codec::lift_record("report", &output)
 };
+"self.focus.scratchpad.recall" => fn self_focus_scratchpad_recall(&self, input: ScratchpadRecallRequest) -> ScratchpadRecallReply = |client| {
+    let input: oneiron::task_verb::sdk::ScratchpadRecallRequest = crate::codec::lower_record("self.focus.scratchpad.recall", input)?;
+    let output = client.self_focus_scratchpad_recall(&input)?;
+    crate::codec::lift_record("self.focus.scratchpad.recall", &output)
+};
 "self.memory.diary" => fn self_memory_diary(&self, input: DiaryEntryRequest) -> DiaryEntryReceipt = |client| {
     let input: oneiron::task_verb::sdk::DiaryEntryRequest = crate::codec::lower_record("self.memory.diary", input)?;
     let output = client.self_memory_diary(&input)?;
@@ -960,7 +965,7 @@ export_facade! {
     let output = client.vault_questions_read(&input)?;
     crate::codec::lift_record("vault.questions.read", &output)
 };
-"vault.questions.answers" => fn vault_questions_answers(&self, input: QuestionAnswersRequest) -> Vec<AnswerRecord> = |client| {
+"vault.questions.answers" => fn vault_questions_answers(&self, input: QuestionAnswersRequest) -> Vec<QuestionAnswer> = |client| {
     let input: oneiron::receipt::QuestionAnswersRequest = crate::codec::lower_record("vault.questions.answers", input)?;
     let output = client.vault_questions_answers(&input)?;
     crate::codec::lift_record("vault.questions.answers", &output)

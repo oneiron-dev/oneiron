@@ -232,6 +232,7 @@ mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_record_erase;
+mod sdk_scratchpad;
 mod sdk_secret;
 mod sdk_self;
 mod sdk_share;

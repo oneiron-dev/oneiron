@@ -499,13 +499,18 @@ the value, so a resumed step must reveal again. The rows are `reveal`,
 
 A run reads a result too big for its window with reader children
 (ARCH-0079 #reader-forks). `can({read})` answers what a child may take: the
-children's cutoff, what the run's spend scope may still spend, the active
-window of the code-mode seat's model in tokens (from the model's described
-context; 32768 when none is described) and the memory one child may hold
+children's cutoff, the meter they spend on (`scope` with what the run's spend
+scope may still spend, or `host`), the active window of the code-mode seat's
+model in tokens (from the model's described context; 32768 when none is
+described) and the memory one child may hold
 (`[limits] code_result_session_memory_bytes` shared by the children one run
 may have running, at 32 MiB each). `self.spawn` queues one child over one
 range, and `tasks.wait` waits on them. Children run on the vault's reader
-runner, never inside a step, and spend from the run's spend scope. Past
+runner, never inside a step. A paid or attempt-scoped run's children spend
+under its spend scope. An `execute_code` run's children, and those of a
+resident run with no spend scope, spend on the host's code-mode meter
+(`budget_units`), the one the run's own model calls take, with no per-run
+cap: one run's children can exhaust it for every code-mode run. Past
 `[limits] code_reader_backlog` queued children (default 256) the row asks
 once, on its crossing, and keeps queueing; it never refuses.
 

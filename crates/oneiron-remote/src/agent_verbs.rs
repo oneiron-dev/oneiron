@@ -38,6 +38,9 @@ impl OneironClient {
                 "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
                     client, verb, &input,
                 ),
+                "self.focus.scratchpad.recall" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ScratchpadRecallReply,
+                >(client, verb, &input),
                 "self.memory.diary" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryEntryReceipt,
                 >(client, verb, &input),
@@ -636,7 +639,7 @@ impl OneironClient {
                     Option<oneiron::llm::decision::questions::QuestionRecord>,
                 >(client, verb, &input),
                 "vault.questions.answers" => remote_agent_verb_output::<
-                    Vec<oneiron::llm::decision::questions::AnswerRecord>,
+                    Vec<oneiron::receipt::QuestionAnswer>,
                 >(client, verb, &input),
                 "vault.decisions.asks.answer" => remote_agent_verb_output::<
                     oneiron::llm::decision::DecisionAsk,
@@ -777,6 +780,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("report", value)
+    }
+    pub fn self_focus_scratchpad_recall(
+        &self,
+        input: &oneiron::task_verb::sdk::ScratchpadRecallRequest,
+    ) -> Result<oneiron::task_verb::sdk::ScratchpadRecallReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.focus.scratchpad.recall", value)
     }
     pub fn self_memory_diary(
         &self,
@@ -3181,7 +3196,7 @@ impl OneironClient {
     pub fn vault_questions_answers(
         &self,
         input: &oneiron::receipt::QuestionAnswersRequest,
-    ) -> Result<Vec<oneiron::llm::decision::questions::AnswerRecord>, MemoryError> {
+    ) -> Result<Vec<oneiron::receipt::QuestionAnswer>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

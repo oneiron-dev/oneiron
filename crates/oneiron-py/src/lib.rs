@@ -226,6 +226,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_focus_scratchpad_recall(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.scratchpad.recall")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.scratchpad.recall", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_memory_diary(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.memory.diary")?;
         let output = py
