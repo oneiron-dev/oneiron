@@ -57367,6 +57367,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/slides/app_props.rs",
+     "purpose": "The app properties (`docProps/app.xml`) a slide's removal would leave stale (FIX 2377): the slide…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -57393,7 +57403,7 @@
      "path": "src/edit/structure/slides/mod.rs",
      "purpose": "Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -57900,7 +57910,7 @@
      "purpose": "The add-part and remove-part doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -58071,7 +58081,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58150,7 +58160,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 65,
+   "source_files": 66,
    "test_files": 14
   },
   "oneiron-driver": {
