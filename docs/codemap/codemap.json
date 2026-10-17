@@ -38585,6 +38585,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/host.rs",
+     "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -38639,7 +38650,7 @@
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 6,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -42798,7 +42809,7 @@
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
       "const": 1,
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -50286,7 +50297,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50554,7 +50565,7 @@
    },
    "over_bar": 133,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3052,
+   "source_files": 3053,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53391,7 +53402,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 39,
+      "const": 40,
       "crate-vis": 1
      }
     },
@@ -65360,7 +65371,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/residence.rs",
@@ -68288,7 +68299,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 30,
+   "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 501,
    "test_files": 182
