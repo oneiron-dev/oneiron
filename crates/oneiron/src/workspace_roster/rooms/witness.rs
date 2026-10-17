@@ -173,14 +173,16 @@ pub(crate) fn admit_witness(
     }
     // OF-460: the quote is proven in this write against the reply's own
     // thread chain, never moved onto the quoted target, so a thread reply
-    // may quote a trunk message. The claim parent above stays `reply_to`.
+    // may quote a trunk message. A thread's root, which names its anchor
+    // and answers no turn, continues the anchor. The claim parent above
+    // stays `reply_to`.
     let quoted = match input.quote {
         None => None,
         Some(quote) => {
-            let (Some(anchor), Some(parent)) = (thread_of, reply_to) else {
+            let Some(anchor) = thread_of else {
                 return Err(quote_outside_thread());
             };
-            let parent = dag_parent_in_txn(vault, txn, anchor, parent)?;
+            let parent = dag_parent_in_txn(vault, txn, anchor, reply_to.unwrap_or(anchor))?;
             Some(QuotedReply::prove_in_txn(
                 vault,
                 txn,
