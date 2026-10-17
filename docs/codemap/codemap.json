@@ -27303,7 +27303,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "AskAct",
@@ -51416,7 +51416,7 @@
     "llm": {
      "files": 94,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
     },
