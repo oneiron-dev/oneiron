@@ -218,6 +218,31 @@ impl NativeClient {
         self.inner.last_receipt_ref()
     }
 
+    /// Resends the call a `PENDING_ASK` refusal answered: `verb` with the
+    /// same input, under the invocation id the refusal's `hook` names
+    /// (ARCH-0080 §3, OF-580). `pending_json` is that refusal as its
+    /// serialized MemoryError. The reply is the shared wire JSON for `verb`,
+    /// not the projection its own method encodes (no `encode_recall`
+    /// renaming). The id, the pending check and the input check all stay in
+    /// `oneiron_remote::OneironClient::retry`.
+    fn retry(
+        &self,
+        py: Python<'_>,
+        pending_json: &str,
+        verb: &str,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let pending: MemoryError = decode(pending_json, "pending")?;
+        let input: serde_json::Value = decode(input_json, verb)?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .retry::<serde_json::Value>(&pending, verb, &input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;

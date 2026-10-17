@@ -53,6 +53,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         attempted: None,
         replacement: None,
         schema_ref: None,
+        pending: None,
     }
 }
 

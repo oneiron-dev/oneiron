@@ -133,6 +133,34 @@ impl NativeClient {
     pub fn last_receipt_ref(&self) -> Option<String> {
         self.inner.last_receipt_ref()
     }
+
+    /// Resends the call a `PENDING_ASK` refusal answered: `verb` with the
+    /// same `input`, under the invocation id the refusal's `hook` names
+    /// (ARCH-0080 §3, OF-580). `pending` is that refusal as its serialized
+    /// MemoryError (`{code, message, suggestions, hook}`). While the ask is
+    /// open it raises the same `PENDING_ASK`; once it is answered proceed,
+    /// the saved call runs once. The reply is the shared wire JSON for
+    /// `verb`, not the typed projection its own method would convert to.
+    /// The id, the pending check and the input check all stay in
+    /// `oneiron_remote::OneironClient::retry`.
+    #[napi]
+    pub fn retry(
+        &self,
+        pending: serde_json::Value,
+        verb: String,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        let pending: oneiron::MemoryError = serde_json::from_value(pending).map_err(|error| {
+            facade_error(oneiron::MemoryError::new(
+                oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                format!("pending is not a serialized refusal: {error}"),
+                &["Pass the PENDING_ASK error the call raised, with its hook."],
+            ))
+        })?;
+        self.inner
+            .retry::<serde_json::Value>(&pending, &verb, &input)
+            .map_err(facade_error)
+    }
 }
 
 mod agent_verbs;

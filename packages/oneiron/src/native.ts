@@ -281,6 +281,7 @@ vaultNotesLifecycle(requestJson: string): string
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
+  retry(pending: unknown, verb: string, input: unknown): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

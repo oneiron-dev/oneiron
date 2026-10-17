@@ -18,7 +18,8 @@
 //! converts at its boundary through that shape. Only a shape UniFFI cannot
 //! express (a `serde_json::Value`, a recursive type) stays a [`WireJson`]
 //! field inside its record, and a row whose type the inventory could not read
-//! crosses as [`WireJson`] whole. There is no generic `call(name, json)`.
+//! crosses as [`WireJson`] whole. There is no generic `call(name, json)`; the
+//! one name-keyed method is `retry`, which only resends a pending ask's call.
 //! Every exported row is callable: the table names no definition-only row.
 //!
 //! This surface exports no foreign callback interface and no subscription
@@ -130,6 +131,38 @@ impl Oneiron {
     /// server, and for an anonymous off-record call.
     pub fn last_receipt_ref(&self) -> Option<String> {
         self.inner.last_receipt_ref()
+    }
+
+    /// Resends the call a `PENDING_ASK` refusal answered: `verb` with the
+    /// same `input`, under the invocation id the refusal's hook names
+    /// (ARCH-0080 §3, OF-580).
+    ///
+    /// `pending` is the caught `OneironError.Failure`'s `pending` payload;
+    /// `input` is the verb's input as one JSON value. While the ask is open
+    /// it fails with the same `PENDING_ASK`; once the ask is answered
+    /// proceed, the saved call runs once and this returns its result. The
+    /// reply is the verb's shared wire JSON, not the typed record the verb's
+    /// own method lifts. The id, the pending check and the input check all
+    /// stay in the shared client's `retry`.
+    pub fn retry(
+        &self,
+        pending: WireJson,
+        verb: String,
+        input: WireJson,
+    ) -> Result<WireJson, OneironError> {
+        let pending: oneiron::MemoryError =
+            serde_json::from_str(&pending.canonical_json).map_err(|error| {
+                oneiron::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                    format!("pending is not a serialized refusal: {error}"),
+                    &["Pass the pending payload of the PENDING_ASK failure the call raised."],
+                )
+            })?;
+        let input: serde_json::Value = codec::decode(&verb, &input)?;
+        let output = self
+            .inner
+            .retry::<serde_json::Value>(&pending, &verb, &input)?;
+        codec::encode(&verb, &output)
     }
 }
 

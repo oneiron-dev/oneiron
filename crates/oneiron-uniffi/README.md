@@ -39,11 +39,12 @@
 | `as_actor(actor_key: String)` | `client.asActor(actorKey:)` | a NEW handle for another actor; a connected handle refuses `FORBIDDEN` |
 | `in_room_turn(room_ref: String)` | `client.inRoomTurn(roomRef:)` | a NEW handle whose every verb runs as a turn in that room |
 | `last_receipt_ref() -> Option<String>` | `client.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated; `nil` when embedded |
+| `retry(pending: WireJson, verb: String, input: WireJson) -> WireJson` | `client.retry(pending:verb:input:)` | resends a call a verb hook stopped on an ask under its invocation: `pending` is the `PENDING_ASK` failure's `pending` payload, `input` the same input; answers the verb's wire JSON |
 
 Errors cross as one `OneironError.Failure(code, message, suggestions,
-attempted, replacement, schemaRef)`: the engine's `MEMORY_CODE_*` string
-verbatim, ordered suggestions, and the wrong-root correction when there is
-one.
+attempted, replacement, schemaRef, pending)`: the engine's `MEMORY_CODE_*`
+string verbatim, ordered suggestions, the wrong-root correction when there is
+one, and on a `PENDING_ASK` the whole refusal as `pending`, for `retry`.
 
 ## Which verbs cross typed, and which cross `WireJson`
 
