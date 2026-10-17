@@ -13,6 +13,7 @@ mod project_proposal;
 pub(crate) use failure_card_validation::require_diagnosed_route;
 mod protocol;
 mod receipt_view;
+mod shape_plan;
 mod voice_offer;
 
 pub use self::consent_cards::{
@@ -44,6 +45,7 @@ pub use self::receipt_view::{
     ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution,
     resolve_commitment_receipt_link,
 };
+pub use self::shape_plan::{ShapePlanCard, ShapePlanCardItem};
 pub use self::voice_offer::VoiceGrantOffer;
 
 #[cfg(test)]
