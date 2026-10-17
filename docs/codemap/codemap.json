@@ -13297,7 +13297,7 @@
      "path": "src/connector_key/setup.rs",
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
-      "const": 7,
+      "const": 8,
       "crate-vis": 4,
       "fn": 6,
       "struct": 3,
@@ -29051,7 +29051,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 41,
-      "fn": 20,
+      "fn": 22,
       "struct": 2,
       "type": 1
      }
@@ -35896,13 +35896,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/registry/pack_byte_map/doors.rs",
      "purpose": "Local installation commands and name-based instance admission",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 6
      }
     },
@@ -39544,7 +39544,7 @@
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Bundled skills traverse the same pinned hub import, scanner and provenance doors",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -44225,7 +44225,7 @@
      "path": "src/task_verb/brief.rs",
      "purpose": "The queue task brief (OF-220): the typed why-carrier one TASK holds",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 4,
       "struct": 14
@@ -44386,7 +44386,7 @@
      "path": "src/task_verb/create_origin.rs",
      "purpose": "The creator a created TASK's realizing agent runs under (OF-532)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -44447,6 +44447,16 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/external_attempt.rs",
+     "purpose": "The payload of one external try on a TASK (OF-220, OF-540)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -44603,7 +44613,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "mod": 2,
       "re-export": 23
      }
@@ -44760,6 +44770,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/report_journal.rs",
+     "purpose": "The per-attempt report journal (OF-220)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -44788,7 +44808,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 5,
       "fn": 3,
       "struct": 5
@@ -44962,7 +44982,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 232
+      "fn": 237
      }
     },
     {
@@ -45044,6 +45064,8 @@
       "BlobContent",
       "ClaimRefRequest",
       "CommitRequest",
+      "ConsolidationEnqueueRequest",
+      "ConsolidationStatusRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
       "EditNoteRequest",
@@ -45059,9 +45081,9 @@
      "path": "src/task_verb/sdk_memory.rs",
      "purpose": "Typed inputs for the public memory verbs in the SDK inventory",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 1,
-      "struct": 14
+      "struct": 16
      }
     },
     {
@@ -50510,7 +50532,7 @@
     "registry": {
      "files": 8,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
@@ -50802,7 +50824,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 112,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50958,7 +50980,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3077,
+   "source_files": 3079,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58825,7 +58847,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 187
+      "fn": 192
      }
     },
     {
@@ -59839,7 +59861,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 188
+      "fn": 193
      }
     },
     {
@@ -64154,7 +64176,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/builtin_host/checks.rs",
-     "purpose": "The served host's connection checks: the engine's provider checks, plus `browser.session`, which is local…",
+     "purpose": "The served host's connection checks: the engine's provider checks, plus two that need this host's own config",
      "surface": {
       "crate-vis": 2
      }
@@ -64166,7 +64188,7 @@
      "path": "src/builtin_host/handles.rs",
      "purpose": "One handle per served built-in channel: its adapter, the provider account its check bound, and the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -64991,8 +65013,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 1,
-      "mod": 11,
-      "re-export": 19
+      "mod": 12,
+      "re-export": 20
      }
     },
     {
@@ -65134,6 +65156,21 @@
      "purpose": "`[models.voice]`: the server's own voice loop (OF-410)",
      "surface": {
       "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NativeMailConfig",
+      "NativeMailMode"
+     ],
+     "path": "src/config/native_mail.rs",
+     "purpose": "`[native_mail]`: the host's own mail server, a Stalwart instance serving one domain the owner controls…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
       "struct": 1
      }
     },
@@ -68769,7 +68806,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69030,7 +69067,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 525,
+   "source_files": 526,
    "test_files": 182
   },
   "oneiron-spawn": {
