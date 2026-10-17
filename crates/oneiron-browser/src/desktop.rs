@@ -136,6 +136,11 @@ const SCOPES: &[&str] = &[
     "layered pane",
 ];
 
+/// The roles of rows that hold typed text, any of which may be secret.
+const TEXT_ROLES: &[&str] = &["textbox", "searchbox", "combobox", "spinbutton"];
+/// What a toolkit shows in place of a concealed field's text.
+const MASK_GLYPHS: &[char] = &['•', '●', '∙', '*'];
+
 /// Words that mark a text field secret beside a password role.
 const SECRET_PHRASES: &[&[&str]] = &[
     &["password"],
@@ -797,6 +802,17 @@ fn is_return(key: &str) -> bool {
         .any(|name| key.eq_ignore_ascii_case(name))
 }
 
+/// Whether `key` activates the control it goes to, as a click would.
+fn is_activation(key: &str) -> bool {
+    is_return(key)
+        || key
+            .rsplit('+')
+            .next()
+            .unwrap_or(key)
+            .trim()
+            .eq_ignore_ascii_case("space")
+}
+
 /// A key press as the press refusal names it, when no row takes it.
 fn key_row(key: &str) -> Row {
     Row {
@@ -829,6 +845,31 @@ fn clip(text: &str) -> String {
         Some((end, _)) => format!("{}…", &text[..end]),
         None => text,
     }
+}
+
+/// Whether an element is a secret field: a password role, or a text field
+/// whose label or description names a secret, or whose text or label shows
+/// only mask glyphs (a toolkit concealing what was typed).
+fn secret_field(element: &Value, raw_role: &str, role: &str) -> bool {
+    if raw_role.contains("password") {
+        return true;
+    }
+    if !TEXT_ROLES.contains(&role) {
+        return false;
+    }
+    let text = |name: &str| element.get(name).and_then(Value::as_str).unwrap_or("");
+    let (label, description, value) = (text("label"), text("description"), text("value"));
+    [label, description].iter().any(|words| {
+        SECRET_PHRASES
+            .iter()
+            .any(|phrase| has_phrase(words, phrase))
+    }) || [label, value].iter().any(|shown| masked(shown))
+}
+
+/// Whether `text` is nothing but mask glyphs, as a concealed field shows it.
+fn masked(text: &str) -> bool {
+    let mut glyphs = text.chars().filter(|c| !c.is_whitespace()).peekable();
+    glyphs.peek().is_some() && glyphs.all(|c| MASK_GLYPHS.contains(&c))
 }
 
 /// Whether `name` holds the words of `phrase` in a row, ignoring case.
@@ -875,18 +916,17 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
             .and_then(Value::as_str)
             .map(clip)
             .unwrap_or_default();
-        let password = raw.contains("password");
-        let secret =
-            password || (role == "textbox" && SECRET_PHRASES.iter().any(|p| has_phrase(&label, p)));
+        let secret = secret_field(element, &raw, &role);
         if secret {
             secrets.push(Secret {
                 screen: frame_of(element, "frame"),
                 shot: frame_of(element, "screenshot_frame"),
             });
         }
-        // A password field's own text can stand in for a missing name: it
-        // never leaves the session.
-        let name = if password { String::new() } else { label };
+        // A secret field's own text can stand in for a missing name (the
+        // driver names an unnamed field by its text): it never leaves the
+        // session.
+        let name = if secret { String::new() } else { label };
         let token = element
             .get("element_token")
             .and_then(Value::as_str)
@@ -1389,7 +1429,13 @@ impl BrowserDriver for DesktopSession {
             .as_deref()
             .map(|target| Self::token(&snapshot, target))
             .transpose()?;
-        let class = is_return(&input.key).then_some(EFFECT_SEND);
+        // An activation key aimed at an effect-named control does what a
+        // click on it does, and takes its class; any other Return sends.
+        let class = aimed
+            .as_ref()
+            .filter(|_| is_activation(&input.key))
+            .and_then(|(line, _)| effect_class(&line.row.name))
+            .or_else(|| is_return(&input.key).then_some(EFFECT_SEND));
         let row = aimed
             .as_ref()
             .map_or_else(|| key_row(&input.key), |(line, _)| line.row.clone());

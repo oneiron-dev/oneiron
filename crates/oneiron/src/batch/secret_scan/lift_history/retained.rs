@@ -9,7 +9,12 @@
 //! - a repo snapshot: each file with a secret marked withheld, as a new
 //!   capture stores it;
 //! - an LFS object, which a new upload is refused for: marked, and withheld
-//!   from every reader off this device.
+//!   from every reader off this device;
+//! - a code document's head, tested frontiers and ingress receipts, and a
+//!   typed body's state and each fork's (a deck's fork log among its texts),
+//!   which a new edit is refused for: each text's keys go to custody, marked
+//!   under the text's hash as a file's are (owner ruling C2; Engine ruling
+//!   G2 = b). A reader other than the owner reads each as its handle.
 //!
 //! A row the owning module cannot read is read as stored, and a hit in it
 //! still files a proposal.
@@ -18,10 +23,13 @@ use heed::{RoTxn, RwTxn};
 
 use super::{Done, LiftCause};
 use crate::Vault;
+use crate::batch::secret_scan::CarrierText;
+use crate::code_document::{CodeDocumentRows, code_document_texts_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, Result};
 use crate::origin::lfs::LfsOid;
 use crate::side_table::{self as t, SideTableDecl};
+use crate::typed_body::{TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn};
 
 /// One carrier with a door here, by the row key after its prefix.
 enum Row<'a> {
@@ -29,6 +37,8 @@ enum Row<'a> {
     Codebase(EntityId),
     Repo(&'a str),
     Lfs(LfsOid),
+    Code(CodeDocumentRows, &'a [u8]),
+    Typed(TypedBodyRows, &'a [u8]),
 }
 
 impl<'a> Row<'a> {
@@ -50,6 +60,16 @@ impl<'a> Row<'a> {
             <[u8; 32]>::try_from(row)
                 .ok()
                 .map(|oid| Self::Lfs(LfsOid::from_bytes(oid)))
+        } else if is(&t::CODE_DOCUMENT_HEAD) {
+            Some(Self::Code(CodeDocumentRows::Head, row))
+        } else if is(&t::CODE_DOCUMENT_FRONTIER) {
+            Some(Self::Code(CodeDocumentRows::Frontier, row))
+        } else if is(&t::CODE_DOCUMENT_INGRESS) {
+            Some(Self::Code(CodeDocumentRows::Ingress, row))
+        } else if is(&t::TYPED_BODY_DOC) {
+            Some(Self::Typed(TypedBodyRows::Doc, row))
+        } else if is(&t::TYPED_BODY_FORK_DOC) {
+            Some(Self::Typed(TypedBodyRows::ForkDoc, row))
         } else {
             return None;
         })
@@ -75,6 +95,11 @@ pub(super) fn hit(
         Some(Row::Codebase(id)) => vault.codebase_snapshot_lift_hit_in_txn(txn, &id),
         Some(Row::Repo(fork)) => vault.repo_snapshot_lift_hit_in_txn(txn, fork),
         Some(Row::Lfs(oid)) => vault.lfs_object_lift_hit_in_txn(txn, oid),
+        Some(Row::Code(rows, row)) => code_document_texts_in_txn(&vault.store, txn, rows, row)
+            .and_then(|texts| {
+                crate::batch::secret_scan::carrier_texts_hit_in_txn(&vault.store, txn, &texts)
+            }),
+        Some(Row::Typed(rows, row)) => typed_body_lift_hit_in_txn(&vault.store, txn, rows, row),
     };
     match read {
         Ok(found) => Ok(Some(found)),
@@ -102,11 +127,33 @@ pub(super) fn lift(
         Some(Row::Codebase(id)) => vault.lift_codebase_snapshot_in_txn(txn, &id)?,
         Some(Row::Repo(fork)) => vault.lift_repo_snapshot_in_txn(txn, fork)?,
         Some(Row::Lfs(oid)) => vault.lift_lfs_object_in_txn(txn, oid)?,
+        Some(Row::Code(rows, row)) => {
+            let texts = code_document_texts_in_txn(&vault.store, txn, rows, row)?;
+            let marked = crate::batch::secret_scan::mark_carrier_texts_in_txn(
+                vault, txn, decl, row, &texts,
+            )?;
+            return Ok(Some(text_done(marked)));
+        }
+        Some(Row::Typed(rows, row)) => {
+            return Ok(Some(text_done(lift_typed_body_in_txn(
+                vault, txn, rows, row,
+            )?)));
+        }
     };
     Ok(Some(match marked {
         Some(reason) => Done::Propose(LiftCause::File, reason),
         None => Done::Clean,
     }))
+}
+
+/// A lifted text's outcome: its keys marked, with the owner's proposal; a
+/// hit no span places, proposed; nothing left to mark.
+pub(super) const fn text_done(marked: CarrierText) -> Done {
+    match marked {
+        CarrierText::Minted(reason) => Done::Propose(LiftCause::File, reason),
+        CarrierText::Unplaceable(reason) => Done::Propose(LiftCause::Unplaceable, reason),
+        CarrierText::Clean | CarrierText::Marked => Done::Clean,
+    }
 }
 
 /// A failure of the store, which the census does not read past.
