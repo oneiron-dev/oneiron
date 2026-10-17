@@ -16,7 +16,7 @@ use crate::server::SyncServer;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
-use axum::http::{HeaderMap, HeaderValue};
+use axum::http::{Extensions, HeaderMap, HeaderValue};
 use axum::response::IntoResponse;
 use axum::response::Json;
 use oneiron::claim::CallerLocality;
@@ -231,14 +231,25 @@ impl McpCallContext {
 
 /// The PRIMARY endpoint: the truthful `setup_oneiron` catalog. `execute_code`
 /// is not registered in this release; direct requests receive its typed
-/// unavailable refusal at the shared name-resolution door.
+/// unavailable refusal at the shared name-resolution door. `connection` is
+/// the request's own (its peer, the machine its binding proved): an action's
+/// rows run under it.
 pub(crate) async fn mcp_gateway(
     headers: HeaderMap,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
+    connection: Extensions,
     body: Bytes,
 ) -> impl IntoResponse {
-    mcp_endpoint(McpSurfaceMode::Primary, headers, locality, server, body).await
+    mcp_endpoint(
+        McpSurfaceMode::Primary,
+        headers,
+        locality,
+        connection,
+        server,
+        body,
+    )
+    .await
 }
 
 /// The TOOL-FIRST endpoint: one generated tool per exported verb row.
@@ -249,15 +260,25 @@ pub(crate) async fn mcp_tool_first_gateway(
     headers: HeaderMap,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
+    connection: Extensions,
     body: Bytes,
 ) -> impl IntoResponse {
-    mcp_endpoint(McpSurfaceMode::ToolFirst, headers, locality, server, body).await
+    mcp_endpoint(
+        McpSurfaceMode::ToolFirst,
+        headers,
+        locality,
+        connection,
+        server,
+        body,
+    )
+    .await
 }
 
 async fn mcp_endpoint(
     mode: McpSurfaceMode,
     headers: HeaderMap,
     locality: CallerLocality,
+    connection: Extensions,
     server: Arc<SyncServer>,
     body: Bytes,
 ) -> Json<Value> {
@@ -332,6 +353,7 @@ async fn mcp_endpoint(
         mode,
         &headers,
         locality,
+        &connection,
         &server,
         request,
         raw_arguments.as_deref(),
@@ -481,6 +503,7 @@ pub(crate) async fn handle_mcp_request(
     mode: McpSurfaceMode,
     headers: &HeaderMap,
     locality: CallerLocality,
+    connection: &Extensions,
     server: &Arc<SyncServer>,
     request: McpJsonRpcRequest,
     raw_arguments: Option<&str>,
@@ -570,7 +593,7 @@ pub(crate) async fn handle_mcp_request(
                 let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                 ensure_mcp_actor_matches(&args, &actor)?;
                 mcp_admit_scoped_call(server, &args, &actor)?;
-                execute_mcp_tool(server, args, &actor).await
+                execute_mcp_tool(server, args, &actor, headers, connection).await
             }
             .await;
             // ONE-1704 M4: ONE chokepoint. Everything inside that block happened
