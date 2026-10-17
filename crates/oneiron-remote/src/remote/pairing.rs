@@ -51,6 +51,16 @@ fn lower_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// The credential string for `slip_token` (`v2.slip.…`) bound to `key`, in
+/// the form [`pair`] returns: a renewal hands its new slip back this way
+/// with the seed the device already holds. `None` for a token that is not a
+/// v2 slip.
+pub(super) fn credential_string(slip_token: &str, key: &SigningKey) -> Option<String> {
+    slip_token
+        .strip_prefix("v2.slip.")
+        .map(|slip| format!("{CREDENTIAL_PREFIX}{slip}.{}", lower_hex(key.as_bytes())))
+}
+
 /// The redeem route's success body.
 #[derive(serde::Deserialize)]
 struct Paired {

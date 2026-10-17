@@ -209,6 +209,19 @@ Every paired slip carries a slip id, its identity. Two pairings of identical cla
 
 **Revoking one slip.** `oneiron token revoke --jti <hex64>`. Its own explicit act, on one named token, effective immediately on every route including the owner-grade ones; idempotent, and it reports `{"revoked": false}` when the id was already revoked. It does not affect any other token, whatever claims they share.
 
+**Renewing a paired owner device's credential.** `POST /v1/core/slips/renew`, with an optional JSON `{"lifetime_secs": <positive seconds>}`, answers `{"token": "v2.slip.…"}`: a fresh slip with the same claims and binding key, so the device keeps its seed. The request needs three headers:
+- the device's owner-grade slip in `Authorization: Bearer`;
+- its `x-oneiron-binding` proof;
+- an `x-oneiron-machine` proof over that same request, which is mandatory here.
+
+The rules:
+- Only an unattenuated, parentless human slip of a live owner renews, and its own-device grant must still stand.
+- The machine must be live, the owner's, and enrolled as `yours`, `work_school` or `rented`.
+- The new slip lives no longer than the original slip's own lifetime, the trusted vault policy's initial-owner ceiling, or the requested lifetime.
+- The old slip is not revoked. It runs out on its own, so a device can retry a renewal whose reply it lost.
+- An expired or revoked slip, a missing machine proof, or any rule above that fails, refuses with `UNAUTHORIZED`. A device whose slip expired or was revoked pairs again.
+- A managed supervisor, the development mode, a host root and an agent's slip are refused with `FORBIDDEN`.
+
 **Rotating credentials.** Rotate or revoke the logged slips. The issuer key is not a bearer token; replacing it alone is not a device-lease rotation ceremony. Receipt-attestation device keys remain verification records, not access credentials (ONE-2294 tracks slip-backed receipt attestation).
 ## Tier-1: Endpoint Activation Index
 
