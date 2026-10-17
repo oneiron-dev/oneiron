@@ -85,9 +85,10 @@ impl Vault {
         // A held world keeps its pads on either reason, before any work here
         // (OF-470).
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
-        // A peer deleted a world: its keys go here too, whether or not this
-        // replica holds the WORLD row (fix 7). An archive is never a delete.
-        if decoded.reason != Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
+        // A peer erased a world: its keys go here too, whether or not this
+        // replica holds the WORLD row (fix 7). A soft delete or an archive
+        // keeps them: the world restores from old bundles.
+        if decoded.is_hard() {
             self.destroy_world_keys_for_delete_in_txn(
                 wtxn,
                 *id,
@@ -215,7 +216,7 @@ impl Vault {
         let (cascaded_shells, mut changed_documents) =
             self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
         let (_existed, citing) =
-            self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
+            self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref(), true)?;
         changed_documents.extend(citing);
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
