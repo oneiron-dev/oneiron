@@ -1,8 +1,10 @@
 //! `/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: "autoapply +
 //! revert rather than holdout"): the Dreamer's maintenance writes that
 //! applied at once (a curator rung, a harness retune finding, an advisory
-//! action mode, a Dreamer-born digest cadence and presentation), and the
-//! owner's revert of one. The Coach's findings still wait in the run tray.
+//! action mode, a Dreamer-born digest cadence and presentation, a
+//! stewardship reach-out, a follow-up plan saved for send review, an
+//! identity ask whose names were kept separate for now), and the owner's
+//! revert of one. The Coach's findings still wait in the run tray.
 
 use std::sync::Arc;
 
@@ -11,14 +13,16 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::dreamer_runner::maintenance::{AppliedMaintenance, MaintenanceRevert};
+use oneiron::dreamer_runner::maintenance::{
+    AppliedMaintenance, MaintenanceRevert, MaintenanceTarget,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::stamp::now_unix_ms;
-use crate::owner::{OwnerResult, entity_id};
+use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
 /// The most applied writes one list returns unless the caller asks for fewer.
@@ -36,20 +40,30 @@ struct AppliedQuery {
     limit: Option<usize>,
 }
 
+/// One applied write: its finding, or the identity ask it kept separate.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RevertMaintenance {
     /// The applied write's finding, as 32 hex.
-    finding: String,
+    #[serde(default)]
+    finding: Option<String>,
+    /// The identity ask a nightly abstention kept separate, as 64 hex.
+    #[serde(default)]
+    ask: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct AppliedView {
-    finding: String,
-    /// `finding`, `curator` or `proactivity_policy`.
+    /// The finding, as 32 hex; none for an identity ask.
+    finding: Option<String>,
+    /// The identity ask kept separate, as 64 hex.
+    ask: Option<String>,
+    /// `finding`, `curator`, `proactivity_policy`, `reach_out`,
+    /// `representation_plan` or `identity_provisional`.
     kind: &'static str,
     facet: String,
-    attempt: String,
+    /// The attempt that wrote it; none for an identity ask.
+    attempt: Option<String>,
     applied_at: u64,
     receipt_ref: String,
     /// The owner's revert, once made.
@@ -58,7 +72,8 @@ struct AppliedView {
 
 #[derive(Debug, Serialize)]
 struct RevertView {
-    finding: String,
+    finding: Option<String>,
+    ask: Option<String>,
     /// Records standing again in place.
     restored: Vec<String>,
     /// The Dreamer's fresh copies of its own records, as `[record, copy]`.
@@ -67,16 +82,28 @@ struct RevertView {
     closed: Vec<String>,
     /// Settings rows put back.
     settings: Vec<String>,
+    /// Identity asks put to the owner, as 64 hex.
+    asked: Vec<String>,
     /// What a later write changed, left as it is.
     left_alone: Vec<String>,
     receipt_ref: String,
 }
 
+/// The target as the views spell it: `(finding, ask)`.
+fn target_view(target: MaintenanceTarget) -> (Option<String>, Option<String>) {
+    match target {
+        MaintenanceTarget::Finding(id) => (Some(id.to_hex()), None),
+        MaintenanceTarget::IdentityAsk(_) => (None, Some(target.to_hex())),
+    }
+}
+
 fn revert_view(revert: MaintenanceRevert) -> RevertView {
     let hex =
         |ids: &[oneiron::EntityId]| -> Vec<String> { ids.iter().map(|id| id.to_hex()).collect() };
+    let (finding, ask) = target_view(revert.target);
     RevertView {
-        finding: revert.finding.to_hex(),
+        finding,
+        ask,
         restored: hex(&revert.restored),
         copied: revert
             .copied
@@ -85,14 +112,17 @@ fn revert_view(revert: MaintenanceRevert) -> RevertView {
             .collect(),
         closed: hex(&revert.closed),
         settings: revert.settings,
+        asked: revert.asked,
         left_alone: revert.left_alone,
         receipt_ref: revert.receipt_ref,
     }
 }
 
 fn applied_view(applied: AppliedMaintenance) -> AppliedView {
+    let (finding, ask) = target_view(applied.target);
     AppliedView {
-        finding: applied.finding.to_hex(),
+        finding,
+        ask,
         kind: applied.kind,
         facet: applied.facet,
         attempt: applied.attempt,
@@ -121,10 +151,11 @@ async fn applied(
     Ok(Json(applied))
 }
 
-/// `POST /v1/owner/dreamer/maintenance/revert`: the owner's revert of one
-/// applied write. Its effect is undone where no later write changed it, its
-/// finding is retracted, and one receipt records the revert; a second revert
-/// returns the first one's result.
+/// `POST /v1/owner/dreamer/maintenance/revert` with `{"finding"}` or
+/// `{"ask"}`: the owner's revert of one applied write. Its effect is undone
+/// where no later write changed it, its finding is retracted (an ask kept
+/// separate goes to the owner as their question), and one receipt records
+/// the revert; a second revert returns the first one's result.
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -133,11 +164,20 @@ async fn revert(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let reverted = blocking(move || -> OwnerResult<RevertView> {
-        let finding = entity_id("finding", &request.finding)?;
+        let target = match (&request.finding, &request.ask) {
+            (Some(finding), None) => MaintenanceTarget::Finding(entity_id("finding", finding)?),
+            (None, Some(ask)) => MaintenanceTarget::identity_ask(ask)
+                .ok_or_else(|| OwnerError::Invalid("ask must be 64 hex".into()))?,
+            _ => {
+                return Err(OwnerError::Invalid(
+                    "name exactly one of finding or ask".into(),
+                ));
+            }
+        };
         let now = now_unix_ms() / 1_000;
         let reverted = server
             .vault()
-            .revert_dreamer_maintenance(&owner, finding, now)?;
+            .revert_dreamer_maintenance(&owner, target, now)?;
         Ok(revert_view(reverted))
     })
     .await?;
