@@ -11,6 +11,7 @@ use serde::Deserialize;
 use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
+use super::failure_signals::{FailureSignalsConfigOverride, lookup_failure_signals_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::import::ImportConfigOverride;
 use super::keystore::{KeystoreConfigOverride, lookup_keystore_override};
@@ -120,6 +121,7 @@ impl EnvConfig {
         values.oneironer = lookup_oneironer_override(&mut lookup)?;
         values.backup = lookup_backup_override(&mut lookup)?;
         values.feedback = lookup_feedback_override(&mut lookup)?;
+        values.failure_signals = lookup_failure_signals_override(&mut lookup)?;
         values.recall = lookup_recall_override(&mut lookup)?;
         values.skills = lookup_skills_override(&mut lookup)?;
         values.keystore = lookup_keystore_override(&mut lookup)?;
@@ -286,6 +288,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     config.backup.validate()?;
     config.feedback.validate()?;
+    config.failure_signals.validate()?;
     config.recall.validate()?;
     config.skills.validate()?;
     config.keystore.validate()?;
@@ -299,6 +302,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
+    }
+    if let Some(embedding) = &config.embedding {
+        embedding.validate()?;
     }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
@@ -501,6 +507,7 @@ struct FileServeConfig {
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
+    failure_signals: Option<FailureSignalsConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -510,6 +517,7 @@ struct FileServeConfig {
     browser: Option<super::BrowserConfig>,
     desktop: Option<super::DesktopConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -557,6 +565,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oneironer: value.oneironer,
             backup: value.backup,
             feedback: value.feedback,
+            failure_signals: value.failure_signals,
             recall: value.recall,
             skills: value.skills,
             keystore: value.keystore,
@@ -566,6 +575,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             browser: value.browser,
             desktop: value.desktop,
             gpu: value.gpu,
+            embedding: value.embedding,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -614,6 +624,7 @@ struct PartialServeConfig {
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
+    failure_signals: Option<FailureSignalsConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -627,6 +638,8 @@ struct PartialServeConfig {
     desktop: Option<super::DesktopConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    /// `[embedding]` is file-only, as `[models]` is.
+    embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -686,6 +699,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
+            .field("failure_signals", &self.failure_signals)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
@@ -695,6 +709,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
+            .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -833,6 +848,9 @@ impl PartialServeConfig {
         if let Some(value) = self.feedback {
             resolved.feedback.apply_override(value);
         }
+        if let Some(value) = self.failure_signals {
+            resolved.failure_signals.apply_override(value);
+        }
         if let Some(value) = self.keystore {
             resolved.keystore.apply_override(value);
         }
@@ -853,6 +871,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.browser {
             resolved.browser = Some(value);
+        }
+        if let Some(value) = self.embedding {
+            resolved.embedding = Some(value);
         }
         if let Some(value) = self.desktop {
             resolved.desktop = Some(value);
@@ -923,6 +944,7 @@ impl From<&ServeArgs> for PartialServeConfig {
                 .filter(|over| !over.is_empty()),
             backup: None,
             feedback: None,
+            failure_signals: None,
             recall: None,
             skills: None,
             keystore: value
@@ -938,6 +960,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             browser: None,
             desktop: None,
             gpu: None,
+            embedding: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

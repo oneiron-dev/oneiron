@@ -59,6 +59,9 @@ impl OneironClient {
                 "self.inbox.concern.outcome" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::maintenance::agent_health::ConcernCardSummary,
                 >(client, verb, &input),
+                "self.inbox.concern.move" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome,
+                >(client, verb, &input),
                 "vault.people.list" => {
                     remote_agent_verb_output::<oneiron::memory::PeoplePage>(client, verb, &input)
                 }
@@ -205,6 +208,18 @@ impl OneironClient {
                     oneiron::federation::SharedActExecutionReceipt,
                 >(client, verb, &input),
                 "vault.members.leave" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.members.invitations" => remote_agent_verb_output::<
+                    Vec<oneiron::federation::SharedInvitation>,
+                >(client, verb, &input),
+                "vault.members.accept" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.members.decline" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActExecutionReceipt,
+                >(client, verb, &input),
+                "vault.members.withdraw_invitation" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
                 >(client, verb, &input),
                 "vault.guests.revoke" => remote_agent_verb_output::<
@@ -676,6 +691,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.inbox.concern.outcome", value)
+    }
+    pub fn self_inbox_concern_move(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+    ) -> Result<oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.concern.move", value)
     }
     pub fn vault_people_list(
         &self,
@@ -1280,6 +1308,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.members.leave", value)
+    }
+    pub fn vault_members_invitations(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedVaultRequest,
+    ) -> Result<Vec<oneiron::federation::SharedInvitation>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.invitations", value)
+    }
+    pub fn vault_members_accept(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedInvitationRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.accept", value)
+    }
+    pub fn vault_members_decline(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedInvitationRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.decline", value)
+    }
+    pub fn vault_members_withdraw_invitation(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedInvitationWithdrawRequest,
+    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.withdraw_invitation", value)
     }
     pub fn vault_guests_revoke(
         &self,

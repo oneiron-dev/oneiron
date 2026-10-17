@@ -299,6 +299,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_inbox_concern(json.dumps(spec))))
         def outcome(self, spec):
             return json.loads(_translate(lambda: self._client.self_inbox_concern_outcome(json.dumps(spec))))
+        def move(self, spec):
+            return json.loads(_translate(lambda: self._client.self_inbox_concern_move(json.dumps(spec))))
     class _SelfGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -613,7 +615,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def add(self, spec):
-            """An Admin adds a live person to a shared vault at a non-root role."""
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
@@ -624,6 +626,18 @@ class Oneiron:
         def leave(self, spec):
             """A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead."""
             return json.loads(_translate(lambda: self._client.vault_members_leave(json.dumps(spec))))
+        def invitations(self, spec):
+            """The caller's own pending invitations into a shared vault."""
+            return json.loads(_translate(lambda: self._client.vault_members_invitations(json.dumps(spec))))
+        def accept(self, spec):
+            """The invitee accepts their own invitation and joins the shared vault at its role."""
+            return json.loads(_translate(lambda: self._client.vault_members_accept(json.dumps(spec))))
+        def decline(self, spec):
+            """The invitee declines their own invitation; nothing is granted."""
+            return json.loads(_translate(lambda: self._client.vault_members_decline(json.dumps(spec))))
+        def withdraw_invitation(self, spec):
+            """An Admin with the add_member power takes back a pending invitation."""
+            return json.loads(_translate(lambda: self._client.vault_members_withdraw_invitation(json.dumps(spec))))
     class _VaultGuestsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

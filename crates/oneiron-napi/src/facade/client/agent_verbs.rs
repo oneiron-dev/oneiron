@@ -68,6 +68,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_concern_move(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.concern.move", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_people_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.people.list", input)
@@ -512,6 +521,42 @@ impl NativeClient {
     pub fn vault_members_leave(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.members.leave", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_invitations(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.invitations", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_decline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.decline", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_withdraw_invitation(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.withdraw_invitation", input)
             .map_err(facade_error)
     }
     #[napi]

@@ -27,6 +27,7 @@ mod media;
 mod provider;
 #[cfg(test)]
 mod tests;
+mod voice;
 
 pub use compaction::CompactionSettings;
 pub use decision_read::{
@@ -38,6 +39,7 @@ pub use decisions::{
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{MediaSeatConfig, MediaSettings};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
+pub use voice::VoiceSettings;
 
 use levels::{RoleFile, Shorthand};
 use provider::ProviderFile;
@@ -73,6 +75,8 @@ pub(crate) struct ModelsFile {
     #[serde(default)]
     decisions: decisions::DecisionsFile,
     media: Option<media::MediaFile>,
+    #[serde(default)]
+    voice: voice::VoiceFile,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -172,6 +176,8 @@ pub struct ModelsConfig {
     /// The media seats (`[models.media]`): image, video, speech,
     /// transcription and embedding ladders, and their meter.
     pub media: MediaSettings,
+    /// The server's own voice loop (`[models.voice]`).
+    pub voice: VoiceSettings,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -425,6 +431,7 @@ impl ModelsFile {
         let broker = self.broker.unwrap_or_default().resolve()?;
         let media = self.media.unwrap_or_default().resolve(&providers)?;
         let decisions = self.decisions.resolve()?;
+        let voice = self.voice.resolve(base)?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -440,6 +447,7 @@ impl ModelsFile {
             decision_read: None,
             decisions,
             media,
+            voice,
         };
         if let Some(file) = self.decision_read {
             models.decision_read = Some(file.resolve(base, &models)?);
@@ -551,9 +559,9 @@ fn validate_ladders(
                     rung.model.provider
                 )
             })?;
-            if provider.kind.speech_only() {
+            if provider.kind.media_only() {
                 anyhow::bail!(
-                    "models.roles.{key}: {} is on a speech provider, which serves [models.media.speech] only",
+                    "models.roles.{key}: {} is on a media provider, which serves [models.media] seats only",
                     rung.model
                 );
             }

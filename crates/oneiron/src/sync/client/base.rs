@@ -55,6 +55,10 @@ pub struct SyncClient {
     /// When each owed artifact publication, by digest, may be sent again on
     /// this connection. Cleared at every connect.
     pub(crate) artifact_publication_resend: HashMap<[u8; 32], std::time::Instant>,
+    /// The machine the home proved on this connection's upgrade (OF-534
+    /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
+    /// Cleared at every connect.
+    pub(crate) home_peer: crate::authority::PeerMachine,
     pub(crate) status: SyncStatus,
     pub(crate) event_tx: mpsc::UnboundedSender<SyncEvent>,
 }
@@ -161,6 +165,7 @@ impl SyncClient {
             lfs_download: None,
             last_lfs_download: None,
             artifact_publication_resend: HashMap::new(),
+            home_peer: crate::authority::PeerMachine::Unknown,
             status: SyncStatus::Disconnected,
             event_tx,
         };
@@ -205,9 +210,36 @@ impl SyncClient {
     }
 
     /// The verdict on raw local `update` bytes for window `key`, read right
-    /// before they go out or a queue row holding them clears unsent.
+    /// before they go out or a queue row holding them clears unsent, for the
+    /// home this connection proved (an unknown destination when it proved
+    /// none).
     pub(crate) fn update_verdict(&self, key: &str, update: &[u8]) -> UpdateVerdict {
-        crate::sync::window::raw_update_verdict(&self.manager, key, update)
+        crate::sync::window::raw_update_verdict_for(&self.manager, key, update, self.home_peer)
+    }
+
+    /// Whether window `key`'s updates may go out as residence updates: an
+    /// opened machine sends only the windows the home granted (`rp:w:`). A
+    /// window the home refused to grant again stays on disk and no longer
+    /// syncs, so its writes wait queued instead of closing the socket ("window
+    /// not promoted"). A sync-all machine sends every window. A marker that
+    /// cannot be read is judged ungranted.
+    pub(crate) fn residence_granted(&self, key: &str) -> bool {
+        self.config.residence_mode != crate::sync::SyncResidenceMode::Opened
+            || self
+                .vault
+                .sync_state_get(&format!("rp:w:{key}"))
+                .is_ok_and(|marker| marker.is_some())
+    }
+
+    /// Where this connection's sends go: the machine the home proved while it
+    /// still stands here on the key it proved, else an unknown destination.
+    pub(crate) fn home_destination(&self) -> crate::authority::Destination {
+        match self.vault.peer_machine_stands(self.home_peer) {
+            crate::authority::PeerMachine::Proven { machine, .. } => {
+                crate::authority::Destination::Machine(machine)
+            }
+            crate::authority::PeerMachine::Unknown => crate::authority::Destination::Unknown,
+        }
     }
 
     /// Whether an outgoing frame carries what a device-only world now keeps
@@ -224,7 +256,7 @@ impl SyncClient {
                         && self.update_verdict(key, update) != UpdateVerdict::Portable
                 });
         }
-        crate::sync::documents::document_frame_withheld(&self.vault, frame)
+        crate::sync::documents::document_frame_withheld_for(&self.vault, self.home_peer, frame)
     }
 
     /// Returns the live window for `key` if loaded — registry lookup only,

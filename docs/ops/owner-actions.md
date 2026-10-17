@@ -669,11 +669,36 @@ The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inb
 &limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
 carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
 
+## Share failure signals
+
+A participating deployment sends its publisher two things, and nothing else: the content-free
+tier-1 failure counts, and the Coach's sealed code-fix records (an invented example verified in
+the vault, and a candidate fix's fixed or not-fixed result). No world text leaves, and a failure
+that touched a private world sends its counts only. A vault our cloud hosts participates by its
+terms; a self-hosted server participates only once you set `failure_signal_export = true`
+(`ONEIRON_FAILURE_SIGNAL_EXPORT`). Training on what leaves is a separate yes,
+`failure_signal_training` (`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
+
+```toml
+[failure_signals]
+endpoint = "https://…"     # ONEIRON_FAILURE_SIGNALS_ENDPOINT; HTTPS, or HTTP on loopback
+every_secs = 3600          # ONEIRON_FAILURE_SIGNALS_EVERY_SECS
+batch = 64                 # ONEIRON_FAILURE_SIGNALS_BATCH: code-fix records per send
+```
+
+The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
+`https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
+sends nothing, and sealed records wait in the vault. Each send is one JSON batch, `POST`ed as an
+ordinary outbound effect on `failure_signals/send` with its recorded receipt. While the deployment
+participates, the vault keeps a standing grant on that channel for the sender, so no send asks
+you; turning participation off revokes it. A record leaves the vault only once the publisher took
+it: a failed send keeps it for the next one.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
 owner, the read says "ask up?", or the clock cut an irreversible step), the
-server's decision ladder queues it for you (run-with-models.md, section 12).
+server's decision ladder queues it for you (run-with-models.md, section 13).
 The ask waits in the vault, through restarts, until you answer.
 
 `GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=true` lists them
@@ -885,13 +910,22 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - `PUT /v1/owner/embedding-spaces` with `{"id", "dimensions", "accepts", "query_towers"}` (and
   optional `"evidence": {"floor", "strong"}`) declares a space. `POST .../bind` with
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
-  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included.
+  `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
+  refuse a slot an open move carries until the move ends.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
+- **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
+  `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
+  for the preset, apply at each `serve` start. A start declares only spaces the vault does not
+  hold and binds only slots the vault leaves unbound and no open move carries, so a door edit
+  or a model move stays. A listed space the vault holds at another width stops `serve`: a new
+  width needs a new id.
 - **Moving to a new model version.** `POST .../move` with `{"candidate", "incumbent", "margin"}`
   starts moving every slot the incumbent serves to the candidate. Leave out `incumbent` for the
   text index. The media backfill fills the candidate while the incumbent keeps serving, and
-  writes probes meanwhile: short queries the chat seat writes from text documents, and the
-  captioner or Local-vision seat from images. Once the candidate holds every document, the
+  writes probes meanwhile: short queries the chat seat writes from text documents, the
+  captioner or Local-vision seat from images, and the chat seat from audio once the
+  `[models.media]` transcribe seat has transcribed it. Audio and image bytes never go to a
+  third-party seat for a probe. Once the candidate holds every document, the
   probes run on both spaces, and on the incumbent twice for its retest noise. The candidate swaps
   in by itself only when every kind is not worse: the low end of the kind's family-grouped
   paired interval stays at or above minus that noise, or minus your stricter `margin`. A kind
@@ -899,12 +933,17 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   than 10 probe families, or an interval across the margin, reads unknown. Unknown never swaps
   by itself: the move stays open and is checked again every 6 hours. Each swap, keep and undo
   leaves a short note in the inbox.
+- The media backfill skips any document a space's model refuses by its content (a format it
+  cannot read, a content filter) until the document changes, so one bad file never stalls a
+  space or a move. A model that refuses everything it is sent before it has embedded anything
+  is treated as down, and the backfill retries it.
 - `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
   full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
-  `.../move/abandon` ends an open move without one.
+  `.../move/abandon` ends an open move without one. An undo works for 30 days after the swap.
+  Then the incumbent retires (its rows and declaration go) unless a slot binds it again.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
-  one. Audio probes are only the ones you store.
+  one.
 
 ## Calling the owner routes
 

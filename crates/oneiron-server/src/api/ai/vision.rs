@@ -354,6 +354,7 @@ async fn box_answer(
             body_hash: *blake3::hash(&image.bytes).as_bytes(),
         },
         image,
+        frame: None,
     }];
     let seat = LocalVisionModel::new(&server.ai, vault, run, tokio::runtime::Handle::current())
         .ok_or_else(|| {
@@ -383,7 +384,9 @@ async fn box_answer(
                 model: ASK_IMAGE_BOX.name.to_owned(),
                 version: ASK_IMAGE_BOX.version.to_string(),
             },
+            ask_to: None,
             person: None,
+            presence: None,
         };
         ladder.run_images(
             &question,

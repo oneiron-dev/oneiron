@@ -5,8 +5,8 @@
 //! and each piece reports why it is idle (`no_model_configured`, say) on
 //! `/api/health` and `GET /v1/ai/status`. Writes never wait on a model.
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use oneiron::dreamer_consolidation::DREAMER_EXTRACTION_ROLE;
@@ -17,6 +17,7 @@ use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocali
 use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
+use crate::decision_host::DecisionHost;
 use crate::models::{
     KeyDoor, LoggedReceipts, ModelRuntime, ModelsStatus, OfferCooldowns, RawInference, RoleCall,
     RoleRefusal, Seat, VaultKeyDoor,
@@ -30,8 +31,10 @@ mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) mod coach_heal;
+mod coach_health;
 mod code_fix;
 mod dreamer;
+pub(crate) mod failure_signals;
 mod harness;
 pub(crate) mod identity;
 mod local_vision;
@@ -89,6 +92,9 @@ pub struct AiHandle {
     inbound: Arc<AtomicU64>,
     /// The running Dreamer has a summary instruction to write bodies with.
     summaries: bool,
+    /// The server's decision host, set once the server staffs it: the
+    /// Dreamer's passes ask their typed questions through it.
+    decisions: Arc<OnceLock<DecisionHost>>,
 }
 
 impl AiHandle {
@@ -129,6 +135,7 @@ impl AiHandle {
             turns: TurnTracker::new(),
             inbound: Arc::new(AtomicU64::new(unix_now())),
             summaries: false,
+            decisions: Arc::default(),
         }
     }
 
@@ -402,6 +409,9 @@ impl AiHost {
         let server = server
             .with_ai(host.handle.clone())
             .with_decision_config(models);
+        // The Dreamer started before the server staffed its ladder; its next
+        // pass asks through it.
+        let _ = host.handle.decisions.set(server.decision_host().clone());
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server =
             code_mode::bind(server, &host.handle.runtime, models, &host.handle.status).await;
@@ -445,7 +455,12 @@ impl AiHost {
         };
         let status = Arc::clone(&handle.status);
         let idle = handle.idle_sample();
-        match start_dreamer(&vault, &runtime, models, host_root, &status, idle).await {
+        let decisions = Arc::clone(&handle.decisions);
+        match start_dreamer(
+            &vault, &runtime, models, host_root, &status, idle, decisions,
+        )
+        .await
+        {
             Ok(dreamer) => {
                 handle.hints = Some(dreamer.hints());
                 handle.summaries = models.dreamer.summary_instruction.is_some();
@@ -688,6 +703,7 @@ async fn start_dreamer(
     host_root: bool,
     status: &Arc<StatusCell>,
     idle: IdleSample,
+    decisions: Arc<OnceLock<DecisionHost>>,
 ) -> Result<DreamerHost, IdleReason> {
     if !models.dreamer.enabled {
         return Err(IdleReason::Disabled);
@@ -752,6 +768,7 @@ async fn start_dreamer(
         status: Arc::clone(status),
         idle,
         windows: dreamer::dream_windows(models),
+        decisions,
     })
     .await
     .map_err(|error| {

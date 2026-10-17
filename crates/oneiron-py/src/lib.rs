@@ -267,6 +267,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_inbox_concern_move(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.concern.move")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.concern.move", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_people_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.people.list")?;
         let output = py
@@ -617,6 +624,41 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.members.leave")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.members.leave", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_invitations(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.invitations")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.invitations", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_accept(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.accept")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.accept", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_decline(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.decline")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.decline", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_withdraw_invitation(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.withdraw_invitation")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.members.withdraw_invitation", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

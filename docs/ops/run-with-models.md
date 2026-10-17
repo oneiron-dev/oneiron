@@ -636,7 +636,13 @@ yes/no question lists no before yes, as test 6b's side questions did; its
 readout still reports yes first), the single-token label verbalizers
 (`tokens`, at least four), the end token (`eos`), `n_probs` (how many of the
 top probabilities come back), `n_probs_full` (the whole vocabulary, for the
-retry below) and, for the owner's probe, `[probe] paired` and `person`.
+retry below) and, for the owner's probe, `[probe] paired` and `person`. An
+optional `[probe] presence` words the presence question every Box or Point
+call asks first, over the same images and clock, with the coordinate
+question's wording in the `locate` state field ("is that target in the image
+at all?"). Only a confident yes, with no person asked, starts the
+coordinates; a confident no answers that the target is absent; anything else
+abstains. Without it, the coordinates are asked directly.
 
 A question and "does this need more thinking?" stay joint (ARCH-0076
 `#ask-a-person`): the question renders the joint template, its text as
@@ -696,6 +702,22 @@ it from the cases where a person changed the answer. A host passes it to
 `DecisionBandPolicy::set_person_threshold`. Without the row, the person
 reading is recorded on every receipt and routes nothing.
 
+"Ask a person?" asks for escalation, not for an actor. Who the ask goes to is
+the caller's: it sets `DecisionLadder.ask_to` to an `AskTo` (the role asked,
+`Responsible { actor, project }`, `Board { project }` or `Owner`; the highest
+`RoleRank` it may climb to; and the act an answer authorises). With none set,
+the ask goes to the vault's owners, as before. When `DecisionAsks` queues the
+ask, the vault resolves the first role on the chain that has a live holder:
+the responsible actor, then the boards of its project and that project's
+parents, then the owners, cut at the ceiling. A live person or a live bound
+agent can hold a role. An `ESignature` or `Payment` act resolves only to a
+person. When no role up to the ceiling has a holder, the ask stays unresolved;
+it never goes wider. A holder answers through `DecisionAsks::answer_as` with
+its verified `WriteActor`, and the door reads the role's holders again before
+it takes the answer. The owner door answers any ask whose ceiling is `Owner`.
+`DecisionAsks::climb` moves an open ask to the next role. The answer keeps the
+role and the kind of actor that gave it.
+
 To tune it, the host keeps each changed answer
 (`HumanDecisionRequest::changed_by`) with `Vault::record_person_changed_answer`,
 bound to its ask. The Coach's nightly `coach.person_threshold` job (a host job:
@@ -744,7 +766,8 @@ Image, video, speech, transcription and embedding calls have their own seats,
 outside the text tiers: one ladder per operation in `[models.media]`, each rung
 `"<provider>:<model>"` on an OpenAI-compatible provider (`openai-compat` or
 `local-openai-compat`, keyed by `key_env`; the credential broker sends chat
-calls only). A media call is admitted, sent and settled like a text call:
+calls only), or an image or video rung on a `gemini` provider (below). A
+media call is admitted, sent and settled like a text call:
 each rung it reaches gets its own permit on the media meter, an offer refused
 for a limit rests and the call goes to the next rung, and the run's receipts
 show every rung.
@@ -769,6 +792,37 @@ rungs = ["local:whisper-large-v3"]
 
 [models.media.embed]             # POST /v1/embeddings
 rungs = ["local:qwen3-embedding"]
+```
+
+A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
+key in `key_env` (sent as `x-goog-api-key`). It serves the image and video
+seats only. An image is `models/{model}:generateContent` asked for image
+output: the instruction and each reference image go inline, a `size`
+(`"WxH"`) or `width`/`height` becomes the nearest drawn `aspectRatio` and an
+`imageSize` (`1K` up to 1024 px a side, `2K` up to 2048, else `4K`),
+`aspect_ratio` / `image_size` name them outright, and any other param joins
+`generationConfig`. It is charged the tokens the answer counts. A video is a
+Veo job (`models/{model}:predictLongRunning`; one reference image is its first
+frame). `seconds` becomes `durationSeconds`, a `size` an `aspectRatio` and
+`resolution`, and other params go as `parameters`. The poll reads the
+operation, and a finished job's clips are fetched from the file URIs it names:
+the key goes to the API's origin only, and the one redirect to storage is
+followed without it. The operation names no clip length, so a clip is charged
+its call's reservation. The API has no cancel for a Veo job, so a cancel lets
+the job go here and the provider finishes it unread.
+
+```toml
+[models.providers.gemini]
+kind = "gemini"
+base_url = "https://generativelanguage.googleapis.com"
+key_env = "GEMINI_API_KEY"
+
+[models.media.image]
+rungs = ["gemini:gemini-2.5-flash-image"]
+max_references = 3
+
+[models.media.video]
+rungs = ["gemini:veo-3.1-generate-preview"]
 ```
 
 A provider that counts tokens is charged them; one that counts images,
@@ -894,6 +948,55 @@ the media gate and is charged its characters or seconds. A transcription
 whose provider reports no duration is charged the length of the WAV it was
 sent. These calls are buffered, so live partial transcripts wait for a
 streaming media lease.
+
+### The server's own voice loop (`[models.voice]`)
+
+With `socket` set, `serve` listens there for the sibling process that carries
+a call's audio (Linux; elsewhere the socket is not bound and voice stays
+off). The socket's parent must be an existing owner-only runtime directory.
+The socket is created 0600 and removed when serve stops. One call runs at a
+time; a second connection waits for the first to end.
+
+```toml
+[models.voice]
+socket = "/run/oneiron/voice.sock"
+extraction_prompt_file = "prompts/voice-extraction.md"  # or extraction_prompt
+stock_voice = "alloy"          # or bank_voice = "<voice id>"
+queue_capacity = 64            # media calls queued (default 64)
+call_budget_units = 64000      # each call's line for the host's own calls
+```
+
+A call opens with one JSON line:
+`{"op":"hello","token":"v2.slip...","binding":{"timestamp":..,"nonce":"..","signature":".."},"sample_rate":16000,"channels":1}`.
+- The token and binding proof are the owner's capability slip and a fresh
+  transport proof, the same ones the HTTP API takes in `Authorization` and
+  `x-oneiron-binding`.
+- They pass the same doors at the on-device locality, then the owner door.
+- A bad or missing token closes the socket before any audio. An admitted call
+  is answered `{"op":"accepted"}`.
+
+After that the stream carries:
+- **the transcript ops** (`open`, `partial`, `final`, `close`);
+- **media in:** `pcm` (STANDARD base64 of whole PCM16LE samples, at most about
+  12 KiB raw a frame), `cut`, `speaking`, `roster_changed`, and
+  `drained{generation}` once a `generation_end`'s audio has all played;
+- **media out:** `pcm{generation, sample_rate, data}` (mono PCM16LE),
+  `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice` and
+  `session_ended`.
+
+How a call runs:
+- Each heard final is answered by the chat role as `/ai/chat` answers it: the
+  default agent's instructions, the call's earlier turns and the transcript,
+  with tools off, on the owner's budget line (`[models.chat]
+  turn_budget_units` a turn).
+- Each sentence is spoken on the vault's live TTS route while its safeguard
+  runs.
+- Partials are enriched with the extraction prompt on the runtime's
+  summarizer route, which must name a model that `[models]` serves.
+- The enrichment and the safeguard model run on the call's own line.
+
+A full media queue makes heard audio wait for the next cut and a sentence
+wait for room. A queue that takes nothing for 30 seconds stops the reply.
 
 ### Lazy images and `ask_image`
 

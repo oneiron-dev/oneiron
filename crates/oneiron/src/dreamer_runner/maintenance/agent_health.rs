@@ -2,13 +2,15 @@
 //! recipe on the gated maintenance lane, run on the Coach's timer wake. It
 //! reads call receipts, attempt rows, run coordination and sealed attempt
 //! receipts. Each finding is one `agent_health` DIAGNOSTIC, merged into one
-//! card per actor, signal and task.
+//! card per actor, signal and task. Every dial resolves for the project and
+//! task type of the attempt it judges (`learning_setting` scoped rows).
 //!
 //! It never stops an agent and never narrows a grant or scope: its output is
 //! cards and proposed moves, and an agent-health event never feeds the auto
 //! arm (`Vault::is_signed_tripwire`). It reads no diary. A card's recipient
 //! settles it (`self.inbox.concern.outcome`), as the owner does through
-//! `/v1/owner/inbox/concern/outcome`.
+//! `/v1/owner/inbox/concern/outcome`, and may ask the Coach for a proposal
+//! (`self.inbox.concern.move`, `ask`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +29,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
 use crate::learning::{TeamEvent, project_run_coordination, team_events_from_attempts};
-use crate::learning_setting::{SettingSpec, setting_value_in_txn};
+use crate::learning_setting::{SettingSpec, setting_value_scoped_in_txn};
 use crate::llm::run_admission::LeaseUnit;
 use crate::llm::{DreamerTrapKind, OpenTrapWait, open_trap_waits};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -41,6 +43,15 @@ use crate::self_heal::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+
+mod ask;
+mod check_repeat;
+mod run_loop;
+pub use ask::{
+    AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
+    AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
+    ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
+};
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.
@@ -62,7 +73,8 @@ pub const HEALTH_LOOP_REPEATS: SettingSpec = SettingSpec {
     seed: 3.0,
 };
 
-/// `failed_check_repeat`: the canon failure-ladder N. No capture reads it yet.
+/// `failed_check_repeat`: the same tool run failing the same way, the canon
+/// failure-ladder N.
 pub const HEALTH_CHECK_FAILS: SettingSpec = SettingSpec {
     key: "health.check.fails",
     min: 2.0,
@@ -118,6 +130,16 @@ pub const HEALTH_ESCALATE_TTL_HOURS: SettingSpec = SettingSpec {
     min: 1.0,
     max: 720.0,
     seed: 24.0,
+};
+
+/// The lowest card impact that still makes a card: struggling 100, off
+/// course 150, concern 200, so a concern always does. A finding below it
+/// writes its DIAGNOSTIC and no card.
+pub const HEALTH_CARD_FLOOR: SettingSpec = SettingSpec {
+    key: "health.card.floor",
+    min: 0.0,
+    max: 200.0,
+    seed: 0.0,
 };
 
 /// How far back one review reads receipts and settled attempts.
@@ -307,6 +329,9 @@ pub struct AgentHealthCard {
     pub watermark: usize,
     pub opened_at: u64,
     pub updated_at: u64,
+    /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
+    #[serde(default)]
+    pub coach: Option<AgentHealthCoachAsk>,
 }
 
 impl AgentHealthCard {
@@ -343,37 +368,105 @@ type Dispatches = BTreeMap<[u8; 16], Dispatched>;
 /// The open trap waits, by attempt bytes.
 type Traps = BTreeMap<[u8; 16], Vec<OpenTrapWait>>;
 
-/// The dials in force for one review.
+/// The dials in force for one project and task type.
 struct Dials {
+    review: bool,
     loop_repeats: u64,
+    check_fails: u64,
     wait_share: f64,
     wait_secs: u64,
     silent_secs: u64,
     widen_denials: u64,
     cost_spike: f64,
     ttl_secs: u64,
+    card_floor: f64,
+}
+
+/// The dials for each project and task type the review meets (agent-mind
+/// §3.7): the narrowest owner pin (project, then type, then vault), else the
+/// vault fit, else the narrowest seed, else the catalog seed. A finding with
+/// no dispatch behind it reads the vault's.
+struct DialBook {
+    vault: Dials,
+    scoped: BTreeMap<Option<EntityId>, BTreeMap<String, Dials>>,
+}
+
+impl DialBook {
+    fn read(vault: &Vault, dispatched: &Dispatches) -> Result<Self> {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut book = Self {
+            vault: read_dials(vault, &rtxn, None, None)?,
+            scoped: BTreeMap::new(),
+        };
+        for dispatch in dispatched.values() {
+            let types = book.scoped.entry(dispatch.project).or_default();
+            if !types.contains_key(&dispatch.type_node) {
+                let dials = read_dials(vault, &rtxn, dispatch.project, Some(&dispatch.type_node))?;
+                types.insert(dispatch.type_node.clone(), dials);
+            }
+        }
+        Ok(book)
+    }
+
+    /// One dispatch's dials; the vault's for none.
+    fn of(&self, dispatch: Option<&Dispatched>) -> &Dials {
+        dispatch
+            .and_then(|dispatch| {
+                self.scoped
+                    .get(&dispatch.project)?
+                    .get(&dispatch.type_node)
+            })
+            .unwrap_or(&self.vault)
+    }
+
+    /// The dials of an attempt's dispatch.
+    fn for_attempt(&self, dispatched: &Dispatches, attempt: Option<AttemptId>) -> &Dials {
+        self.of(attempt.and_then(|attempt| dispatched.get(attempt.as_bytes())))
+    }
+
+    /// Whether any scope the review meets is reviewed at all.
+    fn any_review(&self) -> bool {
+        self.vault.review
+            || self
+                .scoped
+                .values()
+                .flat_map(BTreeMap::values)
+                .any(|dials| dials.review)
+    }
+}
+
+/// The dials one project and task type resolve to. A type row matches its
+/// node at any tree version.
+fn read_dials(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_node: Option<&str>,
+) -> Result<Dials> {
+    let type_ref = type_node.map(|node_id| crate::learning::TypeRef {
+        node_id: node_id.to_owned(),
+        tree_version: 0,
+    });
+    let value = |spec: &SettingSpec| {
+        setting_value_scoped_in_txn(&vault.store, rtxn, spec, project, type_ref.as_ref())
+    };
+    Ok(Dials {
+        review: value(&HEALTH_REVIEW)? >= 0.5,
+        loop_repeats: value(&HEALTH_LOOP_REPEATS)?.round() as u64,
+        check_fails: value(&HEALTH_CHECK_FAILS)?.round() as u64,
+        wait_share: value(&HEALTH_WAIT_SHARE)?,
+        wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
+        silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
+        widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
+        cost_spike: value(&HEALTH_COST_SPIKE)?,
+        ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
+        card_floor: value(&HEALTH_CARD_FLOOR)?,
+    })
 }
 
 /// One review: detect, emit, merge, escalate. Returns the cards it touched.
+/// Each dial is read for the project and task type of the attempt it judges.
 pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
-    let dials = {
-        let rtxn = vault.store.env.read_txn()?;
-        let value = |spec: &SettingSpec| setting_value_in_txn(&vault.store, &rtxn, spec);
-        if value(&HEALTH_REVIEW)? < 0.5 {
-            return Ok(0);
-        }
-        Dials {
-            loop_repeats: value(&HEALTH_LOOP_REPEATS)?.round() as u64,
-            wait_share: value(&HEALTH_WAIT_SHARE)?,
-            wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
-            silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
-            widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
-            cost_spike: value(&HEALTH_COST_SPIKE)?,
-            ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
-        }
-    };
-    let since = now.saturating_sub(LOOKBACK_SECS);
-    let calls = agent_calls(vault, since)?;
     let attempts: Attempts = AttemptQueue::new(vault)
         .list()?
         .into_iter()
@@ -383,6 +476,12 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         .iter()
         .filter_map(|(key, record)| Dispatched::of(record).map(|dispatch| (*key, dispatch)))
         .collect();
+    let book = DialBook::read(vault, &dispatched)?;
+    if !book.any_review() {
+        return Ok(0);
+    }
+    let since = now.saturating_sub(LOOKBACK_SECS);
+    let calls = agent_calls(vault, since)?;
 
     let mut traps = Traps::new();
     for wait in open_trap_waits(vault)? {
@@ -392,21 +491,36 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             .push(wait);
     }
 
-    let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
+    let mut findings = loop_findings(&calls, &dispatched, &attempts, &book);
+    findings.extend(run_loop::run_loop_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        &book,
+        since,
+    )?);
+    findings.extend(check_repeat::check_repeat_findings(
+        vault,
+        &calls,
+        &dispatched,
+        &attempts,
+        &book,
+        since,
+    )?);
     findings.extend(silent_findings(
         vault,
         &calls,
         &dispatched,
         &attempts,
         &traps,
-        &dials,
+        &book,
         now,
     )?);
     findings.extend(long_wait_findings(
         &dispatched,
         &attempts,
         &traps,
-        &dials,
+        &book,
         since,
         now,
     ));
@@ -418,27 +532,11 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         now,
     )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(widen_denial_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &dials,
-        since,
-    )?);
-    findings.extend(unsupported_done_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        since,
-    )?);
-    findings.extend(cost_spike_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &dials,
-        since,
-        now,
-    )?);
+    findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &book, since)?);
+    findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
+    findings.extend(cost_spike_findings(vault, &dispatched, &attempts, &book, since, now)?);
+    // A project or task type whose review is off keeps its findings unsaid.
+    findings.retain(|finding| book.for_attempt(&dispatched, finding.attempt).review);
     // What each agent said itself, for its card.
     for finding in &mut findings {
         let began = finding
@@ -471,6 +569,10 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     vault.with_write_txn_grouped(|txn| {
         let mut touched = BTreeSet::new();
         for ((finding, diagnostic), route) in findings.iter().zip(&emitted).zip(&routes) {
+            let floor = book.for_attempt(&dispatched, finding.attempt).card_floor;
+            if f64::from(AgentHealthTone::of(finding.signal).impact()) < floor {
+                continue;
+            }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
             let card = merge(card, finding, *diagnostic, route, &owners, now);
@@ -481,7 +583,11 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         for (key, mut card) in CARDS.scan(&vault.store, txn)? {
             if card.outcome == AgentHealthOutcome::Open
                 && !card.owner_copy
-                && now >= card.opened_at.saturating_add(dials.ttl_secs)
+                && now
+                    >= card.opened_at.saturating_add(
+                        book.of(card.attempt.and_then(|attempt| dispatched.get(attempt.as_bytes())))
+                            .ttl_secs,
+                    )
             {
                 card.owner_copy = true;
                 add_recipients(&mut card.recipients, card.subject, &owners);
@@ -597,15 +703,18 @@ fn live_attempt(
 
 /// `loop`: one actor's identical `(verb, request_digest)` calls in a row, with
 /// no other call by that actor between them. A call receipt names no attempt,
-/// so the card's task is none.
+/// so the card's task is none. An agent run's own calls leave no receipt and
+/// are judged per attempt (`run_loop`).
 fn loop_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
     attempts: &Attempts,
-    repeats: u64,
+    book: &DialBook,
 ) -> Vec<Finding> {
     let mut out = Vec::new();
     for (actor, rows) in calls {
+        let attempt = live_attempt(*actor, dispatched, attempts);
+        let repeats = book.for_attempt(dispatched, attempt).loop_repeats;
         let mut start = 0;
         while start < rows.len() {
             let first = &rows[start].1;
@@ -636,7 +745,7 @@ fn loop_findings(
                 subject: *actor,
                 signal: AgentHealthSignal::Loop,
                 task: None,
-                attempt: live_attempt(*actor, dispatched, attempts),
+                attempt,
                 evidence: run.iter().map(|(id, _)| *id).collect(),
                 window: (run[0].1.at, run[run.len() - 1].1.at),
                 actual: count,
@@ -660,7 +769,7 @@ fn silent_findings(
     dispatched: &Dispatches,
     attempts: &Attempts,
     traps: &Traps,
-    dials: &Dials,
+    book: &DialBook,
     now: u64,
 ) -> Result<Vec<Finding>> {
     let runner = DreamerRunnerStore::new(vault);
@@ -672,6 +781,7 @@ fn silent_findings(
         if record.state != AttemptState::Leased {
             continue;
         }
+        let dials = book.of(Some(dispatch));
         let claimed = record.claimed_at.unwrap_or(record.updated_at);
         let last_call = calls
             .get(&dispatch.actor)
@@ -722,7 +832,7 @@ fn long_wait_findings(
     dispatched: &Dispatches,
     attempts: &Attempts,
     traps: &Traps,
-    dials: &Dials,
+    book: &DialBook,
     since: u64,
     now: u64,
 ) -> Vec<Finding> {
@@ -735,6 +845,7 @@ fn long_wait_findings(
         if !live && (!settled(record.state) || record.updated_at < since) {
             continue;
         }
+        let dials = book.of(Some(dispatch));
         let end = if live { now } else { record.updated_at };
         let life = end.saturating_sub(record.created_at);
         if life == 0 || life < dials.wait_secs {
@@ -824,7 +935,7 @@ fn cost_spike_findings(
     vault: &Vault,
     dispatched: &Dispatches,
     attempts: &Attempts,
-    dials: &Dials,
+    book: &DialBook,
     since: u64,
     now: u64,
 ) -> Result<Vec<Finding>> {
@@ -882,6 +993,7 @@ fn cost_spike_findings(
         let (Some(record), Some(dispatch)) = (attempts.get(key), dispatched.get(key)) else {
             continue;
         };
+        let dials = book.of(Some(dispatch));
         let live = record.state == AttemptState::Leased;
         if !live && (!settled(record.state) || record.updated_at < since) {
             continue;
@@ -1129,17 +1241,18 @@ fn widen_denial_findings(
     vault: &Vault,
     dispatched: &Dispatches,
     attempts: &Attempts,
-    dials: &Dials,
+    book: &DialBook,
     since: u64,
 ) -> Result<Vec<Finding>> {
     let mut out = Vec::new();
     for (id, denials) in crate::agent_dispatch::unlanded_widens_by_parent(vault)? {
-        if denials < dials.widen_denials {
-            continue;
-        }
         let (Some(dispatch), Some(record)) = (dispatched.get(&id), attempts.get(&id)) else {
             continue;
         };
+        let dials = book.of(Some(dispatch));
+        if denials < dials.widen_denials {
+            continue;
+        }
         if settled(record.state) && record.updated_at < since {
             continue;
         }
@@ -1153,10 +1266,7 @@ fn widen_denial_findings(
             task: task_of(record),
             attempt: Some(record.id),
             evidence: vec![attempt],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
@@ -1208,10 +1318,7 @@ fn unsupported_done_findings(
             task: Some(task),
             attempt: Some(record.id),
             evidence: vec![attempt, task],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
             actual: count,
             dial: 0,
             measured: count,
@@ -1395,6 +1502,7 @@ fn merge(
         watermark: 0,
         opened_at: now,
         updated_at: now,
+        coach: None,
     });
     keep_newest(&mut card.evidence, &finding.evidence, MAX_CARD_EVIDENCE);
     keep_newest(&mut card.diagnostics, &[diagnostic], MAX_CARD_DIAGNOSTICS);

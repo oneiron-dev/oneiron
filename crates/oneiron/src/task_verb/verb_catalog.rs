@@ -12,6 +12,7 @@ pub enum AgentVerb {
     SelfIdentitySettle,
     SelfInboxConcern,
     SelfInboxConcernOutcome,
+    SelfInboxConcernMove,
     VaultPeopleList,
     VaultPeopleGet,
     SelfMessage,
@@ -56,6 +57,10 @@ pub enum AgentVerb {
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
+    VaultMembersInvitations,
+    VaultMembersAccept,
+    VaultMembersDecline,
+    VaultMembersWithdrawInvitation,
     VaultGuestsRevoke,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
@@ -219,6 +224,7 @@ impl AgentVerb {
         Self::SelfIdentitySettle,
         Self::SelfInboxConcern,
         Self::SelfInboxConcernOutcome,
+        Self::SelfInboxConcernMove,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
         Self::SelfMessage,
@@ -263,6 +269,10 @@ impl AgentVerb {
         Self::VaultMembersChange,
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
+        Self::VaultMembersInvitations,
+        Self::VaultMembersAccept,
+        Self::VaultMembersDecline,
+        Self::VaultMembersWithdrawInvitation,
         Self::VaultGuestsRevoke,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
@@ -429,6 +439,7 @@ impl AgentVerb {
             Self::SelfIdentitySettle => "self.identity.settle",
             Self::SelfInboxConcern => "self.inbox.concern",
             Self::SelfInboxConcernOutcome => "self.inbox.concern.outcome",
+            Self::SelfInboxConcernMove => "self.inbox.concern.move",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
             Self::SelfMessage => "self.message",
@@ -473,6 +484,10 @@ impl AgentVerb {
             Self::VaultMembersChange => "vault.members.change",
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
+            Self::VaultMembersInvitations => "vault.members.invitations",
+            Self::VaultMembersAccept => "vault.members.accept",
+            Self::VaultMembersDecline => "vault.members.decline",
+            Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
@@ -637,6 +652,7 @@ impl AgentVerb {
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -681,6 +697,10 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultMembersInvitations
+                | Self::VaultMembersAccept
+                | Self::VaultMembersDecline
+                | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
@@ -851,6 +871,7 @@ impl AgentVerb {
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -895,6 +916,10 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultMembersInvitations
+                | Self::VaultMembersAccept
+                | Self::VaultMembersDecline
+                | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
@@ -1034,6 +1059,7 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultSharedOutcomes
+                | Self::VaultMembersInvitations
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -1087,6 +1113,7 @@ impl AgentVerb {
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -1127,6 +1154,10 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultMembersInvitations
+                | Self::VaultMembersAccept
+                | Self::VaultMembersDecline
+                | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
@@ -1281,6 +1312,7 @@ impl AgentVerb {
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1304,6 +1336,9 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultMembersAccept
+                | Self::VaultMembersDecline
+                | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1413,6 +1448,7 @@ impl AgentVerb {
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
+            Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1457,6 +1493,10 @@ impl AgentVerb {
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
+            Self::VaultMembersInvitations => &["spec"],
+            Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersDecline => &["spec"],
+            Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
@@ -1621,6 +1661,7 @@ impl AgentVerb {
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
+            Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1665,6 +1706,10 @@ impl AgentVerb {
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
+            Self::VaultMembersInvitations => &["spec"],
+            Self::VaultMembersAccept => &["spec"],
+            Self::VaultMembersDecline => &["spec"],
+            Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
@@ -1846,6 +1891,7 @@ impl AgentVerb {
             }
             Self::SelfInboxConcern => "",
             Self::SelfInboxConcernOutcome => "",
+            Self::SelfInboxConcernMove => "",
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
             Self::SelfMessage => {
@@ -1955,7 +2001,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => "The reader's own outcome notices for a shared vault.",
             Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
             Self::VaultMembersAdd => {
-                "An Admin adds a live person to a shared vault at a non-root role."
+                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept."
             }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."
@@ -1963,6 +2009,18 @@ impl AgentVerb {
             Self::VaultMembersRemove => "An Admin removes one member from a shared vault.",
             Self::VaultMembersLeave => {
                 "A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead."
+            }
+            Self::VaultMembersInvitations => {
+                "The caller's own pending invitations into a shared vault."
+            }
+            Self::VaultMembersAccept => {
+                "The invitee accepts their own invitation and joins the shared vault at its role."
+            }
+            Self::VaultMembersDecline => {
+                "The invitee declines their own invitation; nothing is granted."
+            }
+            Self::VaultMembersWithdrawInvitation => {
+                "An Admin with the add_member power takes back a pending invitation."
             }
             Self::VaultGuestsRevoke => "",
             Self::VaultAuthorityHandoffAlarms => {

@@ -171,7 +171,7 @@ impl BrokerSite {
         }
     }
 
-    fn client(&self, reply_timeout: Duration) -> anyhow::Result<BrokerClient> {
+    pub(super) fn client(&self, reply_timeout: Duration) -> anyhow::Result<BrokerClient> {
         match self {
             Self::User { socket, uid } => BrokerClient::new(
                 socket.clone(),
@@ -229,6 +229,7 @@ pub(super) fn broker_backend(
         ProviderKind::Cartesia | ProviderKind::Elevenlabs | ProviderKind::Voxcpm2 => {
             anyhow::bail!("a speech provider sends no model call")
         }
+        ProviderKind::Gemini => anyhow::bail!("a gemini provider sends media calls only"),
     };
     Ok(BrokerBackend {
         wire,
@@ -343,7 +344,11 @@ impl BrokerBackend {
                 reason: Failure::Send,
             } => return Err(RetryableLlmError::StreamCut.into()),
             Outcome::Failed {
-                reason: Failure::ReplyTooLarge | Failure::ReplyEncoded,
+                reason:
+                    Failure::ReplyTooLarge
+                    | Failure::ReplyEncoded
+                    | Failure::Redirect
+                    | Failure::ReplyHoldsKey,
             } => return Err(RetryableLlmError::ServerError.into()),
         };
         let parsed = serde_json::from_slice::<JsonValue>(body);

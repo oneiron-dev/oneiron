@@ -100,6 +100,9 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use rmpv::Value;
 
+mod host;
+pub use host::bind_agent_run_attribution;
+pub(crate) use host::run_executor_model;
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,

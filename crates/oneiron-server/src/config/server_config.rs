@@ -7,6 +7,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
+use super::failure_signals::FailureSignalsConfig;
 use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
@@ -277,6 +278,9 @@ pub struct ServeConfig {
     pub backup: BackupConfig,
     /// The `[feedback]` section: where the owner's feedback goes.
     pub feedback: FeedbackConfig,
+    /// The `[failure_signals]` section: the publisher this deployment's
+    /// failure signals go to.
+    pub failure_signals: FailureSignalsConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
     /// The `[skills]` section: the skill-edit gate's live pull budget.
@@ -302,6 +306,9 @@ pub struct ServeConfig {
     /// config file names it. Absent means every batch runs where its slot's
     /// provider runs.
     pub gpu: Option<crate::runtime::GpuPoolConfig>,
+    /// The `[embedding]` section: spaces and kind slots seeded at start,
+    /// absent until the config file names it.
+    pub embedding: Option<super::EmbeddingConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -358,6 +365,7 @@ impl Default for ServeConfig {
             oneironer: None,
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
+            failure_signals: FailureSignalsConfig::default(),
             recall: RecallConfig::default(),
             skills: SkillsConfig::default(),
             keystore: KeystoreConfig::default(),
@@ -367,6 +375,7 @@ impl Default for ServeConfig {
             browser: None,
             desktop: None,
             gpu: None,
+            embedding: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -428,6 +437,7 @@ impl fmt::Debug for ServeConfig {
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
+            .field("failure_signals", &self.failure_signals)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
@@ -437,6 +447,7 @@ impl fmt::Debug for ServeConfig {
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
+            .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",

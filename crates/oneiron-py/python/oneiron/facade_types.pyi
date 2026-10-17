@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 165 facade rows, 619 declarations.
-Inputs: 143 of 165 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 139 of 165 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 170 facade rows, 633 declarations.
+Inputs: 148 of 170 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 144 of 170 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -113,6 +113,37 @@ AgentHealthConfidence = Literal["high", "low"]
 AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs"]
 AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
 AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
+class AgentHealthPadReadRead(TypedDict):
+    state: Literal["read"]
+    read: NotRequired[EntityId | None]
+    pads: int
+class AgentHealthPadReadPendingReview(TypedDict):
+    state: Literal["pending_review"]
+    request: EntityId
+class AgentHealthPadReadDeclined(TypedDict):
+    state: Literal["declined"]
+    request: EntityId
+class AgentHealthPadReadNotCovered(TypedDict):
+    state: Literal["not_covered"]
+class AgentHealthPadReadRefused(TypedDict):
+    state: Literal["refused"]
+    code: str
+AgentHealthPadRead = AgentHealthPadReadRead | AgentHealthPadReadPendingReview | AgentHealthPadReadDeclined | AgentHealthPadReadNotCovered | AgentHealthPadReadRefused
+AgentHealthCoachRoute = Literal["skill_edit", "prompt_inject", "neither"]
+class AgentHealthCoachDraft(TypedDict):
+    route: AgentHealthCoachRoute
+    diagnosis: str
+    proposal: str
+class AgentHealthCoachAnswer(TypedDict):
+    at: int
+    pads: AgentHealthPadRead
+    draft: NotRequired[AgentHealthCoachDraft | None]
+class AgentHealthCoachAsk(TypedDict):
+    asked_by: EntityId
+    asked_at: int
+    diagnostic: NotRequired[EntityId | None]
+    attempt: str
+    answer: NotRequired[AgentHealthCoachAnswer | None]
 class AgentHealthCard(TypedDict):
     subject: EntityId
     signal: AgentHealthSignal
@@ -139,6 +170,7 @@ class AgentHealthCard(TypedDict):
     watermark: int
     opened_at: int
     updated_at: int
+    coach: NotRequired[AgentHealthCoachAsk | None]
 RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class RunTreeTimestamps(TypedDict):
     created_at: int
@@ -196,6 +228,13 @@ class ConcernCardSummary(TypedDict):
     tone: str
     outcome: str
     evidence: int
+ConcernMove = Literal["ask_coach"]
+class ConcernMoveRequest(TypedDict):
+    card: str
+    move: ConcernMove
+class ConcernMoveOutcome(TypedDict):
+    card: str
+    ask: AgentHealthCoachAsk
 class PeopleListRequest(TypedDict):
     vault: NotRequired[str | None]
     page: NotRequired[int | None]
@@ -1295,6 +1334,29 @@ class SharedVaultChangeMemberAddedBody(TypedDict):
     role: FederationGrantRole
 class SharedVaultChangeMemberAdded(TypedDict):
     member_added: SharedVaultChangeMemberAddedBody
+class SharedVaultChangeMemberInvitedBody(TypedDict):
+    invitation: str
+    member: str
+    role: FederationGrantRole
+    expires_at: int
+class SharedVaultChangeMemberInvited(TypedDict):
+    member_invited: SharedVaultChangeMemberInvitedBody
+class SharedVaultChangeInvitationAcceptedBody(TypedDict):
+    invitation: str
+    member: str
+    role: FederationGrantRole
+class SharedVaultChangeInvitationAccepted(TypedDict):
+    invitation_accepted: SharedVaultChangeInvitationAcceptedBody
+class SharedVaultChangeInvitationDeclinedBody(TypedDict):
+    invitation: str
+    member: str
+class SharedVaultChangeInvitationDeclined(TypedDict):
+    invitation_declined: SharedVaultChangeInvitationDeclinedBody
+class SharedVaultChangeInvitationWithdrawnBody(TypedDict):
+    invitation: str
+    member: str
+class SharedVaultChangeInvitationWithdrawn(TypedDict):
+    invitation_withdrawn: SharedVaultChangeInvitationWithdrawnBody
 SharedVaultChangeMemberRoleChangedBody = TypedDict("SharedVaultChangeMemberRoleChangedBody", {"member": str, "from": FederationGrantRole, "to": FederationGrantRole})
 class SharedVaultChangeMemberRoleChanged(TypedDict):
     member_role_changed: SharedVaultChangeMemberRoleChangedBody
@@ -1309,7 +1371,7 @@ class SharedVaultChangeMemberLeft(TypedDict):
 SharedVaultChangeOwnerRecoveredBody = TypedDict("SharedVaultChangeOwnerRecoveredBody", {"from": str, "to": str})
 class SharedVaultChangeOwnerRecovered(TypedDict):
     owner_recovered: SharedVaultChangeOwnerRecoveredBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -1361,6 +1423,36 @@ class SharedMemberRoleRequest(TypedDict):
 class SharedMemberRequest(TypedDict):
     vault_id: int
     member: str
+class SharedInvitationStateAcceptedBody(TypedDict):
+    at: int
+class SharedInvitationStateAccepted(TypedDict):
+    accepted: SharedInvitationStateAcceptedBody
+class SharedInvitationStateDeclinedBody(TypedDict):
+    at: int
+class SharedInvitationStateDeclined(TypedDict):
+    declined: SharedInvitationStateDeclinedBody
+class SharedInvitationStateWithdrawnBody(TypedDict):
+    by: str
+    at: int
+class SharedInvitationStateWithdrawn(TypedDict):
+    withdrawn: SharedInvitationStateWithdrawnBody
+SharedInvitationState = Literal["pending"] | SharedInvitationStateAccepted | SharedInvitationStateDeclined | SharedInvitationStateWithdrawn
+class SharedInvitation(TypedDict):
+    id: str
+    vault_id: int
+    inviter: str
+    invitee: str
+    role: FederationGrantRole
+    issued_at: int
+    expires_at: int
+    state: SharedInvitationState
+class SharedInvitationRequest(TypedDict):
+    vault_id: int
+    invitation: str
+class SharedInvitationWithdrawRequest(TypedDict):
+    vault_id: int
+    member: str
+    invitation: str
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
@@ -2037,7 +2129,7 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -2066,6 +2158,9 @@ class ImageBox(TypedDict):
     bottom: float
     left: float
     right: float
+class ImagePoint(TypedDict):
+    x: float
+    y: float
 class DecisionAnswerNoul(TypedDict):
     kind: Literal["noul"]
     value: bool
@@ -2078,9 +2173,12 @@ class DecisionAnswerScore(TypedDict):
 class DecisionAnswerBox(TypedDict):
     kind: Literal["box"]
     value: ImageBox | None
+class DecisionAnswerPoint(TypedDict):
+    kind: Literal["point"]
+    value: ImagePoint | None
 class DecisionAnswerAbstain(TypedDict):
     kind: Literal["abstain"]
-DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerAbstain
+DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
 class OutcomeLabel(TypedDict):
     answer: str
     fact: str
@@ -2739,6 +2837,16 @@ class DecisionTime(TypedDict):
     stop: StopCause
     answered: NotRequired[DecisionRung | None]
     reasoning: Reasoning
+class ImagePin(TypedDict):
+    provider: ProviderPin
+    name: str
+    evidence: EvidenceVersion
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+    edge: NotRequired[int | None]
+    sent_width: int
+    sent_height: int
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -2751,6 +2859,7 @@ class DecisionReceipt(TypedDict):
     paired: NotRequired[list[PairedReading]]
     person: NotRequired[list[PairedReading]]
     time: NotRequired[DecisionTime | None]
+    images: NotRequired[list[ImagePin]]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
@@ -2759,7 +2868,7 @@ class RoutineOutcomePoint(TypedDict):
     outcome: Literal["point"]
     x: float
     y: float
-    found: ImageBox
+    found: NotRequired[ImageBox | None]
 class RoutineOutcomeNone(TypedDict):
     outcome: Literal["none"]
 class RoutineOutcomeReobserve(TypedDict):
@@ -2788,7 +2897,9 @@ class AnswerContractScore(TypedDict):
     max: float
 class AnswerContractBox(TypedDict):
     kind: Literal["box"]
-AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox
+class AnswerContractPoint(TypedDict):
+    kind: Literal["point"]
+AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
 DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):
     entity_type: int

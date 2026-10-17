@@ -35,6 +35,7 @@ selfIdentityAnswer(input: unknown): unknown
 selfIdentitySettle(input: unknown): unknown
 selfInboxConcern(input: unknown): unknown
 selfInboxConcernOutcome(input: unknown): unknown
+selfInboxConcernMove(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
 selfMessage(input: unknown): unknown
@@ -79,6 +80,10 @@ vaultMembersAdd(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
+vaultMembersInvitations(input: unknown): unknown
+vaultMembersAccept(input: unknown): unknown
+vaultMembersDecline(input: unknown): unknown
+vaultMembersWithdrawInvitation(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown

@@ -62,6 +62,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.inbox.concern.move",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+                >(),
+            ),
+            (
                 "vault.people.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
             ),
@@ -263,6 +269,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.members.leave",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.members.invitations",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.members.accept",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationRequest,
+                >(),
+            ),
+            (
+                "vault.members.decline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationRequest,
+                >(),
+            ),
+            (
+                "vault.members.withdraw_invitation",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationWithdrawRequest,
                 >(),
             ),
             (
@@ -982,6 +1012,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
             (
+                "self.team.start",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamStartInput>(),
+            ),
+            (
+                "self.team.record",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
+            ),
+            (
                 "self.spawn",
                 crate::code_run::vault_read::request_schema::<crate::code_run::ReaderSpawnInput>(),
             ),
@@ -1074,6 +1112,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.inbox.concern.outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.concern.move" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1397,6 +1442,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.members.leave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.invitations" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.decline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.withdraw_invitation" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2250,6 +2323,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest =
                 decode(value.clone())?;
         }
+        "self.inbox.concern.move" => {
+            let _input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
+                decode(value.clone())?;
+        }
         "vault.people.list" => {
             let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
         }
@@ -2397,6 +2474,19 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.members.leave" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.members.invitations" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.members.accept" => {
+            let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
+        }
+        "vault.members.decline" => {
+            let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
+        }
+        "vault.members.withdraw_invitation" => {
+            let _input: crate::task_verb::sdk::SharedInvitationWithdrawRequest =
+                decode(value.clone())?;
         }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
@@ -2897,6 +2987,7 @@ pub fn invoke(
         "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
         "self.inbox.concern" => encode(self_inbox_concern(memory, decode(value)?)?),
         "self.inbox.concern.outcome" => encode(self_inbox_concern_outcome(memory, decode(value)?)?),
+        "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
@@ -2947,6 +3038,12 @@ pub fn invoke(
         "vault.members.change" => encode(vault_members_change(memory, decode(value)?)?),
         "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
+        "vault.members.invitations" => encode(vault_members_invitations(memory, decode(value)?)?),
+        "vault.members.accept" => encode(vault_members_accept(memory, decode(value)?)?),
+        "vault.members.decline" => encode(vault_members_decline(memory, decode(value)?)?),
+        "vault.members.withdraw_invitation" => {
+            encode(vault_members_withdraw_invitation(memory, decode(value)?)?)
+        }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
@@ -3347,6 +3444,12 @@ pub fn self_inbox_concern_outcome(
 ) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary> {
     memory.concern_outcome(&input)
 }
+pub fn self_inbox_concern_move(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome> {
+    memory.concern_move(&input)
+}
 pub fn vault_people_list(
     memory: &Memory<'_>,
     input: crate::memory::PeopleListRequest,
@@ -3719,6 +3822,46 @@ pub fn vault_members_leave(
         memory.vault(),
         &memory.embedded_owner("vault.members.leave")?,
         None,
+        input,
+    )
+}
+pub fn vault_members_invitations(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<Vec<crate::federation::SharedInvitation>> {
+    crate::task_verb::sdk::read_shared_invitations(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.invitations")?,
+        input,
+    )
+}
+pub fn vault_members_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::accept_shared_invitation_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.accept")?,
+        input,
+    )
+}
+pub fn vault_members_decline(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::decline_shared_invitation_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.decline")?,
+        input,
+    )
+}
+pub fn vault_members_withdraw_invitation(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationWithdrawRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::withdraw_shared_invitation_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.withdraw_invitation")?,
         input,
     )
 }
