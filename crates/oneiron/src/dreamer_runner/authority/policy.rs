@@ -83,6 +83,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_ISSUES_FACET => Some(coach::COACH_ISSUES_FACET),
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
+        super::super::maintenance::action_mode::ACTION_MODE_FACET => {
+            Some(super::super::maintenance::action_mode::ACTION_MODE_FACET)
+        }
         super::super::maintenance::representation::REPRESENTATION_FACET => {
             Some(super::super::maintenance::representation::REPRESENTATION_FACET)
         }
