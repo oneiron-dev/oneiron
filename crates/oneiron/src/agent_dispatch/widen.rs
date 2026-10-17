@@ -1,4 +1,5 @@
-//! Fail-closed propose-widen and owner-authenticated, TASK-bound board approval.
+//! Fail-closed propose-widen and owner-authenticated, TASK-bound board
+//! approval or decline.
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::{
@@ -16,8 +17,8 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use super::attenuation::source_content_fingerprint;
 use super::codec::record_dispatch_input;
 use super::widen_record::{
-    PROPOSAL_INDEX, SLICE, SliceOverride, WIDEN, WidenIntent, WidenLanding, WidenRecord,
-    WidenRequest, WidenTarget, invalid, json, validate_proposal_id, widened_parent,
+    PROPOSAL_INDEX, SLICE, SliceOverride, WIDEN, WidenDecline, WidenIntent, WidenLanding,
+    WidenRecord, WidenRequest, WidenTarget, invalid, json, validate_proposal_id, widened_parent,
 };
 use super::{
     AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
@@ -133,6 +134,7 @@ impl AgentDispatcher<'_> {
                     "existing widen dedupe key names a different dispatch",
                 ));
             }
+            record.validate_settlement()?;
             return self.widen_outcome(&wtxn, &record).map(Some);
         }
         // All target leaves must be dispatchable even when only context widens.
@@ -143,6 +145,7 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         }
         // A request, not a grant: this transaction contains NO queue or slice write.
+        let recorded_at = crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
         let record = WidenRecord {
             version: 1,
             request: WidenRequest {
@@ -155,7 +158,9 @@ impl AgentDispatcher<'_> {
                     &spawn.context_spec.clone().unwrap_or_default(),
                 ),
             },
+            recorded_at,
             landed: None,
+            declined: None,
         };
         let proposal = record.request.proposal()?;
         WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
@@ -222,7 +227,9 @@ impl AgentDispatcher<'_> {
         if self.recorded_parent(record.request.intent.parent)? != Some(board) {
             return Err(invalid("widen board is not the immediate board above"));
         }
-        if record.landed.is_some() {
+        // A settled proposal answers as it settled: its landing, or its
+        // refusal once declined.
+        if record.landed.is_some() || record.declined.is_some() {
             return self.widen_outcome(&wtxn, &record);
         }
         let (input, spawn) = record.request.intent.dispatch(&proposal.proposal_id, now)?;
@@ -320,6 +327,48 @@ impl AgentDispatcher<'_> {
         Ok(outcome)
     }
 
+    /// The board above refuses an exact, stored proposal (OF-568), on the
+    /// same proof as approval: the authenticated owner of the board's TASK,
+    /// a live human, and the immediate board above. Declining writes only the
+    /// refusal: no slice, no enqueue, no consent minted or spent. An approved
+    /// proposal cannot be declined; declining a declined one again is a
+    /// no-op. The declined proposal stays as the Coach's widen-denial
+    /// evidence, and a retry of its intent is refused.
+    pub fn decline_context_widen(
+        &self,
+        owner: &AuthenticatedOwner,
+        proposal: &super::ContextWidenProposal,
+    ) -> Result<()> {
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(self.vault, &wtxn)?;
+        let (key_hash, mut record) = self.stored_widen_proposal(&wtxn, &proposal.proposal_id)?;
+        if record.request.proposal()? != *proposal {
+            return Err(invalid("widen proposal differs from the stored request"));
+        }
+        let board = record
+            .request
+            .board
+            .ok_or_else(|| invalid("widen has no provable board above"))?;
+        self.require_board_owner(&wtxn, board, actor)?;
+        if self.recorded_parent(record.request.intent.parent)? != Some(board) {
+            return Err(invalid("widen board is not the immediate board above"));
+        }
+        if record.landed.is_some() {
+            return Err(invalid("an approved widen proposal cannot be declined"));
+        }
+        if record.declined.is_some() {
+            return Ok(());
+        }
+        let at = crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
+        record.declined = Some(WidenDecline {
+            by: actor.to_hex(),
+            at,
+        });
+        WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
     fn stored_widen_proposal(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -345,6 +394,7 @@ impl AgentDispatcher<'_> {
         {
             return Err(invalid("widen proposal index does not match its request"));
         }
+        record.validate_settlement()?;
         Ok((key_hash, record))
     }
 
@@ -353,6 +403,11 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         record: &WidenRecord,
     ) -> Result<AgentDispatchOutcome> {
+        // OF-568: a decline is final. A retry of its intent and a later
+        // approval are both refused here; neither reopens the proposal.
+        if record.declined.is_some() {
+            return Err(invalid("widen proposal was declined"));
+        }
         match (&record.request.intent.target, record.landed) {
             (_, None) => Ok(AgentDispatchOutcome::ProposedWiden(Box::new(
                 record.request.proposal()?,

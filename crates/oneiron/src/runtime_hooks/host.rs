@@ -44,6 +44,8 @@ impl Vault {
             scope: None,
             board_epoch: None,
             domain: VerbDomain::Write,
+            // A host's own call reads as its actor.
+            reader: None,
         };
         let check = |rewritten: &Value| {
             if *rewritten == args {

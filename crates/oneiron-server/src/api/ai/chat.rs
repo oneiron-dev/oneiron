@@ -27,6 +27,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::claim::ScopedReadActorKey;
 use oneiron::conversation::TurnActionAttempt;
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
 use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
@@ -35,6 +36,7 @@ use oneiron::memory::{
     MessageWriteMode, StreamCadence, StreamCancelReason, StreamSyncVisibility, WitnessAuthor,
     WitnessMessage, WitnessTurn,
 };
+use oneiron::runtime_hooks::verb::InvocationClaim;
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::skill_hub::pack_catalog::HookActorClass;
@@ -56,6 +58,8 @@ fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refuse
     Box::new(refusal(status, code, message))
 }
 use crate::ai_host::{AiHandle, CHAT_ROLE, TurnGuard};
+use crate::api::credential_memory;
+use crate::api::facade::{self, DoorClaim};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -85,7 +89,7 @@ pub(crate) fn keepalive_every(idle_timeout_ms: u64) -> std::time::Duration {
     (std::time::Duration::from_millis(idle_timeout_ms) / 3).clamp(KEEPALIVE_MIN, KEEPALIVE_MAX)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ChatTurnRequest {
     /// Short ref or 32-hex id; a new hex id creates the conversation.
@@ -102,14 +106,14 @@ pub(super) struct ChatTurnRequest {
     stream: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct HistoryLine {
     role: HistoryRole,
     text: String,
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum HistoryRole {
     User,
@@ -328,11 +332,57 @@ pub(super) async fn chat_turn(
     let peer = machine.map_or(oneiron::authority::PeerMachine::Unknown, |machine| {
         machine.0
     });
-    match start_turn(&auth, &server, peer, locality, &headers, payload) {
-        Ok(started) if started.stream => streamed(started),
+    // A turn that names its invocation claims it for the whole request
+    // (OF-580): a second request naming it for the same turn waits for this
+    // one's reply and gets it, and one naming it for another turn is refused.
+    let claim = match (invocation(&headers), &payload) {
+        (Ok(Some(named)), Ok(Json(request))) => {
+            let body = turn_invocation_body(&auth, locality, request);
+            match facade::claim_door_invocation(&server, named, body).await {
+                DoorClaim::Run(claim) => Some(claim),
+                DoorClaim::Answered(outcome) => return facade::door_replay(outcome),
+                DoorClaim::InFlight => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        facade::INVOCATION_IN_FLIGHT,
+                        "another request is still running this invocation; retry once it returns",
+                    );
+                }
+                DoorClaim::Conflict => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        facade::INVOCATION_CONFLICT,
+                        "this invocation id names a different call",
+                    );
+                }
+            }
+        }
+        _ => None,
+    };
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload) {
+        Ok(started) if started.stream => return streamed(started, claim),
         Ok(started) => whole(started).await,
         Err(refused) => *refused,
+    };
+    match claim {
+        Some(claim) => facade::finish_door_claim(claim, response).await,
+        None => response,
     }
+}
+
+/// What a claimed turn's invocation names: the caller, where it sits, and
+/// the request.
+fn turn_invocation_body(
+    auth: &CoreAuth,
+    locality: oneiron::claim::CallerLocality,
+    request: &ChatTurnRequest,
+) -> [u8; 32] {
+    let request = serde_json::to_vec(request).unwrap_or_default();
+    facade::invocation_body(
+        Some(auth),
+        locality,
+        &[b"chat".as_slice(), request.as_slice()],
+    )
 }
 
 /// A turn whose user turn is witnessed and whose answer is running.
@@ -427,9 +477,19 @@ fn start_turn(
     // is admitted, so a refused admission leaves no hook's blocks or notes,
     // and before the user's turn is witnessed, so a skip or an ask ends the
     // turn before anything lands and a retry of it witnesses once.
-    let generating = turn_generate_pre(&vault, actor, invocation, &request.conversation_ref)
-        .map_err(|error| engine(&error))?
-        .map_err(|stop| hook_stopped(&stop))?;
+    // The turn's hooks read under the caller's credential, where its
+    // connection sits (ARCH-0080 §3). An owner-grade credential naming no
+    // principal reads as the owner it writes as.
+    let hooked = || match auth.principal_ref() {
+        Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
+        None => vault.memory(actor, class),
+    };
+    let reader =
+        VerbCall::reader_of(&hooked(), HOST_TURN_GENERATE).map_err(|error| engine(&error))?;
+    let generating =
+        turn_generate_pre(&vault, actor, invocation, reader, &request.conversation_ref)
+            .map_err(|error| engine(&error))?
+            .map_err(|stop| hook_stopped(&stop))?;
 
     // The assistant message closes after the vault's idle timeout without
     // an append; read before anything is written.
@@ -451,11 +511,11 @@ fn start_turn(
     );
     let user = crate::server::blocking(|| {
         let memory = vault.memory(actor, class).with_session(session_key);
-        let memory = match invocation {
-            Some(id) => memory.with_invocation(id),
-            None => memory,
+        let (memory, hooked) = match invocation {
+            Some(id) => (memory.with_invocation(id), hooked().with_invocation(id)),
+            None => (memory, hooked()),
         };
-        witness_through_row(&vault, &memory, &user_turn)
+        witness_through_row(&vault, &memory, &hooked, &user_turn)
     })
     .map_err(|error| engine(&error))?
     .map_err(|stop| hook_stopped(&stop))?;
@@ -544,8 +604,13 @@ fn invocation(headers: &axum::http::HeaderMap) -> Result<Option<InvocationId>, R
 
 /// The call of a turn's `host.turn.generate`. A write a host verb causes
 /// stamps the System class. Its invocation derives from the turn's own, so a
-/// retry of the turn carries it too.
-fn turn_generate_call(actor: EntityId, invocation: Option<InvocationId>) -> VerbCall {
+/// retry of the turn carries it too. Its hooks read under `reader`, the
+/// caller's key, and as `actor` when there is none.
+fn turn_generate_call(
+    actor: EntityId,
+    invocation: Option<InvocationId>,
+    reader: Option<ScopedReadActorKey>,
+) -> VerbCall {
     VerbCall {
         verb: HOST_TURN_GENERATE.to_owned(),
         invocation: invocation.map_or_else(InvocationId::mint, |id| {
@@ -559,10 +624,12 @@ fn turn_generate_call(actor: EntityId, invocation: Option<InvocationId>) -> Verb
         scope: None,
         board_epoch: None,
         domain: VerbDomain::Write,
+        reader,
     }
 }
 
-/// Runs `host.turn.generate`'s pre chain for `actor`'s reply in `room`.
+/// Runs `host.turn.generate`'s pre chain for `actor`'s reply in `room`,
+/// its hooks reading under `reader`, the caller's key, when there is one.
 /// `Err(stop)` when a hook skipped the turn or asked first: the turn ends
 /// there, with the stop's reason. Hooks write and run their sandbox, so they
 /// run off the runtime's workers.
@@ -570,6 +637,7 @@ pub(crate) fn turn_generate_pre(
     vault: &Vault,
     actor: EntityId,
     invocation: Option<InvocationId>,
+    reader: Option<ScopedReadActorKey>,
     room: &str,
 ) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
     let args = json!({
@@ -579,7 +647,7 @@ pub(crate) fn turn_generate_pre(
     });
     crate::server::blocking(|| {
         vault.pre_verb_hooks(
-            turn_generate_call(actor, invocation),
+            turn_generate_call(actor, invocation, reader),
             args.clone(),
             &|rewritten: &Value| host_args_kept(&args, rewritten),
         )
@@ -596,17 +664,18 @@ fn host_args_kept(args: &Value, rewritten: &Value) -> Result<(), String> {
 }
 
 /// Lands the user's turn through the `vault.witness` row's boundary, so the
-/// row's verb hooks fire on it (ARCH-0080 §3). The answer is the caller's
-/// view of the row's receipt.
+/// row's verb hooks fire on it (ARCH-0080 §3), reading under `hooked`'s key.
+/// The answer is the caller's view of the row's receipt.
 fn witness_through_row(
     vault: &Vault,
     memory: &Memory<'_>,
+    hooked: &Memory<'_>,
     turn: &WitnessTurn,
 ) -> Result<Result<Value, VerbHookStop>, MemoryError> {
     let args = serde_json::to_value(turn)
         .map_err(|_| MemoryError::bad_request("witness turn does not encode"))?;
     vault.verb_hooks(
-        VerbCall::for_memory(memory, WITNESS_ROW, VerbDomain::Write),
+        VerbCall::for_memory(hooked, WITNESS_ROW, VerbDomain::Write)?,
         args,
         &|args: &Value| {
             oneiron::task_verb::sdk::validate_input(WITNESS_ROW, args)
@@ -630,6 +699,12 @@ fn hook_stopped(stop: &VerbHookStop) -> Refused {
         VerbHookStop::Skipped { .. } => (StatusCode::CONFLICT, "verb_hook_skipped"),
         VerbHookStop::Pending { .. } => (StatusCode::ACCEPTED, "verb_hook_pending"),
         VerbHookStop::Hidden { .. } => (StatusCode::FORBIDDEN, "verb_hook_hidden"),
+        // The call ran once its ask settled: the stop carries what it
+        // returned, and nothing runs it again.
+        VerbHookStop::Completed { .. } => (StatusCode::OK, "verb_hook_completed"),
+        VerbHookStop::CompletedWithError { .. } => {
+            (StatusCode::CONFLICT, "verb_hook_completed_with_error")
+        }
     };
     Box::new(
         (
@@ -682,8 +757,10 @@ pub(crate) fn after_turn(
 }
 
 /// The NDJSON answer: accepted, each delta, the terminal, then saved or the
-/// error.
-fn streamed(started: Started) -> Response {
+/// error. A claimed invocation stays claimed until the last line goes out; a
+/// stream leaves no reply to send again, so a duplicate waiting on it is
+/// told to retry.
+fn streamed(started: Started, claim: Option<InvocationClaim>) -> Response {
     let Started {
         user_turn,
         answering,
@@ -756,7 +833,10 @@ fn streamed(started: Started) -> Response {
             };
             std::future::ready(next)
         })
-        .map(Ok::<_, std::io::Error>);
+        .map(move |bytes| {
+            let _claimed = &claim;
+            Ok::<_, std::io::Error>(bytes)
+        });
     (
         [(header::CONTENT_TYPE, "application/x-ndjson")],
         Body::from_stream(body),

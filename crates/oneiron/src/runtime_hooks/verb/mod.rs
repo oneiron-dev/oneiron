@@ -11,17 +11,22 @@
 mod ask;
 mod chain;
 mod redact;
+mod resume;
 mod served;
 mod state;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::claim::ScopedReadActorKey;
 pub use crate::error::VerbHookStop;
+use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
+pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
+pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};
 
 /// One logical verb's id, minted once where the call enters and passed
 /// across transport wrappers and internal dispatch (review fix M7).
@@ -89,14 +94,26 @@ pub struct VerbCall {
     pub scope: Option<String>,
     pub board_epoch: Option<u64>,
     pub domain: VerbDomain,
+    /// The caller's scoped-read key: its proof, room turn and locality. A
+    /// hook reads through it, capped by its grant. `None` for a host's own
+    /// call, which reads as its actor.
+    pub reader: Option<ScopedReadActorKey>,
 }
 
 impl VerbCall {
     /// The call of `verb` on `memory`: its actor and class, the invocation
-    /// its host bound or a fresh one.
-    #[must_use]
-    pub fn for_memory(memory: &crate::Memory<'_>, verb: &str, domain: VerbDomain) -> Self {
-        Self {
+    /// its host bound or a fresh one, and the handle's read key when a hook
+    /// may run on `verb`.
+    ///
+    /// # Errors
+    ///
+    /// When a hook may run and the handle's read key does not build.
+    pub fn for_memory(
+        memory: &crate::Memory<'_>,
+        verb: &str,
+        domain: VerbDomain,
+    ) -> MemoryResult<Self> {
+        Ok(Self {
             verb: verb.to_owned(),
             invocation: memory.invocation().unwrap_or_else(InvocationId::mint),
             actor: memory.actor(),
@@ -104,6 +121,32 @@ impl VerbCall {
             scope: None,
             board_epoch: None,
             domain,
+            reader: Self::reader_of(memory, verb)?,
+        })
+    }
+
+    /// Whether a verb hook may run on `verb`. A door builds what only a hook
+    /// reads (the caller's key, a rewrite's re-admission) only when one may,
+    /// so a call no binding takes pays nothing.
+    #[must_use]
+    pub fn may_run(vault: &Vault, verb: &str) -> bool {
+        vault.verb_hooks_may_run(verb)
+    }
+
+    /// The key a call of `verb` on `memory` carries: the handle's read key
+    /// when a hook may run on `verb`, else none.
+    ///
+    /// # Errors
+    ///
+    /// When a hook may run and the handle's read key does not build.
+    pub fn reader_of(
+        memory: &crate::Memory<'_>,
+        verb: &str,
+    ) -> MemoryResult<Option<ScopedReadActorKey>> {
+        if Self::may_run(memory.vault(), verb) {
+            memory.read_key().map(Some)
+        } else {
+            Ok(None)
         }
     }
 }
@@ -162,7 +205,26 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check)
+        chain::pre(self, call, args, check, None)
+    }
+
+    /// [`Self::pre_verb_hooks`] for a call settlement can run again without
+    /// its caller: an ask saves `resume`, and once the drain ran the call a
+    /// retry presenting the same target gets [`VerbHookStop::Completed`] or
+    /// [`VerbHookStop::CompletedWithError`]. `None` is a call only its
+    /// caller's retry resumes.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur; a hook's own failure is never one.
+    pub(crate) fn pre_verb_hooks_resumable(
+        &self,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        resume: Option<VerbResume>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        chain::pre(self, call, args, check, resume.as_ref())
     }
 
     /// Runs the post chain over the verb's `result`: the caller's view after
@@ -182,6 +244,7 @@ impl Vault {
 
     /// The pre chain, the verb and the post chain for one call. `run` gets
     /// the args after every Rewrite; an error from it skips the post chain.
+    /// A call its settled ask already ran answers what it returned.
     ///
     /// # Errors
     ///
@@ -195,6 +258,7 @@ impl Vault {
     ) -> std::result::Result<std::result::Result<Value, VerbHookStop>, E> {
         let pre = match self.pre_verb_hooks(call, args, check)? {
             Ok(pre) => pre,
+            Err(VerbHookStop::Completed { result, .. }) => return Ok(Ok(result)),
             Err(stop) => return Ok(Err(stop)),
         };
         let result = run(pre.args.clone())?;

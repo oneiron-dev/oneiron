@@ -130,7 +130,7 @@ impl AgentDispatcher<'_> {
 
     /// The source message's words as the house mind may read them; `None`
     /// when it is gone or withheld from that scope.
-    fn source_text(
+    pub(super) fn source_text(
         &self,
         house: EntityId,
         source: &ProjectDetectionSource,
