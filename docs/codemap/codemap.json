@@ -50103,7 +50103,7 @@
      "path": "src/workspace_roster/project/house.rs",
      "purpose": "The house mind leads the root project (ONEIRON-ARCH-0063: the vault is the root project, its house mind…",
      "surface": {
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -66406,6 +66406,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/house_routes.rs",
+     "purpose": "`/v1/owner/workspace/finish`: the owner finishes a stored workspace and its house mind takes the root…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/inbox_routes.rs",
      "purpose": "`/v1/owner/inbox`: the owner's view of the agent inbox lens (ARCH-0063 R4, INB-03)",
      "surface": {
@@ -70995,6 +71005,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/owner/house.rs",
+     "purpose": "The house mind leads the root project (ARCH-0067: the vault is the root project, its house mind leads it and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/owner/imports.rs",
      "purpose": "Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202)",
      "surface": {
@@ -71018,7 +71038,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -72381,7 +72401,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 301,
+     "files": 302,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72654,7 +72674,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72768,7 +72788,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 597,
+   "source_files": 599,
    "test_files": 182
   },
   "oneiron-spawn": {
