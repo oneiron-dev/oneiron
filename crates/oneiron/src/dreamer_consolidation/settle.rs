@@ -244,10 +244,14 @@ pub(crate) fn open_conflicts_in_txn(
         }
         None => {
             for predicate in [PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED] {
-                vault.for_each_readable_claim_with_predicate_in_txn(txn, predicate, |id, body| {
-                    sort(id, body);
-                    Ok(())
-                })?;
+                vault.for_each_readable_claim_with_predicate_in_txn(
+                    txn,
+                    predicate,
+                    |id, body| {
+                        sort(id, body);
+                        Ok(())
+                    },
+                )?;
             }
         }
     }
