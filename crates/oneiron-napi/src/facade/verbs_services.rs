@@ -1,11 +1,9 @@
 //! Structural/blob/retrieval/outbound/calendar verbs of the actor surface.
 //!
-//! Each verb that is an SDK row on its row's own input runs the row's verb
-//! hooks around the engine call (ARCH-0080 §3), as every other door to the
+//! Each verb that is an SDK row runs the row's verb hooks around the engine
+//! call (ARCH-0080 §3), on the row's own input, as every other door to the
 //! row does.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use napi_derive::napi;
 use oneiron::memory::RecallEffort;
 use oneiron::{
@@ -15,8 +13,9 @@ use oneiron::{
 };
 
 use super::boundary::{
-    BoundaryResult, boundary_error, decode_blob_base64, facade_error, narrow_to_f32,
-    outbound_schedule_context_to_engine, ts_from_engine, ts_opt_to_engine, ts_to_engine,
+    BoundaryResult, boundary_error, decode_blob_base64, facade_error, mention_to_engine,
+    narrow_to_f32, outbound_schedule_context_to_engine, ts_from_engine, ts_opt_to_engine,
+    ts_to_engine,
 };
 use super::bridge::ActorScopedVault;
 use super::convert::{
@@ -34,7 +33,10 @@ use super::dtos::{
     NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope, NapiStructuralPutInput,
 };
 use super::numeric::claim_input_to_engine;
-use oneiron::task_verb::sdk::{NeighborsRequest, QueryBm25Request};
+use oneiron::task_verb::sdk::{
+    AppendBlobVersionRequest, NeighborsRequest, OutboundScheduleRequest, QueryBm25Request,
+    ReadBlobVersionRequest,
+};
 use oneiron::task_verb::verb_hook_boundary::typed_row;
 
 #[napi]
@@ -140,16 +142,28 @@ impl ActorScopedVault {
         learned_at: Option<i64>,
     ) -> napi::Result<NapiBlobVersionView> {
         let bytes = decode_blob_base64(&bytes_base64).map_err(boundary_error)?;
-        let view = self
-            .facade()?
-            .append_blob_version(
-                &artifact_ref,
+        let request = AppendBlobVersionRequest {
+            artifact_ref,
+            content_base64: bytes_base64.clone(),
+            run_ref,
+            occurred_at: ts_to_engine(occurred_at, "occurred_at").map_err(boundary_error)?,
+            learned_at: ts_opt_to_engine(learned_at, "learned_at").map_err(boundary_error)?,
+        };
+        let memory = self.facade()?;
+        let view = typed_row(&memory, "vault.artifacts.append", request, |input| {
+            // Content a hook rewrote is decoded again, under the row's checks.
+            if input.content_base64 != bytes_base64 {
+                return oneiron::task_verb::sdk::vault_artifacts_append(&memory, input);
+            }
+            memory.append_blob_version(
+                &input.artifact_ref,
                 &bytes,
-                run_ref.as_deref(),
-                ts_to_engine(occurred_at, "occurred_at").map_err(boundary_error)?,
-                ts_opt_to_engine(learned_at, "learned_at").map_err(boundary_error)?,
+                input.run_ref.as_deref(),
+                input.occurred_at,
+                input.learned_at,
             )
-            .map_err(facade_error)?;
+        })
+        .map_err(facade_error)?;
         Ok(NapiBlobVersionView {
             artifact_ref: view.artifact_ref,
             version: ts_from_engine(view.version, "version").map_err(boundary_error)?,
@@ -354,7 +368,7 @@ impl ActorScopedVault {
         // TASK or attempt row can be written.
         let schedule_context =
             outbound_schedule_context_to_engine(&draft).map_err(boundary_error)?;
-        let engine_draft = OutboundDraftInput {
+        let request = OutboundScheduleRequest {
             verb: draft.verb,
             channel: draft.channel,
             target: draft.target,
@@ -367,12 +381,14 @@ impl ActorScopedVault {
             job_ref: draft.job_ref,
             occurred_at: ts_opt_to_engine(draft.occurred_at, "occurred_at")
                 .map_err(boundary_error)?,
-            mention: None,
+            mention: mention_to_engine(draft.mention).map_err(boundary_error)?,
         };
-        let receipt = self
-            .facade()?
-            .schedule_outbound_with_context(&engine_draft, &schedule_context)
-            .map_err(facade_error)?;
+        let memory = self.facade()?;
+        let receipt = typed_row(&memory, "connector.outbound.schedule", request, |input| {
+            let engine_draft = OutboundDraftInput::from(input);
+            memory.schedule_outbound_with_context(&engine_draft, &schedule_context)
+        })
+        .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
             intent_ref: receipt.intent_ref,
             outcome: receipt.outcome,
@@ -484,7 +500,7 @@ impl ActorScopedVault {
                 sequence: input.sequence,
                 ics_blob_ref: input.ics_blob_ref,
                 recipient: input.recipient,
-                mention: None,
+                mention: mention_to_engine(input.mention).map_err(boundary_error)?,
             })
             .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {
@@ -505,13 +521,15 @@ impl ActorScopedVault {
         artifact_ref: String,
         version: i64,
     ) -> napi::Result<Option<String>> {
-        let bytes = self
-            .facade()?
-            .read_blob_version(
-                &artifact_ref,
-                ts_to_engine(version, "version").map_err(boundary_error)?,
-            )
-            .map_err(facade_error)?;
-        Ok(bytes.map(|bytes| BASE64_STANDARD.encode(bytes)))
+        let request = ReadBlobVersionRequest {
+            artifact_ref,
+            version: ts_to_engine(version, "version").map_err(boundary_error)?,
+        };
+        let memory = self.facade()?;
+        let content = typed_row(&memory, "vault.artifacts.read", request, |input| {
+            oneiron::task_verb::sdk::vault_artifacts_read(&memory, input)
+        })
+        .map_err(facade_error)?;
+        Ok(content.map(|content| content.content_base64))
     }
 }

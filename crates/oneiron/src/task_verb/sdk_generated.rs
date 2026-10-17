@@ -151,6 +151,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestRequest>(),
             ),
             (
+                "vault.weave.lens",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveReportRequest>(),
+            ),
+            (
                 "vault.weave.link.wrong",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
                 ),
@@ -250,6 +254,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.guests.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestRevokeRequest,
+                >(),
+            ),
+            (
                 "vault.authority.handoff_alarms",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -315,6 +325,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.shares.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ShareCreateRequest,
+                >(),
+            ),
+            (
+                "vault.shares.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.shares.view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ShareViewRequest,
                 >(),
             ),
             (
@@ -625,6 +647,35 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::AiVerdictRequest,
                 >(),
+            ),
+            (
+                "vault.graph.ask",
+                crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskRequest>(),
+            ),
+            (
+                "vault.questions.create",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionCreateRequest>(
+                ),
+            ),
+            (
+                "vault.questions.edit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionEditRequest>(
+                ),
+            ),
+            (
+                "vault.questions.pause",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionPauseRequest>(
+                ),
+            ),
+            (
+                "vault.questions.read",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionReadRequest>(
+                ),
+            ),
+            (
+                "vault.questions.answers",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionAnswersRequest>(
+                ),
             ),
             (
                 "connector.list",
@@ -996,6 +1047,10 @@ pub fn mcp_arguments_schema_from_input(
                 "label".to_owned(),
                 schema.pointer("/properties/label")?.clone(),
             );
+            properties.insert(
+                "assignee".to_owned(),
+                schema.pointer("/properties/assignee")?.clone(),
+            );
             &["spec"]
         }
         "tasks.update" => {
@@ -1097,6 +1152,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.digest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.lens" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1230,6 +1292,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.guests.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.authority.handoff_alarms" => &[],
         "vault.authority.handoff_alarms.acknowledge" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -1304,6 +1373,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shares.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shares.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shares.view" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -1786,6 +1869,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.graph.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.pause" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.questions.answers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2094,6 +2219,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.digest" => {
             let _input: crate::claim::WeaveDigestRequest = decode(value.clone())?;
         }
+        "vault.weave.lens" => {
+            let _input: crate::claim::WeaveReportRequest = decode(value.clone())?;
+        }
         "vault.weave.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
         }
@@ -2151,6 +2279,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.leave" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
         }
+        "vault.guests.revoke" => {
+            let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
+        }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -2193,6 +2324,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.shares.create" => {
             let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
+        }
+        "vault.shares.revoke" => {
+            let _input: crate::task_verb::sdk::ShareRevokeRequest = decode(value.clone())?;
+        }
+        "vault.shares.view" => {
+            let _input: crate::task_verb::sdk::ShareViewRequest = decode(value.clone())?;
         }
         "vault.hooks.replay" => {
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
@@ -2388,6 +2525,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::task_verb::sdk::AiVerdictRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
+        }
+        "vault.graph.ask" => {
+            let input: crate::receipt::GraphAskRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "vault.questions.create" => {
+            let _input: crate::receipt::QuestionCreateRequest = decode(value.clone())?;
+        }
+        "vault.questions.edit" => {
+            let _input: crate::receipt::QuestionEditRequest = decode(value.clone())?;
+        }
+        "vault.questions.pause" => {
+            let _input: crate::receipt::QuestionPauseRequest = decode(value.clone())?;
+        }
+        "vault.questions.read" => {
+            let _input: crate::receipt::QuestionReadRequest = decode(value.clone())?;
+        }
+        "vault.questions.answers" => {
+            let _input: crate::receipt::QuestionAnswersRequest = decode(value.clone())?;
         }
         "connector.list" => {
             let _input: ConnectorListRequest = decode(value.clone())?;
@@ -2587,6 +2743,7 @@ pub fn invoke(
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
+        "vault.weave.lens" => encode(vault_weave_lens(memory, decode(value)?)?),
         "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
@@ -2612,6 +2769,7 @@ pub fn invoke(
         "vault.members.change" => encode(vault_members_change(memory, decode(value)?)?),
         "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
+        "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -2632,6 +2790,8 @@ pub fn invoke(
         "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
         "vault.disclosure.offer" => encode(vault_disclosure_offer(memory, decode(value)?)?),
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
+        "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
+        "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
@@ -2724,6 +2884,12 @@ pub fn invoke(
         "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
         "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
+        "vault.graph.ask" => encode(vault_graph_ask(memory, decode(value)?)?),
+        "vault.questions.create" => encode(vault_questions_create(memory, decode(value)?)?),
+        "vault.questions.edit" => encode(vault_questions_edit(memory, decode(value)?)?),
+        "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
+        "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
+        "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
@@ -3120,6 +3286,12 @@ pub fn vault_weave_digest(
 ) -> MemoryResult<Option<crate::claim::WeaveDigestView>> {
     memory.weave_digest(None, &input)
 }
+pub fn vault_weave_lens(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveReportRequest,
+) -> MemoryResult<crate::lens::GeneratedLens> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.lens", &input)
+}
 pub fn vault_weave_link_wrong(
     memory: &Memory<'_>,
     input: crate::claim::WeaveWrongLinkRequest,
@@ -3282,6 +3454,12 @@ pub fn vault_members_leave(
         input,
     )
 }
+pub fn vault_guests_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestRevokeRequest,
+) -> MemoryResult<crate::receipt::GuestRevokeResponse> {
+    crate::task_verb::sdk::revoke_guest_embedded(memory, input)
+}
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,
     _input: EmptyRequest,
@@ -3390,6 +3568,18 @@ pub fn vault_shares_create(
     input: crate::task_verb::sdk::ShareCreateRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ShareCreated> {
     crate::task_verb::sdk::create_share_as_caller(memory, input)
+}
+pub fn vault_shares_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareRevokeRequest,
+) -> MemoryResult<crate::receipt::ShareRevokeReceipt> {
+    crate::task_verb::sdk::revoke_share_as_caller(memory, input)
+}
+pub fn vault_shares_view(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ShareViewRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>> {
+    crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)
 }
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,
@@ -3893,6 +4083,43 @@ pub fn ai_verdict(
     crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::host_only(memory, "ai.verdict", &input)
+}
+pub fn vault_graph_ask(
+    memory: &Memory<'_>,
+    input: crate::receipt::GraphAskRequest,
+) -> MemoryResult<crate::receipt::GraphAskOutcome> {
+    input.validate()?;
+    crate::task_verb::sdk::host_only(memory, "vault.graph.ask", &input)
+}
+pub fn vault_questions_create(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionCreateRequest,
+) -> MemoryResult<crate::llm::decision::questions::QuestionRecord> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.create", &input)
+}
+pub fn vault_questions_edit(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionEditRequest,
+) -> MemoryResult<crate::llm::decision::questions::QuestionRecord> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.edit", &input)
+}
+pub fn vault_questions_pause(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionPauseRequest,
+) -> MemoryResult<crate::receipt::QuestionPaused> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.pause", &input)
+}
+pub fn vault_questions_read(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionReadRequest,
+) -> MemoryResult<Option<crate::llm::decision::questions::QuestionRecord>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.read", &input)
+}
+pub fn vault_questions_answers(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionAnswersRequest,
+) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
 }
 pub fn connector_list(
     memory: &Memory<'_>,

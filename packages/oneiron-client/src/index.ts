@@ -1,29 +1,47 @@
 /**
- * `@oneiron/client` — one hand-written thin HTTP client for the Oneiron API.
+ * `@oneiron/client` — the one thin typed client for the Oneiron API.
  *
- * The REST API and its OpenAPI document are the contract; this package is
- * convenience over that contract and never a second one. Every public method
- * hands back the ORIGINAL `Response`: nothing here parses a body, clones a
- * response, throws on an HTTP status, buffers a stream, re-sends a mutation,
- * or caches a result. An HTTP error is therefore something the caller reads
- * off the wire — status, headers, request id, and the server's own error
- * envelope all survive — rather than something this layer has interpreted.
+ * The verb table (`scripts/sdk/agent-verbs.json`) is the contract; this
+ * package is convenience over it and never a second one. Its facade is
+ * GENERATED from that table (`./facade.ts`, `./facade-types.ts`): every verb
+ * a typed method at its SDK path, its input and result typed from the Rust
+ * types its row names, its row metadata in `FACADE_CATALOG`. What is written
+ * by hand is this file: the HTTP transport.
+ *
+ * Every public method hands back the ORIGINAL `Response`: nothing here parses
+ * a body, clones a response, throws on an HTTP status, buffers a stream,
+ * re-sends a mutation, or caches a result. An HTTP error is therefore
+ * something the caller reads off the wire — status, headers, request id, and
+ * the server's own error envelope all survive — rather than something this
+ * layer has interpreted. `FacadeResult<V>` types what a 2xx body reads as.
  *
  * The one thing it does NOT delegate to the runtime is redirect following.
  * A client carrying a bearer credential cannot let `fetch` chase a `Location`
  * to wherever it points, so each hop is taken by hand and re-checked against
  * the configured origin.
  *
- * There is deliberately no code-mode injector here. The sandbox keeps the
- * host dispatcher it already has, and shares the WIRE with this package
- * rather than the artifact; the importers of this package are the native
- * TypeScript worker and npm-capable external agents.
+ * One artifact serves three consumers (ARCH-0028): `facadeTree` takes an
+ * injected invocation transport, so this HTTP adapter, a native adapter over
+ * an in-process binding and the code-mode inject share one typed tree and one
+ * catalog. Only the transport differs; `@oneiron/client/facade` is the tree
+ * without this fetch client.
  */
 
-import { facadeVerbs } from "./facade.js";
-export { FACADE_VERBS } from "./facade.js";
-export type { FacadeVerb } from "./facade.js";
-export type * from "./facade-types.js";
+import { facadeTree } from "./facade.js";
+export { FACADE_CATALOG, FACADE_VERBS, facadeTree } from "./facade.js";
+export type {
+  FacadeInput,
+  FacadeInputs,
+  FacadeResult,
+  FacadeResults,
+  FacadeReturn,
+  FacadeReturns,
+  FacadeTransport,
+  FacadeTree,
+  FacadeVerb,
+  FacadeVerbMeta,
+} from "./facade.js";
+export type * as Facade from "./facade-types.js";
 
 export interface HttpBaseClientOptions {
   /** Origin of an existing Oneiron server, e.g. `http://127.0.0.1:9090`. */
@@ -127,7 +145,12 @@ export function mergeHeaders(defaults: Headers, extra?: HeadersInit): Headers {
 }
 
 export class HttpBaseClient {
-  readonly facade = facadeVerbs((verb, input, init = {}) => {
+  /**
+   * Every facade verb at its SDK path, as `POST /v1/core/facade/<verb>`:
+   * `client.facade.vault.recall({ query: "..." }, init)`. Each returns the
+   * original `Response`; `FacadeResult<"vault.recall">` types its 2xx body.
+   */
+  readonly facade = facadeTree<"response", RequestInit>((verb, input, init = {}) => {
     const headers = new Headers(init.headers ?? {});
     headers.set("Content-Type", "application/json");
     return this.request(`/v1/core/facade/${encodeURIComponent(verb)}`, {

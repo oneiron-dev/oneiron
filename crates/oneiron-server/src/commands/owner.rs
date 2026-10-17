@@ -1,6 +1,7 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
 //! window and clock recovery, export, the secret scan switch, registering and
-//! rotating a secret, import consent and agent-run consent.
+//! rotating a secret, the vault key's wraps, import consent and agent-run
+//! consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -25,6 +26,9 @@ use crate::owner::backup::{self, BackupPlan};
 use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
+
+mod vault_key;
+pub use self::vault_key::vault_key;
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
@@ -237,8 +241,28 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         .backup
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
-    // A backup opens with this install's keystore, as configured.
+    if args.inspect {
+        let unlocks = oneiron::recovery::checkpoint::CheckpointKey::unlocks(backup)
+            .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
+        return emit(&crate::owner::vault_key::BackupUnlocks::from(unlocks));
+    }
+    // A backup opens with this install's keystore, as configured, unless the
+    // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
+    let unlock = vault_key::HostUnlock::read(&args, backup)?;
+    let pins = args.trust.as_deref().map(vault_key::read_pins).transpose()?;
+    if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
+        return emit(&vault_key::restore_fresh(
+            backup, &config, keystore, &unlock, pins,
+        )?);
+    }
+    let key = vault_key::backup_key(
+        backup,
+        &config.vault_path,
+        keystore.as_ref(),
+        &unlock,
+        pins,
+    )?;
     if args.rehearse {
         // Read off the disk, beside a `serve` that may hold the vault.
         let mut source =
@@ -246,19 +270,25 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         if let Some(keystore) = keystore {
             source = source.with_keystore(keystore);
         }
-        return emit(&backup::rehearse(
-            backup,
-            vault_config(&config),
-            args.scratch.as_deref(),
-            &source,
-        )?);
+        let scratch = args.scratch.as_deref();
+        return emit(&match key {
+            Some(key) => {
+                backup::rehearse_keyed(backup, vault_config(&config), scratch, &source, key)?
+            }
+            None => backup::rehearse(backup, vault_config(&config), scratch, &source)?,
+        });
     }
-    emit(&backup::restore_over(
-        backup,
-        &config.vault_path,
-        vault_config(&config),
-        keystore,
-    )?)
+    emit(&match key {
+        Some(key) => {
+            backup::restore_over_keyed(backup, &config.vault_path, vault_config(&config), key)?
+        }
+        None => backup::restore_over(
+            backup,
+            &config.vault_path,
+            vault_config(&config),
+            keystore,
+        )?,
+    })
 }
 
 #[derive(Serialize)]
@@ -423,8 +453,12 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;
     // The owner's own `vault.export`, so its verb hooks run around it
-    // (ARCH-0080 §3).
+    // (ARCH-0080 §3). The export's own owner check comes first, so a hook
+    // never fires on an export it refuses.
     let memory = vault.memory(owner, oneiron::edge::EdgeActorClass::Human);
+    memory
+        .admit_export(None)
+        .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
     let export = oneiron::task_verb::verb_hook_boundary::typed_row(
         &memory,
         "vault.export",
@@ -500,6 +534,8 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
     match command {
         SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
+        // `run_cli` sends revoke straight to `revoke_secret`, before the read.
+        SecretsCommand::Revoke(args) => revoke_secret(*args),
     }
 }
 
@@ -586,6 +622,15 @@ fn rotate_secret(args: SecretRotateArgs, value: &[u8]) -> anyhow::Result<secrets
     Ok(vault
         .rotate_secret_as_owner(&owner, &args.name, value, vault.now_recorded_at())?
         .into())
+}
+
+/// Revokes a secret through the engine door `POST /v1/owner/secrets/revoke`
+/// uses, as the local owner (OF-422). It reads nothing from stdin.
+pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/revoke --data -")?;
+    let owner = local_owner(&vault)?;
+    emit(&secrets::revoke(&vault, &owner, &args.name)?)
 }
 
 /// A batch file: imported claims, or the notes `import notes` wrote.
@@ -828,6 +873,34 @@ fn hold_targets(
         }));
     }
     Ok(targets)
+}
+
+/// The owner's ask guests (OF-232) on a stopped vault; `serve` answers the
+/// same at `/v1/owner/guests/revoke`. A revoke signs each pact disconnect
+/// with the host's own key, the config's auth secret `serve` signs with; a
+/// config without one has no host key, and the revoke refuses.
+pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
+    use crate::cli::GuestsCommand;
+    match command {
+        GuestsCommand::Revoke(args) => {
+            let grant = hold_id_arg(&args.grant_ref)?;
+            let config = resolve_serve_config(&args.serve)?;
+            let vault = open_vault(&config, "POST /v1/owner/guests/revoke --data -")?;
+            let owner = local_owner(&vault)?;
+            let secret = config
+                .sync_server_config()
+                .auth_secret
+                .filter(|secret| !secret.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "the config names no auth secret, so this host has no key to sign the guest's pact disconnects"
+                    )
+                })?;
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            let outcome = vault.revoke_guest_access(&owner, &issuer, grant)?;
+            emit(&oneiron::receipt::project_guest_revoke(outcome))
+        }
+    }
 }
 
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {

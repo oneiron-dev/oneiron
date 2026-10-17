@@ -24,8 +24,10 @@ pub use owner_args::{
 };
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
-    LegalHoldsCommand,
+    LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
+    VaultKeyNamedArgs,
 };
+pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevokeArgs};
 pub use wake_args::{WakeArgs, WakeCommand};
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -90,6 +92,10 @@ pub enum Command {
     /// value is read from stdin.
     #[command(subcommand)]
     Secrets(SecretsCommand),
+    /// A stopped vault's data key: its wraps (password, passkey, escrow,
+    /// device), this install's checkpoint signer and a passkey's PRF input.
+    #[command(subcommand)]
+    VaultKey(VaultKeyCommand),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
     /// exports, Claude Code and Codex sessions, a Copilot or Cursor hook
     /// transcript, a folder of markdown notes), or preview, approve or decline
@@ -106,6 +112,9 @@ pub enum Command {
     /// through the "Lift the hold and erase?" confirm.
     #[command(subcommand)]
     LegalHolds(LegalHoldsCommand),
+    /// Your ask guests at this host: revoke one's access.
+    #[command(subcommand)]
+    Guests(GuestsCommand),
     /// Move a stopped vault to the configured embedding model: repin it and
     /// queue every record to be embedded again, which the next `serve` does.
     Reembed(Box<ReembedArgs>),
@@ -852,11 +861,15 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::RecoverClock(args) => commands::recover_clock(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
+        // Revoke reads no value, so it never reaches the stdin read.
+        Command::Secrets(SecretsCommand::Revoke(args)) => commands::revoke_secret(*args),
         Command::Secrets(command) => commands::secrets(command),
+        Command::VaultKey(command) => commands::vault_key(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
+        Command::Guests(command) => commands::guests(command),
         // Blocking: an endpoint's transform is read over blocking HTTP.
         Command::Reembed(args) => {
             crate::logging::off_runtime("reembed", move || commands::reembed(*args)).await?

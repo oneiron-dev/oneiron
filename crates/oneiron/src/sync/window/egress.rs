@@ -13,7 +13,6 @@ use super::reverse::{
     delete_edges_touching_entities, is_delegated_channel_identity_carrier,
     is_unsyncable_secret_custody, quarantine_outbound_protected_tombstones,
     remove_entity_crdt_carriers, reverse_remat_skip_redaction_receipt_mirror,
-    skip_companion_register_sync_mirror,
 };
 use super::types::WindowKey;
 use crate::sync::window_rows::{HISTORY_FREE_WINDOW, OFF_RECORD_PROMOTE_PICKUP, WindowEntityKey};
@@ -624,7 +623,6 @@ fn replay_mirrors(
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
             || is_delegated_channel_identity_carrier(&raw)
-            || skip_companion_register_sync_mirror(&raw)
         {
             let wrote_doc = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if wrote_doc {

@@ -15,8 +15,12 @@
 //! on probation; a failure rests it again with one more strike, and
 //! [`STABLE_SUCCESSES`] answers in a row over [`STABLE_SECS`] are a stable
 //! recovery, which clears its strikes and tells [`OfferCooldowns::recoveries`]
-//! so the memory work its outage stopped resumes.
+//! so the memory work its outage stopped resumes. On probation it takes one
+//! request at a time: the call that sends it holds the offer's probation
+//! slot ([`ProbePermit`]) until the request ends, and a call that comes
+//! meanwhile passes the offer to the next rung, or waits for that end.
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::Duration;
 
@@ -26,6 +30,7 @@ use oneiron::{LlmRequest, ModelId, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
 use super::ladder::OfferLadder;
+use super::status::{HealthState, LimitHold, RungHealth};
 
 /// The engine's `MODEL_OFFER_COOLDOWN` side table: never replicated, and
 /// runtime to a checkpoint, which keeps none.
@@ -34,11 +39,6 @@ const PREFIX: &str = "models:offer-cooldown:v1:";
 /// The owner's open quota questions, one per parked offer, beside its rest
 /// in the same table: this deployment's routing state too.
 const QUESTION_PREFIX: &str = "models:offer-cooldown:v1:ask:";
-
-/// The owner's standing fallbacks, one per offer they answered
-/// `use_fallback` for: the engine id of the model its calls go to while it
-/// is parked.
-const FALLBACK_PREFIX: &str = "models:offer-cooldown:v1:fallback:";
 
 /// A down provider's first health rest, in seconds; each failure in a row
 /// doubles it.
@@ -100,13 +100,65 @@ pub(super) struct Rest {
 
 /// One offer's health after its provider was down: its failures in a row,
 /// the end of its rest, and, once it answered again, its answers since and
-/// when the first came.
+/// when the first came. On probation, the token of the one request out now.
 #[derive(Clone, Copy, Debug, Default)]
 struct Health {
     strikes: u32,
     until: u64,
     successes: u32,
     first_success_at: Option<u64>,
+    probing: Option<u64>,
+}
+
+impl Health {
+    fn rest(&self) -> Rest {
+        Rest {
+            until: self.until,
+            source: ResetSource::Unhealthy,
+            strikes: self.strikes,
+            spent: None,
+        }
+    }
+}
+
+/// Why a call may not send to an offer right now, found at the send: its
+/// health rest began after the walk judged it, or it is on probation and its
+/// one probation request is out. `seen` is the health version at that
+/// moment, so a wait for the request's end cannot miss it.
+pub(super) enum ProbeBlocked {
+    Resting(Rest),
+    Busy { seen: u64 },
+}
+
+/// The right to send one request to an offer now (OF-305), held until the
+/// request ends. A recovering offer grants one at a time: its probation
+/// request. Dropping the permit frees that slot for the next call and
+/// credits nothing. A healthy offer's permit holds no slot.
+pub(super) struct ProbePermit {
+    rests: Arc<OfferCooldowns>,
+    key: String,
+    /// The token of the probation slot this permit holds.
+    slot: Option<u64>,
+}
+
+impl ProbePermit {
+    /// The request answered: [`OfferCooldowns::succeeded`].
+    pub(super) fn answered(self) {
+        self.rests.succeeded_at(&self.key);
+    }
+
+    /// The request met its provider down: [`OfferCooldowns::failed_down`].
+    pub(super) fn down(self) {
+        self.rests.failed_down_at(&self.key);
+    }
+}
+
+impl Drop for ProbePermit {
+    fn drop(&mut self) {
+        if let Some(token) = self.slot.take() {
+            self.rests.release_probe(&self.key, token);
+        }
+    }
 }
 
 /// What a limit refusal said, for its offer's rest.
@@ -147,8 +199,9 @@ pub struct QuotaFallback {
     pub model: String,
 }
 
-/// A configured chat model, as the runtime built it, that the owner may
-/// name as a parked offer's fallback.
+/// A configured model, as the runtime built it, that the owner may name as
+/// a parked offer's fallback: a chat model by its own id, or one rung of a
+/// media seat.
 pub(super) struct FallbackRung {
     pub(super) provider: String,
     pub(super) model: ModelId,
@@ -182,13 +235,11 @@ impl QuotaChoice {
 }
 
 /// Where a parked offer is, for its question: the rung that met the
-/// refusal, and whether it is a media rung (whose calls no chat model
-/// takes).
+/// refusal.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Asked<'a> {
     pub(super) provider: &'a str,
     pub(super) wire_model: &'a str,
-    pub(super) media: bool,
 }
 
 /// Where a ladder keeps its offers' rests, and asks whether a call's world
@@ -196,11 +247,16 @@ pub(super) struct Asked<'a> {
 /// hands its call on, and the next call starts fresh.
 pub struct OfferCooldowns {
     vault: Option<Arc<Vault>>,
-    /// The configured chat models a parked offer may fall back to.
+    /// The configured models a parked offer may fall back to.
     fallbacks: RwLock<Vec<FallbackRung>>,
     /// Each offer whose provider was down and has not stably recovered,
     /// by its row's key. In memory: a restart starts every offer healthy.
     health: Mutex<BTreeMap<String, Health>>,
+    /// The next probation slot's token.
+    probes: AtomicU64,
+    /// The health version: it moves each time a probation request ends, for
+    /// the calls that wait for one.
+    health_changed: tokio::sync::watch::Sender<u64>,
     /// The count of stable recoveries, for the work an outage stopped.
     recovered: tokio::sync::watch::Sender<u64>,
     /// A test's vault clock, which a call's wait moves to the end it waited
@@ -216,6 +272,8 @@ impl OfferCooldowns {
             vault: None,
             fallbacks: RwLock::default(),
             health: Mutex::default(),
+            probes: AtomicU64::new(0),
+            health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             #[cfg(test)]
             waits_move: None,
@@ -230,6 +288,8 @@ impl OfferCooldowns {
             vault: Some(vault),
             fallbacks: RwLock::default(),
             health: Mutex::default(),
+            probes: AtomicU64::new(0),
+            health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             #[cfg(test)]
             waits_move: None,
@@ -247,26 +307,45 @@ impl OfferCooldowns {
             vault: Some(vault),
             fallbacks: RwLock::default(),
             health: Mutex::default(),
+            probes: AtomicU64::new(0),
+            health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             waits_move: Some(clock),
         })
     }
 
     /// Waits `wait`, for the offer back `at` then, asking `may_send` each
-    /// slice of it: once it says no, the wait ends there.
-    pub(super) async fn wait(&self, wait: Duration, at: u64, may_send: &(dyn Fn() -> bool + Sync)) {
-        let end = tokio::time::Instant::now() + wait;
+    /// slice of it: once it says no, the wait ends there. A call that passed
+    /// an offer whose probation request was out at health version `seen`
+    /// also stops waiting once that version moves (OF-305), so it never
+    /// misses the request's end. Returns how long it waited.
+    pub(super) async fn wait(
+        &self,
+        wait: Duration,
+        at: u64,
+        seen: Option<u64>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> Duration {
+        let start = tokio::time::Instant::now();
+        let end = start + wait;
+        let mut changed = self.health_changed.subscribe();
         loop {
             let left = end.saturating_duration_since(tokio::time::Instant::now());
             if left.is_zero() {
                 break;
             }
-            if !may_send() {
-                return;
+            if !may_send() || seen.is_some_and(|seen| *changed.borrow_and_update() != seen) {
+                return start.elapsed();
             }
-            tokio::time::sleep(left.min(WAIT_SLICE)).await;
+            let slice = left.min(WAIT_SLICE);
+            if seen.is_some() {
+                let _ = tokio::time::timeout(slice, changed.changed()).await;
+            } else {
+                tokio::time::sleep(slice).await;
+            }
         }
         self.waited_until(at);
+        wait
     }
 
     #[cfg(test)]
@@ -293,12 +372,110 @@ impl OfferCooldowns {
     fn health_rest(&self, key: &str, now: u64) -> Option<Rest> {
         let health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
         let held = health.get(key).filter(|held| held.until > now)?;
-        Some(Rest {
-            until: held.until,
-            source: ResetSource::Unhealthy,
-            strikes: held.strikes,
-            spent: None,
-        })
+        Some(held.rest())
+    }
+
+    /// The health version, when the offer serving `wire_model` is on
+    /// probation with its one probation request out. Read-only: it takes no
+    /// slot.
+    pub(super) fn probing(&self, offer: &OfferBinding, wire_model: &str) -> Option<u64> {
+        let now = self.now()?;
+        let key = key(offer, wire_model);
+        let health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
+        health
+            .get(&key)
+            .filter(|held| held.until <= now && held.probing.is_some())?;
+        Some(*self.health_changed.borrow())
+    }
+
+    /// The permit to send one request to the offer serving `wire_model` now
+    /// (OF-305). Taken right before the request goes out, and held until it
+    /// ends. An offer with no health row gets a permit that holds nothing.
+    /// One whose health rest still runs is blocked. One on probation after
+    /// its rest gets its one probation slot, and is busy while another call
+    /// holds that slot.
+    pub(super) fn try_probe(
+        self: &Arc<Self>,
+        offer: &OfferBinding,
+        wire_model: &str,
+    ) -> Result<ProbePermit, ProbeBlocked> {
+        let mut permit = ProbePermit {
+            rests: Arc::clone(self),
+            key: key(offer, wire_model),
+            slot: None,
+        };
+        let Some(now) = self.now() else {
+            return Ok(permit);
+        };
+        let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(held) = health.get_mut(&permit.key) else {
+            return Ok(permit);
+        };
+        if held.until > now {
+            return Err(ProbeBlocked::Resting(held.rest()));
+        }
+        if held.probing.is_some() {
+            return Err(ProbeBlocked::Busy {
+                seen: *self.health_changed.borrow(),
+            });
+        }
+        let token = self.probes.fetch_add(1, Ordering::Relaxed);
+        held.probing = Some(token);
+        drop(health);
+        permit.slot = Some(token);
+        Ok(permit)
+    }
+
+    /// Frees the probation slot `token` holds on the offer at `key`, unless a
+    /// stable recovery already cleared its row, and tells every waiting call
+    /// that the offer's health changed.
+    fn release_probe(&self, key: &str, token: u64) {
+        let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(held) = health.get_mut(key)
+            && held.probing == Some(token)
+        {
+            held.probing = None;
+        }
+        self.health_changed
+            .send_modify(|seen| *seen = seen.wrapping_add(1));
+    }
+
+    /// The live health of the offer serving `wire_model`, for the status
+    /// route: whether it is healthy, down or recovering, and any limit rest
+    /// it is held by. Read-only: it takes no probation slot and probes
+    /// nothing.
+    pub(super) fn offer_health(&self, offer: &OfferBinding, wire_model: &str) -> RungHealth {
+        let mut status = RungHealth {
+            state: HealthState::Healthy,
+            strikes: 0,
+            until: None,
+            successes: 0,
+            probing: false,
+            limit: None,
+        };
+        let Some(vault) = self.vault.as_ref() else {
+            return status;
+        };
+        let key = key(offer, wire_model);
+        status.limit = self.limit_rest(vault, &key).map(|rest| LimitHold {
+            until: rest.until,
+            reset: rest.source.as_str(),
+            spent: rest.spent,
+        });
+        let now = vault.now_recorded_at();
+        let health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(held) = health.get(&key) {
+            status.strikes = held.strikes;
+            status.successes = held.successes;
+            status.probing = held.probing.is_some();
+            if held.until > now {
+                status.state = HealthState::Down;
+                status.until = Some(held.until);
+            } else {
+                status.state = HealthState::Recovering;
+            }
+        }
+        status
     }
 
     /// The limit rest kept at `key`, while it runs.
@@ -375,12 +552,16 @@ impl OfferCooldowns {
     /// was down: for a backoff that doubles with each failure in a row from
     /// [`HEALTH_REST_SECS`] up to [`HEALTH_REST_MAX_SECS`], with jitter. A
     /// failure while it recovers is one more in a row, and its answers since
-    /// count no more. `None` when no vault keeps rests.
+    /// count no more. A probation slot that is held stays held until its
+    /// request ends. `None` when no vault keeps rests.
     pub(super) fn failed_down(&self, offer: &OfferBinding, wire_model: &str) -> Option<Rest> {
+        self.failed_down_at(&key(offer, wire_model))
+    }
+
+    fn failed_down_at(&self, key: &str) -> Option<Rest> {
         let now = self.now()?;
-        let key = key(offer, wire_model);
         let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
-        let held = health.entry(key.clone()).or_default();
+        let held = health.entry(key.to_owned()).or_default();
         let strikes = held.strikes.saturating_add(1);
         let backoff = HEALTH_REST_SECS
             .saturating_mul(1u64 << (strikes - 1).min(16))
@@ -398,6 +579,7 @@ impl OfferCooldowns {
             until,
             successes: 0,
             first_success_at: None,
+            probing: held.probing,
         };
         tracing::warn!(
             strikes,
@@ -417,15 +599,15 @@ impl OfferCooldowns {
     /// least [`STABLE_SECS`] after the first, is a stable recovery: its
     /// strikes clear and [`Self::recoveries`] hears it.
     pub(super) fn succeeded(&self, offer: &OfferBinding, wire_model: &str) {
+        self.succeeded_at(&key(offer, wire_model));
+    }
+
+    fn succeeded_at(&self, key: &str) {
         let Some(now) = self.now() else {
             return;
         };
         let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
-        if health.is_empty() {
-            return;
-        }
-        let key = key(offer, wire_model);
-        let Some(held) = health.get_mut(&key) else {
+        let Some(held) = health.get_mut(key) else {
             return;
         };
         held.successes = held.successes.saturating_add(1);
@@ -434,7 +616,7 @@ impl OfferCooldowns {
             return;
         }
         let strikes = held.strikes;
-        health.remove(&key);
+        health.remove(key);
         drop(health);
         tracing::info!(
             strikes,
@@ -450,7 +632,7 @@ impl OfferCooldowns {
         self.recovered.subscribe()
     }
 
-    /// The configured chat models a parked offer may fall back to, as the
+    /// The configured models a parked offer may fall back to, as the
     /// runtime built them.
     pub(super) fn offer_fallbacks(&self, rungs: Vec<FallbackRung>) {
         *self
@@ -462,11 +644,20 @@ impl OfferCooldowns {
     /// The owner's question about the offer `asked` names, parked on a spent
     /// window or spent credit (`rest`), asked once every rung of the call
     /// that met it has parked: which offer, what was spent, when it is back,
-    /// and the choices, `use_fallback` among them while a chat model on a
-    /// provider outside the call's ladder (`own`) has usage left. A question
-    /// already open stays as it was asked. Nothing when the rest spent
-    /// nothing or no vault keeps rests.
-    pub(super) fn ask(&self, offer: &OfferBinding, rest: Rest, asked: Asked<'_>, own: &[&str]) {
+    /// and the choices. `use_fallback` is among them while a model on a
+    /// provider outside the call's ladder (`own`) has usage left and `fits`
+    /// the call: it speaks the seat's wire, keeps a role's work on the device
+    /// when it must stay there, and accepts the request. A question already
+    /// open stays as it was asked. Nothing when the rest spent nothing or no
+    /// vault keeps rests.
+    pub(super) fn ask(
+        &self,
+        offer: &OfferBinding,
+        rest: Rest,
+        asked: Asked<'_>,
+        own: &[&str],
+        fits: &dyn Fn(&OfferLadder) -> bool,
+    ) {
         let (Some(vault), Some(spent)) = (self.vault.as_ref(), rest.spent) else {
             return;
         };
@@ -476,11 +667,7 @@ impl OfferCooldowns {
         if matches!(vault.sync_state_get(&question_key(&id)), Ok(Some(_))) {
             return;
         }
-        let fallbacks = if asked.media {
-            Vec::new()
-        } else {
-            self.usage_left(own)
-        };
+        let fallbacks = self.usage_left(own, fits);
         let mut choices = match spent {
             SpentKind::Window => vec![
                 QuotaChoice::Wait,
@@ -514,9 +701,9 @@ impl OfferCooldowns {
         }
     }
 
-    /// The chat models on providers other than `own` whose offers are in
-    /// rotation now.
-    fn usage_left(&self, own: &[&str]) -> Vec<QuotaFallback> {
+    /// The models on providers other than `own` whose offers are in rotation
+    /// now and that `fits` the parked call.
+    fn usage_left(&self, own: &[&str], fits: &dyn Fn(&OfferLadder) -> bool) -> Vec<QuotaFallback> {
         self.fallbacks
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -525,7 +712,7 @@ impl OfferCooldowns {
             .filter(|rung| {
                 rung.ladder
                     .upgrade()
-                    .is_some_and(|ladder| !ladder.rests_now())
+                    .is_some_and(|ladder| !ladder.rests_now() && fits(ladder.as_ref()))
             })
             .map(|rung| QuotaFallback {
                 provider: rung.provider.clone(),
@@ -543,15 +730,14 @@ impl OfferCooldowns {
     ) -> Option<Arc<OfferLadder>> {
         let vault = self.vault.as_ref()?;
         let key = key(offer, wire_model);
-        let bytes = vault
-            .sync_state_get(&fallback_key(key.trim_start_matches(PREFIX)))
+        let model = vault
+            .model_fallback(key.trim_start_matches(PREFIX))
             .ok()??;
-        let model = std::str::from_utf8(&bytes).ok()?;
         self.fallbacks
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .find(|rung| rung.model.as_str() == model)?
+            .find(|rung| rung.model.as_str() == model.as_str())?
             .ladder
             .upgrade()
     }
@@ -607,7 +793,7 @@ impl OfferCooldowns {
             }) else {
                 return Ok(false);
             };
-            vault.sync_state_put(&fallback_key(&question.id), model.as_bytes())?;
+            vault.set_model_fallback(&question.id, model)?;
         }
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
@@ -720,10 +906,6 @@ fn question_key(id: &str) -> String {
 
 /// Where the owner's fallback for the offer question `id` asked about is
 /// kept.
-fn fallback_key(id: &str) -> String {
-    format!("{FALLBACK_PREFIX}{id}")
-}
-
 /// One row per deployment: the adapter and origin it goes out on, whose key
 /// pays, and the model it is asked for.
 fn key(offer: &OfferBinding, wire_model: &str) -> String {

@@ -100,6 +100,8 @@ fn matches_shape(value: &JsonValue, shape: &JsonValue) -> bool {
 /// Imported code and its local descendants always use the foreign microVM
 /// tier. Local code uses the caller's first-party sandbox; neither path widens
 /// the caller's host bridge or creates another authority lease.
+/// The invocation witness names the entity the load door chose: the skill,
+/// or its open proposal while an exploration trial routes this attempt.
 /// An outcome is credited separately once the attempt has a terminal receipt.
 #[expect(
     clippy::too_many_arguments,
@@ -162,7 +164,7 @@ pub fn execute_callable_skill(
     crate::skill_reliability::record_callable_invocation(
         vault,
         leased,
-        skill,
+        &loaded.entity,
         executor,
         &loaded.record.version,
         seq,
@@ -201,7 +203,7 @@ pub fn execute_callable_skill(
     crate::skill_reliability::record_callable_invocation(
         vault,
         leased,
-        skill,
+        &loaded.entity,
         executor,
         &loaded.record.version,
         seq,

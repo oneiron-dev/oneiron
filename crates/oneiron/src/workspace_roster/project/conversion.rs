@@ -104,6 +104,11 @@ impl Vault {
         task: EntityId,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
+            // A binding with no policy row asks at the shipped threshold.
+            let policy: crate::gate::ProjectConversionPolicy =
+                crate::gate::resolve_policy_manifest(&self.store, txn)?
+                    .project_conversion_policy()
+                    .unwrap_or_default();
             let mut row = room_thread_in(self, txn, room, thread)?;
             let turns = rooms::thread_turns_in(self, txn, room, thread)?;
             let source = rooms::room_in(self, txn, room)?;
@@ -116,15 +121,16 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            // A thread binds however many tasks (rule 5); past the threshold
-            // row its census raises the owner's check for the thread.
-            let mut census = crate::scan_check::ScanCount::start(
-                &self.store,
-                txn,
-                crate::scan_check::EngineScan::RoomThreadTasks,
+            // A thread binds however many tasks (rule 5). Once the bound set
+            // passes the policy's task threshold, its census raises the
+            // owner's question for the thread and the bind goes on.
+            let mut census = crate::scan_check::ScanCount::start_at(
+                crate::scan_check::EngineScan::ThreadTaskCensus,
                 thread.as_bytes(),
-            )?;
+                u64::try_from(policy.max_tasks).unwrap_or(u64::MAX),
+            );
             census.rows(turns.iter().map(|turn| turn.task_ids.len()).sum());
+            census.rows(usize::from(!row.task_ids.contains(&task.to_hex())));
             census.finish(self);
             if !row.task_ids.contains(&task.to_hex()) {
                 row.task_ids.push(task.to_hex());
@@ -340,14 +346,14 @@ impl Vault {
                 &bindings,
                 &source_members,
             )?;
-            // The thread's whole task set moves, however many (rule 5); past
-            // the threshold row its census raises the owner's check.
-            let mut census = crate::scan_check::ScanCount::start(
-                &self.store,
-                txn,
-                crate::scan_check::EngineScan::RoomThreadTasks,
+            // The thread's whole task set moves, however many (rule 5). Past
+            // the policy's task threshold its census raises the owner's
+            // question for the thread and the conversion goes on.
+            let mut census = crate::scan_check::ScanCount::start_at(
+                crate::scan_check::EngineScan::ThreadTaskCensus,
                 thread.as_bytes(),
-            )?;
+                u64::try_from(policy.max_tasks).unwrap_or(u64::MAX),
+            );
             census.rows(task_ids.len());
             census.finish(self);
             let mut holder = None;
@@ -700,7 +706,7 @@ impl Vault {
         let mut children = crate::scan_check::ScanCount::start(
             &self.store,
             &txn,
-            crate::scan_check::EngineScan::RoomHistoryRows,
+            crate::scan_check::EngineScan::RoomThreadChildRows,
             &prefix,
         )?;
         for item in rooms::THREAD_CHILDREN.iter_from(&self.store, &txn, &prefix)? {
@@ -721,7 +727,7 @@ impl Vault {
         let mut born = crate::scan_check::ScanCount::start(
             &self.store,
             &txn,
-            crate::scan_check::EngineScan::RoomPageRows,
+            crate::scan_check::EngineScan::MessageOriginRows,
             message.as_bytes(),
         )?;
         let mut projects = Vec::new();
