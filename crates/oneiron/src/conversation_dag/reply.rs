@@ -560,9 +560,11 @@ impl Vault {
     }
 
     /// Continues the thread chain on Parent without changing the conversation
-    /// HEAD. The reply target stays the caller's (or the quoted message's
-    /// TURN), so a thread reply may answer a trunk message; absent both, it
-    /// answers the chain's tip. `writer` binds it as it binds
+    /// HEAD: the first same-session thread under `trunk`, by root id, whose
+    /// audience admits the writer, else a new thread. A reply that names a
+    /// `thread_audience` always opens a new thread. The reply target stays
+    /// the caller's (or the quoted message's TURN), so a thread reply may
+    /// answer a trunk message; absent both, it answers the chain's tip. `writer` binds it as it binds
     /// [`Vault::append_dag_record`] (OF-063): the trunk and every typed ref
     /// must read for the writer, and so must the parent this door picks, in
     /// the reply's own transaction.
@@ -579,9 +581,34 @@ impl Vault {
             require_member(&self.store, txn, &input.conversation, &trunk)?;
             let mut target = trunk;
             let conversation = conversation_of(&self.store, txn, &trunk)?;
-            let candidates = chain_in_txn(self, txn, conversation, trunk, Some(input.session))?;
-            if let Some(last) = candidates.last() {
-                target = *last;
+            // FIX 3126: continue the first same-session thread, by root id,
+            // whose audience admits the writer; else open a new one. An
+            // explicit audience always opens a fresh thread.
+            if input.thread_audience.is_none() {
+                let actor = input.actor.entity_ref();
+                for root in roots_in_txn(self, txn, trunk)? {
+                    if crate::compaction::turn_session_membership_in_txn(&self.store, txn, &root)?
+                        != input.session
+                    {
+                        continue;
+                    }
+                    match crate::workspace_roster::thread_audience_allows_in(
+                        self,
+                        txn,
+                        conversation,
+                        root,
+                        actor,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) | Err(Error::EntityNotFound) => continue,
+                        Err(e) => return Err(e.into()),
+                    }
+                    target = chain_in_txn(self, txn, conversation, root, Some(input.session))?
+                        .last()
+                        .copied()
+                        .unwrap_or(root);
+                    break;
+                }
             }
             // The tip is chosen in this transaction, so a concurrent reply
             // never puts an unchecked parent under the writer.
@@ -620,6 +647,6 @@ impl Vault {
             }
             Ok(appended)
         });
-        policy::settle_append(writer, policy::REPLY_ROW, replied)
+        policy::settle_append(writer, policy::REPLY_ROW, input, replied)
     }
 }

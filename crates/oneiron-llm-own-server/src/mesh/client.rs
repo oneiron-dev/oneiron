@@ -15,12 +15,14 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
-use super::catalog::{CatalogRefresh, merge, mesh_row};
+use super::catalog::{CatalogRefresh, merge, mesh_row, prune};
 use super::{Batch, LLM_ALPN, Reply, Request, exchange, lock, put, take};
 use crate::OwnServerTransport;
 
 /// How long a node has to answer the dial.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a dialled node has to send its whole catalog.
+const CATALOG_TIMEOUT: Duration = Duration::from_secs(10);
 /// The first pause before trying the nodes again, doubling up to the last.
 const PAUSE_FIRST: Duration = Duration::from_secs(1);
 const PAUSE_MOST: Duration = Duration::from_secs(30);
@@ -113,7 +115,8 @@ impl MeshLlmTransport {
 
     /// Asks each of the owner's nodes granted model calls which models it
     /// offers, and writes an own-server row for each one the vault does not
-    /// already route another way. A node that does not answer keeps the
+    /// already route another way. A node that answers drops the rows of the
+    /// models it no longer offers. A node that does not answer keeps the
     /// rows it had: its models wait for it, as any call to it does.
     ///
     /// # Errors
@@ -129,17 +132,20 @@ impl MeshLlmTransport {
         for (machine, answer) in answers {
             match answer {
                 Ok(entries) => {
+                    let mut offered = Vec::new();
                     for entry in entries {
                         let model = entry.model.clone();
                         let Some(row) = mesh_row(machine, entry) else {
                             continue;
                         };
+                        offered.push(model.clone());
                         if merge(vault, row)? {
                             refresh.written.push(model);
                         } else {
                             refresh.conflicts.push(model);
                         }
                     }
+                    refresh.withdrawn.extend(prune(vault, machine, &offered)?);
                 }
                 Err(why) => unreached.push(format!("node {}: {why}", machine.to_hex())),
             }
@@ -217,10 +223,11 @@ impl Leg {
         (answers, tried)
     }
 
-    /// The models `machine` offers.
+    /// The models `machine` offers, sent within [`CATALOG_TIMEOUT`] of the
+    /// dial, so a node that hangs mid-reply holds no refresh.
     async fn catalog_on(&self, machine: MachineId) -> Result<Vec<LlmCatalogEntry>, Absent> {
         let conn = self.dial(machine).await?;
-        let asked = async {
+        let asked = tokio::time::timeout(CATALOG_TIMEOUT, async {
             match exchange(&*conn, &Request::Catalog)
                 .await
                 .map_err(|err| err.to_string())?
@@ -233,8 +240,9 @@ impl Leg {
                 Reply::Refused(why) => Err(why),
                 _ => Err("an unexpected reply".into()),
             }
-        }
-        .await;
+        })
+        .await
+        .unwrap_or_else(|_| Err("did not send its catalog in time".into()));
         conn.close();
         asked
     }
