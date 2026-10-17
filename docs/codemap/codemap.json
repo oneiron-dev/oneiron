@@ -6845,12 +6845,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "Retired",
       "WorkflowRecord"
      ],
      "path": "src/browser_library.rs",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
-      "fn": 5,
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -18274,9 +18277,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 17,
+      "const": 18,
       "crate-vis": 8,
-      "fn": 8,
+      "fn": 9,
       "trait": 1
      }
     },
@@ -41355,8 +41358,8 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 7,
-      "re-export": 13
+      "crate-vis": 8,
+      "re-export": 14
      }
     },
     {
@@ -41438,6 +41441,23 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TradeoffRouteChannel",
+      "TradeoffRouteIssue",
+      "TradeoffRouteReport"
+     ],
+     "path": "src/skill_optimize/tradeoff_route.rs",
+     "purpose": "The Coach's tradeoff router (FIX-LIST 817; the Engine's call \"OF-495 tradeoff router\")",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 2
      }
     },
     {
@@ -45496,7 +45516,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 2,
       "re-export": 23
      }
@@ -45578,6 +45598,7 @@
      "path": "src/task_verb/project_tradeoff.rs",
      "purpose": "A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks)",
      "surface": {
+      "crate-vis": 2,
       "fn": 5
      }
     },
@@ -45899,7 +45920,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 292
+      "fn": 293
      }
     },
     {
@@ -51913,7 +51934,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52167,7 +52188,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3155,
+   "source_files": 3156,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54389,6 +54410,8 @@
       "LibraryCard",
       "LibraryFindInput",
       "LibraryFindOutput",
+      "LibraryRetireInput",
+      "LibraryRetireOutput",
       "LibraryRunInput",
       "LibraryRunOutput",
       "ProposeInput",
@@ -54405,7 +54428,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 3,
-      "struct": 9,
+      "struct": 11,
       "trait": 1
      }
     },

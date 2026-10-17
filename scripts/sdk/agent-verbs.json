@@ -3238,6 +3238,17 @@
       "section": false
     },
     {
+      "name": "self.browser.library.retire",
+      "description": "Takes a program out of the replay library for every later run, and returns the card it had.",
+      "input": "oneiron_browser::LibraryRetireInput",
+      "output": "oneiron_browser::LibraryRetireOutput",
+      "call": "driver.library_retire(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "self.browser.library.run",
       "description": "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner.",
       "input": "oneiron_browser::LibraryRunInput",

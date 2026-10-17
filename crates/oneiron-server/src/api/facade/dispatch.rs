@@ -5907,6 +5907,7 @@ pub(crate) async fn call_verb(
         | "self.browser.batch"
         | "self.browser.library.find"
         | "self.browser.library.propose"
+        | "self.browser.library.retire"
         | "self.browser.library.run"
         | "self.desktop.open"
         | "self.desktop.observe"
