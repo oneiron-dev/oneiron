@@ -689,6 +689,10 @@ fn mcp_agent_verb_input(
         "vault.members.change" => a.spec.clone().ok_or_else(invalid),
         "vault.members.remove" => a.spec.clone().ok_or_else(invalid),
         "vault.members.leave" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.invitations" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.accept" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.decline" => a.spec.clone().ok_or_else(invalid),
+        "vault.members.withdraw_invitation" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.authority.handoff_alarms" => Ok(Value::Object(serde_json::Map::new())),
         "vault.authority.handoff_alarms.acknowledge" => a.spec.clone().ok_or_else(invalid),
@@ -1118,6 +1122,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.members.leave" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.invitations" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.accept" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.decline" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.members.withdraw_invitation" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.guests.revoke" => {
@@ -2288,6 +2304,57 @@ async fn execute_agent_verb_row(
             let output = crate::api::facade::host_doors::vault_members_leave(server, auth, input)
                 .await
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.members.invitations" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.invitations", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedVaultRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_members_invitations(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.members.accept" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.accept", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedInvitationRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_members_accept(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.members.decline" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.decline", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedInvitationRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_members_decline(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.members.withdraw_invitation" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.members.withdraw_invitation", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedInvitationWithdrawRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_members_withdraw_invitation(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

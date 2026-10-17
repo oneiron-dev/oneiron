@@ -70,6 +70,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.members.change", post(vault_members_change))
         .route("/vault.members.remove", post(vault_members_remove))
         .route("/vault.members.leave", post(vault_members_leave))
+        .route(
+            "/vault.members.invitations",
+            post(vault_members_invitations),
+        )
+        .route("/vault.members.accept", post(vault_members_accept))
+        .route("/vault.members.decline", post(vault_members_decline))
+        .route(
+            "/vault.members.withdraw_invitation",
+            post(vault_members_withdraw_invitation),
+        )
         .route("/vault.guests.revoke", post(vault_guests_revoke))
         .route(
             "/vault.authority.handoff_alarms",
@@ -1387,6 +1397,94 @@ async fn vault_members_leave(
     let output = facade_output(
         super::host_doors::vault_members_leave(&server, &auth, facade_input(hooks.args.clone())?)
             .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_members_invitations(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.invitations")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.invitations", &value)?;
+    let hooks =
+        facade_hooks_pre(&server, &headers, &auth, "vault.members.invitations", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_invitations(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_members_accept(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.accept")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.accept", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.members.accept", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_accept(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_members_decline(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.decline")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.decline", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.members.decline", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_members_decline(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_members_withdraw_invitation(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.members.withdraw_invitation")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.members.withdraw_invitation", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.members.withdraw_invitation",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_members_withdraw_invitation(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
     )?;
     Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }

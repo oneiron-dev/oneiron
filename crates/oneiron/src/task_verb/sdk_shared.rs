@@ -220,7 +220,8 @@ pub fn read_shared_deletion(vault: &Vault) -> MemoryResult<Option<SharedVaultDel
     Ok(vault.shared_vault_deletion()?)
 }
 
-/// `vault.members.add`: an Admin's `add_member` power adds a member at once.
+/// `vault.members.add`: an Admin's `add_member` power invites a member, who
+/// joins on `vault.members.accept`.
 pub fn add_shared_member_as(
     vault: &Vault,
     admin: &AuthenticatedOwner,

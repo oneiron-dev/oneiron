@@ -6,6 +6,8 @@
 //! Erase keeps its own executor (`Memory::execute_completed_entity_erase`).
 mod membership;
 
+pub use membership::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
+
 use super::FederationGrantRole as Role;
 use super::pending_act::{LiveActHolder, check_vault, decode, encode, invalid, key};
 use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
@@ -107,6 +109,27 @@ pub enum SharedVaultChange {
     MemberAdded {
         member: String,
         role: Role,
+    },
+    /// An `add_member` holder invited `member`; nothing is granted yet.
+    MemberInvited {
+        invitation: String,
+        member: String,
+        role: Role,
+        expires_at: u64,
+    },
+    /// `member` accepted the invitation and holds `role` now.
+    InvitationAccepted {
+        invitation: String,
+        member: String,
+        role: Role,
+    },
+    InvitationDeclined {
+        invitation: String,
+        member: String,
+    },
+    InvitationWithdrawn {
+        invitation: String,
+        member: String,
     },
     MemberRoleChanged {
         member: String,
