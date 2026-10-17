@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 278 facade rows, 1066 declarations.
+Census: 278 facade rows, 1067 declarations.
 Inputs: 232 of 278 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 226 of 278 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
@@ -717,10 +717,13 @@ class PeerCount(TypedDict):
     peer: EntityId
     count: int
 SpendBasis = Literal["calibrated", "prior"]
+DollarBasis = Literal["unknown_price", "upper_bound_rate", "sum", "incomplete_or_overflow"]
 class ExpectedSpend(TypedDict):
     units: int
     samples: int
     basis: SpendBasis
+    expected_usd_micros: NotRequired[int | None]
+    dollar_basis: DollarBasis
 LeaseUnit = str
 SpendScopeId = str
 class SpendCapView(TypedDict):
