@@ -94,6 +94,13 @@ pub struct SlateToolManifest {
     pub spends: bool,
     pub sends_outward: bool,
     pub legacy_ask: bool,
+    /// The connector's declared `readOnlyHint` and `idempotentHint`. A call
+    /// to a read-only tool that destroys nothing, or to an idempotent one,
+    /// retries after an ambiguous reply instead of abandoning the intent.
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub idempotent: bool,
 }
 impl SlateToolManifest {
     /// Irreversible or header-bearing: `auto` already asks per call for these.
