@@ -83,6 +83,7 @@ declare namespace self {
   };
   const inbox: {
     concern: ((input: { card: string }) => Promise<unknown>) & {
+      move(input: { card: string; move: "ask_coach" }): Promise<unknown>;
       outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
     };
   };

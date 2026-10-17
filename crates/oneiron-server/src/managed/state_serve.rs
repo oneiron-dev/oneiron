@@ -497,6 +497,35 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
     (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
 }
 
+/// Seals the vault's held data key to the node's managed escrow recipient
+/// and the owner's break-glass recipient, each named by the supervisor.
+/// A wrap is labelled by its recipient's fingerprint, so a restart adds
+/// nothing, and a recipient of a new epoch gets a wrap of its own.
+fn escrow_vault_key(vault: &oneiron::Vault, managed: &ManagedArgs) -> anyhow::Result<()> {
+    let present = vault.vault_key_wraps()?;
+    for (role, path) in [
+        ("managed", &managed.escrow_recipient),
+        ("break-glass", &managed.break_glass_recipient),
+    ] {
+        let Some(path) = path else {
+            continue;
+        };
+        let bytes = std::fs::read(path)
+            .map_err(|error| anyhow::anyhow!("{role} escrow recipient unreadable: {error}"))?;
+        let recipient = oneiron::world_keys::HybridPublicKey::from_bytes(&bytes)
+            .map_err(|_| anyhow::anyhow!("{role} escrow recipient is not a hybrid public key"))?;
+        let fingerprint = blake3::hash(&bytes);
+        let label = format!("{role}.{}", &fingerprint.to_hex()[..16]);
+        let sealed = present.iter().any(|wrap| {
+            matches!(&wrap.kind, oneiron::world_keys::VaultKeyWrapKind::Escrow { label: held } if *held == label)
+        });
+        if !sealed {
+            vault.add_vault_key_escrow(&label, &recipient)?;
+        }
+    }
+    Ok(())
+}
+
 /// Boots the engine as a supervised child process.
 ///
 /// The startup order is the contract, not an implementation detail: the
@@ -560,6 +589,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
     issuer_key.fill(0);
     provision_host_authority(&vault, &issuer, &config.keystore, &managed.data_dir)?;
+    // The delivered DEK is the vault's data key (CROSS-ARCH-0022
+    // #ov-custody): its sealed artifacts derive from it, and each escrow
+    // recipient the node's operator installed keeps a copy of it.
+    vault.admit_vault_key(&credentials.dek)?;
+    escrow_vault_key(&vault, &managed)?;
     // Managed mode reads no environment, so the destination carries no
     // bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
@@ -691,6 +725,25 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     });
+    // Failure signals reach our collector under the same admission (OF-380).
+    // Managed mode reads no environment, so the send carries no bearer.
+    let failure_signals = crate::ai_host::failure_signals::spawn(
+        &sync_server,
+        crate::ai_host::failure_signals::FailureSignalHost::new(
+            &config.failure_signals,
+            true,
+            None,
+        ),
+        {
+            let state = Arc::clone(&state);
+            Arc::new(move || {
+                state
+                    .admit_http_mutation()
+                    .ok()
+                    .map(|admission| Box::new(admission) as Box<dyn Send>)
+            })
+        },
+    );
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -719,6 +772,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = connector_sends.await;
     builtin_host.abort();
     let _ = builtin_host.await;
+    if let Some(failure_signals) = failure_signals {
+        failure_signals.abort();
+        let _ = failure_signals.await;
+    }
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 

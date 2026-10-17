@@ -669,11 +669,36 @@ The notes stay out of recall, views and the Dreamer. `GET /v1/owner/feedback/inb
 &limit=<n>` returns them oldest first (100 unless `limit` says fewer, at most 1,000). Each
 carries its arrival number `seq`; a sweep keeps the last one it read and passes it as `after`.
 
+## Share failure signals
+
+A participating deployment sends its publisher two things, and nothing else: the content-free
+tier-1 failure counts, and the Coach's sealed code-fix records (an invented example verified in
+the vault, and a candidate fix's fixed or not-fixed result). No world text leaves, and a failure
+that touched a private world sends its counts only. A vault our cloud hosts participates by its
+terms; a self-hosted server participates only once you set `failure_signal_export = true`
+(`ONEIRON_FAILURE_SIGNAL_EXPORT`). Training on what leaves is a separate yes,
+`failure_signal_training` (`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
+
+```toml
+[failure_signals]
+endpoint = "https://…"     # ONEIRON_FAILURE_SIGNALS_ENDPOINT; HTTPS, or HTTP on loopback
+every_secs = 3600          # ONEIRON_FAILURE_SIGNALS_EVERY_SECS
+batch = 64                 # ONEIRON_FAILURE_SIGNALS_BATCH: code-fix records per send
+```
+
+The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
+`https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
+sends nothing, and sealed records wait in the vault. Each send is one JSON batch, `POST`ed as an
+ordinary outbound effect on `failure_signals/send` with its recorded receipt. While the deployment
+participates, the vault keeps a standing grant on that channel for the sender, so no send asks
+you; turning participation off revokes it. A record leaves the vault only once the publisher took
+it: a failed send keeps it for the next one.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
 owner, the read says "ask up?", or the clock cut an irreversible step), the
-server's decision ladder queues it for you (run-with-models.md, section 12).
+server's decision ladder queues it for you (run-with-models.md, section 13).
 The ask waits in the vault, through restarts, until you answer.
 
 `GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=true` lists them
