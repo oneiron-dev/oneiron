@@ -421,6 +421,8 @@ class Oneiron:
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs": ...
         @property
+        def connectors(self) -> "Oneiron._VaultConnectorsVerbs": ...
+        @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs": ...
         @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
@@ -603,6 +605,8 @@ class Oneiron:
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
+        def remove(self, spec: Facade.PackRemoveRequest) -> Facade.PackInstallReceipt:
+            """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
         @property
         def setup(self) -> "Oneiron._VaultPacksSetupVerbs": ...
     class _VaultPacksSetupVerbs:
@@ -614,6 +618,16 @@ class Oneiron:
             """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
         def verify(self, spec: Facade.PackSetupVerifyRequest) -> Facade.PackSetupReceipt:
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
+    class _VaultConnectorsVerbs:
+        @property
+        def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
+    class _VaultConnectorsSubscriptionsVerbs:
+        def put(self, spec: Facade.ChannelSubscriptionRequest) -> Facade.ChannelMessageSubscription:
+            """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
+        def list(self, spec: Facade.ChannelSubscriptionsRequest) -> Facade.ChannelSubscriptions:
+            """An agent's connector event subscriptions, standing and revoked, for the owner."""
+        def revoke(self, spec: Facade.ChannelSubscriptionRevokeRequest) -> Facade.ChannelSubscriptionRevoked:
+            """The owner stops one connector event subscription; the agent's key for the channel stays."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit: grants, revokes and confirms, for the owner."""

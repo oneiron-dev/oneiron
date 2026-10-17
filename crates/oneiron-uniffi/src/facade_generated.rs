@@ -296,6 +296,26 @@ export_facade! {
     let output = client.vault_packs_put(&input)?;
     crate::codec::lift_record("vault.packs.put", &output)
 };
+"vault.packs.remove" => fn vault_packs_remove(&self, input: PackRemoveRequest) -> PackInstallReceipt = |client| {
+    let input: oneiron::task_verb::sdk::PackRemoveRequest = crate::codec::lower_record("vault.packs.remove", input)?;
+    let output = client.vault_packs_remove(&input)?;
+    crate::codec::lift_record("vault.packs.remove", &output)
+};
+"vault.connectors.subscriptions.put" => fn vault_connectors_subscriptions_put(&self, input: ChannelSubscriptionRequest) -> ChannelMessageSubscription = |client| {
+    let input: oneiron::task_verb::sdk::ChannelSubscriptionRequest = crate::codec::lower_record("vault.connectors.subscriptions.put", input)?;
+    let output = client.vault_connectors_subscriptions_put(&input)?;
+    crate::codec::lift_record("vault.connectors.subscriptions.put", &output)
+};
+"vault.connectors.subscriptions.list" => fn vault_connectors_subscriptions_list(&self, input: ChannelSubscriptionsRequest) -> ChannelSubscriptions = |client| {
+    let input: oneiron::task_verb::sdk::ChannelSubscriptionsRequest = crate::codec::lower_record("vault.connectors.subscriptions.list", input)?;
+    let output = client.vault_connectors_subscriptions_list(&input)?;
+    crate::codec::lift_record("vault.connectors.subscriptions.list", &output)
+};
+"vault.connectors.subscriptions.revoke" => fn vault_connectors_subscriptions_revoke(&self, input: ChannelSubscriptionRevokeRequest) -> ChannelSubscriptionRevoked = |client| {
+    let input: oneiron::task_verb::sdk::ChannelSubscriptionRevokeRequest = crate::codec::lower_record("vault.connectors.subscriptions.revoke", input)?;
+    let output = client.vault_connectors_subscriptions_revoke(&input)?;
+    crate::codec::lift_record("vault.connectors.subscriptions.revoke", &output)
+};
 "vault.packs.setup.prepare" => fn vault_packs_setup_prepare(&self, input: PackSetupRequest) -> PackSetupReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackSetupRequest = crate::codec::lower_record("vault.packs.setup.prepare", input)?;
     let output = client.vault_packs_setup_prepare(&input)?;

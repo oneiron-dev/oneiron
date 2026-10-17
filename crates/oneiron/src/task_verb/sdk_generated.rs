@@ -306,6 +306,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.packs.remove",
+                crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.put",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.list",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionsRequest>(),
+            ),
+            (
+                "vault.connectors.subscriptions.revoke",
+                crate::code_run::vault_read::request_schema::<ChannelSubscriptionRevokeRequest>(),
+            ),
+            (
                 "vault.packs.setup.prepare",
                 crate::code_run::vault_read::request_schema::<PackSetupRequest>(),
             ),
@@ -2183,6 +2199,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.packs.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.packs.setup.prepare" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3945,6 +3989,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.packs.remove" => {
+            let _input: PackRemoveRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.put" => {
+            let _input: ChannelSubscriptionRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.list" => {
+            let _input: ChannelSubscriptionsRequest = decode(value.clone())?;
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            let _input: ChannelSubscriptionRevokeRequest = decode(value.clone())?;
+        }
         "vault.packs.setup.prepare" => {
             let _input: PackSetupRequest = decode(value.clone())?;
         }
@@ -4866,6 +4922,17 @@ pub fn invoke(
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
+        "vault.connectors.subscriptions.put" => {
+            encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.list" => {
+            encode(vault_connectors_subscriptions_list(memory, decode(value)?)?)
+        }
+        "vault.connectors.subscriptions.revoke" => encode(vault_connectors_subscriptions_revoke(
+            memory,
+            decode(value)?,
+        )?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
@@ -5884,6 +5951,30 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_packs_remove(
+    memory: &Memory<'_>,
+    input: PackRemoveRequest,
+) -> MemoryResult<crate::skill_hub::pack_catalog::PackInstallReceipt> {
+    crate::task_verb::sdk::remove_pack_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_put(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<crate::connector_key::ChannelMessageSubscription> {
+    crate::task_verb::sdk::subscribe_channel_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_list(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptions> {
+    crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)
+}
+pub fn vault_connectors_subscriptions_revoke(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChannelSubscriptionRevoked> {
+    crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)
 }
 pub fn vault_packs_setup_prepare(
     memory: &Memory<'_>,

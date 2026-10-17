@@ -755,6 +755,55 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_packs_remove(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.remove")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.remove", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_subscriptions_put(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.subscriptions.put")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.subscriptions.put", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_subscriptions_list(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.subscriptions.list")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.subscriptions.list", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_connectors_subscriptions_revoke(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.connectors.subscriptions.revoke")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.connectors.subscriptions.revoke", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_packs_setup_prepare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.packs.setup.prepare")?;
         let output = py

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 283 facade rows, 1076 declarations.
-Inputs: 237 of 283 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 231 of 283 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Census: 287 facade rows, 1086 declarations.
+Inputs: 241 of 287 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 235 of 287 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
 """
 
@@ -2002,6 +2002,33 @@ class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]
     receipt: NotRequired[PackInstallReceipt | None]
+class PackRemoveRequest(TypedDict):
+    pack: str
+class ChannelSubscriptionRequest(TypedDict):
+    agent: str
+    channel: str
+class ChannelMessageSubscription(TypedDict):
+    subscription: str
+    connector_key: str
+    connector: str
+    agent: str
+    existing: bool
+class ChannelSubscriptionsRequest(TypedDict):
+    agent: str
+class ChannelSubscriptionRow(TypedDict):
+    subscription: str
+    connector_key: str
+    connector: str
+    event_kind: NotRequired[str | None]
+    predicate: NotRequired[str | None]
+    active: bool
+class ChannelSubscriptions(TypedDict):
+    agent: str
+    subscriptions: list[ChannelSubscriptionRow]
+class ChannelSubscriptionRevokeRequest(TypedDict):
+    subscription: str
+class ChannelSubscriptionRevoked(TypedDict):
+    subscription: str
 class PackSetupRequest(TypedDict):
     pack: str
     source: NotRequired[str | None]
@@ -2698,14 +2725,25 @@ class LearningSettingSpecView(TypedDict):
     seed: float
     value: float
 LearningSettingMode = Literal["seed", "pin"]
-LearningSettingScope = Literal["vault", "project", "task_type"]
+LearningSettingScope = Literal["vault", "goal", "project", "task_type"]
+class LearningChoiceValueModel(TypedDict):
+    model: str
+class LearningChoiceValueWidth(TypedDict):
+    width: int
+class LearningChoiceValuePattern(TypedDict):
+    pattern: str
+class LearningChoiceValueBudget(TypedDict):
+    budget: int
+LearningChoiceValue = LearningChoiceValueModel | LearningChoiceValueWidth | LearningChoiceValuePattern | LearningChoiceValueBudget
 class LearningSettingRowView(TypedDict):
     key: str
     mode: LearningSettingMode
     scope: LearningSettingScope
+    goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
-    value: float
+    value: NotRequired[float | None]
+    choice: NotRequired[LearningChoiceValue | None]
     weight_runs: NotRequired[float | None]
     by: str
     at: int
@@ -2716,14 +2754,17 @@ class LearningSettingsView(TypedDict):
 class LearningSettingPut(TypedDict):
     key: str
     mode: LearningSettingMode
-    value: float
+    value: NotRequired[float | None]
+    choice: NotRequired[LearningChoiceValue | None]
     weight_runs: NotRequired[float | None]
     why: str
+    goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
 class LearningSettingClear(TypedDict):
     key: str
     mode: LearningSettingMode
+    goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
 LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
@@ -3376,6 +3417,9 @@ class ImagePin(TypedDict):
     edge: NotRequired[int | None]
     sent_width: int
     sent_height: int
+class HostRuleRef(TypedDict):
+    id: str
+    revision: int
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -3391,6 +3435,7 @@ class DecisionReceipt(TypedDict):
     images: NotRequired[list[ImagePin]]
     think_row: NotRequired[int | None]
     person_row: NotRequired[int | None]
+    rule: NotRequired[HostRuleRef | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
@@ -4571,6 +4616,8 @@ class AskAnswer(TypedDict):
     role: AskRole
     kind: HolderKind
     changed: bool
+    reason: NotRequired[str | None]
+    rule: NotRequired[HostRuleRef | None]
 class DecisionAsk(TypedDict):
     seq: int
     id: str

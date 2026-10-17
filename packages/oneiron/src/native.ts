@@ -88,6 +88,10 @@ vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultPacksRemove(input: unknown): unknown
+vaultConnectorsSubscriptionsPut(input: unknown): unknown
+vaultConnectorsSubscriptionsList(input: unknown): unknown
+vaultConnectorsSubscriptionsRevoke(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
 vaultPacksSetupAnswer(input: unknown): unknown

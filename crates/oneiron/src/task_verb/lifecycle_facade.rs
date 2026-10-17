@@ -168,19 +168,52 @@ impl Memory<'_> {
         };
         // The consult keeps its own reader: a non-consult task is refused
         // before the shared terminal writer ever sees it, and the evidence /
-        // abstention contract above is unchanged.
-        self.settle_task_terminal(
+        // abstention contract above is unchanged. A measured spend folds into
+        // the peer's consult calibration in the settling commit, only on a
+        // first landing (OF-393); a fold that fails lands nothing.
+        let (terminal, idempotent_replay) = self.with_verified_actor_write_txn(|wtxn| {
+            let body = consult_body_in_txn(self.vault(), &*wtxn, task_ref)?;
+            let peer = match body.assignee {
+                Some(TaskAssignee::Peer { actor_ref }) => Some(actor_ref),
+                _ => None,
+            };
+            if input.measured_spend.is_some() && peer.is_none() {
+                return Err(MemoryError::bad_request(
+                    "a measured consult spend lands only on a peer's consult",
+                ));
+            }
+            let (terminal, replay) = self.settle_task_terminal_in_txn(
+                wtxn,
+                task_ref,
+                body,
+                &landed,
+                input.completed_at,
+                Some(&input.kind),
+            )?;
+            if !replay && let (Some(peer), Some(spend)) = (peer, &input.measured_spend) {
+                crate::agent_dispatch::AgentDispatcher::new(self.vault())
+                    .fold_consult_spend_sample_in_txn(
+                        wtxn,
+                        peer,
+                        &spend.unit,
+                        spend.units,
+                        self.vault().store.clock.now_recorded_at(),
+                    )?;
+            }
+            Ok((terminal, replay))
+        })?;
+        self.signal_task_settled(task_ref, input.completed_at)?;
+        Ok(TaskResultReceipt {
             task_ref,
-            &landed,
-            input.completed_at,
-            consult_body_in_txn,
-            Some(&input.kind),
-        )
+            terminal,
+            idempotent_replay,
+        })
     }
 
     /// The one terminal-write path: assignee actor check, local compare-and-set
     /// against the existing terminal register, one body write, then the C9
-    /// peer-result signal. Both the consult and general result doors run it, so
+    /// peer-result signal. The general result door runs it; the consult door
+    /// runs its settling half and the same signal around its spend fold, so
     /// there is exactly one place a task settles.
     ///
     /// The compare-and-set asks about BOTH settled halves of the register: the

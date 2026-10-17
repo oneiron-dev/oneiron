@@ -31,7 +31,9 @@ use oneiron::{
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::receipt::LensActivationReceipt;
 use oneiron::task_verb::sdk::{
-    PackSetupAnswerRequest, PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
+    ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest, ChannelSubscriptionRevoked,
+    ChannelSubscriptions, ChannelSubscriptionsRequest, PackRemoveRequest, PackSetupAnswerRequest,
+    PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
 use crate::api::ai::{VoiceRefusal, bind_voice};
@@ -105,6 +107,75 @@ pub(crate) async fn vault_packs_put(
     })
     .await
     .map_err(|_| internal("vault.packs.put"))?
+}
+
+/// `vault.packs.remove`: the owner removes an installed pack, under the
+/// proof `/v1/owner/packs/remove` takes. Answers the removed receipt.
+pub(crate) async fn vault_packs_remove(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackRemoveRequest,
+) -> MemoryResult<oneiron::skill_hub::pack_catalog::PackInstallReceipt> {
+    let owner = owner_proof(auth, server, "vault.packs.remove")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::remove_pack_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.remove"))?
+}
+
+/// `vault.connectors.subscriptions.put`: the owner subscribes an agent to
+/// the messages a built-in channel's pack routes to it (OF-519), as
+/// `POST /v1/owner/connectors/subscriptions` does.
+pub(crate) async fn vault_connectors_subscriptions_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<oneiron::connector_key::ChannelMessageSubscription> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.put")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::subscribe_channel_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.put"))?
+}
+
+/// `vault.connectors.subscriptions.list`: an agent's connector event
+/// subscriptions, standing and revoked, for the owner.
+pub(crate) async fn vault_connectors_subscriptions_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<ChannelSubscriptions> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.list")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::channel_subscriptions_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.list"))?
+}
+
+/// `vault.connectors.subscriptions.revoke`: the owner stops a subscription;
+/// its key stays.
+pub(crate) async fn vault_connectors_subscriptions_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<ChannelSubscriptionRevoked> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.revoke")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::revoke_channel_subscription_as_owner(
+            server.vault(),
+            &owner,
+            &input,
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.revoke"))?
 }
 
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
@@ -603,6 +674,10 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
         "vault.packs.put"
+        | "vault.packs.remove"
+        | "vault.connectors.subscriptions.put"
+        | "vault.connectors.subscriptions.list"
+        | "vault.connectors.subscriptions.revoke"
         | "vault.authority.audit"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
