@@ -529,17 +529,15 @@ fn participate_in_txn(
 
 /// Whether `request` is a person's first entry into an ordinary room: no
 /// thread, no project room, and never yet in the room's ledger.
-fn first_entry_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    request: &JoinRequest,
-) -> Result<bool> {
+fn first_entry_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, request: &JoinRequest) -> Result<bool> {
     let JoinSubject::Person(person) = request.subject else {
         return Ok(false);
     };
     Ok(request.branch.is_none()
         && super::project_room_audience_in(vault, txn, request.room, &[])?.is_none()
-        && !vault.ever_members_in_txn(txn, request.room)?.contains(&person))
+        && !vault
+            .ever_members_in_txn(txn, request.room)?
+            .contains(&person))
 }
 
 /// Whom `caller` may file a join for: the subject itself, or its principal.

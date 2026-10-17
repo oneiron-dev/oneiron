@@ -4,7 +4,8 @@
 //! replays come from the reserved receipts' attempts, and each typed question
 //! lands in the judge's decision journal. Beside it: person-time on receipts,
 //! which `human_minutes` and the live slice read, and the goal-axis bandit's
-//! live arm attribution for one open proposal, judged per axis.
+//! live arm attribution for one open proposal, judged per axis by this judge
+//! or by one a caller lends it (the Coach's, on its wake pass's clock).
 //!
 //! A plain inner scorer: a decorator (the archive coverage floor) wraps it
 //! before registration when one is built.
@@ -554,6 +555,14 @@ impl GoalAxisBandits for ServeReplayJudge {
     fn for_proposal(&self, proposal: &EntityId) -> Result<Box<dyn GoalAxisBandit + '_>> {
         Ok(Box::new(ServeAxisBandit::for_proposal(self, proposal)?))
     }
+
+    fn for_proposal_judged<'b>(
+        &'b self,
+        proposal: &EntityId,
+        notes: &'b dyn HeldOutReplayNotes,
+    ) -> Result<Box<dyn GoalAxisBandit + 'b>> {
+        Ok(Box::new(ServeAxisBandit::judged_by(self, proposal, notes)?))
+    }
 }
 
 /// The judge this process registered.
@@ -574,10 +583,13 @@ struct Arm {
 /// takes the newest run its axis has not taken yet that loaded the arm's
 /// version. It met
 /// the pulled axis when it completed, no skill-defect judgment names it, and
-/// the judge decides it met that axis by the axis's measure and bound. Its
-/// person-time is what is recorded on its receipt, unknown when none is.
+/// the judge it asks decides it met that axis by the axis's measure and bound.
+/// Its person-time is what is recorded on its receipt, unknown when none is.
 pub struct ServeAxisBandit<'a> {
     judge: &'a ServeReplayJudge,
+    /// The judge each pull's axis question is asked of: the serve judge
+    /// itself, or one a caller lent on its own clock.
+    notes: &'a dyn HeldOutReplayNotes,
     /// The active skill the proposal revises, whose goal it is measured on.
     target: EntityId,
     incumbent: Arm,
@@ -607,6 +619,19 @@ impl<'a> ServeAxisBandit<'a> {
     /// A proposal that names no skill it revises, an unreadable goal or
     /// project goal record, or storage errors.
     pub fn for_proposal(judge: &'a ServeReplayJudge, proposal: &EntityId) -> Result<Self> {
+        Self::judged_by(judge, proposal, judge)
+    }
+
+    /// The slice of `proposal` on `judge`'s arms, each pull's axis question
+    /// asked of `notes`: the Coach lends its judge on the wake pass's clock,
+    /// so a pull it starts stops by the time the pass has left.
+    /// # Errors
+    /// As [`Self::for_proposal`].
+    pub fn judged_by(
+        judge: &'a ServeReplayJudge,
+        proposal: &EntityId,
+        notes: &'a dyn HeldOutReplayNotes,
+    ) -> Result<Self> {
         let vault = &judge.vault;
         let staged = vault
             .get_skill_record(proposal)?
@@ -643,6 +668,7 @@ impl<'a> ServeAxisBandit<'a> {
         }
         Ok(Self {
             judge,
+            notes,
             target,
             incumbent: Arm {
                 loaded: format!("{}@{}", current.skill_id, current.version),
@@ -661,7 +687,7 @@ impl<'a> ServeAxisBandit<'a> {
 
     /// Whether `receipt`'s run met `criterion` under `arm`'s instructions.
     fn met(&self, arm: &Arm, receipt: &str, criterion: &Value) -> Result<bool> {
-        (self.judge as &dyn HeldOutReplayNotes).live_axis_met(
+        self.notes.live_axis_met(
             self.target,
             &arm.record,
             receipt,

@@ -467,7 +467,7 @@ fn mcp_board_sections(
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &children,
     );
-    let (mut tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
+    let (mut tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, pins, served)?;
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
         receipt: None,
