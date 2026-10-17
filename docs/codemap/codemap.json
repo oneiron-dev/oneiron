@@ -65093,7 +65093,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 30
      }
     },
     {
@@ -71147,7 +71147,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 28
      }
     },
     {
