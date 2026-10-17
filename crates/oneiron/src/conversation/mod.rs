@@ -28,7 +28,10 @@ pub use turn_actions::{
     TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine,
     TurnActionReceipt, TurnActionRequest,
 };
-pub(crate) use visibility::{AudienceCache, conversation_summary_covers, room_for_record_in};
+pub(crate) use visibility::{
+    AudienceCache, conversation_summary_covers, private_threads_readable_raw_in,
+    room_for_record_in,
+};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};

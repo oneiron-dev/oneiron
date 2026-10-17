@@ -100,6 +100,11 @@ pub struct AppendRecord {
     pub session: Option<EntityId>,
     /// Explicit byline and actor class, validated in the write transaction.
     pub actor: WriteActor,
+    /// The audience a new thread's root names (FIX 2951): room PERSON and
+    /// AGENT_DEF members, the writer among them. Only the record that opens
+    /// a thread takes one; it is fixed from then on, and the thread's later
+    /// records read under it. `None` opens a thread read as its room is.
+    pub thread_audience: Option<std::collections::BTreeSet<EntityId>>,
 }
 
 /// Result of one append.

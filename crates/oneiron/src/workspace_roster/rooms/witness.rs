@@ -3,10 +3,15 @@ use super::participation::{
     addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
     record_addressed_in_txn, thread_root_in_txn,
 };
+use super::audience::{
+    ThreadBinding, thread_audience_allows_in, thread_audience_in, thread_binding,
+    thread_root_readable_in, validate_private_audience_in,
+};
 use super::*;
 use crate::conversation_dag::{ProvenRoomQuote, QuotedReply};
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessTurn};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::JoinSubject;
 
 /// A quote rides a turn in a project room (OF-460).
@@ -14,9 +19,21 @@ fn quote_outside_project() -> Error {
     Error::InvalidConfig("a room quote rides a turn in a project room".into())
 }
 
-/// Returns a thread reply's proven quote, which the witness mints into the
-/// TURN's first body and write (OF-460). A trunk turn's quote is kept in its
-/// room row instead, and its TURN is minted opaque: `None` comes back.
+/// What the room guard proved for one witness.
+pub(crate) struct RoomWitness {
+    /// A thread reply's proven quote, which the witness mints into the
+    /// TURN's first body and write (OF-460). A trunk turn's quote is kept in
+    /// its room row instead, and its TURN is minted opaque: `None`.
+    pub(crate) quoted: Option<QuotedReply>,
+    /// The thread binding a minted TURN is born with (FIX 2951): its root
+    /// and, on the root, the audience it names. A stored TURN already holds
+    /// the same one. `None` for a trunk turn, or outside a project room.
+    pub(crate) thread: Option<ThreadBinding>,
+}
+
+/// The guard every base witness passes in its write transaction: the
+/// room's claim, participation and quote rules, and a thread's audience
+/// (FIX 2951), checked before any message.
 #[expect(
     clippy::too_many_arguments,
     reason = "binds the witness transaction to its resolved actor, container and message ids"
@@ -30,17 +47,39 @@ pub(crate) fn admit_witness(
     turn_id: EntityId,
     input: &WitnessTurn,
     messages: &[EntityId],
-) -> Result<Option<QuotedReply>> {
+) -> Result<RoomWitness> {
     // OF-530 ruling A: a room-wide offer card a new message names, or a
     // reply answers, is engaged in this write: here in an ordinary room, and
     // in a project room once its writer is admitted below.
     let writer = crate::WriteActor::new(actor, class);
+    // A stored TURN keeps the thread it was born in (FIX 2951).
+    let stored = match live_entity_row_in_txn(&vault.store, txn, &turn_id)? {
+        LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_TURN,
+            body,
+        } => Some(thread_binding(&body)?),
+        _ => None,
+    };
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         if input.quote.is_some() {
             return Err(quote_outside_project());
         }
+        // An ordinary room's thread opens on its DAG, so a witness opens
+        // none; one adding to a private thread's TURN writes from its
+        // audience.
+        if input.thread_audience.is_some() {
+            return Err(invalid());
+        }
+        if let Some(Some(binding)) = &stored
+            && !thread_root_readable_in(vault, txn, binding.root, &[actor])?
+        {
+            return Err(invalid());
+        }
         super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
-        return Ok(None);
+        return Ok(RoomWitness {
+            quoted: None,
+            thread: None,
+        });
     }
     // OF-529: an agent needs no seat: it stands on a Ready receipt, checked
     // once its thread is known. A person stands on its seat or a live Ready
@@ -127,6 +166,52 @@ pub(crate) fn admit_witness(
     // The participation gate (OF-529): the thread this turn lands in is its
     // root, and a person's turn is its join there.
     let branch = thread_root_in_txn(vault, txn, turn_id, reply_to, thread_of)?;
+    // FIX 2951: the binding this turn is born with, or holds. A thread's
+    // root names its audience once, at birth: a retry keeps it, and a set it
+    // restates must be the same one. Every later turn names that root and
+    // writes there only from its audience, which the participation gate
+    // checks; the root's own later writes are checked here.
+    let thread = match branch {
+        None if input.thread_audience.is_some() => return Err(invalid()),
+        None => None,
+        Some(root) if root == turn_id => Some(match &stored {
+            Some(Some(binding)) => {
+                if binding.root != turn_id
+                    || input
+                        .thread_audience
+                        .as_ref()
+                        .is_some_and(|set| Some(set) != binding.audience.as_ref())
+                    || !thread_audience_allows_in(vault, txn, room, turn_id, actor)?
+                {
+                    return Err(invalid());
+                }
+                binding.clone()
+            }
+            // A stored root born without one never takes an audience later.
+            Some(None) if input.thread_audience.is_some() => return Err(invalid()),
+            Some(None) | None => {
+                if let Some(audience) = &input.thread_audience {
+                    validate_private_audience_in(vault, txn, room, actor, audience)?;
+                }
+                ThreadBinding {
+                    root: turn_id,
+                    audience: input.thread_audience.clone(),
+                }
+            }
+        }),
+        Some(root) => {
+            let binding = ThreadBinding {
+                root,
+                audience: None,
+            };
+            if input.thread_audience.is_some()
+                || matches!(&stored, Some(Some(held)) if *held != binding)
+            {
+                return Err(invalid());
+            }
+            Some(binding)
+        }
+    };
     let admitted = super::admit_participation_in_txn(
         vault,
         txn,
@@ -138,6 +223,20 @@ pub(crate) fn admit_witness(
         None,
         now,
     )?;
+    // A private thread names only its audience: a mention hands the named
+    // agent the turn.
+    let private = match &thread {
+        Some(binding) if binding.root == turn_id => binding.audience.clone(),
+        Some(binding) => thread_audience_in(vault, txn, room, binding.root)?,
+        None => None,
+    };
+    if let Some(audience) = &private
+        && mentions
+            .iter()
+            .any(|named| !EntityId::from_hex(named).is_ok_and(|id| audience.contains(&id)))
+    {
+        return Err(invalid());
+    }
     let standing = match speaker {
         Some(JoinSubject::Agent(agent)) => Some(
             agent_standing_in_txn(vault, txn, room, branch, agent, None)?.ok_or_else(invalid)?,
@@ -270,7 +369,7 @@ pub(crate) fn admit_witness(
         now,
     )?;
     super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
-    Ok(quoted)
+    Ok(RoomWitness { quoted, thread })
 }
 
 /// The record a quoted thread reply's DAG chain continues: the nearest turn
