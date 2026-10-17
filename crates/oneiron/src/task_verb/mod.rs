@@ -54,6 +54,10 @@ pub(crate) mod highway_runner;
 mod highway_status;
 mod highway_types;
 mod lifecycle_facade;
+mod lifecycle_receipt;
+pub(crate) use lifecycle_receipt::{
+    erase_in_txn as erase_lifecycle_receipts_in_txn, task_lifecycle_receipts,
+};
 mod linear_store;
 mod owner_index;
 mod policy_change_followup;
@@ -242,6 +246,7 @@ mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_mesh;
 mod sdk_record_erase;
+mod sdk_research;
 mod sdk_scratchpad;
 mod sdk_secret;
 mod sdk_secret_use;

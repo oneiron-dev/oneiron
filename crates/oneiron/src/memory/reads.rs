@@ -484,7 +484,7 @@ impl Memory<'_> {
                 MemoryError::bad_request_with(
                     format!("unknown receipt kind {name:?}"),
                     &[
-                        "Use one of: outbound, gate, identity_lifecycle, scoped_read, share, artifact_settle, proposal_outcome, commitment_lifecycle, extraction, served_form, hook, reference_refusal.",
+                        "Use one of: outbound, gate, identity_lifecycle, scoped_read, share, artifact_settle, proposal_outcome, commitment_lifecycle, extraction, served_form, hook, reference_refusal, task_lifecycle.",
                     ],
                 )
             })?;
