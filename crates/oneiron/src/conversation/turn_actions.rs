@@ -341,6 +341,7 @@ impl Memory<'_> {
             body,
             text: Vec::new(),
             session,
+            thread_audience: None,
             actor: crate::WriteActor::new(context.agent, EdgeActorClass::Agent),
         };
         let appended = if thread {
