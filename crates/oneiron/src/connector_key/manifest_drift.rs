@@ -160,6 +160,13 @@ fn resolve_schema(
             | "x-mcp-header" => {
                 result.insert(key.clone(), value.clone());
             }
+            // Value assertions and `format`: none carries a schema, so none
+            // can hide a ref; the call validator enforces each assertion.
+            "minimum" | "maximum" | "exclusiveMinimum" | "exclusiveMaximum" | "multipleOf"
+            | "minLength" | "maxLength" | "pattern" | "format" | "minItems" | "maxItems"
+            | "uniqueItems" | "minProperties" | "maxProperties" => {
+                result.insert(key.clone(), value.clone());
+            }
             // Unknown schema-bearing keywords (for example `if` or
             // `dependentSchemas`) can hide refs. Reject, never strip them.
             _ => return Err(invalid()),
@@ -279,6 +286,29 @@ fn merge_all_of(schemas: &[Value]) -> Result<Value> {
                 }
                 merged.insert(key, first.clone());
             }
+            // Every conjunct's bound holds, so the tightest one does.
+            "minimum" | "exclusiveMinimum" | "minLength" | "minItems" | "minProperties" => {
+                merged.insert(key, tightest(&values, true)?);
+            }
+            "maximum" | "exclusiveMaximum" | "maxLength" | "maxItems" | "maxProperties" => {
+                merged.insert(key, tightest(&values, false)?);
+            }
+            "uniqueItems" => {
+                let mut unique = false;
+                for value in values {
+                    unique |= value.as_bool().ok_or_else(invalid)?;
+                }
+                merged.insert(key, Value::Bool(unique));
+            }
+            // Two different steps, patterns or formats have no one keyword
+            // that means both, so the merge refuses rather than pick one.
+            "multipleOf" | "pattern" | "format" => {
+                let first = values[0];
+                if values.iter().any(|value| *value != first) {
+                    return Err(invalid());
+                }
+                merged.insert(key, first.clone());
+            }
             // This also guards future keyword additions from silently being
             // copied through a composition path with unknown semantics.
             _ => return Err(invalid()),
@@ -290,6 +320,26 @@ fn merge_all_of(schemas: &[Value]) -> Result<Value> {
         return Ok(Value::Bool(false));
     }
     Ok(Value::Object(merged))
+}
+
+/// The tightest of one bound keyword's values across conjuncts: the largest
+/// lower bound, or the smallest upper one.
+fn tightest(values: &[&Value], lower: bool) -> Result<Value> {
+    let mut best: Option<(&Value, f64)> = None;
+    for value in values {
+        let number = value.as_f64().ok_or_else(invalid)?;
+        let tighter = best.is_none_or(|(_, current)| {
+            if lower {
+                number > current
+            } else {
+                number < current
+            }
+        });
+        if tighter {
+            best = Some((value, number));
+        }
+    }
+    best.map(|(value, _)| value.clone()).ok_or_else(invalid)
 }
 
 /// JSON Schema's `integer` is a subset of `number`; model integer and
