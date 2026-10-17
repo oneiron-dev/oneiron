@@ -165,6 +165,7 @@ pub fn run_deck_transaction(
             slide_judgments: Vec::new(),
             paragraph_judgments: Vec::new(),
             paragraph_question: None,
+            slide_question: None,
         },
         inspection,
         validation: ValidationReport {

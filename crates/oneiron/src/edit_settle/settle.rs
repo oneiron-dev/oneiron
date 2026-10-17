@@ -672,10 +672,11 @@ impl Vault {
         carried: bool,
     ) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
-        crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
         if carried {
+            crate::edit_roundtrip::slides_review::verify_carried_judgments(proposal)?;
             crate::edit_roundtrip::paragraph_review::verify_carried_paragraph_judgments(proposal)?;
         } else {
+            crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
             crate::edit_roundtrip::paragraph_review::verify_paragraph_judgments(proposal)?;
         }
         // An EditProposal only exists on a passed corruption gate, but a select
@@ -833,7 +834,9 @@ fn proposal_made_by(
     }
 }
 
-fn pptx_review_identities(proposal: &EditProposal) -> Vec<super::records::PptxReviewIdentity> {
+pub(super) fn pptx_review_identities(
+    proposal: &EditProposal,
+) -> Vec<super::records::PptxReviewIdentity> {
     proposal
         .manifest
         .ops

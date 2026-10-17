@@ -231,7 +231,7 @@ impl Vault {
                     sheet_answers: Some(_),
                     ..
                 } | PendingBody::Edit {
-                    format: OfficeFormat::Docx,
+                    format: OfficeFormat::Docx | OfficeFormat::Pptx,
                     ..
                 }
             );
@@ -241,7 +241,9 @@ impl Vault {
             let Some(proposal) = row.edit_proposal()? else {
                 continue;
             };
-            if proposal.sheet_answers.is_none() && proposal.manifest.paragraph_judgments.is_empty()
+            if proposal.sheet_answers.is_none()
+                && proposal.manifest.paragraph_judgments.is_empty()
+                && proposal.manifest.slide_judgments.is_empty()
             {
                 continue;
             }

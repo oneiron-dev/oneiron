@@ -236,6 +236,20 @@ system install roots. The recommended local path is:
 
 Use `--dict-search-paths` or `ONEIRON_DICT_SEARCH_PATHS` for custom roots.
 
+## Slide Review Renders
+
+A held slide review whose slides change before Keep withdraws only the changed
+slides' answers. After the quiet interval the server asks those slides again
+over fresh renders of the head. It renders them itself with LibreOffice Impress
+headless (`soffice`, exported to PDF) and poppler's `pdftoppm` (one PNG per
+slide at 96 dpi). Both must be on the server's `PATH`. Each conversion uses its
+own temporary profile and a timeout. Install the review fonts beside them:
+Liberation for Arial, Times New Roman and Courier New; Carlito and Caladea for
+Calibri and Cambria.
+
+Without both tools the slides stay withdrawn, and their wake is held and tried
+again every five minutes. The rest of the review still lands on Keep.
+
 ## Service Templates
 
 Linux user service:

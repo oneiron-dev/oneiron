@@ -1,20 +1,20 @@
 //! ARCH-0075 §4: a held answer proposal whose units change under it.
 //!
-//! A held typed-answer proposal (answers over sheet rows, a folder column or
-//! paragraphs) is judged unit by unit against one revision. When somebody
-//! edits a unit while it waits, only that unit's answer is withdrawn: Keep
-//! carries the untouched answers onto the head and lands them, each still
-//! naming the revision it was judged against, and records every withdrawn
-//! answer with the revision it changed in. After a quiet interval (the
+//! A held typed-answer proposal (answers over sheet rows, a folder column,
+//! paragraphs or slides) is judged unit by unit against one revision. When
+//! somebody edits a unit while it waits, only that unit's answer is
+//! withdrawn: Keep carries the untouched answers onto the head and lands
+//! them, each still naming the revision it was judged against, and records
+//! every withdrawn answer with the revision it changed in. After a quiet interval (the
 //! `artifact_answer_quiet_seconds` policy row) the proposer is woken with
 //! the changed units: the ask's question is asked of them again as its
 //! principal, and the answers wait as a fresh proposal for Keep. A wake
 //! never settles anything; acceptance stays a Keep.
 //!
 //! The wake pass also looks at proposals still waiting: a unit that changes
-//! before anyone presses Keep is withdrawn and asked again the same way.
-//! Slide reviews and other held edits are not split; a moved base strands
-//! them whole.
+//! before anyone presses Keep is withdrawn and asked again the same way. A
+//! changed slide is asked again over the host's fresh render of it. Other
+//! held edits are not split; a moved base strands them whole.
 
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -30,15 +30,20 @@ use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::paragraph_review::carry_paragraph_judgments;
-use crate::edit_roundtrip::slides_review::SlideReviewLabels;
+use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
+use crate::edit_roundtrip::slides_review::{
+    SlideNow, SlideRenderer, SlideReviewError, SlideReviewImage, SlideReviewLabels,
+    SlideReviewRequest, SlideReviewUnit, carry_slide_judgments, deck_slides_now,
+};
 use crate::edit_roundtrip::{
-    ArtifactAsk, CellRef, CellValue, EditProposal, FolderAsk, FolderItem, OfficeFormat,
+    ArtifactAsk, CellRef, CellValue, EditOp, EditProposal, FolderAsk, FolderItem, OfficeFormat,
     ParagraphAsk, RangeRef, SheetAnswerBundle, SheetRowReads, SheetRowsAsk, UnitDecider,
 };
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, TypedDecision,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
+    TypedDecision,
 };
 use crate::provenance::made_by::MadeBy;
 use crate::receipt::ReceiptRecord;
@@ -61,7 +66,7 @@ const WAKE_DEADLINE: Duration = Duration::from_secs(300);
 #[serde(rename_all = "snake_case")]
 pub enum WithdrawReason {
     /// What the call read changed: the row's cells or the header row, the
-    /// paragraph's text, the file.
+    /// paragraph's text, the file, what the slide shows.
     UnitChanged,
     /// The unit is gone from the head.
     UnitMissing,
@@ -76,6 +81,13 @@ pub enum WithdrawnUnit {
     SheetRow { row: u32 },
     Paragraph { block: String },
     FolderItem { file: EntityId, row: u32 },
+    /// A slide by its managed identity, and the shape on it a shape unit
+    /// names by creation id.
+    Slide {
+        part: String,
+        sld_id: u32,
+        shape: Option<String>,
+    },
 }
 
 /// One answer withdrawn because its unit changed after it was judged.
@@ -112,6 +124,10 @@ pub enum ReaskShape {
     },
     Paragraphs {
         author: String,
+        labels: SlideReviewLabels,
+    },
+    Slides {
+        author: PptxAuthor,
         labels: SlideReviewLabels,
     },
 }
@@ -163,6 +179,9 @@ impl Vault {
             && !proposal.manifest.paragraph_judgments.is_empty()
         {
             return self.split_paragraphs(artifact, proposal, principal, made_by, carry);
+        }
+        if proposal.format == OfficeFormat::Pptx && !proposal.manifest.slide_judgments.is_empty() {
+            return self.split_slides(artifact, proposal, principal, made_by, carry);
         }
         Ok(None)
     }
@@ -456,6 +475,117 @@ impl Vault {
         }))
     }
 
+    /// The slide branch of [`Self::split_typed_answers`]: a slide whose
+    /// content, or any part it renders through, moved since the base is
+    /// withdrawn, as is a slide gone from the head; a comment written on a
+    /// slide since moves nothing. The untouched comments are written again
+    /// on their slides on the head.
+    fn split_slides(
+        &self,
+        artifact: &EntityId,
+        proposal: &EditProposal,
+        principal: EntityId,
+        made_by: Option<&MadeBy>,
+        carry: bool,
+    ) -> Result<Option<Split>> {
+        let (Some(base_version), Some(question)) = (
+            proposal.base_version,
+            proposal.manifest.slide_question.as_ref(),
+        ) else {
+            return Ok(None);
+        };
+        let head = self
+            .blob_artifact_head(artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        if head.version == base_version && head.content_hash == proposal.base_content_hash {
+            return Ok(None);
+        }
+        let limits = self.docedit_package_limits()?;
+        let base = self
+            .read_blob_artifact_version(artifact, base_version)?
+            .ok_or(Error::EntityNotFound)?;
+        let current = self
+            .read_blob_artifact_version(artifact, head.version)?
+            .ok_or(Error::EntityNotFound)?;
+        let was = deck_slides_now(&base, limits)?;
+        let now = deck_slides_now(&current, limits)?;
+        let rows = &proposal.manifest.slide_judgments;
+        let patches = proposal.manifest.ops.iter().filter_map(|op| match op {
+            EditOp::PptxComment { patch } => Some(patch),
+            _ => None,
+        });
+        let mut kept = Vec::new();
+        let mut withdrawn = Vec::new();
+        for (row, patch) in rows.iter().zip(patches) {
+            let shows = |slides: &[SlideNow]| {
+                slides
+                    .iter()
+                    .find(|slide| slide.is(&row.anchor))
+                    .map(|slide| slide.shows)
+            };
+            let reason = match (shows(&was), shows(&now)) {
+                (_, None) => Some(WithdrawReason::UnitMissing),
+                (Some(was), Some(now)) if was == now => None,
+                _ => Some(WithdrawReason::UnitChanged),
+            };
+            match reason {
+                None => kept.push((row.clone(), patch.clone())),
+                Some(reason) => withdrawn.push(WithdrawnAnswer {
+                    unit: WithdrawnUnit::Slide {
+                        part: row.anchor.slide_part.clone(),
+                        sld_id: row.anchor.sld_id,
+                        shape: row.target.shape_creation_id.clone(),
+                    },
+                    judged_on: *artifact,
+                    judged_version: row.judged_version,
+                    judged_hash: row.frontier,
+                    changed_version: Some(head.version),
+                    reason,
+                    decision: row.decision.clone(),
+                    woken_at: None,
+                }),
+            }
+        }
+        let author = proposal
+            .manifest
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                EditOp::PptxComment { patch } => Some(patch.author.clone()),
+                _ => None,
+            })
+            .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "a held slide review has no comment",
+            )))?;
+        let shape = ReaskShape::Slides {
+            author,
+            labels: rows[0].labels.clone(),
+        };
+        let carried = if carry && !kept.is_empty() {
+            let mut carried =
+                carry_slide_judgments(&current, head.version, kept, &proposal.run_ref, limits)?;
+            carried.manifest.slide_question = Some(question.clone());
+            Some(carried)
+        } else {
+            None
+        };
+        Ok(Some(Split {
+            carried,
+            withdrawal: UnitWithdrawal {
+                artifact: *artifact,
+                proposal_ref: proposal.run_ref.clone(),
+                question: question.clone(),
+                principal,
+                made_by: made_by.cloned(),
+                shape,
+                answers: withdrawn,
+                observed: self.observed_versions(artifact, &[])?,
+                reask_refs: Vec::new(),
+                retry_at: None,
+            },
+        }))
+    }
+
     /// The head versions of `artifact` and `files`, a missing head as 0.
     fn observed_versions(
         &self,
@@ -546,8 +676,8 @@ impl Vault {
                 manifest_ref: Some(manifest_hash),
                 manifest_ops: u64::try_from(held.manifest.ops.len()).unwrap_or(u64::MAX),
                 pptx_slide_creation_id_mints: Vec::new(),
-                pptx_review_identities: Vec::new(),
-                pptx_judgments: Vec::new(),
+                pptx_review_identities: super::settle::pptx_review_identities(held),
+                pptx_judgments: held.manifest.slide_judgments.clone(),
                 docx_judgments: held.manifest.paragraph_judgments.clone(),
                 anchors: Vec::new(),
                 reason: Some("units_withdrawn".to_owned()),
@@ -718,9 +848,11 @@ impl Vault {
 
     /// Wakes one withdrawal's proposer: the ask's question is asked again of
     /// each changed unit on the head, as `actor` through `decider`, and the
-    /// answers wait as a fresh proposal for Keep. The asked units are marked
-    /// woken whatever the answers, so each is asked again once; a wake that
-    /// fails is held, then tried again.
+    /// answers wait as a fresh proposal for Keep. A changed slide is asked
+    /// over `renderer`'s render of it on the head; with no renderer the wake
+    /// fails. The asked units are marked woken whatever the answers, so each
+    /// is asked again once; a wake that fails is held, then tried again.
+    #[expect(clippy::too_many_arguments)]
     pub fn wake_answer_proposer(
         &self,
         wake: &UnitWithdrawal,
@@ -728,10 +860,11 @@ impl Vault {
         decider: &dyn UnitDecider,
         dial: DecisionDial,
         policy: &DecisionBandPolicy,
+        renderer: Option<&dyn SlideRenderer>,
         now: u64,
     ) -> Result<Option<PendingProposalView>> {
         let key = settlement_key_parts(&wake.artifact, &wake.proposal_ref);
-        let woke = self.reask(wake, actor, decider, dial, policy, now);
+        let woke = self.reask(wake, actor, decider, dial, policy, renderer, now);
         let (proposed, reask_ref) = match woke {
             Ok(woke) => woke,
             Err(error) => {
@@ -766,6 +899,7 @@ impl Vault {
     }
 
     /// The ask a wake makes, and the ref its proposal waits under.
+    #[expect(clippy::too_many_arguments)]
     fn reask(
         &self,
         wake: &UnitWithdrawal,
@@ -773,6 +907,7 @@ impl Vault {
         decider: &dyn UnitDecider,
         dial: DecisionDial,
         policy: &DecisionBandPolicy,
+        renderer: Option<&dyn SlideRenderer>,
         now: u64,
     ) -> Result<(Option<PendingProposalView>, String)> {
         let head = self
@@ -803,7 +938,7 @@ impl Vault {
             deadline: Instant::now() + WAKE_DEADLINE,
             run_ref: &reask_ref,
         };
-        let run = match &wake.shape {
+        let proposal = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
                 answer_col,
@@ -843,6 +978,7 @@ impl Vault {
                         only_rows: Some(&rows),
                     },
                 )?
+                .proposal
             }
             ReaskShape::FolderItems {
                 sheet,
@@ -874,6 +1010,7 @@ impl Vault {
                         sight: crate::secret_custody::SecretSight::Masked,
                     },
                 )?
+                .proposal
             }
             ReaskShape::Paragraphs { author, labels } => {
                 let blocks: Vec<String> = wake
@@ -896,9 +1033,82 @@ impl Vault {
                         labels,
                     },
                 )?
+                .proposal
+            }
+            ReaskShape::Slides { author, labels } => {
+                let bytes = self
+                    .read_blob_artifact_version(&wake.artifact, head.version)?
+                    .ok_or(Error::EntityNotFound)?;
+                let slides = deck_slides_now(&bytes, self.docedit_package_limits()?)?;
+                // A slide gone from the head has nothing to ask of.
+                let targets: Vec<PptxCommentTarget> = wake
+                    .answers
+                    .iter()
+                    .filter_map(|answer| match &answer.unit {
+                        WithdrawnUnit::Slide { part, sld_id, shape } => slides
+                            .iter()
+                            .find(|slide| slide.part == *part && slide.sld_id == *sld_id)
+                            .map(|slide| PptxCommentTarget {
+                                slide: slide.slide,
+                                slide_creation_id: slide.creation_id,
+                                shape_creation_id: shape.clone(),
+                                shape_fingerprint: None,
+                            }),
+                        _ => None,
+                    })
+                    .collect();
+                if targets.is_empty() {
+                    return Ok((None, reask_ref));
+                }
+                let renderer = renderer.ok_or_else(|| {
+                    Error::InvalidConfig("no slide renderer on this host".to_owned())
+                })?;
+                let numbers: Vec<u64> = targets.iter().map(|target| target.slide).collect();
+                let images = renderer.render(&bytes, &numbers)?;
+                if images.len() != targets.len() {
+                    return Err(Error::InvalidConfig(
+                        "the slide renderer returned the wrong number of images".to_owned(),
+                    ));
+                }
+                let units: Vec<SlideReviewUnit> = targets
+                    .into_iter()
+                    .zip(images)
+                    .map(|(target, image)| SlideReviewUnit {
+                        target,
+                        image: SlideReviewImage::Rendered(image),
+                        renderer: renderer.name().to_owned(),
+                    })
+                    .collect();
+                let request = SlideReviewRequest {
+                    units: &units,
+                    question: &wake.question,
+                    principal: wake.principal,
+                    answered_by: actor.entity_ref(),
+                    author,
+                    dial,
+                    resident_dial: None,
+                    // The vault re-imposes its stored policy's limits.
+                    limits: SlideReviewLimits::default(),
+                    policy,
+                    reversibility: Reversibility::ReversibleRead,
+                    labels,
+                    decider,
+                    evidence: &[],
+                    budget: WAKE_UNIT_BUDGET,
+                    deadline: Instant::now() + WAKE_DEADLINE,
+                    run_ref: &reask_ref,
+                    // The comment writer stamps epoch milliseconds.
+                    at: now.saturating_mul(1000),
+                };
+                self.review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
+                    .map_err(|error| match error {
+                        SlideReviewError::Vault(error) => error,
+                        other => Error::InvalidConfig(other.to_string()),
+                    })?
+                    .proposal
             }
         };
-        let proposed = match &run.proposal {
+        let proposed = match &proposal {
             Some(proposal) => Some(self.retain_edit_proposal(
                 &wake.artifact,
                 proposal,
