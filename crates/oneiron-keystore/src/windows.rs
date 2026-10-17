@@ -47,7 +47,9 @@ impl WindowsDpapiKeystore {
             }
         }
         if !fs::metadata(&dir).map_err(io)?.is_dir() {
-            return Err(KeystoreError::Corrupt("the key directory is not a directory"));
+            return Err(KeystoreError::Corrupt(
+                "the key directory is not a directory",
+            ));
         }
         Ok(Self { dir })
     }

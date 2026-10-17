@@ -19,12 +19,15 @@
 //! resolves under the reader's own read through the `vault.refs.resolve`
 //! door; one the reader cannot read, or an invented one, is its plain label.
 //! The spans are display only: no grant, scope or authority path reads them.
+//! Each span carries its UTF-8 byte offsets and the same points in UTF-16
+//! code units, each link the narrowing of the read that admitted its record,
+//! and a turn is read a page of messages at a time.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::ScopedReadResult;
+use crate::claim::{ScopedReadReceipt, ScopedReadResult};
 use crate::memory::{
     EntityView, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
@@ -36,6 +39,10 @@ pub const RECORD_REF_SNIPPET_MAX_CHARS: usize = 280;
 /// The longest ref `vault.refs.resolve` reads, in bytes.
 pub const RECORD_REF_MAX_BYTES: usize = 256;
 
+/// The most messages one `vault.refs.links` page of a turn reads for links,
+/// and the page size when the caller names none.
+pub const RECORD_LINKS_TURN_PAGE_MAX: usize = 32;
+
 /// The body fields a label is read from; the first one holding text wins.
 const LABEL_FIELDS: [&str; 6] = [
     "title",
@@ -45,6 +52,10 @@ const LABEL_FIELDS: [&str; 6] = [
     "predicate",
     "subject",
 ];
+/// The body fields a CLAIM's label is read from: its value.
+const CLAIM_LABEL_FIELDS: [&str; 1] = ["val"];
+/// The body fields a PERSON's label is read from: the name it shows.
+const PERSON_LABEL_FIELDS: [&str; 2] = ["display_name", "name"];
 /// The body fields a snippet is read from; the first one holding text wins.
 const SNIPPET_FIELDS: [&str; 6] = [
     "content",
@@ -62,31 +73,114 @@ pub struct RecordRef {
     pub kind: String,
     /// 32-hex entity id.
     pub id: String,
-    /// The vault's short id, when one is assigned.
+    /// The vault's short id, when one is assigned. Never revision-pinned: a
+    /// ref names a record, not a revision of it.
     pub short_id: Option<String>,
-    /// A bounded, single-line display label: the record's own title or name
-    /// when its body has one, else its kind and short id. Display text only.
+    /// A bounded, single-line display label, from the record's own admitted
+    /// body by its kind: a CLAIM's value, a PERSON's display name, any other
+    /// record's title or name; else its kind and short id. Display text only,
+    /// never authority.
     pub label: String,
 }
 
 impl RecordRef {
-    /// The ref one admitted view names.
+    /// The ref one admitted view names, labelled from that view's body: no
+    /// other read.
     #[must_use]
     pub fn from_view(view: &EntityView) -> Self {
+        let short_id = view.short_ref.as_deref().map(bare_short_ref);
         let label = view
             .body
             .as_ref()
-            .and_then(|body| first_text(body, &LABEL_FIELDS))
-            .map(|text| bounded(&text, RECORD_REF_LABEL_MAX_CHARS))
-            .filter(|label| !label.is_empty())
-            .unwrap_or_else(|| fallback_label(view));
+            .and_then(|body| kind_label(&view.kind, body))
+            .unwrap_or_else(|| fallback_label(&view.kind, short_id.as_deref(), &view.id_hex));
         Self {
             kind: view.kind.clone(),
             id: view.id_hex.clone(),
-            short_id: view.short_ref.clone(),
+            short_id,
             label,
         }
     }
+
+    /// The ref a producer names from the entity type and id it already
+    /// holds, with no read: labelled with its kind and short id. It proves
+    /// nothing, neither that a reader may read the record nor who made it;
+    /// hover and open re-read it through [`Memory::resolve_record_ref`].
+    #[must_use]
+    pub fn from_id(
+        entity_type: u8,
+        id: &crate::entity_id::EntityId,
+        short_id: Option<&str>,
+    ) -> Self {
+        Self::from_body(entity_type, id, short_id, None)
+    }
+
+    /// [`Self::from_id`], labelled by its kind from `body`, the JSON body
+    /// the producer's own read already admitted, when it holds one.
+    #[must_use]
+    pub fn from_body(
+        entity_type: u8,
+        id: &crate::entity_id::EntityId,
+        short_id: Option<&str>,
+        body: Option<&serde_json::Value>,
+    ) -> Self {
+        let kind = crate::registry::entity_type_registry_entry(entity_type).map_or_else(
+            || format!("TYPE_{entity_type}"),
+            |entry| entry.kind.to_owned(),
+        );
+        let id = id.to_hex();
+        let short_id = short_id.map(bare_short_ref);
+        let label = body
+            .and_then(|body| kind_label(&kind, body))
+            .unwrap_or_else(|| fallback_label(&kind, short_id.as_deref(), &id));
+        Self {
+            kind,
+            id,
+            short_id,
+            label,
+        }
+    }
+
+    /// This ref labelled with `text`, bounded to one line, when it holds
+    /// any: a producer's own served view of the record (a claim's served
+    /// value). Display text only.
+    #[must_use]
+    pub fn with_label(mut self, text: &str) -> Self {
+        let label = bounded(text, RECORD_REF_LABEL_MAX_CHARS);
+        if !label.is_empty() {
+            self.label = label;
+        }
+        self
+    }
+}
+
+/// A short ref without the `@<revision>` a pinned read qualifies it with.
+fn bare_short_ref(short: &str) -> String {
+    short
+        .rsplit_once('@')
+        .map_or(short, |(bare, _)| bare)
+        .to_owned()
+}
+
+/// The label a record of `kind` shows from its own admitted body (OF-063
+/// per-kind labels): a CLAIM its value, a PERSON the name it shows, any
+/// other record its title or name. `None` when the body holds none. A CLAIM
+/// whose body reads as a secret shows no value: it falls back to its kind
+/// and short id, as every read door serves such a claim redacted.
+fn kind_label(kind: &str, body: &serde_json::Value) -> Option<String> {
+    let text = match kind {
+        "CLAIM" => {
+            if crate::batch::secret_scan::release_reads_whole_json(body) {
+                return None;
+            }
+            first_text(body, &CLAIM_LABEL_FIELDS)
+        }
+        "PERSON" => {
+            first_text(body, &PERSON_LABEL_FIELDS).or_else(|| first_text(body, &LABEL_FIELDS))
+        }
+        _ => first_text(body, &LABEL_FIELDS),
+    }?;
+    Some(bounded(&text, RECORD_REF_LABEL_MAX_CHARS)).filter(|label| !label.is_empty())
 }
 
 /// `vault.refs.resolve`'s one input.
@@ -193,24 +287,22 @@ fn unresolved_ref() -> MemoryError {
 }
 
 /// The first of `fields` in `body` that holds text. A claim's non-text
-/// `value` is shown as its compact JSON.
+/// value (`value`, or a CLAIM body's `val`) is shown as its compact JSON.
 fn first_text(body: &serde_json::Value, fields: &[&str]) -> Option<String> {
     let object = body.as_object()?;
     fields.iter().find_map(|field| match object.get(*field)? {
         serde_json::Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
         serde_json::Value::Null | serde_json::Value::String(_) => None,
-        other if *field == "value" => Some(other.to_string()),
+        other if matches!(*field, "value" | "val") => Some(other.to_string()),
         _ => None,
     })
 }
 
-/// The label a record with no title of its own shows: its kind and short id.
-fn fallback_label(view: &EntityView) -> String {
-    let name = view
-        .short_ref
-        .clone()
-        .unwrap_or_else(|| view.id_hex.chars().take(8).collect());
-    bounded(&format!("{} {name}", view.kind), RECORD_REF_LABEL_MAX_CHARS)
+/// The label a record with no title of its own shows: its kind and short id
+/// (the first 8 hex of its id when it has none).
+fn fallback_label(kind: &str, short_id: Option<&str>, id_hex: &str) -> String {
+    let name = short_id.map_or_else(|| id_hex.chars().take(8).collect(), str::to_owned);
+    bounded(&format!("{kind} {name}"), RECORD_REF_LABEL_MAX_CHARS)
 }
 
 /// `text` on one line, every run of whitespace or control characters one
@@ -247,7 +339,8 @@ fn bounded(text: &str, max_chars: usize) -> String {
 pub const RECORD_LINKS_TEXT_MAX_BYTES: usize = 256 * 1024;
 
 /// `vault.refs.links`'s one input: a text to read for links, or a TURN whose
-/// messages this reader may read. Exactly one is named.
+/// messages this reader may read, a page at a time. Exactly one of `text`
+/// and `turn_ref` is named; `after` and `limit` page a turn only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordLinksRequest {
@@ -258,10 +351,20 @@ pub struct RecordLinksRequest {
     /// reader may read is read for links.
     #[serde(default)]
     pub turn_ref: Option<String>,
+    /// The `next_after` the previous page of the turn gave: this page reads
+    /// the turn's messages after it. `None` reads the first page.
+    #[serde(default)]
+    pub after: Option<String>,
+    /// The most messages the page holds, 1 to
+    /// [`RECORD_LINKS_TURN_PAGE_MAX`] (also the default).
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
-/// One stretch of a text as one reader sees it. Offsets are UTF-8 byte
-/// offsets into the text, end exclusive; the spans cover it in order.
+/// One stretch of a text as one reader sees it. `start` and `end` are UTF-8
+/// byte offsets into the text, end exclusive; `start_utf16` and `end_utf16`
+/// are the same points in UTF-16 code units, as a JS UI indexes a string.
+/// The spans cover the text in order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProseSpan {
@@ -270,15 +373,21 @@ pub enum ProseSpan {
     Plain {
         start: usize,
         end: usize,
+        start_utf16: usize,
+        end_utf16: usize,
         text: String,
     },
-    /// A link the reader may follow: its label as written and the record it
-    /// names, as `vault.refs.resolve` reads it for this reader.
+    /// A link the reader may follow: its label as written, the record it
+    /// names as `vault.refs.resolve` reads it for this reader, and that
+    /// read's narrowing.
     Link {
         start: usize,
         end: usize,
+        start_utf16: usize,
+        end_utf16: usize,
         label: String,
         record: RecordRef,
+        narrowing: ScopedReadReceipt,
     },
 }
 
@@ -291,21 +400,38 @@ pub struct LinkedText {
     pub spans: Vec<ProseSpan>,
 }
 
-/// `vault.refs.links`'s answer: the given text, or the turn's readable
-/// visible messages in order.
+/// `vault.refs.links`'s answer: the given text, or one page of the turn's
+/// readable visible messages, in message order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordLinks {
     pub texts: Vec<LinkedText>,
+    /// For a turn: the narrowing of the reads that admitted the turn and each
+    /// message this page read, folded. `None` for a text, which reads no
+    /// record but its links; each link's own read rides its span.
+    pub narrowing: Option<ScopedReadReceipt>,
+    /// For a turn: the `after` that reads the next page, when the turn holds
+    /// messages past this one. It names the last message this page served.
+    pub next_after: Option<String>,
 }
 
+/// The record a link resolves to for one reader, with that read's
+/// narrowing; `None` when it does not resolve.
+type LinkedRecord = Option<(RecordRef, ScopedReadReceipt)>;
+
 impl Memory<'_> {
-    /// `vault.refs.links`: `text`, or each visible message of `turn_ref` this
-    /// reader may read, as typed spans whose links resolve under this
-    /// handle's own read. A turn this reader may not read, and one that does
-    /// not exist, give the same `NOT_FOUND`.
+    /// `vault.refs.links`: `text`, or a page of the visible messages of
+    /// `turn_ref` this reader may read, as typed spans whose links resolve
+    /// under this handle's own read. A turn this reader may not read, and one
+    /// that does not exist, give the same `NOT_FOUND`.
     pub fn record_links(&self, input: &RecordLinksRequest) -> MemoryResult<RecordLinks> {
         match (input.text.as_deref(), input.turn_ref.as_deref()) {
             (Some(text), None) => {
+                if input.after.is_some() || input.limit.is_some() {
+                    return Err(MemoryError::bad_request_with(
+                        "`after` and `limit` page a turn's messages; a text is read whole",
+                        &["Drop `after` and `limit`, or read a TURN by `turn_ref`."],
+                    ));
+                }
                 if text.len() > RECORD_LINKS_TEXT_MAX_BYTES {
                     return Err(MemoryError::bad_request_with(
                         format!(
@@ -319,9 +445,25 @@ impl Memory<'_> {
                         message_id: None,
                         spans: self.link_spans(text)?,
                     }],
+                    narrowing: None,
+                    next_after: None,
                 })
             }
-            (None, Some(turn_ref)) => self.turn_links(turn_ref.trim()),
+            (None, Some(turn_ref)) => {
+                let limit = match input.limit {
+                    Some(0) => {
+                        return Err(MemoryError::bad_request_with(
+                            "a page of a turn holds at least one message",
+                            &["Pass a `limit` of 1 or more, or none for the default page."],
+                        ));
+                    }
+                    Some(limit) => usize::try_from(limit)
+                        .unwrap_or(RECORD_LINKS_TURN_PAGE_MAX)
+                        .min(RECORD_LINKS_TURN_PAGE_MAX),
+                    None => RECORD_LINKS_TURN_PAGE_MAX,
+                };
+                self.turn_links(turn_ref.trim(), input.after.as_deref(), limit)
+            }
             _ => Err(MemoryError::bad_request_with(
                 "name exactly one of `text` and `turn_ref`",
                 &["Pass the text to read, or the TURN whose messages to read."],
@@ -330,38 +472,48 @@ impl Memory<'_> {
     }
 
     /// `text` as spans for this reader: each `oneiron://` link it may follow
-    /// a [`ProseSpan::Link`], everything else plain.
+    /// a [`ProseSpan::Link`] with its read's narrowing, everything else
+    /// plain. A ref the text names twice is read once.
     pub fn link_spans(&self, text: &str) -> MemoryResult<Vec<ProseSpan>> {
         let links = crate::gate::record_references::parse_record_links(text);
-        let mut records: BTreeMap<&str, Option<RecordRef>> = BTreeMap::new();
+        let mut records: BTreeMap<&str, LinkedRecord> = BTreeMap::new();
         let mut spans = Vec::with_capacity(links.len() * 2 + 1);
+        let mut utf16 = Utf16Offsets::new(text);
         let mut at = 0;
         for link in &links {
             if link.start > at {
                 spans.push(ProseSpan::Plain {
                     start: at,
                     end: link.start,
+                    start_utf16: utf16.at(at),
+                    end_utf16: utf16.at(link.start),
                     text: text[at..link.start].to_owned(),
                 });
             }
-            let record = match records.get(link.reference.as_str()) {
-                Some(record) => record.clone(),
+            let resolved = match records.get(link.reference.as_str()) {
+                Some(resolved) => resolved.clone(),
                 None => {
-                    let record = self.linked_record(&link.reference)?;
-                    records.insert(&link.reference, record.clone());
-                    record
+                    let resolved = self.linked_record(&link.reference)?;
+                    records.insert(&link.reference, resolved.clone());
+                    resolved
                 }
             };
-            spans.push(match record {
-                Some(record) => ProseSpan::Link {
+            let (start_utf16, end_utf16) = (utf16.at(link.start), utf16.at(link.end));
+            spans.push(match resolved {
+                Some((record, narrowing)) => ProseSpan::Link {
                     start: link.start,
                     end: link.end,
+                    start_utf16,
+                    end_utf16,
                     label: link.label.clone(),
                     record,
+                    narrowing,
                 },
                 None => ProseSpan::Plain {
                     start: link.start,
                     end: link.end,
+                    start_utf16,
+                    end_utf16,
                     text: link.label.clone(),
                 },
             });
@@ -371,20 +523,22 @@ impl Memory<'_> {
             spans.push(ProseSpan::Plain {
                 start: at,
                 end: text.len(),
+                start_utf16: utf16.at(at),
+                end_utf16: utf16.at(text.len()),
                 text: text[at..].to_owned(),
             });
         }
         Ok(spans)
     }
 
-    /// The record one link names, through the `vault.refs.resolve` door;
-    /// `None` when it does not resolve for this reader.
-    fn linked_record(&self, reference: &str) -> MemoryResult<Option<RecordRef>> {
+    /// The record one link names, through the `vault.refs.resolve` door, with
+    /// that read's narrowing; `None` when it does not resolve for this reader.
+    fn linked_record(&self, reference: &str) -> MemoryResult<LinkedRecord> {
         let request = ResolveRecordRefRequest {
             reference: reference.to_owned(),
         };
         match self.resolve_record_ref(&request) {
-            Ok(read) => Ok(Some(read.value.record)),
+            Ok(read) => Ok(Some((read.value.record, read.receipt))),
             Err(error)
                 if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
             {
@@ -394,31 +548,78 @@ impl Memory<'_> {
         }
     }
 
-    /// Each visible message of the TURN `turn_ref` this reader may read, in
-    /// message order, as linked text.
-    fn turn_links(&self, turn_ref: &str) -> MemoryResult<RecordLinks> {
-        let turn = match self.get_entity(turn_ref) {
-            Ok(read) => read.value,
+    /// One page of the visible messages of the TURN `turn_ref` this reader
+    /// may read: at most `limit`, after the message `after` names. Pages go
+    /// in the order the vault minted the turn's messages, which is the order
+    /// they were said in; a page shows its own by their `order`. Each member
+    /// is read through this reader's lane until the page is full, so a page
+    /// resolves the links of at most `limit` messages.
+    fn turn_links(
+        &self,
+        turn_ref: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> MemoryResult<RecordLinks> {
+        let after = after
+            .map(|cursor| {
+                crate::entity_id::EntityId::from_hex(cursor.trim()).map_err(|_| {
+                    MemoryError::bad_request_with(
+                        "`after` is not a cursor this read gave",
+                        &["Pass the `next_after` of the previous page as it was returned."],
+                    )
+                })
+            })
+            .transpose()?;
+        let (turn, mut narrowing) = match self.get_entity(turn_ref) {
+            Ok(read) => (read.value, Some(read.receipt)),
             Err(error)
                 if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
             {
-                None
+                (None, None)
             }
             Err(error) => return Err(error),
         };
         let turn = turn
             .map(|view| crate::entity_id::EntityId::from_hex(&view.id_hex))
             .transpose()?;
-        let Some(members) = turn
+        let Some(mut members) = turn
             .map(|turn| self.turn_message_ids(&turn))
             .transpose()?
             .flatten()
         else {
             return Err(MemoryError::not_found("turn not found"));
         };
+        members.sort_unstable();
+        members.dedup();
+        if let Some(after) = after {
+            members.retain(|id| *id > after);
+        }
         let mut messages = Vec::new();
-        for id in members {
-            let Some(view) = self.get_entity(&id.to_hex())?.value else {
+        let mut last_served = None;
+        let mut read_to = 0;
+        for (index, id) in members.iter().enumerate() {
+            if messages.len() == limit {
+                break;
+            }
+            read_to = index + 1;
+            let read = match self.get_entity(&id.to_hex()) {
+                Ok(read) => read,
+                Err(error)
+                    if error.code == MEMORY_CODE_NOT_FOUND
+                        || error.code == MEMORY_CODE_BAD_REQUEST =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            narrowing = Some(match narrowing.take() {
+                Some(mut folded) => {
+                    folded.restrict_with(&read.receipt);
+                    folded
+                }
+                None => read.receipt,
+            });
+            let Some(view) = read.value else {
                 continue;
             };
             let Some(body) = view.body.as_ref() else {
@@ -438,7 +639,11 @@ impl Memory<'_> {
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             messages.push((order, view.id_hex.clone(), text.to_owned()));
+            last_served = Some(*id);
         }
+        let next_after = last_served
+            .filter(|_| messages.len() == limit && read_to < members.len())
+            .map(|id| id.to_hex());
         messages.sort();
         let texts = messages
             .into_iter()
@@ -449,12 +654,17 @@ impl Memory<'_> {
                 })
             })
             .collect::<MemoryResult<Vec<_>>>()?;
-        Ok(RecordLinks { texts })
+        Ok(RecordLinks {
+            texts,
+            narrowing,
+            next_after,
+        })
     }
 
     /// The MESSAGE rows `turn` holds, when it is a TURN; `None` otherwise.
-    /// The caller reads each through its own lane. Every edge is walked, so
-    /// rows this reader may not read never change what it gets.
+    /// Only their ids: the caller reads each through its own lane. Every
+    /// edge is walked, so rows this reader may not read never change what it
+    /// gets.
     fn turn_message_ids(
         &self,
         turn: &crate::entity_id::EntityId,
@@ -491,5 +701,34 @@ impl Memory<'_> {
             }
         }
         Ok(Some(members))
+    }
+}
+
+/// UTF-16 code-unit offsets of byte offsets into one text, read forward:
+/// each call counts only the stretch since the last.
+struct Utf16Offsets<'t> {
+    text: &'t str,
+    byte: usize,
+    units: usize,
+}
+
+impl<'t> Utf16Offsets<'t> {
+    const fn new(text: &'t str) -> Self {
+        Self {
+            text,
+            byte: 0,
+            units: 0,
+        }
+    }
+
+    /// The UTF-16 offset of the byte offset `byte`, a character boundary.
+    fn at(&mut self, byte: usize) -> usize {
+        if byte < self.byte {
+            self.byte = 0;
+            self.units = 0;
+        }
+        self.units += self.text[self.byte..byte].encode_utf16().count();
+        self.byte = byte;
+        self.units
     }
 }

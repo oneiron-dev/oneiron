@@ -636,11 +636,11 @@ fn refusal(target: &PptxCommentTarget, reason: SlideUnitRefusalReason) -> SlideU
             reason,
             SlideUnitRefusalReason::EvidenceBudget | SlideUnitRefusalReason::UnreadableImage
         ))
-        .then(|| PptxCommentTarget {
-            shape_creation_id: None,
-            shape_fingerprint: None,
-            ..target.clone()
-        });
+    .then(|| PptxCommentTarget {
+        shape_creation_id: None,
+        shape_fingerprint: None,
+        ..target.clone()
+    });
     SlideUnitRefusal {
         target: target.clone(),
         reason,
