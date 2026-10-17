@@ -352,7 +352,9 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             };
             let next = tokio::task::spawn_blocking(move || {
                 pump_due(&server, oneiron_vault_contract::now_ts())?;
-                server.vault().next_question_refresh_at()
+                let question = server.vault().next_question_refresh_at()?;
+                let wake = server.vault().next_answer_wake_at()?;
+                Ok::<_, oneiron::Error>(question.into_iter().chain(wake).min())
             })
             .await;
             let next = match next {
@@ -420,7 +422,7 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             tracing::warn!(kind = ?error.kind(), "unheld decision asks were not climbed");
         }
     }
-    Ok(())
+    crate::decision_artifact::pump_answer_wakes(server, now)
 }
 
 /// Whether this server is the vault's home: the elected home names this

@@ -181,6 +181,7 @@ impl Vault {
             EditOutcome::Proposed(mut proposal) => {
                 proposal.base_version = Some(version);
                 proposal.manifest.paragraph_judgments = judgments;
+                proposal.manifest.paragraph_question = Some(ask.question.clone());
                 *proposal
             }
             EditOutcome::Rejected { .. } => {
@@ -200,9 +201,73 @@ impl Vault {
     }
 }
 
+/// The untouched answers of a held paragraph ask, carried onto a newer head
+/// of the document (ARCH-0075 §4): each comment again quotes its paragraph,
+/// whose text is the text its call read, in one tracked revision on a copy
+/// of `head`. Each answer keeps the revision it was judged against.
+pub(crate) fn carry_paragraph_judgments(
+    head: &[u8],
+    head_version: u64,
+    carried: Vec<ParagraphJudgment>,
+    run_ref: &str,
+    limits: oneiron_docedit::ArchiveLimits,
+) -> Result<EditProposal> {
+    let blocks = read_docx_blocks(head, limits).map_err(|_| invalid("paragraph carry document"))?;
+    let author = carried
+        .first()
+        .map(|row| row.author.clone())
+        .ok_or_else(|| invalid("no paragraph answer to carry"))?;
+    let ops = carried
+        .iter()
+        .map(|row| {
+            let block = blocks
+                .iter()
+                .find(|block| block.id == row.block)
+                .filter(|block| *blake3::hash(block.text.as_bytes()).as_bytes() == row.text_hash)
+                .ok_or_else(|| invalid("a carried paragraph changed"))?;
+            Ok(json!({
+                "op": "comment_create",
+                "target": row.block,
+                "expect": block.text,
+                "occurrence": 1,
+                "body": row.comment,
+                "author": row.author,
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let transaction = json!({ "ops": ops, "revision": { "author": author } }).to_string();
+    let mut proposal =
+        match super::docx::run_docx_revision_with_limits(head, &transaction, run_ref, limits)? {
+            EditOutcome::Proposed(proposal) => *proposal,
+            EditOutcome::Rejected { .. } => {
+                return Err(Error::Artifact(
+                    crate::error::ArtifactError::EditRoundtripFailed(
+                        "the carried comments failed validation",
+                    ),
+                ));
+            }
+        };
+    proposal.base_version = Some(head_version);
+    proposal.manifest.paragraph_judgments = carried;
+    verify_carried_paragraph_judgments(&proposal)?;
+    Ok(proposal)
+}
+
 /// Validate the receipts against the actual comment ops at the settle door.
 /// A public manifest is not a source of authority to invent judgment receipts.
 pub(crate) fn verify_paragraph_judgments(proposal: &EditProposal) -> Result<()> {
+    verify_rows(proposal, false)
+}
+
+/// [`verify_paragraph_judgments`] for answers the engine carried onto a
+/// newer head at Keep: each still names the revision it was judged against,
+/// which may be older than the proposal's base, and its comment still quotes
+/// exactly the text its call read.
+pub(crate) fn verify_carried_paragraph_judgments(proposal: &EditProposal) -> Result<()> {
+    verify_rows(proposal, true)
+}
+
+fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> {
     let rows = &proposal.manifest.paragraph_judgments;
     if rows.is_empty() {
         return Ok(());
@@ -264,8 +329,9 @@ pub(crate) fn verify_paragraph_judgments(proposal: &EditProposal) -> Result<()> 
                 .evidence_versions
                 .iter()
                 .any(|version| version.body_hash != row.frontier)
-            || row.frontier != proposal.base_content_hash
-            || row.judged_version != proposal.base_version
+            || (!carried
+                && (row.frontier != proposal.base_content_hash
+                    || row.judged_version != proposal.base_version))
         {
             return Err(mismatch());
         }

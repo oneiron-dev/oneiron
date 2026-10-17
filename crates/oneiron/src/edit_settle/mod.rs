@@ -40,6 +40,15 @@
 //! `proposed`, not `selected`. No version is appended and no anchor moves.
 //! The old ref is consumed once; explicit reconciliation uses a new ref.
 //!
+//! A held typed-answer proposal (sheet rows, a folder column, paragraphs) is
+//! split instead, unit by unit (ARCH-0075 §4, `carry`): Keep lands the
+//! answers whose units are untouched on the head and withdraws the rest,
+//! each recorded with the revision it was judged against. After the
+//! `artifact_answer_quiet_seconds` policy row's quiet interval the
+//! proposer is woken: the changed units are asked again as a fresh
+//! proposal ([`Vault::due_answer_wakes`](crate::Vault::due_answer_wakes),
+//! [`Vault::wake_answer_proposer`](crate::Vault::wake_answer_proposer)).
+//!
 //! # The proposal landing and undo (ARCH-0078, ARCH-0077)
 //!
 //! A proposal can wait beside its artifact under its ref until a person keeps
@@ -88,6 +97,7 @@
 //! The owner-driven select/discard ([`SettleConsent::OwnerConsent`]) remains
 //! the P1 path.
 
+mod carry;
 mod codec;
 mod keys;
 mod organ_wait;
@@ -101,6 +111,7 @@ pub use organ_wait::{ORGAN_WAIT_CALL_MAX_BYTES, OrganWait, OrganWaitView};
 pub use pending::{
     NATIVE_OUTPUT_REPORT_MAX_BYTES, NativeOutput, PendingProposalKind, PendingProposalView,
 };
+pub use carry::{ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit};
 pub use stranded::StrandedEditProposal;
 pub use undo::{KeepUndo, KeepUndoOutcome};
 

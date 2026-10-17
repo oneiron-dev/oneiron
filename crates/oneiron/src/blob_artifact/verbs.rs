@@ -697,6 +697,7 @@ impl Memory<'_> {
                     answer_col: *answer_column,
                     header_row: *header_row,
                     max_count_override: *max_count,
+                    only_rows: None,
                 },
             )?,
             ArtifactAskUnits::Paragraphs {

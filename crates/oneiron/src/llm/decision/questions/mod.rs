@@ -26,6 +26,7 @@ pub use health_ask::{
 };
 pub use outcomes::{calibration_pairs, person_changed_pairs, project_bound_outcomes};
 pub(crate) use recipe::run_graph_question_with_proposals;
+pub(crate) use refresh::principal_actor;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
 pub use refresh::{

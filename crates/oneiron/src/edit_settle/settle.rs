@@ -74,7 +74,35 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        self.ensure_selectable(artifact_id, proposal, actor)?;
+        self.settle_select_carried(
+            artifact_id,
+            proposal,
+            made_by,
+            consent,
+            actor,
+            occurred,
+            learned_at,
+            None,
+        )
+    }
+
+    /// [`Vault::settle_select_edit_proposal_made_by`] for a held answer
+    /// proposal the engine carried onto the head at Keep (`carry` is
+    /// `Some`): its answers may name an older revision than its base, and
+    /// the answers it withdrew, if any, are recorded with the select.
+    #[expect(clippy::too_many_arguments)]
+    pub(super) fn settle_select_carried(
+        &self,
+        artifact_id: &EntityId,
+        proposal: &EditProposal,
+        made_by: Option<&MadeBy>,
+        consent: &SettleConsent,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        carry: Option<Option<&super::carry::UnitWithdrawal>>,
+    ) -> Result<SettleSelectOutcome> {
+        self.ensure_selectable(artifact_id, proposal, actor, carry.is_some())?;
         self.authorize_settle(consent, actor)?;
         // A deck proposal answering a thread settles under that thread's brief
         // when it rides a standing grant; the owner's own consent needs none.
@@ -384,10 +412,14 @@ impl Vault {
                     deck: checked_deck.map(|checked| Box::new(checked.evidence)),
                 };
                 RECORD.put(&self.store, wtxn, &key, &record)?;
+                if let Some(Some(withdrawal)) = carry {
+                    self.record_unit_withdrawal_in_txn(wtxn, &key, withdrawal)?;
+                }
                 Ok((version, reanchor, record, None))
             })?;
 
         let receipt = settlement_receipt_record(*artifact_id, &record)?;
+        let receipt = self.with_withdrawn_units(*artifact_id, &record, receipt)?;
         Ok(SettleSelectOutcome {
             stranded_proposal,
             version,
@@ -637,10 +669,15 @@ impl Vault {
         artifact_id: &EntityId,
         proposal: &EditProposal,
         actor: WriteActor,
+        carried: bool,
     ) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
         crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
-        crate::edit_roundtrip::paragraph_review::verify_paragraph_judgments(proposal)?;
+        if carried {
+            crate::edit_roundtrip::paragraph_review::verify_carried_paragraph_judgments(proposal)?;
+        } else {
+            crate::edit_roundtrip::paragraph_review::verify_paragraph_judgments(proposal)?;
+        }
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
         if !proposal.validation.ok {

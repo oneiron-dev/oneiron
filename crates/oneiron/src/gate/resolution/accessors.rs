@@ -283,6 +283,25 @@ impl PolicyManifestResolution {
         )
     }
 
+    /// How long the units that changed under a held artifact answer stay
+    /// quiet before its proposer is woken to re-evaluate them (ARCH-0075
+    /// §4): the vault's row, else the shipped one. A fail-closed manifest
+    /// reads the shipped row, since a wake settles nothing.
+    pub(crate) fn artifact_answer_quiet_seconds(&self) -> u64 {
+        let fallback = crate::gate::policy_values::shipped_default_artifact_answer_quiet_seconds();
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::ArtifactAnswerQuietSeconds,
+                &PolicyEvaluationScope::default(),
+                PolicyValue::ArtifactAnswerQuietSeconds(fallback),
+            )
+            .value
+        {
+            PolicyValue::ArtifactAnswerQuietSeconds(seconds) => seconds,
+            _ => unreachable!("typed policy key"),
+        }
+    }
+
     /// How long an offer a provider refused for a quota or a limit rests
     /// when the refusal names no reset, the longest rest any refusal may ask,
     /// and the longest a call waits for a cooling chain: the vault's rows,
