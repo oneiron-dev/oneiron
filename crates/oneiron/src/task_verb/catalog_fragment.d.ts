@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 369 code-mode rows (349 host rows, 20 run rows), 1296 declarations.
+// Census: 369 code-mode rows (349 host rows, 20 run rows), 1299 declarations.
 // Replies: 316 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -1157,11 +1157,14 @@ declare namespace Sdk {
   type Digest = string;
   type StepAssetKind = "factual" | "illustration";
   type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
-  type ChartKind = "bar" | "line" | "pie";
-  type ChartSeries = { name: string; values: (number | null)[] };
+  type HeldMedia = { part: string; hash: Digest };
+  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar";
+  type ChartSeries = { name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null };
+  type ChartSource = "workbook" | "literal" | "cached";
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };
-  type NodePayload = { picture: { image: AssetRef } } | { table: { header: string[]; rows: (string | null)[][] } } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[] } } | { connector: { preset: ConnectorPreset; start?: ConnectorEnd | null; end?: ConnectorEnd | null } };
+  type SmartArtNode = { text: string; level: number };
+  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: { header: string[]; rows: (string | null)[][] } } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: number } };
   type Run = { text: string; bold?: boolean | null; italic?: boolean | null; size?: number | null; latin?: string | null };
   type Paragraph = { id: NodeId; level: number; runs: Run[] };
   type TextBody = { paragraphs: Paragraph[] };

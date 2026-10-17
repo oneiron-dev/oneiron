@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 308 facade rows, 1100 generated types.
+// UniFFI census: 308 facade rows, 1103 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 276.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -16355,6 +16355,15 @@ pub struct AssetRef {
     pub description: String,
 }
 
+/// `oneiron_docedit::live::pptx::HeldMedia`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HeldMedia {
+    #[serde(rename = "part")]
+    pub part: String,
+    #[serde(rename = "hash")]
+    pub hash: String,
+}
+
 /// `oneiron_docedit::live::pptx::ChartKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChartKind {
@@ -16364,6 +16373,14 @@ pub enum ChartKind {
     Line,
     #[serde(rename = "pie")]
     Pie,
+    #[serde(rename = "area")]
+    Area,
+    #[serde(rename = "scatter")]
+    Scatter,
+    #[serde(rename = "doughnut")]
+    Doughnut,
+    #[serde(rename = "radar")]
+    Radar,
 }
 
 /// `oneiron_docedit::live::pptx::ChartSeries`.
@@ -16373,6 +16390,21 @@ pub struct ChartSeries {
     pub name: String,
     #[serde(rename = "values")]
     pub values: Vec<Option<f64>>,
+    #[serde(rename = "family", default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<ChartKind>,
+    #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<Vec<Option<f64>>>,
+}
+
+/// `oneiron_docedit::live::pptx::ChartSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ChartSource {
+    #[serde(rename = "workbook")]
+    Workbook,
+    #[serde(rename = "literal")]
+    Literal,
+    #[serde(rename = "cached")]
+    Cached,
 }
 
 /// `oneiron_docedit::edit::structure::ConnectorPreset`.
@@ -16395,6 +16427,15 @@ pub struct ConnectorEnd {
     pub site: u32,
 }
 
+/// `oneiron_docedit::live::pptx::SmartArtNode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SmartArtNode {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "level")]
+    pub level: u32,
+}
+
 /// `oneiron_docedit::live::pptx::NodePayload`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum NodePayload {
@@ -16402,6 +16443,11 @@ pub enum NodePayload {
     Picture {
         #[serde(rename = "image")]
         image: AssetRef,
+    },
+    #[serde(rename = "held_picture")]
+    HeldPicture {
+        #[serde(rename = "media")]
+        media: HeldMedia,
     },
     #[serde(rename = "table")]
     Table {
@@ -16418,15 +16464,34 @@ pub enum NodePayload {
         categories: Vec<String>,
         #[serde(rename = "series")]
         series: Vec<ChartSeries>,
+        #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+        source: Option<ChartSource>,
     },
     #[serde(rename = "connector")]
     Connector {
-        #[serde(rename = "preset")]
-        preset: ConnectorPreset,
+        #[serde(rename = "preset", default, skip_serializing_if = "Option::is_none")]
+        preset: Option<ConnectorPreset>,
         #[serde(rename = "start", default, skip_serializing_if = "Option::is_none")]
         start: Option<ConnectorEnd>,
         #[serde(rename = "end", default, skip_serializing_if = "Option::is_none")]
         end: Option<ConnectorEnd>,
+    },
+    #[serde(rename = "smart_art")]
+    SmartArt {
+        #[serde(rename = "nodes")]
+        nodes: Vec<SmartArtNode>,
+    },
+    #[serde(rename = "ole")]
+    Ole {
+        #[serde(rename = "prog_id", default, skip_serializing_if = "Option::is_none")]
+        prog_id: Option<String>,
+        #[serde(rename = "preview", default, skip_serializing_if = "Option::is_none")]
+        preview: Option<HeldMedia>,
+    },
+    #[serde(rename = "custom_geometry")]
+    CustomGeometry {
+        #[serde(rename = "paths")]
+        paths: u32,
     },
 }
 
