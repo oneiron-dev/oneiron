@@ -360,7 +360,7 @@ fn run_bound(
         .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled.
-    let skills = ProjectConversationSkills::seeded(None).map_err(text)?;
+    let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
     if let Some(skill) = AgentDispatcher::new(vault)
         .prepare_project_conversation_run(
             &status.attempt,
