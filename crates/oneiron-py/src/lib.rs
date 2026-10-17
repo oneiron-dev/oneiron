@@ -714,6 +714,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shares_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shares.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shares.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shares_view(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shares.view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shares.view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_hooks_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.hooks.replay")?;
         let output = py

@@ -27,6 +27,7 @@ mod graph_ask_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 pub(super) mod role_picks;
+mod share_doors;
 mod shared_act_doors;
 #[cfg(test)]
 pub(super) mod tests;

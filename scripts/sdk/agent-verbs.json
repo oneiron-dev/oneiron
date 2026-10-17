@@ -1032,6 +1032,30 @@
       "section": false
     },
     {
+      "name": "vault.shares.revoke",
+      "input": "crate::task_verb::sdk::ShareRevokeRequest",
+      "output": "crate::receipt::ShareRevokeReceipt",
+      "call": "crate::task_verb::sdk::revoke_share_as_caller(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shares.view",
+      "input": "crate::task_verb::sdk::ShareViewRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>",
+      "call": "crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.hooks.replay",
       "input": "crate::task_verb::sdk::HooksReplayRequest",
       "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
