@@ -11722,7 +11722,7 @@
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
       "crate-vis": 10,
-      "fn": 8,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -30279,7 +30279,7 @@
      "purpose": "The bound actor's one read lane",
      "surface": {
       "crate-vis": 15,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -33501,6 +33501,7 @@
       "ConnectorCallInvocation",
       "ConnectorCallOutcome",
       "ConnectorCallRequest",
+      "ConnectorCallState",
       "ConnectorToolSchema",
       "PendingConnectorCallRef",
       "UntrustedToolResult"
@@ -33509,10 +33510,10 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 2,
-      "fn": 5,
-      "struct": 4,
+      "fn": 7,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -47134,7 +47135,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/mod.rs",
@@ -47429,7 +47430,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 24,
+      "re-export": 25,
       "struct": 36
      }
     },
@@ -47464,10 +47465,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorCallReply",
+      "ConnectorCallStatus",
+      "ConnectorCallStatusRequest",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
       "ConnectorToolResult"
@@ -47476,9 +47479,9 @@
      "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "fn": 6,
-      "struct": 3
+      "enum": 2,
+      "fn": 7,
+      "struct": 4
      }
     },
     {
@@ -47599,7 +47602,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 350
+      "fn": 355
      }
     },
     {
@@ -47779,6 +47782,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ResidenceIndex",
+      "ResidenceIndexEntry",
+      "ResidenceIndexWindowView",
+      "ResidenceMachineRequest",
+      "ResidenceModeChanged",
+      "ResidenceModeName",
+      "ResidenceModeRequest",
+      "ResidenceOpenRequest",
+      "ResidenceOpened",
+      "ResidencePruneRequest",
+      "ResidencePruned"
+     ],
+     "path": "src/task_verb/sdk_residence.rs",
+     "purpose": "The owner's residence controls (OF-534, FIX 531): a machine's residence mode, opening one item there, its…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
       "ScratchpadRecallReply",
@@ -47889,7 +47916,7 @@
      "purpose": "The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset…",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 12
      }
     },
@@ -53971,7 +53998,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54134,7 +54161,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3287,
+   "source_files": 3288,
    "test_files": 902
   },
   "oneiron-android": {
@@ -62233,7 +62260,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 303
+      "fn": 308
      }
     },
     {
@@ -63251,7 +63278,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 304
+      "fn": 309
      }
     },
     {
@@ -65026,7 +65053,7 @@
      "path": "src/ai_host/weave_lens.rs",
      "purpose": "The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -66154,7 +66181,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 54
+      "crate-vis": 61
      }
     },
     {
@@ -66164,7 +66191,7 @@
      "path": "src/api/facade/legal_hold_doors.rs",
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -66195,6 +66222,16 @@
      "purpose": "The host door of `vault.messages.react` (OF-181)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/residence_doors.rs",
+     "purpose": "The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -66600,7 +66637,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/board_setup.rs",
@@ -66838,7 +66875,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi/endpoints_merge.rs",
@@ -66855,6 +66892,16 @@
      "purpose": "OpenAPI document assembly for the HTTP API",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_paths.rs",
+     "purpose": "The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -66914,7 +66961,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -68724,7 +68771,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
@@ -70178,13 +70225,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -71812,7 +71859,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -71974,6 +72021,16 @@
       "const": 1,
       "fn": 11,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/residence_machines.rs",
+     "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -73195,7 +73252,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 310,
+     "files": 312,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73253,7 +73310,7 @@
     "commands": {
      "files": 38,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
@@ -73407,7 +73464,7 @@
     "lens_frames": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered"
     },
@@ -73502,6 +73559,13 @@
      "layout": "file",
      "purpose": "The serve host's skill judge (OF-495)"
     },
+    "residence_machines": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
+    },
     "runtime": {
      "files": 9,
      "impl_vault": false,
@@ -73587,9 +73651,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 51,
+   "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 615,
+   "source_files": 618,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -73949,6 +74013,8 @@
       "ConflictKind",
       "ConnectorCallReply",
       "ConnectorCallRequest",
+      "ConnectorCallStatus",
+      "ConnectorCallStatusRequest",
       "ConnectorEnd",
       "ConnectorEntry",
       "ConnectorListRequest",
@@ -74525,6 +74591,17 @@
       "ResearchTarget",
       "ResearchWeaveWire",
       "ResearchWorkWire",
+      "ResidenceIndex",
+      "ResidenceIndexEntry",
+      "ResidenceIndexWindowView",
+      "ResidenceMachineRequest",
+      "ResidenceModeChanged",
+      "ResidenceModeName",
+      "ResidenceModeRequest",
+      "ResidenceOpenRequest",
+      "ResidenceOpened",
+      "ResidencePruneRequest",
+      "ResidencePruned",
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "RetrievalScoreComponent",
@@ -74870,8 +74947,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 300,
-      "struct": 787
+      "enum": 302,
+      "struct": 798
      }
     },
     {
