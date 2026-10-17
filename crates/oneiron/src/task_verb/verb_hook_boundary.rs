@@ -130,7 +130,9 @@ pub fn row(
     let resume = memory
         .resume_bounds()
         .map(|(session, room)| VerbResume::Row { session, room });
-    let credential = memory.verb_ask_credential();
+    let credential = VerbCall::may_run(memory.vault(), verb)
+        .then(|| memory.verb_ask_credential())
+        .flatten();
     let pre = match row_pre_resumable(memory, verb, args, resume, credential)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
