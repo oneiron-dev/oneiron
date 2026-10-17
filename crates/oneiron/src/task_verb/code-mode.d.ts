@@ -144,7 +144,7 @@ declare const vault: {
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
     create(input: { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null }): Promise<unknown>;
     discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
-    export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
+    export(input: { artifact_ref: string; version?: number | null; why?: string | null }): Promise<unknown>;
     keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     proposals(input: { artifact_ref: string }): Promise<unknown>;
     propose_deck(input: { artifact_ref: string; context?: unknown; made_by?: unknown; run_ref: string; transaction: unknown }): Promise<unknown>;

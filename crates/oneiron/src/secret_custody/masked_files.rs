@@ -60,6 +60,9 @@ pub enum SecretSight {
     /// Every other reader (an agent, a contact, a link): each key's span
     /// overwritten.
     Masked,
+    /// An agent whose standing or approve-once grant covers the file's keys,
+    /// with the read's receipt already written: the stored bytes.
+    Granted,
 }
 
 pub(crate) fn masked_file_in_txn(
@@ -77,6 +80,25 @@ pub(crate) fn put_masked_file_in_txn(
     file: &MaskedFile,
 ) -> Result<()> {
     MASKED_FILE.put(store, txn, hash, file)
+}
+
+/// Drops `custody`'s key from the mark of the file `hash` names, and the mark
+/// with its last key: the owner ruled it no secret.
+pub(crate) fn drop_masked_key_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    hash: &[u8; 32],
+    custody: &EntityId,
+) -> Result<()> {
+    let Some(mut file) = masked_file_in_txn(store, txn, hash)? else {
+        return Ok(());
+    };
+    file.keys.retain(|key| key.custody != *custody);
+    if file.keys.is_empty() {
+        MASKED_FILE.delete(store, txn, hash)?;
+        return Ok(());
+    }
+    MASKED_FILE.put(store, txn, hash, &file)
 }
 
 /// `bytes` with each span in `spans` overwritten by the filler.
@@ -101,7 +123,7 @@ pub(crate) fn sighted_bytes_in_txn(
     bytes: Vec<u8>,
     sight: SecretSight,
 ) -> Result<Vec<u8>> {
-    if sight == SecretSight::Owner {
+    if sight != SecretSight::Masked {
         return Ok(bytes);
     }
     let Some(file) = masked_file_in_txn(store, txn, blake3::hash(&bytes).as_bytes())? else {

@@ -5902,6 +5902,8 @@ pub struct ArtifactExportRequest {
     pub version: Option<u64>,
     #[serde(rename = "travel", default, skip_serializing_if = "Option::is_none")]
     pub travel: Option<TravelChoice>,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportFile`.

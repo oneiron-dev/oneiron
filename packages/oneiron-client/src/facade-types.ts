@@ -933,7 +933,7 @@ export type CodeFileDiffView = { path: string; change: CodeFileChange; renamed_f
 /** `oneiron::code_document::review_views::CodeRepoDiffView` */
 export type CodeRepoDiffView = { files: CodeFileDiffView[]; not_text: string[]; rendered: string }
 /** `oneiron::blob_artifact::verbs::ArtifactExportRequest` */
-export type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null }
+export type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null }
 /** `oneiron::blob_artifact::verbs::ArtifactExportFile` */
 export type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string }
 /** `oneiron::blob_artifact::verbs::BornFromRequest` */

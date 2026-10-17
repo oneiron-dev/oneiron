@@ -2340,6 +2340,7 @@ class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
     travel: NotRequired[TravelChoice | None]
+    why: NotRequired[str | None]
 class ArtifactExportFile(TypedDict):
     artifact_ref: str
     version: int

@@ -478,7 +478,7 @@ declare namespace Sdk {
   type CodeFileChange = "added" | "removed" | "modified" | "renamed";
   type CodeFileDiffView = { path: string; change: CodeFileChange; renamed_from?: string | null; before?: CodeStateView | null; after?: CodeStateView | null; changes: CodeChangeView[] };
   type CodeRepoDiffView = { files: CodeFileDiffView[]; not_text: string[]; rendered: string };
-  type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null };
+  type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type BornFromRequest = { task_ref?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; agent_run?: string | null };
   type BornFromArtifact = { artifact_id: EntityId; version: number; at: number };

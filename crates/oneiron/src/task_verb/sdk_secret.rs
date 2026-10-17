@@ -25,6 +25,7 @@ use crate::memory::{
 };
 use crate::secret_custody::{
     HandleReveal, RevealAsker, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt,
+    SecretSight,
 };
 
 /// `reveal`'s input: the handle, and why the agent needs the value.
@@ -346,6 +347,32 @@ fn mask_reveal_values(value: &mut serde_json::Value) {
 }
 
 impl Memory<'_> {
+    /// One artifact version's export, its bytes as this caller reads them: a
+    /// file stored with keys in it reads whole for the owner, and for an
+    /// agent that says `why` once a grant covers its keys (OF-560, granted
+    /// file sight); every other read, masked.
+    pub(crate) fn export_blob_artifact_sighted(
+        &self,
+        artifact: &EntityId,
+        version: Option<u64>,
+        why: Option<&str>,
+    ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExport>> {
+        let vault = self.vault();
+        let sight = self.secret_sight()?;
+        let Some(why) = why.filter(|_| {
+            sight == SecretSight::Masked && self.actor_class() == EdgeActorClass::Agent
+        }) else {
+            return Ok(vault.export_blob_artifact_as(artifact, version, sight)?);
+        };
+        let Some(mut file) = vault.export_blob_artifact(artifact, version)? else {
+            return Ok(None);
+        };
+        let asker = self.reveal_asker()?;
+        let sight = vault.file_sight(&asker, &file.artifact_id, &file.bytes, why)?;
+        file.bytes = vault.sighted_asset_bytes(std::mem::take(&mut file.bytes), sight)?;
+        Ok(Some(file))
+    }
+
     /// The asker of a reveal: the calling agent, and the project and run its
     /// host bound. Only an agent reveals to a model; a reveal writes a
     /// receipt, so an anonymous off-record session cannot make one.
