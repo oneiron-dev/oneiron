@@ -6,8 +6,8 @@ use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::{
     CoreContextPackRequest, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus,
-    EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient, VaultReadError,
-    VaultReadMethod, View,
+    EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient, VaultReadError, VaultReadMethod,
+    View,
 };
 use oneiron::context_board::CapabilityHit;
 use serde_json::{Value, json};
@@ -220,7 +220,10 @@ async fn context_pack_media(
     server: &SyncServer,
     args: &McpVerbToolArgs,
 ) -> Result<Option<Vec<EmbeddedMediaSeed>>, McpGatewayError> {
-    if !matches!(args.tool.memory_method(), Some(VaultReadMethod::ContextPack)) {
+    if !matches!(
+        args.tool.memory_method(),
+        Some(VaultReadMethod::ContextPack)
+    ) {
         return Ok(None);
     }
     let Some(body) = args.payload.arguments.request.as_ref() else {

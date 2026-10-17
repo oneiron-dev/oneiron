@@ -102,7 +102,10 @@ pub(crate) fn birth_summary_in_txn(
         at,
         |doc| {
             EntityDoc::replace_metadata(doc, &record_metadata)?;
-            EntityDoc::set_record_fields(doc, &record_metadata.keys().cloned().collect::<Vec<_>>())?;
+            EntityDoc::set_record_fields(
+                doc,
+                &record_metadata.keys().cloned().collect::<Vec<_>>(),
+            )?;
             let meta = doc.get_map("meta");
             map_insert_bytes(&meta, "purpose", &purpose)?;
             map_insert_bytes(&meta, "keep", &keep)?;

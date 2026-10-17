@@ -27,9 +27,9 @@ use crate::dto::{
     FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
     MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QuoteSpan, ReadReceipt, ReadScope,
-    RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
-    SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn,
+    RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
+    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson,
+    WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
