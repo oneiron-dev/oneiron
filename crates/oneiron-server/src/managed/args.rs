@@ -324,7 +324,8 @@ impl ManagedArgs {
     /// Serve configuration for managed mode, built from argv alone.
     ///
     /// Outside the managed group, the argv allowlist permits exactly the
-    /// fields read here: dimensions, map size, dictionary roots and log level.
+    /// fields read here: dimensions, map size, dictionary roots, log level
+    /// and `--no-hooks`.
     /// Everything else on `ServeArgs` is refused before this runs, so nothing
     /// reaches here to be quietly dropped.
     ///
@@ -347,6 +348,8 @@ impl ManagedArgs {
             // which managed mode does not get to read.
             dict_search_paths: args.dict_search_paths.clone().unwrap_or_default(),
             assistant_display_names: args.assistant_display_names.clone().unwrap_or_default(),
+            // Fact and verb hooks run unless the supervisor passes `--no-hooks`.
+            hooks: !args.no_hooks,
             // The supervisor's key directory or none: the platform default
             // lies under HOME and the XDG roots, which managed mode never reads.
             keystore: KeystoreConfig {
@@ -623,6 +626,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     ),
     ("map-size", |args| args.map_size.is_some(), ArgvUse::Read),
     ("log-level", |args| args.log_level.is_some(), ArgvUse::Read),
+    ("no-hooks", |args| args.no_hooks, ArgvUse::Read),
     (
         "dict-search-paths",
         |args| args.dict_search_paths.is_some(),

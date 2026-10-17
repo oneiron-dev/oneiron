@@ -282,6 +282,10 @@ pub struct CitedMessage {
     pub short_id: String,
     /// The message's text (capped), as the turn's text revision pins it.
     pub value_text: String,
+    /// The message as a typed record ref (OF-063), the one the reader's read
+    /// of it admitted, with no other read. It carries no revision pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<crate::lens::RecordRef>,
 }
 
 impl MemoryItem {
