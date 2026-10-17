@@ -12,7 +12,8 @@ use oneiron::sync::residence::{
     authority_tail_for, authority_wanted, home_search_candidates, index_selection_revision,
     promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet, sealed_shelf_packet_part,
     selected_item_blob_with, shelve_sealed_window, shelve_staged_sealed_window, stage_sealed_part,
-    window_index_page, window_index_projection_with,
+    want_sealed_replacement, wanted_sealed_replacements, window_index_page,
+    window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
@@ -147,6 +148,18 @@ struct SealedReadRequest {
     offset: u64,
 }
 
+/// A reader's ask for a replacement of one window whose update it could not
+/// take in for want of its base.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedWantRequest {
+    window: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedWantsRequest {}
+
 /// The authority entries a machine holds, as concatenated 32-byte hashes in
 /// base64, and how many missing entries it takes in one page (OF-469).
 #[derive(Deserialize)]
@@ -190,6 +203,8 @@ pub(super) fn run(
             "residence.sealed.stage" => sealed_stage(server, auth, peer, request.params),
             "residence.sealed.commit" => sealed_commit(server, auth, peer, request.params),
             "residence.sealed.read" => sealed_read(server, peer, request.params),
+            "residence.sealed.want" => sealed_want(server, auth, peer, request.params),
+            "residence.sealed.wants" => sealed_wants(server, peer, request.params),
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
             _ => Err(AppError::bad_request(
@@ -852,6 +867,36 @@ fn sealed_read(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<
         }),
         Some(Vec::new()),
     ))
+}
+
+/// Records a reader's ask for a replacement of one window (OF-534 G7);
+/// refused as [`sealed_put`] refuses.
+fn sealed_want(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    auth.require(CoreScope::Write)?;
+    let input: SealedWantRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let window = WindowKey::try_new(input.window).ok_or_else(AppError::invalid_params)?;
+    want_sealed_replacement(&server.vault, peer, &window)
+        .map_err(|_| AppError::not_found("sealed window", None))?;
+    Ok((json!({}), Some(Vec::new())))
+}
+
+/// The windows other machines asked a replacement of, of the worlds the
+/// proved machine reads, for it to put a replacement of each it seals.
+fn sealed_wants(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let SealedWantsRequest {} =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let windows: Vec<String> = wanted_sealed_replacements(&server.vault, peer)
+        .map_err(|_| AppError::not_found("sealed shelf", None))?
+        .into_iter()
+        .map(|window| window.as_str().to_owned())
+        .collect();
+    Ok((json!({"windows": windows}), Some(Vec::new())))
 }
 
 /// The signed authority entries the proved machine lacks, parents first

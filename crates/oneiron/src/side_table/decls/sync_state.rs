@@ -296,6 +296,9 @@ side_tables! {
     /// second of its latest part ‖ the window label its sender named, and beside it each part's
     /// bytes. Key: hex64 (blake3 of the whole packet), then ":" hex16 (offset) per part.
     SYNC_RESIDENCE_SEALED_STAGE: SyncState b"rsu:" Raw;
+    /// The machines that asked the home for a replacement of one sealed window, lacking an
+    /// update's base (OF-534 G7), 16 bytes each. Key: window label.
+    SYNC_RESIDENCE_SEALED_WANT: SyncState b"rsw:" Raw;
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw;

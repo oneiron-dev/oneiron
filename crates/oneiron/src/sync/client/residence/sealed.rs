@@ -4,7 +4,9 @@
 //! new packets in first, so a replacement this machine puts next carries what
 //! the others put, then puts each window that changed here since its last put.
 //! A packet past one request is put in parts the home stages and then shelves
-//! whole, and every packet is read back in slices.
+//! whole, and every packet is read back in slices. An update whose base this
+//! machine lacks asks the home for a replacement of its window, which another
+//! machine that seals the window puts on its next relay.
 
 use std::collections::BTreeSet;
 
@@ -52,6 +54,20 @@ struct SealedListEntry {
     id: String,
     window: String,
     seq: u64,
+}
+
+#[derive(Deserialize)]
+struct SealedWantsReply {
+    windows: Vec<String>,
+}
+
+/// How one packet from the home fared here.
+enum Took {
+    Merged(SealedContentKind),
+    /// Not served, or it does not open or merge here.
+    Skipped,
+    /// An update of a world this machine reads, whose base it lacks.
+    LacksBase,
 }
 
 #[derive(Deserialize)]
@@ -156,7 +172,8 @@ impl Relayer<'_> {
     }
 
     /// Takes in every live packet past the last arrival taken, in arrival
-    /// order. Returns the last arrival taken.
+    /// order, then asks for a replacement of each window an update failed
+    /// on for want of its base. Returns the last arrival taken.
     async fn take_sealed_windows(
         &self,
         rpc: &mut ResidenceRpc,
@@ -166,6 +183,7 @@ impl Relayer<'_> {
             Some(raw) => u64::from_be_bytes(raw.as_slice().try_into().map_err(|_| refused())?),
             None => 0,
         };
+        let mut wanted: BTreeSet<String> = BTreeSet::new();
         loop {
             let reply = rpc
                 .request("residence.sealed.list", json!({"after": after}))
@@ -184,10 +202,18 @@ impl Relayer<'_> {
                     relay.skipped += 1;
                     continue;
                 };
-                if self.take_sealed_packet(rpc, &entry.id, &window).await? {
-                    relay.taken += 1;
-                } else {
-                    relay.skipped += 1;
+                match self.take_sealed_packet(rpc, &entry.id, &window).await? {
+                    Took::Merged(kind) => {
+                        relay.taken += 1;
+                        if kind == SealedContentKind::Replacement {
+                            wanted.remove(window.as_str());
+                        }
+                    }
+                    Took::Skipped => relay.skipped += 1,
+                    Took::LacksBase => {
+                        relay.skipped += 1;
+                        wanted.insert(window.as_str().to_owned());
+                    }
                 }
             }
             self.vault
@@ -199,41 +225,61 @@ impl Relayer<'_> {
                 })
                 .map_err(storage)?;
             if page < SEALED_SHELF_PAGE_MAX {
+                for window in &wanted {
+                    match rpc
+                        .request("residence.sealed.want", json!({"window": window}))
+                        .await
+                    {
+                        Ok(_) | Err(TransportError::InvalidPayload(_)) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
                 return Ok(after);
             }
         }
     }
 
-    /// Fetches one packet and merges it here. `false` when the home no longer
-    /// serves it, or it does not open or merge here: a world this machine
-    /// does not read, or an update whose base it lacks.
+    /// Fetches one packet and merges it here.
     async fn take_sealed_packet(
         &self,
         rpc: &mut ResidenceRpc,
         id: &str,
         window: &WindowKey,
-    ) -> Result<bool, TransportError> {
+    ) -> Result<Took, TransportError> {
         let Some(world) = window.world() else {
-            return Ok(false);
+            return Ok(Took::Skipped);
         };
         let Some(bytes) = read_sealed_packet(rpc, id, window).await? else {
-            return Ok(false);
+            return Ok(Took::Skipped);
         };
         let Ok(packet) = SealedResidenceContent::from_bytes(&bytes) else {
-            return Ok(false);
+            return Ok(Took::Skipped);
         };
         if packet.id().to_hex() != id {
             return Err(refused());
         }
-        Ok(self
+        match self
             .manager
             .import_sealed_residence_content(world, window, &packet)
-            .is_ok())
+        {
+            Ok(binding) => Ok(Took::Merged(binding.kind)),
+            // It opened here, so this machine reads the world.
+            Err(_)
+                if self
+                    .vault
+                    .open_world_content(world, window.as_str(), &packet)
+                    .is_ok_and(|opened| opened.binding.kind == SealedContentKind::Update) =>
+            {
+                Ok(Took::LacksBase)
+            }
+            Err(_) => Ok(Took::Skipped),
+        }
     }
 
-    /// Seals and puts each window that changed here since its last put.
-    /// `through` is the last arrival taken in: a replacement retires the
-    /// window's packets up to it.
+    /// Seals and puts each window that changed here since its last put, and a
+    /// replacement of each window another machine asked one of. `through` is
+    /// the last arrival taken in: a replacement retires the window's packets
+    /// up to it.
     async fn put_sealed_windows(
         &self,
         rpc: &mut ResidenceRpc,
@@ -241,12 +287,17 @@ impl Relayer<'_> {
         through: u64,
         relay: &mut SealedRelay,
     ) -> Result<(), TransportError> {
+        let wanted = wanted_replacements(rpc).await?;
         for window in discover_local_window_keys(self.vault).map_err(storage)? {
             let Some(world) = window.world().filter(|world| sealable.contains(world)) else {
                 continue;
             };
             let put_key = format!("{PUT_PREFIX}{window}");
-            let since = self.vault.sync_state_get(&put_key).map_err(storage)?;
+            let since = if wanted.contains(window.as_str()) {
+                None
+            } else {
+                self.vault.sync_state_get(&put_key).map_err(storage)?
+            };
             // Refused here when this machine does not read the world, or its
             // sealed copies are off.
             let Ok(packet) =
@@ -265,7 +316,7 @@ impl Relayer<'_> {
                 continue;
             }
             let retire_through =
-                (binding.kind == SealedContentKind::Replacement && through > 0).then_some(through);
+                (binding.kind == SealedContentKind::Replacement).then_some(through);
             if !put_sealed_packet(rpc, &window, &packet.into_bytes(), retire_through).await? {
                 continue;
             }
@@ -278,6 +329,20 @@ impl Relayer<'_> {
         }
         Ok(())
     }
+}
+
+/// The windows other machines asked a replacement of.
+async fn wanted_replacements(rpc: &mut ResidenceRpc) -> Result<BTreeSet<String>, TransportError> {
+    let reply = match rpc.request("residence.sealed.wants", json!({})).await {
+        Ok(reply) => reply,
+        Err(TransportError::InvalidPayload(_)) => return Ok(BTreeSet::new()),
+        Err(error) => return Err(error),
+    };
+    let reply: SealedWantsReply = serde_json::from_value(reply).map_err(|_| refused())?;
+    if reply.windows.len() > SEALED_SHELF_PAGE_MAX {
+        return Err(refused());
+    }
+    Ok(reply.windows.into_iter().collect())
 }
 
 /// Reads one shelved packet in slices. `None` when the home no longer serves

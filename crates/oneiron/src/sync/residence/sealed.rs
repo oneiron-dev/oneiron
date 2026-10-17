@@ -8,7 +8,10 @@
 //!
 //! The live packets of a window are its latest replacement and the updates put
 //! after it. A sender that puts a replacement retires the window's packets it
-//! had taken in before; a packet another machine put meanwhile stays live.
+//! had taken in before; a packet another machine put meanwhile stays live. A
+//! reader holding an update whose base it lacks asks the home for a
+//! replacement of the window; another machine that seals it puts one, which
+//! answers the ask.
 //! Every door serves only a machine whose proof stands here, and only for a
 //! world that machine may read.
 
@@ -36,6 +39,9 @@ const NEXT_KEY: &str = "rsn";
 const STAGE_PREFIX: &str = "rsu:";
 /// How long a staged packet waits for its next part before the home drops it.
 const STAGE_IDLE_SECS: u64 = 60 * 60;
+/// The machines that asked for a replacement of one window, 16 bytes each.
+/// Key: the window label. A replacement another machine shelves answers them.
+const WANT_PREFIX: &str = "rsw:";
 
 /// The most entries one shelf listing returns.
 pub const SEALED_SHELF_PAGE_MAX: usize = 256;
@@ -138,9 +144,11 @@ fn shelf_labels(vault: &Vault) -> Result<Vec<(SealedContentId, u64, WindowKey, b
 /// must read the window's world. Refused for an unproved peer, a base window,
 /// a world kept off the sender, and a world whose sealed copies are off; L04's
 /// shelf then refuses a packet of another vault or of a key whose pad is not
-/// here. `retire_through`, when the packet is a replacement, is the last
-/// arrival the sender had taken in: every live packet of the window up to it is
-/// retired, to be purged 30 days on. Returns the packet's id and arrival.
+/// here. `retire_through` is set exactly when the packet is a replacement, to
+/// the last arrival the sender had taken in: every live packet of the window up
+/// to it is retired, to be purged 30 days on, and the asks of other machines
+/// for a replacement of the window are answered. Returns the packet's id and
+/// arrival.
 ///
 /// # Errors
 ///
@@ -178,6 +186,9 @@ pub fn shelve_sealed_window(
             .store
             .sync_state
             .put(wtxn, NEXT_KEY, &seq.saturating_add(1).to_be_bytes())?;
+        if retire_through.is_some() {
+            answer_wants_in(vault, wtxn, peer, window)?;
+        }
         Ok(seq)
     })?;
     if let Some(through) = retire_through {
@@ -411,4 +422,101 @@ pub fn sealed_shelf_packet_part(
     };
     let part = rest[..rest.len().min(SEALED_READ_PART_MAX)].to_vec();
     Ok(Some((window, packet.len() as u64, part)))
+}
+
+fn want_key(window: &WindowKey) -> String {
+    format!("{WANT_PREFIX}{window}")
+}
+
+/// Answers every machine's ask for a replacement of `window` but the one
+/// `peer` proved, whose own replacement lacks what it asked for.
+fn answer_wants_in(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    peer: PeerMachine,
+    window: &WindowKey,
+) -> Result<()> {
+    let key = want_key(window);
+    let Some(askers) = vault
+        .store
+        .sync_state
+        .get(wtxn, &key)?
+        .map(|raw| raw.to_vec())
+    else {
+        return Ok(());
+    };
+    match peer {
+        PeerMachine::Proven { machine, .. }
+            if askers.chunks(16).any(|asker| asker == machine.as_bytes()) =>
+        {
+            vault.store.sync_state.put(wtxn, &key, machine.as_bytes())?;
+        }
+        _ => {
+            vault.store.sync_state.delete(wtxn, &key)?;
+        }
+    }
+    Ok(())
+}
+
+/// Records that the machine `peer` proved asks for a replacement of `window`:
+/// it holds an update of the window whose base it lacks. Refused as
+/// [`shelve_sealed_window`] refuses the sender and world. A replacement of the
+/// window another machine shelves answers the ask.
+///
+/// # Errors
+///
+/// A refused machine or world; storage errors.
+pub fn want_sealed_replacement(vault: &Vault, peer: PeerMachine, window: &WindowKey) -> Result<()> {
+    admit_sender(vault, peer, window)?;
+    let PeerMachine::Proven { machine, .. } = peer else {
+        return Err(denied());
+    };
+    let key = want_key(window);
+    vault.with_write_txn_grouped(|wtxn| {
+        let mut askers = vault
+            .store
+            .sync_state
+            .get(wtxn, &key)?
+            .map(|raw| raw.to_vec())
+            .filter(|raw| raw.len() % 16 == 0)
+            .unwrap_or_default();
+        if !askers.chunks(16).any(|asker| asker == machine.as_bytes()) {
+            askers.extend_from_slice(machine.as_bytes());
+            vault.store.sync_state.put(wtxn, &key, &askers)?;
+        }
+        Ok(())
+    })
+}
+
+/// The windows some machine other than `peer` asked a replacement of, of the
+/// worlds the machine `peer` proved may read, at most
+/// [`SEALED_SHELF_PAGE_MAX`]: it puts a replacement of each it seals.
+///
+/// # Errors
+///
+/// An unproved peer; storage errors.
+pub fn wanted_sealed_replacements(vault: &Vault, peer: PeerMachine) -> Result<Vec<WindowKey>> {
+    let withheld = peer_withheld(vault, peer)?;
+    let PeerMachine::Proven { machine, .. } = peer else {
+        return Err(denied());
+    };
+    let txn = vault.store.env.read_txn()?;
+    let mut wanted = Vec::new();
+    for row in vault.store.sync_state.prefix_iter(&txn, WANT_PREFIX)? {
+        let (key, askers) = row?;
+        let Some(window) = WindowKey::try_new(&key[WANT_PREFIX.len()..]) else {
+            continue;
+        };
+        if window
+            .world()
+            .is_some_and(|world| !withheld.contains(&world))
+            && askers.chunks(16).any(|asker| asker != machine.as_bytes())
+        {
+            wanted.push(window);
+            if wanted.len() == SEALED_SHELF_PAGE_MAX {
+                break;
+            }
+        }
+    }
+    Ok(wanted)
 }
