@@ -326,14 +326,36 @@ async fn take_backup(
     ))
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MaintainQuery {
+    /// Queue a historical secret lift run before the pass, as
+    /// `oneiron maintain --lift-secrets` does (OF-067).
+    #[serde(default)]
+    lift_secrets: bool,
+}
+
 /// `POST /v1/owner/maintain`: every housekeeping sweep now, due or not, as
 /// `oneiron maintain` runs them on a stopped vault. A sweep left past the
-/// budget is reported and runs on a later tick.
+/// budget is reported and runs on a later tick. `?lift_secrets=true` queues a
+/// historical secret lift run first; the pass works it, and a run left
+/// unfinished goes on at the next tick.
 async fn run_housekeeping(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    query: Result<Query<MaintainQuery>, QueryRejection>,
 ) -> OwnerReply<HousekeepingReport> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
+    let query = query_params(query)?;
+    if query.lift_secrets {
+        let lifting = Arc::clone(&server);
+        blocking(move || {
+            let vault = lifting.vault();
+            vault.start_secret_lift(&owner, vault.now_recorded_at())?;
+            Ok(())
+        })
+        .await?;
+    }
     let report = server
         .housekeeping_now()
         .await

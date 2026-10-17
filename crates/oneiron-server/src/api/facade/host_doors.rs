@@ -59,6 +59,8 @@ pub(crate) use super::vault_shape_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The owner's historical secret lift sweep door (OF-067), likewise.
+pub(crate) use super::secret_lift_doors::*;
 // The owner's root wave door (OF-427), likewise.
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.

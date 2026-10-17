@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use super::ledger::{PolicyChangedEvent, put_event_in_txn};
 use crate::Vault;
 use crate::batch::secret_scan::{
-    SecretScanMode, put_secret_scan_mode_in_txn, secret_scan_mode_in_txn,
+    LiftTrigger, SecretScanMode, enqueue_lift_in_txn, put_secret_scan_mode_in_txn,
+    secret_scan_mode_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
@@ -49,6 +50,8 @@ impl Vault {
     /// it (an Admin or Delegate may not, whatever grants it holds). The new
     /// mode, its receipt and a `policy.secret_scan.changed` event commit in
     /// one transaction; a call that keeps the current mode is receipted too.
+    /// Off to on also queues a historical lift run in that transaction
+    /// ([`Vault::start_secret_lift`]), for what was stored while it was off.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof belongs to
@@ -88,6 +91,9 @@ impl Vault {
             at: now,
         };
         put_secret_scan_mode_in_txn(&self.store, &mut txn, mode)?;
+        if previous == SecretScanMode::Off && mode == SecretScanMode::On {
+            enqueue_lift_in_txn(&self.store, &mut txn, LiftTrigger::Switch, Some(actor), now)?;
+        }
         RECEIPTS.put(&self.store, &mut txn, &revision, &receipt)?;
         put_event_in_txn(
             self,

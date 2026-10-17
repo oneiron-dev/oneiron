@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 316 code-mode rows (298 host rows, 18 run rows), 1061 declarations.
-// Replies: 258 fully typed, 46 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 317 code-mode rows (299 host rows, 18 run rows), 1072 declarations.
+// Replies: 259 fully typed, 46 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -487,6 +487,17 @@ declare namespace Sdk {
   type LearningSettingsView = { catalog: LearningSettingSpecView[]; rows: LearningSettingRowView[] };
   type LearningSettingPut = { key: string; mode: LearningSettingMode; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null };
   type LearningSettingClear = { key: string; mode: LearningSettingMode; project?: string | null; task_type?: string | null };
+  type SecretLiftRequest = { start?: boolean };
+  type SecretScanMode = "on" | "off";
+  type LiftTrigger = "switch" | "owner";
+  type LiftFamily = "records" | "side_rows" | "carriers";
+  type LiftCounts = { family: LiftFamily; read: number; masked: number; proposals: number; failed: number };
+  type SecretLiftProgress = { run_id: string; trigger: LiftTrigger; requested_at: number; family: LiftFamily; retrying: number; counts: LiftCounts[] };
+  type SecretLiftReceipt = { receipt_id: string; trigger: LiftTrigger; requested_by?: string | null; requested_at: number; finished_at: number; families: LiftCounts[]; masked: number; proposals: number; failed: number };
+  type LiftCause = "unplaceable" | "immutable" | "held" | "file" | "no_door" | "history";
+  type SecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string };
+  type SecretLiftHistoryProposal = { family: LiftFamily; cause: LiftCause; proposal: SecretLiftProposal; run_id: string; filed_at: number };
+  type SecretLiftStatus = { mode: SecretScanMode; paused: boolean; running?: SecretLiftProgress | null; last?: SecretLiftReceipt | null; open_proposals: number; proposals: SecretLiftHistoryProposal[] };
   type WidenProposalState = "pending" | "approved" | "declined";
   type WidenProposalsRequest = { state?: WidenProposalState | null };
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
@@ -1732,6 +1743,10 @@ declare const vault: Sdk.VaultHost & {
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.Reply<Sdk.MemorySearchOutput>>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */
     bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.LexicalHit[]>>>;
+  };
+  secrets: {
+    /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+    lift_history(input: Sdk.SecretLiftRequest): Promise<Sdk.Reply<Sdk.SecretLiftStatus>>;
   };
   settings: {
     /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */

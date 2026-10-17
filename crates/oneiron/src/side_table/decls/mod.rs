@@ -56,6 +56,16 @@ pub(crate) fn declared() -> impl Iterator<Item = &'static SideTableDecl> {
     PARTS.into_iter().flatten().copied()
 }
 
+/// Every `vault_meta` table the catalog classes `Authored`, in prefix order:
+/// the historical lift sweep walks their rows (OF-067).
+pub(crate) fn authored_vault_meta() -> impl Iterator<Item = &'static SideTableDecl> {
+    PARTS
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|decl| decl.db == SideDb::VaultMeta && decl.payload == SidePayload::Authored)
+}
+
 /// The declared table whose prefix `key` falls under, in `db`, or `None` when
 /// no declared prefix matches. Declared prefixes are disjoint within one
 /// database (`assert_disjoint`), so at most one table can match; this is the

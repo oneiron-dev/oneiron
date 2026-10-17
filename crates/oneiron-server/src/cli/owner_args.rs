@@ -107,6 +107,14 @@ pub struct MaintainArgs {
     #[arg(long)]
     pub reindex_text: bool,
 
+    /// Queue a historical secret lift run and work it to its end: every
+    /// record and authored row is read again by the write door's rules, each
+    /// secret they place goes to custody with its handle left in place, and
+    /// each hit they cannot place files a lift proposal. The report carries
+    /// the run's receipt.
+    #[arg(long)]
+    pub lift_secrets: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

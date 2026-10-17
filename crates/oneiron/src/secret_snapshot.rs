@@ -180,7 +180,7 @@ fn relative_declaration_matches(path: &str, declared: &str) -> bool {
 }
 
 /// A value-free proposal to move a detected file secret into the vault.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SecretLiftProposal {
     pub path: String,
     pub detector_reason: String,

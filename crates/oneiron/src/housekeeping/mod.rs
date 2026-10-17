@@ -38,7 +38,7 @@ use crate::error::{ErrorKind, Result};
 
 use self::schedule::SweepState;
 
-/// One sweep the housekeeping pass knows. The engine runs the first eleven; the
+/// One sweep the housekeeping pass knows. The engine runs the first twelve; the
 /// rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +68,11 @@ pub enum HousekeepingSweep {
     /// Tells the live Owners of each waiting shared act whose window has
     /// passed with no live objection (OF-163). Effect-free.
     SharedActMaturity,
+    /// Works the queued historical lift run (OF-067): rows stored before the
+    /// write wall saw them are masked through their own doors, and each hit
+    /// no door places files a lift proposal. Idle when no run is queued, and
+    /// paused while the owner's switch is off.
+    SecretLiftHistory,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -123,7 +128,7 @@ const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -135,6 +140,7 @@ impl HousekeepingSweep {
         Self::HardEraseSweep,
         Self::PprCacheEviction,
         Self::SharedActMaturity,
+        Self::SecretLiftHistory,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -157,6 +163,7 @@ impl HousekeepingSweep {
             Self::HardEraseSweep => "hard_erase_sweep",
             Self::PprCacheEviction => "ppr_cache_eviction",
             Self::SharedActMaturity => "shared_act_maturity",
+            Self::SecretLiftHistory => "secret_lift_history",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -175,6 +182,8 @@ impl HousekeepingSweep {
     /// deadline is 30 days); the graph-walk cache daily. A shared act's
     /// deadline makes the maturity sweep due then (its start notes it), and
     /// it runs hourly besides, for an act an objection withdrawal released.
+    /// The lift sweep looks for a queued run every fifteen minutes, and a run
+    /// left unfinished at a pass's deadline is due again at once.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -187,9 +196,10 @@ impl HousekeepingSweep {
                 engine(HOUR)
             }
             Self::SymbolLeaseExpiry => engine(5 * MINUTE),
-            Self::EsignExpiry | Self::EsignSealBackstop | Self::CommitmentLapse => {
-                engine(15 * MINUTE)
-            }
+            Self::EsignExpiry
+            | Self::EsignSealBackstop
+            | Self::CommitmentLapse
+            | Self::SecretLiftHistory => engine(15 * MINUTE),
             Self::GateDecisionRetention => Runner::Engine {
                 every: HOUR,
                 at_open: true,
@@ -393,6 +403,7 @@ pub enum SweepWork {
         /// Matured-act notices written to live Owners.
         noticed: u64,
     },
+    SecretLift(SecretLiftWork),
 }
 
 impl SweepWork {
@@ -404,6 +415,7 @@ impl SweepWork {
             Self::HardErase(work) => work
                 .jobs_failed
                 .saturating_add(work.obligations_undecodable),
+            Self::SecretLift(work) => work.failed,
             _ => 0,
         }
     }
@@ -436,6 +448,7 @@ impl SweepWork {
                 deps_cleaned,
             } => evicted == 0 && deps_cleaned == 0,
             Self::SharedActs { noticed } => noticed == 0,
+            Self::SecretLift(work) => work == SecretLiftWork::default(),
         }
     }
 }
@@ -463,6 +476,24 @@ pub struct HardEraseWork {
     /// Receipts queued for a sweep that no obligation covers.
     pub obligations_missing: u64,
     pub obligations_undecodable: u64,
+}
+
+/// The lift sweep's counts for one housekeeping run (OF-067). The run's own
+/// receipt counts the whole run, by family.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SecretLiftWork {
+    /// Rows the census read.
+    pub rows_read: u64,
+    /// Rows rewritten with their handles.
+    pub masked: u64,
+    /// Lift proposals filed.
+    pub proposals: u64,
+    /// Rows that failed again when retried.
+    pub failed: u64,
+    /// A run waits for the owner's switch to come back on.
+    pub paused: bool,
+    /// The run ended and wrote its receipt.
+    pub finished: bool,
 }
 
 fn serialize_error_kind<S: serde::Serializer>(
