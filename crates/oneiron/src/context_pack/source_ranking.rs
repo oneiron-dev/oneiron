@@ -197,6 +197,21 @@ pub(crate) fn clamp_order<T>(
     Ok(())
 }
 
+/// The clamp's rule for one pair of claims on a shared question, for a reader
+/// that picks or cuts rather than ordering a whole list: whether a claim from
+/// source `a` ranks above one from `b`. A stated claim outranks an observed
+/// one, and an override favouring observations opts out, as it does for the
+/// clamp. Every other pair, Generated included, ranks equal.
+pub(crate) fn source_outranks(
+    policy: &SourceRankingPolicy,
+    a: Option<ClaimSource>,
+    b: Option<ClaimSource>,
+) -> bool {
+    a == Some(ClaimSource::UserStated)
+        && b == Some(ClaimSource::Observed)
+        && policy.factor(b) <= policy.factor(a)
+}
+
 /// The multiplier and the observed-below-stated clamp, the one implementation
 /// every path shares. `bodies[i]` is row i's claim body, `None` for a row
 /// that is not a claim.
