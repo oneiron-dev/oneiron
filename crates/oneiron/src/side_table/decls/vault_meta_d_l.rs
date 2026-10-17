@@ -310,13 +310,13 @@ side_tables! {
     /// Where the current reconciled embedding vector was filled (on-device/owner-server/third-party).
     /// Key: id16.
     EMBEDDING_LOCALITY: VaultMeta b"embedding/locality/" Raw;
-    /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
-    /// row (OF-370). Key: space key16 + id16.
-    EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
     /// A document a declared space's model refused by its content, with the BLAKE3 of the bytes
     /// it refused; the media backfill skips it until they change (OF-370). Key: space key16 +
     /// id16.
     EMBEDDING_MEDIA_REFUSED: VaultMeta b"embedding/media_refused/" Named;
+    /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
+    /// row (OF-370). Key: space key16 + id16.
+    EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
     /// A kind slot version move, open or concluded, with its last paired probe check (OF-370).
     /// Key: candidate space id string.
     EMBEDDING_MOVE: VaultMeta b"embedding/move/" Named;

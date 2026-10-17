@@ -258,6 +258,7 @@ impl Vault {
     ) -> Result<Vec<PendingMedia>> {
         let mut pending = Vec::new();
         let mut held = 0;
+        let mut refused = 0;
         self.scan_documents_in_txn(rtxn, kinds, report, |document| {
             if pending.len() >= max_items {
                 return Ok(false);
@@ -272,13 +273,14 @@ impl Vault {
                 held += 1;
             } else if media_refused_in_txn(&self.store, rtxn, space, &document.id, &document.bytes)?
             {
-                report.refused += 1;
+                refused += 1;
             } else {
                 pending.push(document);
             }
             Ok(pending.len() < max_items)
         })?;
         report.already_embedded += held;
+        report.refused += refused;
         Ok(pending)
     }
 

@@ -283,7 +283,8 @@ pub(super) fn clear_media_refusal_in_txn(
     space: &EmbeddingSpace,
     id: &EntityId,
 ) -> Result<()> {
-    MEDIA_REFUSED.delete(store, txn, &(space.key(), *id))
+    MEDIA_REFUSED.delete(store, txn, &(space.key(), *id))?;
+    Ok(())
 }
 
 /// Width of a text row's text hash.
