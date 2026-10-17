@@ -27897,13 +27897,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DecisionReadProvider"
+      "DecisionReadGate",
+      "DecisionReadProvider",
+      "GatedRead"
      ],
      "path": "src/llm/decision/read.rs",
      "purpose": "The escalation rung's decision read: the house model reads the pack's questions over the same state in one…",
      "surface": {
+      "enum": 1,
       "fn": 1,
-      "struct": 1
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -67819,7 +67823,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 20,
       "struct": 1
      }
