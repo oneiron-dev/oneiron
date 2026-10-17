@@ -70021,7 +70021,7 @@
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
