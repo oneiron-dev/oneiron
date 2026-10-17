@@ -62,6 +62,10 @@ pub enum AgentVerb {
     VaultWeaveItemWrong,
     VaultWeaveOwnerItemWrong,
     VaultPacksPut,
+    VaultPacksRemove,
+    VaultConnectorsSubscriptionsPut,
+    VaultConnectorsSubscriptionsList,
+    VaultConnectorsSubscriptionsRevoke,
     VaultPacksSetupPrepare,
     VaultPacksSetupGet,
     VaultPacksSetupAnswer,
@@ -103,6 +107,10 @@ pub enum AgentVerb {
     VaultLegalHoldsList,
     VaultLegalHoldsLog,
     VaultLegalHoldsLiftAndErase,
+    VaultCourtesyDeleteSend,
+    VaultCourtesyDeleteSent,
+    VaultCourtesyDeleteIncoming,
+    VaultCourtesyDeleteAnswer,
     VaultEmbeddingSpacesList,
     VaultEmbeddingSpacesDeclare,
     VaultEmbeddingSpacesBind,
@@ -383,6 +391,10 @@ impl AgentVerb {
         Self::VaultWeaveItemWrong,
         Self::VaultWeaveOwnerItemWrong,
         Self::VaultPacksPut,
+        Self::VaultPacksRemove,
+        Self::VaultConnectorsSubscriptionsPut,
+        Self::VaultConnectorsSubscriptionsList,
+        Self::VaultConnectorsSubscriptionsRevoke,
         Self::VaultPacksSetupPrepare,
         Self::VaultPacksSetupGet,
         Self::VaultPacksSetupAnswer,
@@ -424,6 +436,10 @@ impl AgentVerb {
         Self::VaultLegalHoldsList,
         Self::VaultLegalHoldsLog,
         Self::VaultLegalHoldsLiftAndErase,
+        Self::VaultCourtesyDeleteSend,
+        Self::VaultCourtesyDeleteSent,
+        Self::VaultCourtesyDeleteIncoming,
+        Self::VaultCourtesyDeleteAnswer,
         Self::VaultEmbeddingSpacesList,
         Self::VaultEmbeddingSpacesDeclare,
         Self::VaultEmbeddingSpacesBind,
@@ -707,6 +723,10 @@ impl AgentVerb {
             Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
             Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultPacksRemove => "vault.packs.remove",
+            Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
+            Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
+            Self::VaultConnectorsSubscriptionsRevoke => "vault.connectors.subscriptions.revoke",
             Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
             Self::VaultPacksSetupGet => "vault.packs.setup.get",
             Self::VaultPacksSetupAnswer => "vault.packs.setup.answer",
@@ -750,6 +770,10 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
             Self::VaultLegalHoldsLog => "vault.legal_holds.log",
             Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
+            Self::VaultCourtesyDeleteSend => "vault.courtesy_delete.send",
+            Self::VaultCourtesyDeleteSent => "vault.courtesy_delete.sent",
+            Self::VaultCourtesyDeleteIncoming => "vault.courtesy_delete.incoming",
+            Self::VaultCourtesyDeleteAnswer => "vault.courtesy_delete.answer",
             Self::VaultEmbeddingSpacesList => "vault.embedding_spaces.list",
             Self::VaultEmbeddingSpacesDeclare => "vault.embedding_spaces.declare",
             Self::VaultEmbeddingSpacesBind => "vault.embedding_spaces.bind",
@@ -1031,6 +1055,10 @@ impl AgentVerb {
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
+                | Self::VaultPacksRemove
+                | Self::VaultConnectorsSubscriptionsPut
+                | Self::VaultConnectorsSubscriptionsList
+                | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
                 | Self::VaultPacksSetupAnswer
@@ -1072,6 +1100,10 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesList
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
@@ -1359,6 +1391,10 @@ impl AgentVerb {
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
+                | Self::VaultPacksRemove
+                | Self::VaultConnectorsSubscriptionsPut
+                | Self::VaultConnectorsSubscriptionsList
+                | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
                 | Self::VaultPacksSetupAnswer
@@ -1400,6 +1436,10 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesList
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
@@ -1614,6 +1654,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -1714,6 +1756,10 @@ impl AgentVerb {
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
+                | Self::VaultPacksRemove
+                | Self::VaultConnectorsSubscriptionsPut
+                | Self::VaultConnectorsSubscriptionsList
+                | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
                 | Self::VaultPacksSetupAnswer
@@ -1755,6 +1801,10 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesList
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
@@ -2003,6 +2053,9 @@ impl AgentVerb {
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
+                | Self::VaultPacksRemove
+                | Self::VaultConnectorsSubscriptionsPut
+                | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
@@ -2030,6 +2083,8 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
                 | Self::VaultEmbeddingSpacesOneSpace
@@ -2247,6 +2302,10 @@ impl AgentVerb {
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksRemove => &["spec"],
+            Self::VaultConnectorsSubscriptionsPut => &["spec"],
+            Self::VaultConnectorsSubscriptionsList => &["spec"],
+            Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
             Self::VaultPacksSetupAnswer => &["spec"],
@@ -2288,6 +2347,10 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultCourtesyDeleteSend => &["spec"],
+            Self::VaultCourtesyDeleteSent => &[],
+            Self::VaultCourtesyDeleteIncoming => &[],
+            Self::VaultCourtesyDeleteAnswer => &["spec"],
             Self::VaultEmbeddingSpacesList => &[],
             Self::VaultEmbeddingSpacesDeclare => &["spec"],
             Self::VaultEmbeddingSpacesBind => &["spec"],
@@ -2569,6 +2632,10 @@ impl AgentVerb {
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksRemove => &["spec"],
+            Self::VaultConnectorsSubscriptionsPut => &["spec"],
+            Self::VaultConnectorsSubscriptionsList => &["spec"],
+            Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
             Self::VaultPacksSetupAnswer => &["spec"],
@@ -2610,6 +2677,10 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultCourtesyDeleteSend => &["spec"],
+            Self::VaultCourtesyDeleteSent => &[],
+            Self::VaultCourtesyDeleteIncoming => &[],
+            Self::VaultCourtesyDeleteAnswer => &["spec"],
             Self::VaultEmbeddingSpacesList => &[],
             Self::VaultEmbeddingSpacesDeclare => &["spec"],
             Self::VaultEmbeddingSpacesBind => &["spec"],
@@ -3002,6 +3073,18 @@ impl AgentVerb {
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
             }
+            Self::VaultPacksRemove => {
+                "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
+            }
+            Self::VaultConnectorsSubscriptionsPut => {
+                "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."
+            }
+            Self::VaultConnectorsSubscriptionsList => {
+                "An agent's connector event subscriptions, standing and revoked, for the owner."
+            }
+            Self::VaultConnectorsSubscriptionsRevoke => {
+                "The owner stops one connector event subscription; the agent's key for the channel stays."
+            }
             Self::VaultPacksSetupPrepare => {
                 "The owner opens, or resumes, a pack's guided setup; opening grants nothing."
             }
@@ -3110,6 +3193,18 @@ impl AgentVerb {
             Self::VaultLegalHoldsLog => "The owner-visible legal hold log, oldest first.",
             Self::VaultLegalHoldsLiftAndErase => {
                 "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."
+            }
+            Self::VaultCourtesyDeleteSend => {
+                "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."
+            }
+            Self::VaultCourtesyDeleteSent => {
+                "Every courtesy delete ask this vault sent, with its delivery status, for the owner."
+            }
+            Self::VaultCourtesyDeleteIncoming => {
+                "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer."
+            }
+            Self::VaultCourtesyDeleteAnswer => {
+                "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where."
             }
             Self::VaultEmbeddingSpacesList => {
                 "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."
@@ -3302,7 +3397,7 @@ impl AgentVerb {
                 "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."
             }
             Self::VaultRoomsSpeak => {
-                "Speaks one turn into the current room turn's room, through the normal witness gate."
+                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."
             }
             Self::VaultProjectsPropose => {
                 "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."

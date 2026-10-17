@@ -16,14 +16,14 @@ use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
-pub(crate) struct PersonaListQuery {
+pub(crate) struct ProfileListQuery {
     /// PERSON whose granted companion profiles are listed.
     person_ref: String,
     principal_ref: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub(crate) struct PersonaListRow {
+pub(crate) struct ProfileListRow {
     /// PERSON the profile describes.
     person_ref: String,
     /// FACET the grant is bounded to; null is a person-wide grant, listed at
@@ -37,20 +37,20 @@ pub(crate) struct PersonaListRow {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub(crate) struct PersonasListResponse {
-    items: Vec<PersonaListRow>,
+pub(crate) struct ProfilesListResponse {
+    items: Vec<ProfileListRow>,
 }
 
 /// List only the PERSON's profiles the caller holds a live profile grant for.
-#[utoipa::path(get, path = "/v1/companion/personas", params(PersonaListQuery),
-    responses((status = 200, body = PersonasListResponse),
+#[utoipa::path(get, path = "/v1/companion/profiles", params(ProfileListQuery),
+    responses((status = 200, body = ProfilesListResponse),
               (status = 400, body = ApiErrorEnvelope),
               (status = 403, body = ApiErrorEnvelope)))]
-pub(crate) async fn list_personas(
+pub(crate) async fn list_profiles(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    query: Result<Query<PersonaListQuery>, QueryRejection>,
-) -> Result<Json<PersonasListResponse>, EnvelopedApiError> {
+    query: Result<Query<ProfileListQuery>, QueryRejection>,
+) -> Result<Json<ProfilesListResponse>, EnvelopedApiError> {
     require_companion_profile_read(&auth)?;
     let req = query_params(query)?;
     let principal = companion_profile_principal_ref(
@@ -76,14 +76,14 @@ pub(crate) async fn list_personas(
             .vault
             .get_live_psych_profile(&profile_ref)
             .map_err(|error| companion_engine_error("profile read failed", error))?;
-        items.push(PersonaListRow {
+        items.push(ProfileListRow {
             person_ref: person.to_hex(),
             facet_ref: facet.map(|facet| facet.to_hex()),
             profile_ref: profile_ref.to_hex(),
             personality_compact: profile.map(|p| p.compact),
         });
     }
-    Ok(Json(PersonasListResponse { items }))
+    Ok(Json(ProfilesListResponse { items }))
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
