@@ -153,27 +153,59 @@ pub(crate) fn clamp_order<T>(
     policy: &SourceRankingPolicy,
     body: impl Fn(&T) -> Option<&ClaimBody>,
 ) -> Result<()> {
+    clamp_order_by(rows, policy, |row| {
+        let body = body(row)?;
+        Some((body.source?, question(body)?))
+    })
+}
+
+/// A claim's question as a fixed key a row can carry once its body is gone,
+/// for [`clamp_order_by`]. `None` for a claim about an edge.
+pub(crate) fn question_key(body: &ClaimBody) -> Option<[u8; 32]> {
+    let question = question(body)?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(question.subject.as_bytes());
+    hasher.update(&(question.predicate.len() as u64).to_le_bytes());
+    hasher.update(question.predicate.as_bytes());
+    for id in [question.world, question.rel] {
+        match id {
+            Some(id) => hasher.update(&[1]).update(id.as_bytes()),
+            None => hasher.update(&[0]),
+        };
+    }
+    hasher.update(question.project.as_bytes());
+    hasher.update(question.facet.as_bytes());
+    hasher.update(&question.scope);
+    Some(*hasher.finalize().as_bytes())
+}
+
+/// [`clamp_order`] over keys a reader already holds: `key` yields a row's
+/// source and question key, `None` for a row the clamp leaves alone.
+pub(crate) fn clamp_order_by<T, K: Eq + std::hash::Hash>(
+    rows: &mut Vec<T>,
+    policy: &SourceRankingPolicy,
+    key: impl Fn(&T) -> Option<(ClaimSource, K)>,
+) -> Result<()> {
     policy.validate()?;
     // The same opt-out as the scored clamp: an override favouring observations.
     if policy.factor(Some(ClaimSource::Observed)) > policy.factor(Some(ClaimSource::UserStated)) {
         return Ok(());
     }
-    let mut last_stated = HashMap::<Question, usize>::new();
+    let mut last_stated = HashMap::<K, usize>::new();
     for (index, row) in rows.iter().enumerate() {
-        if let Some(body) = body(row)
-            && body.source == Some(ClaimSource::UserStated)
-            && let Some(key) = question(body)
-        {
-            last_stated.insert(key, index);
+        if let Some((ClaimSource::UserStated, question)) = key(row) {
+            last_stated.insert(question, index);
         }
     }
     let moves: Vec<Option<usize>> = rows
         .iter()
         .enumerate()
         .map(|(index, row)| {
-            let body = body(row).filter(|body| body.source == Some(ClaimSource::Observed))?;
+            let (ClaimSource::Observed, question) = key(row)? else {
+                return None;
+            };
             last_stated
-                .get(&question(body)?)
+                .get(&question)
                 .copied()
                 .filter(|last| *last > index)
         })
@@ -221,12 +253,30 @@ fn rank_scores(
     policy: &SourceRankingPolicy,
 ) -> Result<()> {
     policy.validate()?;
-    let mut stated = HashMap::<Question, f32>::new();
     for (body, score) in bodies.iter().copied().zip(scores.iter_mut()) {
+        if let Some(body) = body {
+            *score = (*score * policy.factor(body.source)).min(f32::MAX);
+        }
+    }
+    clamp_scores(bodies, scores, policy)
+}
+
+/// The observed-below-stated clamp on scores alone, with no multiplier:
+/// each observed claim scores at most just below the lowest stated claim of
+/// its question. For a read whose multipliers a later pass applies once,
+/// such as the pipeline ahead of the pack's assembly. `bodies[i]` is row
+/// i's claim body, `None` for a row that is not a claim.
+pub(crate) fn clamp_scores(
+    bodies: &[Option<&ClaimBody>],
+    scores: &mut [f32],
+    policy: &SourceRankingPolicy,
+) -> Result<()> {
+    policy.validate()?;
+    let mut stated = HashMap::<Question, f32>::new();
+    for (body, score) in bodies.iter().copied().zip(scores.iter()) {
         let Some(body) = body else {
             continue;
         };
-        *score = (*score * policy.factor(body.source)).min(f32::MAX);
         if body.source == Some(ClaimSource::UserStated)
             && let Some(key) = question(body)
         {
