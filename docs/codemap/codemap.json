@@ -20327,12 +20327,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EmbeddingSpace",
       "InputKind",
-      "KindSlotBindings"
+      "KindSlotBindings",
+      "MediaRefused"
      ],
      "path": "src/embed/space.rs",
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
@@ -20340,8 +20341,8 @@
       "const": 3,
       "crate-vis": 17,
       "enum": 1,
-      "fn": 13,
-      "struct": 2
+      "fn": 16,
+      "struct": 3
      }
     },
     {
@@ -20361,10 +20362,10 @@
      "path": "src/embed/space_move.rs",
      "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 3,
       "enum": 4,
-      "fn": 7,
+      "fn": 8,
       "struct": 4,
       "trait": 1
      }
@@ -50792,7 +50793,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 134,
+   "over_bar": 135,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3067,
    "test_files": 903
