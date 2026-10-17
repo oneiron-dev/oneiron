@@ -265,6 +265,7 @@ pub enum AgentVerb {
     SelfDesktopBatch,
     SelfDesktopWindows,
     SelfDesktopWindow,
+    SelfDesktopHandover,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -586,6 +587,7 @@ impl AgentVerb {
         Self::SelfDesktopBatch,
         Self::SelfDesktopWindows,
         Self::SelfDesktopWindow,
+        Self::SelfDesktopHandover,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -914,6 +916,7 @@ impl AgentVerb {
             Self::SelfDesktopBatch => "self.desktop.batch",
             Self::SelfDesktopWindows => "self.desktop.windows",
             Self::SelfDesktopWindow => "self.desktop.window",
+            Self::SelfDesktopHandover => "self.desktop.handover",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -1293,6 +1296,7 @@ impl AgentVerb {
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
+                | Self::SelfDesktopHandover
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -1917,6 +1921,7 @@ impl AgentVerb {
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
+                | Self::SelfDesktopHandover
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -2123,6 +2128,7 @@ impl AgentVerb {
                 | Self::SelfDesktopKey
                 | Self::SelfDesktopHotkey
                 | Self::SelfDesktopBatch
+                | Self::SelfDesktopHandover
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -2450,6 +2456,7 @@ impl AgentVerb {
             Self::SelfDesktopBatch => &["spec"],
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
+            Self::SelfDesktopHandover => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -2772,6 +2779,7 @@ impl AgentVerb {
             Self::SelfDesktopBatch => &["spec"],
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
+            Self::SelfDesktopHandover => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -3512,6 +3520,9 @@ impl AgentVerb {
             Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
             Self::SelfDesktopWindow => {
                 "Moves the session onto another desktop window and observes it."
+            }
+            Self::SelfDesktopHandover => {
+                "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
             }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."
