@@ -148,6 +148,48 @@ pub fn preflight_with_limits(
     Ok(())
 }
 
+/// One body block of a Word document as an anchor reads it: its block id and
+/// visible text, as [`Document::read`] gives them, and a paragraph's own
+/// `w14:paraId`, which follows it through a move and an edit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocxAnchorBlock {
+    pub block_id: String,
+    pub text: String,
+    pub para_id: Option<String>,
+}
+
+/// The body blocks of `document` in reading order, each paragraph with the
+/// `w14:paraId` it carries.
+#[must_use]
+pub fn docx_anchor_blocks(document: &Document) -> Vec<DocxAnchorBlock> {
+    let para_ids: std::collections::HashMap<String, String> = document
+        .snapshot()
+        .canonical
+        .blocks
+        .iter()
+        .filter_map(|tracked| match &tracked.block {
+            stemma::domain::BlockNode::Paragraph(paragraph) => paragraph
+                .para_id
+                .clone()
+                .map(|para_id| (paragraph.id.to_string(), para_id)),
+            _ => None,
+        })
+        .collect();
+    document
+        .read()
+        .blocks
+        .into_iter()
+        .map(|block| {
+            let block_id = block.id.to_string();
+            DocxAnchorBlock {
+                para_id: para_ids.get(&block_id).cloned(),
+                block_id,
+                text: block.text,
+            }
+        })
+        .collect()
+}
+
 /// The independent OOXML linker still runs, but only on bytes already proven
 /// to fit the effective per-part and cumulative archive budgets.
 pub fn validate_blocking_with_limits(
