@@ -85,6 +85,10 @@ pub struct MaintenanceReport {
     /// (anti-clobber re-read guard). SIBLING of `sweep_windows_deferred_live`
     /// — a raced window is neither compacted nor a live-registry deferral.
     pub sweep_windows_deferred_raced: u64,
+    /// Windows and documents left as they are because a legal hold names a
+    /// row their compaction would destroy (OF-470). SIBLING of the live and
+    /// raced deferrals.
+    pub sweep_windows_deferred_held: u64,
     /// REDACTION_AUDIT receipts whose `sweep_complete_at` was finalized.
     pub sweep_receipts_finalized: u64,
     /// Pending jobs observed past their `deadline_at` (queued_at + 30 d,
@@ -322,6 +326,7 @@ impl<'a> MaintenanceBuilder<'a> {
             report.sweep_windows_compacted = run.windows_compacted;
             report.sweep_windows_deferred_live = run.windows_deferred_live;
             report.sweep_windows_deferred_raced = run.windows_deferred_raced;
+            report.sweep_windows_deferred_held = run.windows_deferred_held;
             report.sweep_receipts_finalized = run.receipts_finalized;
             report.sweep_deadline_breaches = run.deadline_breaches;
             report.sweep_quarantine_rows_expired = run.quarantine_rows_expired;

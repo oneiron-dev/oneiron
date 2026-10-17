@@ -20,6 +20,7 @@ mod inbound;
 mod provider_payload;
 pub use self::provider_payload::PROVIDER_EVENT_REF_PREFIX;
 
+pub(crate) use self::handoff::lift_intake_payload_in_txn;
 pub use self::handoff::{
     SURFACE_EVENT_ATTEMPT_KIND, SurfaceEventAck, SurfaceEventAdmission, SurfaceEventAttemptPayload,
     SurfaceEventAttemptRef, SurfaceEventDispatchDisposition, SurfaceEventDispatchRequest,
