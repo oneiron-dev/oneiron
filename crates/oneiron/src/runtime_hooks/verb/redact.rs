@@ -49,7 +49,9 @@ fn hide_at(node: &mut Value, path: &[String]) {
         return;
     }
     match node {
-        Value::Object(fields) if every => fields.values_mut().for_each(|child| hide_at(child, rest)),
+        Value::Object(fields) if every => {
+            fields.values_mut().for_each(|child| hide_at(child, rest))
+        }
         Value::Object(fields) => {
             if let Some(child) = fields.get_mut(segment.as_str()) {
                 hide_at(child, rest);

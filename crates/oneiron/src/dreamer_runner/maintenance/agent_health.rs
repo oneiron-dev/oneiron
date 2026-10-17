@@ -18,8 +18,7 @@ use crate::agent_dispatch::{
     decode_agent_dispatch_input,
 };
 use crate::agent_inbox_lens::{
-    AgentInboxConcern, AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant,
-    InboxImpact,
+    AgentInboxConcern, AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::consent::AuthenticatedOwner;
@@ -351,9 +350,22 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         .collect();
 
     let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
-    findings.extend(silent_findings(vault, &calls, &dispatched, &attempts, &dials, now)?);
+    findings.extend(silent_findings(
+        vault,
+        &calls,
+        &dispatched,
+        &attempts,
+        &dials,
+        now,
+    )?);
     findings.extend(long_wait_findings(&dispatched, &attempts, &dials, since));
-    findings.extend(duplicate_findings(vault, &dispatched, &attempts, since, now)?);
+    findings.extend(duplicate_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        since,
+        now,
+    )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
 
     // Each finding's DIAGNOSTIC, in its own write: the event door opens one.
@@ -411,7 +423,8 @@ impl Dispatched {
         if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
             return None;
         }
-        let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).ok()?;
+        let payload =
+            crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).ok()?;
         if payload.attempt_type != AGENT_DISPATCH_ATTEMPT_TYPE {
             return None;
         }
@@ -425,7 +438,10 @@ impl Dispatched {
 }
 
 /// Each agent's calls in the lookback, oldest first.
-fn agent_calls(vault: &Vault, since: u64) -> Result<BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>> {
+fn agent_calls(
+    vault: &Vault,
+    since: u64,
+) -> Result<BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut calls: BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>> = BTreeMap::new();
     for row in CALL_RECEIPTS
@@ -704,11 +720,12 @@ fn duplicate_findings(
             let Some((record, dispatch)) = does(&label.second) else {
                 continue;
             };
-            let mut evidence: Vec<EntityId> = [Some(record), does(&label.first).map(|(first, _)| first)]
-                .into_iter()
-                .flatten()
-                .filter_map(|record| entity(record.id))
-                .collect();
+            let mut evidence: Vec<EntityId> =
+                [Some(record), does(&label.first).map(|(first, _)| first)]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|record| entity(record.id))
+                    .collect();
             evidence.extend(EntityId::from_hex(&label.audit_receipt).ok());
             out.push(Finding {
                 subject: dispatch.actor,
@@ -754,7 +771,11 @@ fn misalignment_findings(
             let Some(outcome) = &check.outcome else {
                 continue;
             };
-            for finding in outcome.findings.iter().filter(|finding| finding.flaw_present) {
+            for finding in outcome
+                .findings
+                .iter()
+                .filter(|finding| finding.flaw_present)
+            {
                 let reported = sealed
                     .confession
                     .objectives
@@ -824,9 +845,12 @@ fn emit(vault: &Vault, finding: &Finding) -> Result<EntityId> {
         delta: Value::from(finding.actual - finding.dial),
         replay: DiagnosticReplayCoordinate {
             content_hash: *digest.finalize().as_bytes(),
-            run_ref: finding
-                .attempt
-                .map(|attempt| format!("attempt:{}", crate::entity_id::bytes_to_hex_lower(attempt.as_bytes()))),
+            run_ref: finding.attempt.map(|attempt| {
+                format!(
+                    "attempt:{}",
+                    crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
+                )
+            }),
             checkpoint_ref: None,
         },
         evidence_refs: evidence,
