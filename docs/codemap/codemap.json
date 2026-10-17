@@ -39275,13 +39275,15 @@
      "kind": "src",
      "notable": [
       "ExportBody",
+      "ExportBodyFile",
       "ExportValue"
      ],
      "path": "src/serialize/export_value.rs",
      "purpose": "Credential-safe, type-preserving MessagePack values for whole-vault JSON",
      "surface": {
-      "crate-vis": 4,
-      "enum": 2
+      "crate-vis": 10,
+      "enum": 2,
+      "struct": 1
      }
     },
     {
@@ -39500,7 +39502,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/serialize/vault_archive.rs",
-     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row and every…",
+     "purpose": "Writes the whole-vault archive (OF-222) from the credential-nulled document value: every JSONL row is cut…",
      "surface": {
       "crate-vis": 1
      }
