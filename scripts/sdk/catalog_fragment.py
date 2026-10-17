@@ -35,7 +35,8 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 # - REPLY: what a verb call resolves with in code mode. The guest's verb door
 #   decodes the host's whole reply (components/code-run-quickjs/bootstrap.js,
 #   `verb`), and the host writes it as `{output}`, `{denied, reasonCodes}`,
-#   `{failed}` or, for a call that parks and every call past a park,
+#   `{failed, error?}` (`error` only for a code in wire.rs `GUEST_FAILURE_CODES`)
+#   or, for a call that parks and every call past a park,
 #   `{waitId}`, with `budget` added inside a wake pass (wire.rs `reply_body`,
 #   `SelfDispatchResponse::guest_json`). `StoredResult` is runtime.d.ts's card,
 #   which stands in for an output past 512 KiB of JSON.
@@ -54,7 +55,7 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   `connector.call`, so it resolves with that row's reply.
 NAMESPACE = 'Sdk'
 REVISION_ALGORITHM = 'sha256'
-REPLY = ('type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true } '
+REPLY = ('type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } '
          '| { waitId: string }) & { budget?: {budget} };')
 REPLY_DOC = ('/** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, '
              'the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */')
