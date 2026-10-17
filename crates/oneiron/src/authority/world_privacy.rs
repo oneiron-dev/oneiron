@@ -522,7 +522,7 @@ pub(super) fn side_branch_violations(
 /// that anchor's own row retires one, so another anchor naming them never
 /// takes an anchor's door off its own rows.
 pub(super) fn main_log_heads(
-    entries: &[AuthorityLogEntry],
+    rows: &[super::fold_resume::RowMeta<'_>],
     valid: &BTreeSet<AuthorityEntryHash>,
     anchored: &BTreeSet<AuthorityEntryHash>,
     pinned_anchor: Option<[u8; 32]>,
@@ -533,24 +533,24 @@ pub(super) fn main_log_heads(
     let mut main = BTreeSet::new();
     let mut named = BTreeSet::new();
     let mut foreign: BTreeMap<[u8; 32], (BTreeSet<_>, BTreeSet<_>)> = BTreeMap::new();
-    for entry in entries {
-        let Ok(hash) = authority_entry_hash(entry) else {
+    for row in rows {
+        let Some(hash) = row.hash else {
             continue;
         };
-        if !valid.contains(&hash) || side_world(&entry.op).is_some() {
+        if !valid.contains(&hash) || row.world.is_some() {
             continue;
         }
-        match &entry.signer.public_key {
+        match row.signer {
             AuthorityKey::Ed25519(anchor)
                 if anchored.contains(&hash) && pinned_anchor != Some(*anchor) =>
             {
                 let (heads, own_named) = foreign.entry(*anchor).or_default();
                 heads.insert(hash);
-                own_named.extend(entry.parent_hashes.iter().copied());
+                own_named.extend(row.parents.iter().copied());
             }
             _ => {
                 main.insert(hash);
-                named.extend(entry.parent_hashes.iter().copied());
+                named.extend(row.parents.iter().copied());
             }
         }
     }
