@@ -2808,7 +2808,9 @@ impl AgentVerb {
             Self::VaultWeaveDigest => {
                 "One of the bound actor's saved weave digests, or the newest, under the current read policy."
             }
-            Self::VaultWeaveLens => "",
+            Self::VaultWeaveLens => {
+                "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."
+            }
             Self::VaultWeaveLinkWrong => {
                 "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."
             }
@@ -3250,7 +3252,9 @@ impl AgentVerb {
             Self::SelfBrowserSelect => {
                 "Picks the option of a select element by its label, text or value."
             }
-            Self::SelfBrowserWaitFor => "Waits until some page row matches a role and name.",
+            Self::SelfBrowserWaitFor => {
+                "Waits until a page row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfBrowserExpect => {
                 "Checks that a page row is present or absent, and holds a given value."
             }
@@ -3293,7 +3297,9 @@ impl AgentVerb {
             }
             Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
             Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
-            Self::SelfDesktopWaitFor => "Waits until some window row matches a role and name.",
+            Self::SelfDesktopWaitFor => {
+                "Waits until a window row its refs name, or else some row matching a role and name, is there."
+            }
             Self::SelfDesktopExpect => {
                 "Checks that a window row is present or absent, and holds a given value."
             }

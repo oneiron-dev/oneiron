@@ -878,8 +878,9 @@
     },
     {
       "name": "vault.weave.lens",
+      "description": "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events.",
       "input": "crate::claim::WeaveReportRequest",
-      "output": "crate::lens::GeneratedLens",
+      "output": "crate::lens::LensFrameCard",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.lens\", &input)?",
       "host_door": true,
       "scope": "Read",
@@ -3230,7 +3231,7 @@
     },
     {
       "name": "self.browser.wait_for",
-      "description": "Waits until some page row matches a role and name.",
+      "description": "Waits until a page row its refs name, or else some row matching a role and name, is there.",
       "input": "oneiron_browser::WaitForInput",
       "output": "oneiron_browser::WaitForOutput",
       "call": "driver.wait_for(input)?",
@@ -3461,7 +3462,7 @@
     },
     {
       "name": "self.desktop.wait_for",
-      "description": "Waits until some window row matches a role and name.",
+      "description": "Waits until a window row its refs name, or else some row matching a role and name, is there.",
       "input": "oneiron_browser::WaitForInput",
       "output": "oneiron_browser::WaitForOutput",
       "call": "driver.wait_for(input)?",
