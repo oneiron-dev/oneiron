@@ -2,8 +2,35 @@
 //! `oneiron-authority`; this read stays here with the fold it reads.
 
 use crate::entity_id::EntityId;
+use crate::error::Result;
 
-use super::{AuthorityFold, FederationGrantActivation, FederationPactStatus};
+use super::{AuthorityFold, FederationGrantActivation, FederationPactStatus, invalid_authority};
+
+impl AuthorityFold {
+    /// The pact a delivery under `grant` came through, and that pact's
+    /// consent epoch (FIX 321): the map key of the grant's ONE binding, which
+    /// must be operative and Active. No binding (an unpacted grant), several
+    /// bindings, a superseded binding or a non-Active pact refuse; a
+    /// convenient id is never picked.
+    pub fn active_pact_delivery_context(&self, grant: &EntityId) -> Result<([u8; 32], u64)> {
+        let mut bindings = self
+            .federation_grant_bindings
+            .get(grant)
+            .into_iter()
+            .flatten();
+        let (Some(pact_id), None) = (bindings.next(), bindings.next()) else {
+            return Err(invalid_authority());
+        };
+        match self.federation_pacts.get(pact_id) {
+            Some(state)
+                if state.status == FederationPactStatus::Active && state.grant_ref == *grant =>
+            {
+                Ok((*pact_id, state.pact_epoch))
+            }
+            _ => Err(invalid_authority()),
+        }
+    }
+}
 
 /// Activation of `grant_ref` under the fold's pact states.
 ///
