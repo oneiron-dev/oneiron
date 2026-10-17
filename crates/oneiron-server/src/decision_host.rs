@@ -50,8 +50,8 @@ use oneiron::{
 };
 
 use crate::config::models::{
-    BigSettings, BookingParseSettings, ImagePickSettings, ModelsConfig, SeatPickSettings,
-    SystemOneSettings,
+    BigSettings, BookingParseSettings, ConnectorSlateSettings, ImagePickSettings, ModelsConfig,
+    SeatPickSettings, SystemOneSettings,
 };
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
@@ -115,6 +115,7 @@ pub struct DecisionHost {
     auto_checker: Option<BoundedAutoChecker>,
     image_pick: Option<ImagePickSettings>,
     booking_parse: Option<BookingParseSettings>,
+    connector_slate: Option<ConnectorSlateSettings>,
     /// The owner's explicit opt-in to send unit text off the host,
     /// `[models.decisions.system_one].remote_opt_in`.
     remote_opt_in: bool,
@@ -150,6 +151,7 @@ impl DecisionHost {
             auto_checker: None,
             image_pick: None,
             booking_parse: None,
+            connector_slate: None,
             remote_opt_in: false,
             big_model: None,
         }
@@ -402,6 +404,20 @@ impl DecisionHost {
     fn with_booking_parse(mut self, settings: Option<BookingParseSettings>) -> Self {
         self.booking_parse = settings;
         self
+    }
+
+    /// The connector slate drafter's wording and budget (OF-189).
+    fn with_connector_slate(mut self, settings: Option<&ConnectorSlateSettings>) -> Self {
+        self.connector_slate = settings.cloned();
+        self
+    }
+
+    /// The per-row wording `[models.decisions.connector_slate]` gives a
+    /// connector registration's slate drafter; `None` leaves the rule rung
+    /// drafting alone.
+    #[must_use]
+    pub fn connector_slate(&self) -> Option<&ConnectorSlateSettings> {
+        self.connector_slate.as_ref()
     }
 
     /// The seat `[models.decisions.booking_parse]` names for a booking's
@@ -809,7 +825,8 @@ impl SyncServer {
             )
             .with_auto_check(models.decisions.auto_check.as_deref(), principal)
             .with_image_pick(models.decisions.image_pick.as_ref())
-            .with_booking_parse(models.decisions.booking_parse.clone());
+            .with_booking_parse(models.decisions.booking_parse.clone())
+            .with_connector_slate(models.decisions.connector_slate.as_ref());
         self
     }
 
