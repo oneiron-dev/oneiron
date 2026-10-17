@@ -56,11 +56,13 @@ async fn put(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let view = blocking(move || -> OwnerResult<LearningSettingsView> {
-        Ok(oneiron::learning_setting_doors::put_learning_setting_as_owner(
-            server.vault(),
-            &owner,
-            request,
-        )?)
+        Ok(
+            oneiron::learning_setting_doors::put_learning_setting_as_owner(
+                server.vault(),
+                &owner,
+                request,
+            )?,
+        )
     })
     .await?;
     Ok(Json(view))
@@ -76,11 +78,13 @@ async fn clear(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let view = blocking(move || -> OwnerResult<LearningSettingsView> {
-        Ok(oneiron::learning_setting_doors::clear_learning_setting_as_owner(
-            server.vault(),
-            &owner,
-            request,
-        )?)
+        Ok(
+            oneiron::learning_setting_doors::clear_learning_setting_as_owner(
+                server.vault(),
+                &owner,
+                request,
+            )?,
+        )
     })
     .await?;
     Ok(Json(view))

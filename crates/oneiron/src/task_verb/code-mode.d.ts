@@ -24,6 +24,9 @@ declare function describe(input: { fold?: string | null; frame_epoch?: number | 
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
+  const agents: {
+    spawn(input: { agent?: string | null; budget?: object | object | null; care?: "light" | "medium" | "high" | "xhigh" | "max" | null; context?: unknown; context_from?: string[] | null; depth?: number | null; intent_key: string; model?: object | object | null; need: string; notes?: string | null; pattern?: object | object | null; project?: string | null; prompt: string; width?: object | object | null }): Promise<unknown>;
+  };
   const browser: {
     batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
@@ -46,6 +49,9 @@ declare namespace self {
     zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
   };
   const compact: (input: { note?: string | null }) => Promise<unknown>;
+  const decisions: {
+    asks(input: object): Promise<unknown>;
+  };
   const desktop: {
     batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
@@ -86,6 +92,8 @@ declare namespace self {
       move(input: { card: string; move: "ask_coach" }): Promise<unknown>;
       outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
     };
+    list(input: { after?: string | null; limit?: number | null }): Promise<unknown>;
+    mark(input: { mark: "seen" | "acked"; notification_ref: string }): Promise<unknown>;
   };
   const leader: {
     advice(input: { top?: number | null }): Promise<unknown>;
@@ -151,6 +159,7 @@ declare const vault: {
     list(input: { lifecycle?: string | null; limit: number; predicate?: string | null; subject_ref?: string | null }): Promise<unknown>;
     put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
     retract(input: { claim_ref: string }): Promise<unknown>;
+    seed(input: { claims: object[] }): Promise<unknown>;
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
     upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   };
@@ -161,10 +170,20 @@ declare const vault: {
       set(input: { companion_ref: string; contact_ref: string; expected_delta: string; proposal_ref: string }): Promise<unknown>;
     };
   };
+  consolidation: {
+    enqueue(input: { dedupe_key?: string | null; input: unknown; now?: number | null; run_id?: string | null; scope: string }): Promise<unknown>;
+    status(input: { job_ref: string }): Promise<unknown>;
+  };
   conversations: {
     turn: {
       continue(input: { turn_id: string }): Promise<unknown>;
       retry(input: { turn_id: string }): Promise<unknown>;
+    };
+  };
+  decisions: {
+    asks: {
+      answer(input: { answer: unknown; seq: number }): Promise<unknown>;
+      climb(input: { seq: number }): Promise<unknown>;
     };
   };
   delete(input: { entity_ref: string; reason: "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete" }): Promise<unknown>;
@@ -325,13 +344,20 @@ declare const vault: {
     };
   };
   shared: {
+    close_erase_ask(input: { act_id?: string | null; ask_id: string; erased: boolean }): Promise<unknown>;
     deletion(input: object): Promise<unknown>;
+    erase_ask(input: { record: string; vault_id: number }): Promise<unknown>;
+    erase_asks(input: { vault_id: number }): Promise<unknown>;
     execute(input: { act_id: string }): Promise<unknown>;
+    matured(input: { vault_id: number }): Promise<unknown>;
+    object(input: { act_id: string }): Promise<unknown>;
     outcomes(input: { vault_id: number }): Promise<unknown>;
     propose_delete(input: { vault_id: number }): Promise<unknown>;
     propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
     propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
     receipt(input: { receipt_id: string }): Promise<unknown>;
+    started(input: { vault_id: number }): Promise<unknown>;
+    withdraw_objection(input: { act_id: string }): Promise<unknown>;
   };
   shares: {
     create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; mention?: { end: number; message: string; start: number; turn: string } | null; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
