@@ -213,6 +213,9 @@ pub struct ReadPrompt<'a> {
     pub options: Option<&'a [String]>,
     /// The paired question read jointly with this one, when it is.
     pub paired: Option<&'a str>,
+    /// What a yes and a no mean, from the question's criteria: each yes/no
+    /// label row reads its label with its description.
+    pub descriptions: Option<[String; 2]>,
     pub state: &'a JsonValue,
 }
 
@@ -320,11 +323,15 @@ impl DecisionReadRecipe {
     /// with the paired answer no, row `2i + 1` with yes. Its yes/no options
     /// keep their declared order, yes first.
     pub fn render(&self, read: &ReadPrompt<'_>) -> Result<String, RenderRefusal> {
-        let noul = if self.no_first && read.paired.is_none() {
-            [self.no.clone(), self.yes.clone()]
-        } else {
-            [self.yes.clone(), self.no.clone()]
-        };
+        let mut noul = [self.yes.clone(), self.no.clone()];
+        if let (None, Some(descriptions)) = (read.options, &read.descriptions) {
+            for (label, description) in noul.iter_mut().zip(descriptions) {
+                *label = format!("{label}: {description}");
+            }
+        }
+        if self.no_first && read.paired.is_none() {
+            noul.reverse();
+        }
         let options = read.options.unwrap_or(&noul);
         let thinks = match read.paired {
             Some(_) => vec![Some(self.no.as_str()), Some(self.yes.as_str())],

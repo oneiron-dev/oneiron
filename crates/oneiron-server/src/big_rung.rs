@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionCall, DecisionModel, DecisionRung, ProviderCapability,
     ProviderDecision, ProviderPin,
@@ -138,9 +139,13 @@ impl BigModel {
             });
         }
         let state = serde_json::to_string(&state).map_err(failed)?;
+        // A yes/no question's criteria triple, as the rubric it is judged by.
+        let rubric = QuestionCriteria::for_call(call)
+            .map(|criteria| format!("{}\n", criteria.rubric()))
+            .unwrap_or_default();
         content.push(ContentPart::Text {
             text: format!(
-                "Question: {}\n{}\nState (JSON): {state}\n{}",
+                "Question: {}\n{}\n{rubric}State (JSON): {state}\n{}",
                 call.question.text,
                 contract_line(&call.question.contract),
                 self.reply.instructions(),

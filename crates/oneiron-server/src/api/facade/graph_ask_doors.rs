@@ -11,18 +11,16 @@
 //! inside its narrowing. The standing-question rows store a bare principal
 //! the pump answers for later, so they refuse a narrowed record scope.
 use std::sync::Arc;
-use std::time::Duration;
 
 use oneiron::llm::decision::questions::{
     AnswerRecord, QuestionRecord, answer_records, create_question, edit_question, pause_question,
-    read_question, run_graph_ask_receipted, select_graph_units_by_type,
+    question_call_budget, read_question, run_graph_ask_receipted, select_graph_units_by_type,
 };
 use oneiron::llm::decision::{DecisionDial, DecisionRung};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
-    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest,
+    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -55,8 +53,7 @@ pub(crate) async fn vault_graph_ask(
             None => input.units,
         };
         let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
-        let budget =
-            Duration::from_millis(input.unit_deadline_ms.unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS));
+        let budget = question_call_budget(server.vault(), input.unit_deadline_ms)?;
         let dial = server.decision_host().dial(ceiling);
         let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?;
         match run_graph_ask_receipted(

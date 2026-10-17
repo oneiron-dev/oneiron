@@ -23,6 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
@@ -425,8 +426,15 @@ impl LabelReadModel for DecisionReader {
     }
 }
 
-/// What the recipe renders for one question of a pack over `state`.
+/// What the recipe renders for one question of a pack over `state`. The
+/// state's criteria triple describes the caller's yes/no question, the one
+/// read jointly; the person question reads its own wording alone.
 fn prompt_of<'a>(state: &'a JsonValue, question: &LabelReadout<'a>) -> ReadPrompt<'a> {
+    let descriptions = match (question.labels, question.paired) {
+        (LabelSet::Noul, Some(_)) => QuestionCriteria::from_state(state)
+            .map(|criteria| [criteria.yes_means(), criteria.no_means()]),
+        _ => None,
+    };
     ReadPrompt {
         question: question.text,
         options: match question.labels {
@@ -434,6 +442,7 @@ fn prompt_of<'a>(state: &'a JsonValue, question: &LabelReadout<'a>) -> ReadPromp
             LabelSet::Choice(options) => Some(options),
         },
         paired: question.paired,
+        descriptions,
         state,
     }
 }

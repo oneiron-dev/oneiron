@@ -1,5 +1,6 @@
 //! The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`.
 
+use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
     RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRequest,
@@ -91,7 +92,13 @@ impl RemoteDecisionSeat for SystemOneSeat {
             request.validate_remote()?;
             let model = format!("{}-{}", self.pin.model, self.pin.version);
             let (kind, criteria) = match &request.question.contract {
-                AnswerContract::Noul => ("noul", None),
+                // The question's criteria triple, as what a yes and a no mean.
+                AnswerContract::Noul => (
+                    "noul",
+                    QuestionCriteria::from_state(&request.state).map(|criteria| {
+                        json!({"true": criteria.yes_means(), "false": criteria.no_means()})
+                    }),
+                ),
                 AnswerContract::Choice { options } => {
                     let map: BTreeMap<&str, Value> =
                         options.iter().map(|s| (s.as_str(), Value::Null)).collect();

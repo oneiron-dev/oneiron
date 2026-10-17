@@ -26,8 +26,9 @@ use crate::memory::{MemoryError, MemoryResult};
 /// a graph ask's selection.
 pub const GRAPH_ASK_MAX_UNITS: usize = 4096;
 
-/// One unit's clock when a graph ask names none: an `ai.verdict` call's
-/// default, the clock the standing pump gives each unit too.
+/// The shipped seed of the vault's question call budget
+/// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an
+/// `ai.verdict` call's default.
 pub const GRAPH_ASK_UNIT_DEADLINE_MS: u64 = crate::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
 
 /// `vault.graph.ask`'s input: one typed question over graph units, through
@@ -59,8 +60,8 @@ pub struct GraphAskRequest {
     /// never queues an owner ask, so `human` is refused.
     #[serde(default)]
     pub ceiling: Option<DecisionRung>,
-    /// Each unit's own clock on the ladder, 1 to 60000 milliseconds;
-    /// [`GRAPH_ASK_UNIT_DEADLINE_MS`] when absent. It is per unit, not the
+    /// Each unit's own clock on the ladder, 1 to 60000 milliseconds; the
+    /// vault's question call budget when absent. It is per unit, not the
     /// ask's: an ask over n units can run up to n times this.
     #[serde(default)]
     pub unit_deadline_ms: Option<u64>,
