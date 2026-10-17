@@ -91,7 +91,8 @@ pub fn connector_catalog(
     Ok(entries.into_iter().map(Into::into).collect())
 }
 
-/// `connector.status`: one connector by name, removed ones included.
+/// `connector.status`: one connector by name, removed ones included. The
+/// OpenAI proxy's keys have no endpoint to call, so none is described.
 pub fn connector_description(
     memory: &Memory<'_>,
     input: ConnectorNameRequest,
@@ -99,6 +100,7 @@ pub fn connector_description(
     Ok(memory
         .vault()
         .describe_connector(&input.name)?
+        .filter(|described| described.connector != crate::connector_key::PROXY_CONNECTOR)
         .map(Into::into))
 }
 
