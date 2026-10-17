@@ -67,6 +67,8 @@ pub(crate) struct ModelsFile {
     #[serde(default)]
     roles: BTreeMap<ModelRole, RoleFile>,
     #[serde(default)]
+    aliases: BTreeMap<String, String>,
+    #[serde(default)]
     dreamer: DreamerFile,
     #[serde(default)]
     chat: ChatFile,
@@ -168,6 +170,10 @@ pub struct ModelsConfig {
     /// The roles whose work never leaves the device (`leave_device =
     /// "never"`): no rung off it serves them, first or as a fallback.
     pub stays_on_device: BTreeSet<ModelRole>,
+    /// The owner's aliases (`[models.aliases]`): a name an app sends, such
+    /// as a stock vendor model name, and the configured model it calls.
+    /// None is built in.
+    pub aliases: BTreeMap<String, oneiron::ModelId>,
     /// Owner opt-in for the Dreamer's extraction calls to leave the device.
     /// Off by default: personal-data extraction stays local unless the owner
     /// says otherwise (ARCH-0036 counter-arrow).
@@ -346,6 +352,7 @@ impl ModelsFile {
             base,
         )?;
         validate_ladders(&providers, &roles)?;
+        let aliases = resolve_aliases(self.aliases, &providers, &roles)?;
         let dreamer = DreamerSettings {
             enabled: self.dreamer.enabled.unwrap_or(true),
             idle_floor_secs: self
@@ -464,6 +471,7 @@ impl ModelsFile {
             providers,
             roles,
             stays_on_device,
+            aliases,
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
             dreamer,
@@ -621,6 +629,43 @@ fn validate_ladders(
         }
     }
     Ok(())
+}
+
+/// `[models.aliases]`: each target is the engine id
+/// (`provider/name@revision`) of a model a ladder names.
+fn resolve_aliases(
+    aliases: BTreeMap<String, String>,
+    providers: &BTreeMap<String, ProviderConfig>,
+    roles: &BTreeMap<ModelRole, Vec<Rung>>,
+) -> anyhow::Result<BTreeMap<String, oneiron::ModelId>> {
+    let configured = roles
+        .values()
+        .flatten()
+        .filter_map(|rung| {
+            let provider = providers.get(&rung.model.provider)?;
+            rung.model.engine_id(&provider.revision).ok()
+        })
+        .collect::<BTreeSet<_>>();
+    aliases
+        .into_iter()
+        .map(|(alias, target)| {
+            let id = target.parse::<oneiron::ModelId>().map_err(|error| {
+                anyhow::anyhow!(
+                    "models.aliases.{alias}: {target:?} is not a provider/name@revision model id: {error}"
+                )
+            })?;
+            anyhow::ensure!(
+                configured.contains(&id),
+                "models.aliases.{alias}: {id} is not a model [models] configures"
+            );
+            // An alias spelled as a configured id would silently reroute it.
+            anyhow::ensure!(
+                !configured.iter().any(|model| model.as_str() == alias),
+                "models.aliases.{alias}: the alias is a configured model's own id"
+            );
+            Ok((alias, id))
+        })
+        .collect()
 }
 
 impl ModelsConfig {
