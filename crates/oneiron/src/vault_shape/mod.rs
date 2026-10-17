@@ -25,6 +25,7 @@ mod manifest;
 mod member;
 mod plan;
 mod reach;
+mod retire;
 mod run;
 mod seed;
 mod skill;
