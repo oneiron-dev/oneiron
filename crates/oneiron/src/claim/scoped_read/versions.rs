@@ -17,10 +17,55 @@ pub(crate) struct RevisionedHits {
     pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
 }
 
+/// The dense list a scoped vector read ranks: the vault's own text index, or
+/// one declared embedding space (OF-370).
+#[derive(Clone, Copy)]
+enum DenseChannel<'q> {
+    /// A vector at the vault's configured width, over its text index.
+    TextIndex(&'q [f32]),
+    /// A vector that `query_kind`'s tower of space `space_id` encoded.
+    Space {
+        space_id: &'q str,
+        query_kind: crate::embed::InputKind,
+        query: &'q [f32],
+    },
+}
+
 impl ScopedRead<'_> {
     pub(crate) fn search_vector_revisioned(
         &self,
         query: &[f32],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<RevisionedHits> {
+        self.search_dense_revisioned(DenseChannel::TextIndex(query), limit, requested)
+    }
+
+    /// [`Self::search_vector_revisioned`] over declared space `space_id`
+    /// (OF-370): `query` is what that space's `query_kind` tower encoded, and
+    /// every kind the space holds ranks. The space, tower and width are
+    /// checked when the read runs.
+    pub(crate) fn search_space_revisioned(
+        &self,
+        space_id: &str,
+        query_kind: crate::embed::InputKind,
+        query: &[f32],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<RevisionedHits> {
+        let channel = DenseChannel::Space {
+            space_id,
+            query_kind,
+            query,
+        };
+        self.search_dense_revisioned(channel, limit, requested)
+    }
+
+    /// One dense read over `channel`: the same gates, exclusions and receipt
+    /// whichever list it ranks.
+    fn search_dense_revisioned(
+        &self,
+        channel: DenseChannel<'_>,
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
@@ -34,16 +79,23 @@ impl ScopedRead<'_> {
         }
         let excluded = self.request_exclusions(&policy, requested)?;
         let admitted = self.plan_admits(&filter, &policy, &excluded);
-        let results = self
+        let pipeline = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .filter_candidates(&admitted)
-            .search_vector(query, limit)
-            .limit(limit)
-            .run_for_pack()?;
+            .filter_candidates(&admitted);
+        let results = match channel {
+            DenseChannel::TextIndex(query) => pipeline.search_vector(query, limit),
+            DenseChannel::Space {
+                space_id,
+                query_kind,
+                query,
+            } => pipeline.search_media(space_id, query_kind, query, &[], limit),
+        }
+        .limit(limit)
+        .run_for_pack()?;
         let filtered = self.filter_search_results(
             results.scores,
             limit,

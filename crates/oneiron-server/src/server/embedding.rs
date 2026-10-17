@@ -18,6 +18,14 @@ use crate::embedder::{EmbedQueryRefusal, EmbedderSlot, QueryEmbedder};
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const FIRST_BACKOFF: Duration = Duration::from_secs(5);
 
+/// Whether the worker keeps filling the vault's own text index while the
+/// text kind slot binds a declared space (the one-space preset, OF-370). No
+/// text search reads the index then, but `GET /api/search/vector` does, and
+/// an unbind reads it at once rather than after a backfill. Off, the rows
+/// stay pending and the next pass after an unbind fills them. A call canon
+/// is silent on (engine-calls-review CALLS.md).
+const FILL_TEXT_INDEX_ON_ONE_SPACE: bool = true;
+
 /// What the read path needs to report about the active provider.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct EmbedderDescriptor {
@@ -186,7 +194,11 @@ impl SyncServer {
         let mut failing = false;
         loop {
             let pass = Arc::clone(&reconciler);
-            let outcome = tokio::task::spawn_blocking(move || pass.reconcile_once()).await;
+            let outcome = if self.text_index_fill_paused() {
+                Ok(Ok(PendingEmbeddingReconcileReport::default()))
+            } else {
+                tokio::task::spawn_blocking(move || pass.reconcile_once()).await
+            };
             match outcome {
                 Ok(Ok(report)) => {
                     if failing {
@@ -235,6 +247,17 @@ impl SyncServer {
                 }
             }
         }
+    }
+
+    /// Whether this pass leaves the vault's own text index unfilled: only when
+    /// [`FILL_TEXT_INDEX_ON_ONE_SPACE`] is off and the text kind slot binds a
+    /// declared space. The indexed-revision refresh runs either way.
+    fn text_index_fill_paused(&self) -> bool {
+        !FILL_TEXT_INDEX_ON_ONE_SPACE
+            && self
+                .vault
+                .kind_slot_bindings()
+                .is_ok_and(|bindings| bindings.text.is_some())
     }
 
     /// Admits the provider again after a failed pass. An endpoint whose
