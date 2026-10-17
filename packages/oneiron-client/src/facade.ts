@@ -686,7 +686,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "reveal": { description: "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "reveal.wait": { description: "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "reveal.describe": { description: "What a secret handle names, where it was found and what a reveal of it would do now; never the value.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "self.use": { description: "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "self.use": { description: "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.shares.create": { description: "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.shares.revoke": { description: "", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.shares.view": { description: "", scope: "Read", proposes: false, hostDoor: true, section: false },

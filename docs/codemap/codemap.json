@@ -32840,7 +32840,7 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 5,
       "struct": 4,
@@ -38692,8 +38692,8 @@
      "path": "src/secret_custody/use_handle.rs",
      "purpose": "`self.use(handle)` (OF-560; ARCH-0069 \"One use(handle) call\"): an agent hands a secret to one trusted…",
      "surface": {
-      "const": 2,
-      "crate-vis": 3,
+      "const": 3,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 2,
       "re-export": 1,
@@ -38744,8 +38744,8 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 3,
-      "fn": 7
+      "crate-vis": 2,
+      "fn": 8
      }
     },
     {
@@ -46801,7 +46801,7 @@
      "purpose": "`self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -64620,7 +64620,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -64750,7 +64750,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -64801,6 +64801,16 @@
      "purpose": "The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/secret_use_doors.rs",
+     "purpose": "The host door of `self.use` (OF-560)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -71522,7 +71532,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 295,
+     "files": 296,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71909,7 +71919,7 @@
    },
    "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 584,
+   "source_files": 585,
    "test_files": 182
   },
   "oneiron-spawn": {
