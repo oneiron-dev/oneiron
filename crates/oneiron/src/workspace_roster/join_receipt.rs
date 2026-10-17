@@ -103,12 +103,51 @@ pub(super) fn ready_key(room: EntityId, subject: &JoinSubject, branch: Option<En
 }
 
 /// Deletes every join receipt a request for `room` filed, whatever its
-/// decision, then the room's Ready index. JOINS is keyed by join ref, not by
-/// room, so the sweep reads the whole table in keyset pages.
+/// decision, then the room's Ready index.
 pub(super) fn delete_room_joins(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     room: EntityId,
+) -> Result<()> {
+    delete_joins_where(store, txn, |request| request.room == room)?;
+    READY.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
+    Ok(())
+}
+
+/// [`delete_room_joins`] for the one thread of `room` rooted at `thread`,
+/// when that root is erased: the receipts filed for exactly that thread,
+/// whatever their decision, then their Ready rows. A Ready key ends in its
+/// thread ([`ready_key`]), so the room's prefix is read and only keys whose
+/// last part is `thread` go; room-wide and sibling-thread rows stay.
+pub(super) fn delete_thread_joins(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+) -> Result<()> {
+    delete_joins_where(store, txn, |request| {
+        request.room == room && request.branch == Some(thread)
+    })?;
+    let suffix = format!("/{}", thread.to_hex());
+    let ready: Vec<String> = READY
+        .iter_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?
+        .filter_map(|row| match row {
+            Ok((key, _)) => key.ends_with(&suffix).then_some(Ok(key)),
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<Result<_>>()?;
+    for key in &ready {
+        READY.delete(store, txn, key)?;
+    }
+    Ok(())
+}
+
+/// Deletes every join receipt whose request `doomed` names. JOINS is keyed by
+/// join ref, not by room, so the sweep reads the whole table in keyset pages.
+fn delete_joins_where(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    doomed: impl Fn(&JoinRequest) -> bool,
 ) -> Result<()> {
     let page_limit = super::rooms::PAGE_LIMIT;
     let mut after: Option<String> = None;
@@ -119,7 +158,7 @@ pub(super) fn delete_room_joins(
             .take(page_limit)
             .collect::<Result<_>>()?;
         for (join_ref, receipt) in &page {
-            if receipt.request.room == room {
+            if doomed(&receipt.request) {
                 JOINS.delete(store, txn, join_ref)?;
             }
         }
@@ -128,7 +167,6 @@ pub(super) fn delete_room_joins(
         }
         after = page.last().map(|(join_ref, _)| join_ref.clone());
     }
-    READY.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
     Ok(())
 }
 

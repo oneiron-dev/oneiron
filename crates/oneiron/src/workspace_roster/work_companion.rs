@@ -81,7 +81,8 @@ pub const WORK_COMPANION_REQUIRED: &str =
 
 impl Vault {
     /// `workspace`'s `work_companion` policy. A workspace nobody has
-    /// onboarded into has no preset yet, so it has no policy to read.
+    /// onboarded into or established has no preset yet, so it has no policy
+    /// to read.
     pub fn workspace_work_companion(&self, workspace: &str) -> Result<WorkCompanionPolicy> {
         validate_name(
             workspace,
@@ -117,6 +118,45 @@ impl Vault {
             require_settings_authority_in_txn(self, txn, row.preset.workspace_vault_id, owner)?;
             if row.work_companion != policy {
                 row.work_companion = policy;
+                PRESET.put(&self.store, txn, &key, &row)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Establishes `preset` with its `work_companion` policy before anyone
+    /// is onboarded, so an owner can set `require` ahead of the first member.
+    ///
+    /// `owner` is revalidated in the writing transaction under the same
+    /// settings authority as [`Self::set_workspace_work_companion`]. The
+    /// preset is checked as onboarding checks it; a `workspace_ref` bound to
+    /// a different preset refuses, and an identical retry writes nothing.
+    /// Only the `PRESET` row is written: no member, grant, mailbox or
+    /// companion, and no house anchor. Onboarding still does those, and
+    /// keeps the policy established here.
+    pub fn establish_workspace_preset(
+        &self,
+        preset: &WorkspaceRosterPreset,
+        policy: WorkCompanionPolicy,
+        owner: &AuthenticatedOwner,
+    ) -> Result<()> {
+        let key = preset.workspace_ref.clone();
+        self.with_write_txn_grouped(|txn| {
+            require_settings_authority_in_txn(self, txn, preset.workspace_vault_id, owner)?;
+            super::steps::validate_workspace_preset_in_txn(self, txn, preset)?;
+            let existing = PRESET.get(&self.store, txn, &key)?;
+            if let Some(existing) = &existing
+                && existing.preset != *preset
+            {
+                return Err(invalid(
+                    "workspace_ref is already bound to a different workspace preset",
+                ));
+            }
+            if existing.is_none_or(|row| row.work_companion != policy) {
+                let row = super::records::PresetRow {
+                    preset: preset.clone(),
+                    work_companion: policy,
+                };
                 PRESET.put(&self.store, txn, &key, &row)?;
             }
             Ok(())
