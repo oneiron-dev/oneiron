@@ -16933,7 +16933,7 @@
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
       "crate-vis": 16,
-      "mod": 2,
+      "mod": 3,
       "re-export": 17
      }
     },
@@ -17203,8 +17203,9 @@
      "path": "src/dreamer_consolidation/selection.rs",
      "purpose": "Mechanical candidate selection",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -17247,6 +17248,21 @@
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConsolidationStrengthPolicy",
+      "ConsolidationStrengthSnapshot"
+     ],
+     "path": "src/dreamer_consolidation/strength.rs",
+     "purpose": "Consolidation strength observations and an archive-only lifecycle (OF-216)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -18089,7 +18105,7 @@
       "crate-vis": 7,
       "fn": 1,
       "mod": 10,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -18227,6 +18243,17 @@
       "crate-vis": 2,
       "fn": 4,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/strength.rs",
+     "purpose": "Nightly strength maintenance rides the existing wake recipe/run-tree lane",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2
      }
     },
     {
@@ -48617,6 +48644,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 5,
       "struct": 6
      }
@@ -50172,7 +50200,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50200,7 +50228,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51196,7 +51224,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3093,
+   "source_files": 3095,
    "test_files": 903
   },
   "oneiron-android": {
