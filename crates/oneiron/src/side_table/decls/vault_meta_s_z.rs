@@ -538,6 +538,10 @@ side_tables! {
     TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
+    /// One mutating task-highway call's `TaskLifecycle` receipt (OF-220), projected as the receipt
+    /// family reads it, written in the call's own transaction. Key: string (the receipt id,
+    /// `task_lifecycle:` + 32 hex).
+    TASK_LIFECYCLE_RECEIPT: VaultMeta b"tasks.lifecycle_receipt.v1/" Named;
     /// Owner-authority fact to forward index key. Key: id16.
     TASK_OWNER_FACT_REVERSE: VaultMeta b"tasks.owner_fact.v1/" Raw;
     /// Display handle for a peer actor. Key: id16.

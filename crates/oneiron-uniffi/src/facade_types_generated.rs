@@ -9150,6 +9150,8 @@ pub enum ReceiptKind {
     Hook,
     #[serde(rename = "reference_refusal")]
     ReferenceRefusal,
+    #[serde(rename = "task_lifecycle")]
+    TaskLifecycle,
 }
 
 /// `oneiron::receipt::kernel::ReceiptRecord`.
