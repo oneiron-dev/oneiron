@@ -537,6 +537,41 @@ pub struct ReceiptRecord {
     pub fields: BTreeMap<String, String>,
 }
 
+impl ReceiptRecord {
+    /// This receipt's free text as the side-row wall keeps it (OF-067), read in
+    /// the caller's transaction for the row at `at` (its place and key); `true`
+    /// when the wall placed a handle.
+    ///
+    /// Free text is the open `fields` map, names and values, but for the names
+    /// in `except` that the row's own identity or evidence reads. The kind,
+    /// outcome, ids, refs, stamps and policy trace are engine-authored and stay
+    /// as written.
+    pub(crate) fn admit_free_text(
+        &mut self,
+        dbs: &impl crate::side_table::SideTableDbs,
+        wtxn: &mut heed::RwTxn<'_>,
+        at: (&str, &[u8]),
+        except: &[&str],
+    ) -> crate::Result<bool> {
+        let mut free: BTreeMap<String, String> = self
+            .fields
+            .iter()
+            .filter(|(name, _)| !except.contains(&name.as_str()))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        if free.is_empty() {
+            return Ok(false);
+        }
+        let names: BTreeSet<String> = free.keys().cloned().collect();
+        if !crate::batch::secret_scan::admit_typed(dbs, wtxn, at, &mut free)? {
+            return Ok(false);
+        }
+        self.fields.retain(|name, _| !names.contains(name));
+        self.fields.extend(free);
+        Ok(true)
+    }
+}
+
 /// A receipt-family result with explicit source and result-limit completeness.
 ///
 /// Only `complete` proves that `records` contains every matching receipt.
