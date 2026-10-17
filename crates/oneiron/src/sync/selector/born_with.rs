@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 use crate::share_travel::{BornWith, TravelChoice};
 use crate::side_table::{self, Named, SideTable};
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
+use crate::sync::window::Withhold;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The window map that carries born-with text beside the row births.
@@ -72,15 +73,24 @@ fn carried_rows(doc: &LoroDoc) -> Vec<(EntityId, u8)> {
 
 /// Writes into `doc`, beside its births, the born-with text the owner lets
 /// `grant`'s windows carry, for each row `doc` carries: the bound choice's
-/// fields of [`Vault::born_with_text`]. Nothing here reads or writes a birth,
+/// fields of [`Vault::born_with_text`], none from a row a world `withhold`
+/// keeps off the destination holds. Nothing here reads or writes a birth,
 /// so its masked refs stay masked.
-pub(super) fn carry_born_with(vault: &Vault, doc: &LoroDoc, grant: &EntityId) -> Result<()> {
+pub(super) fn carry_born_with(
+    vault: &Vault,
+    doc: &LoroDoc,
+    grant: &EntityId,
+    withhold: Withhold<'_>,
+) -> Result<()> {
     let Some(bound) = vault.federation_grant_travel(grant)? else {
         return Ok(());
     };
+    let kept = withhold.worlds(vault)?;
     let map = doc.get_map(ROW_BORN_WITH_MAP);
     for (id, _) in carried_rows(doc) {
-        let text = bound.travel.project(vault.born_with_text(&id, None)?);
+        let text = bound
+            .travel
+            .project(vault.born_with_text_kept_off(&id, None, &kept)?);
         if !text.is_empty() {
             map_insert_bytes(&map, &id.to_hex(), &encode(&text)?)?;
         }

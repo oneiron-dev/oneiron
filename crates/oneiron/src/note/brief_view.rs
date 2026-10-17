@@ -77,7 +77,7 @@ impl Vault {
         if let Some(view) = rendered.value.as_mut() {
             view.born_with = self
                 .share_travel(&share_id)?
-                .project(self.born_with_text(&id, None)?);
+                .project(self.born_with_text_for_another(&id, None)?);
         }
         Ok(rendered)
     }
