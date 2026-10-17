@@ -450,7 +450,7 @@ fn host_row(
                 &request.objective,
                 constraints,
                 now,
-            )?))
+            )?)?)
         }
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => Err(owners(verb, "ai.* media calls are the owner's")),

@@ -85,10 +85,16 @@ pub(crate) fn wave_plan(
 }
 
 /// The planning attempt one enqueue answered with.
-pub(crate) fn wave_receipt(outcome: EnqueueOutcome) -> TaskWaveReceipt {
-    let (EnqueueOutcome::Enqueued(attempt) | EnqueueOutcome::Existing(attempt)) = outcome;
-    TaskWaveReceipt {
+pub(crate) fn wave_receipt(outcome: EnqueueOutcome) -> MemoryResult<TaskWaveReceipt> {
+    let (EnqueueOutcome::Enqueued(attempt) | EnqueueOutcome::Existing(attempt)) = outcome else {
+        return Err(MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            format!("{VERB}: the wave's planning was not queued"),
+            &["Report this wave-door failure."],
+        ));
+    };
+    Ok(TaskWaveReceipt {
         attempt_ref: crate::ai_host::waves::attempt_ref(attempt.id),
         state: attempt.state.as_str().to_owned(),
-    }
+    })
 }

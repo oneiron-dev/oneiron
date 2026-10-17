@@ -52,12 +52,12 @@ pub(crate) async fn tasks_wave(
         if !auth.credential_is_live(server.vault()) {
             return Err(refused("the credential is no longer live"));
         }
-        Ok(wave_receipt(server.vault().enqueue_wave_plan(
+        wave_receipt(server.vault().enqueue_wave_plan(
             epic,
             &input.objective,
             constraints,
             oneiron_vault_contract::now_ts(),
-        )?))
+        )?)
     })
     .await
     .map_err(|_| internal(VERB))?
