@@ -2297,6 +2297,36 @@
       "section": false
     },
     {
+      "name": "vault.decisions.asks.answer",
+      "input": "crate::receipt::DecisionAskAnswerRequest",
+      "output": "crate::llm::decision::DecisionAsk",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.answer\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.decisions.asks.climb",
+      "input": "crate::receipt::DecisionAskClimbRequest",
+      "output": "Option<crate::llm::decision::ResolvedRole>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.climb\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.decisions.asks",
+      "input": "crate::receipt::DecisionAskListRequest",
+      "output": "Vec<crate::llm::decision::DecisionAsk>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.decisions.asks\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "connector.list",
       "description": "Every live catalogued connector whose name or summary matches the query.",
       "input": "ConnectorListRequest",

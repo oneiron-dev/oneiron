@@ -217,6 +217,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.questions.pause", post(vault_questions_pause))
         .route("/vault.questions.read", post(vault_questions_read))
         .route("/vault.questions.answers", post(vault_questions_answers))
+        .route(
+            "/vault.decisions.asks.answer",
+            post(vault_decisions_asks_answer),
+        )
+        .route(
+            "/vault.decisions.asks.climb",
+            post(vault_decisions_asks_climb),
+        )
+        .route("/self.decisions.asks", post(self_decisions_asks))
         .route("/connector.list", post(connector_list))
         .route("/connector.status", post(connector_status))
         .route("/vault.commit", post(vault_commit))
@@ -3115,6 +3124,82 @@ async fn vault_questions_answers(
             facade_input(hooks.args.clone())?,
         )
         .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_decisions_asks_answer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.decisions.asks.answer")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.decisions.asks.answer", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.decisions.asks.answer",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_decisions_asks_answer(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_decisions_asks_climb(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.decisions.asks.climb")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.decisions.asks.climb", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.decisions.asks.climb",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_decisions_asks_climb(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn self_decisions_asks(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "self.decisions.asks")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("self.decisions.asks", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "self.decisions.asks", value).await?;
+    let output = facade_output(
+        super::host_doors::self_decisions_asks(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
     )?;
     Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }

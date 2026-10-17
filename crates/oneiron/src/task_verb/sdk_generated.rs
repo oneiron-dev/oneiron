@@ -696,6 +696,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.decisions.asks.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::DecisionAskAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.decisions.asks.climb",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::DecisionAskClimbRequest,
+                >(),
+            ),
+            (
+                "self.decisions.asks",
+                crate::code_run::vault_read::request_schema::<crate::receipt::DecisionAskListRequest>(
+                ),
+            ),
+            (
                 "connector.list",
                 crate::code_run::vault_read::request_schema::<ConnectorListRequest>(),
             ),
@@ -2035,6 +2052,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.decisions.asks.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.decisions.asks.climb" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.decisions.asks" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "connector.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2681,6 +2719,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.answers" => {
             let _input: crate::receipt::QuestionAnswersRequest = decode(value.clone())?;
         }
+        "vault.decisions.asks.answer" => {
+            let _input: crate::receipt::DecisionAskAnswerRequest = decode(value.clone())?;
+        }
+        "vault.decisions.asks.climb" => {
+            let _input: crate::receipt::DecisionAskClimbRequest = decode(value.clone())?;
+        }
+        "self.decisions.asks" => {
+            let _input: crate::receipt::DecisionAskListRequest = decode(value.clone())?;
+        }
         "connector.list" => {
             let _input: ConnectorListRequest = decode(value.clone())?;
         }
@@ -3086,6 +3133,11 @@ pub fn invoke(
         "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
+        "vault.decisions.asks.answer" => {
+            encode(vault_decisions_asks_answer(memory, decode(value)?)?)
+        }
+        "vault.decisions.asks.climb" => encode(vault_decisions_asks_climb(memory, decode(value)?)?),
+        "self.decisions.asks" => encode(self_decisions_asks(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
@@ -4424,6 +4476,24 @@ pub fn vault_questions_answers(
     input: crate::receipt::QuestionAnswersRequest,
 ) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
+}
+pub fn vault_decisions_asks_answer(
+    memory: &Memory<'_>,
+    input: crate::receipt::DecisionAskAnswerRequest,
+) -> MemoryResult<crate::llm::decision::DecisionAsk> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.asks.answer", &input)
+}
+pub fn vault_decisions_asks_climb(
+    memory: &Memory<'_>,
+    input: crate::receipt::DecisionAskClimbRequest,
+) -> MemoryResult<Option<crate::llm::decision::ResolvedRole>> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.asks.climb", &input)
+}
+pub fn self_decisions_asks(
+    memory: &Memory<'_>,
+    input: crate::receipt::DecisionAskListRequest,
+) -> MemoryResult<Vec<crate::llm::decision::DecisionAsk>> {
+    crate::task_verb::sdk::host_only(memory, "self.decisions.asks", &input)
 }
 pub fn connector_list(
     memory: &Memory<'_>,

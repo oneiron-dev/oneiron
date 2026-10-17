@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 166 facade rows, 629 declarations.
-Inputs: 144 of 166 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 140 of 166 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 169 facade rows, 642 declarations.
+Inputs: 147 of 169 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 143 of 169 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -2938,6 +2938,63 @@ class QuestionReadRequest(TypedDict):
     version: NotRequired[int | None]
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
+class DecisionAskAnswerRequest(TypedDict):
+    seq: int
+    answer: DecisionAnswer
+class AskPrior(TypedDict):
+    answer: DecisionAnswer
+    probability: NotRequired[float | None]
+    provider: ProviderPin
+    paired: NotRequired[PairedReading | None]
+    person: NotRequired[PairedReading | None]
+class AskRoleResponsible(TypedDict):
+    role: Literal["responsible"]
+    actor: str
+    project: NotRequired[str | None]
+class AskRoleBoard(TypedDict):
+    role: Literal["board"]
+    project: str
+class AskRoleOwner(TypedDict):
+    role: Literal["owner"]
+AskRole = AskRoleResponsible | AskRoleBoard | AskRoleOwner
+RoleRank = Literal["responsible", "board", "owner"]
+AskAct = Literal["judgment", "e_signature", "payment"]
+class AskTo(TypedDict):
+    role: AskRole
+    ceiling: RoleRank
+    act: AskAct
+HolderKind = Literal["person", "agent"]
+class RoleHolder(TypedDict):
+    actor: str
+    kind: HolderKind
+class ResolvedRole(TypedDict):
+    role: AskRole
+    holders: list[RoleHolder]
+class AskAnswer(TypedDict):
+    answer: DecisionAnswer
+    answered_at: int
+    by: str
+    role: AskRole
+    kind: HolderKind
+    changed: bool
+class DecisionAsk(TypedDict):
+    seq: int
+    id: str
+    asked_at: int
+    question: DecisionQuestion
+    principal: str
+    evidence: list[str]
+    reason: HumanAskReason
+    prior: NotRequired[AskPrior | None]
+    queue_pin: ProviderPin
+    to: AskTo
+    role: NotRequired[ResolvedRole | None]
+    answer: NotRequired[AskAnswer | None]
+class DecisionAskClimbRequest(TypedDict):
+    seq: int
+class DecisionAskListRequest(TypedDict):
+    after: NotRequired[int | None]
+    limit: NotRequired[int | None]
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
 class ConnectorEntry(TypedDict):

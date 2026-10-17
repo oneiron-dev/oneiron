@@ -699,6 +699,21 @@ export_facade! {
     let output = client.vault_questions_answers(&input)?;
     crate::codec::encode("vault.questions.answers", &output)
 };
+"vault.decisions.asks.answer" => fn vault_decisions_asks_answer(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::DecisionAskAnswerRequest = crate::codec::decode("vault.decisions.asks.answer", &input)?;
+    let output = client.vault_decisions_asks_answer(&input)?;
+    crate::codec::encode("vault.decisions.asks.answer", &output)
+};
+"vault.decisions.asks.climb" => fn vault_decisions_asks_climb(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::DecisionAskClimbRequest = crate::codec::decode("vault.decisions.asks.climb", &input)?;
+    let output = client.vault_decisions_asks_climb(&input)?;
+    crate::codec::encode("vault.decisions.asks.climb", &output)
+};
+"self.decisions.asks" => fn self_decisions_asks(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::DecisionAskListRequest = crate::codec::decode("self.decisions.asks", &input)?;
+    let output = client.self_decisions_asks(&input)?;
+    crate::codec::encode("self.decisions.asks", &output)
+};
 "connector.list" => fn connector_list(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::ConnectorListRequest = crate::codec::decode("connector.list", &input)?;
     let output = client.connector_list(&input)?;

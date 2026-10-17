@@ -144,6 +144,9 @@ pub enum AgentVerb {
     VaultQuestionsPause,
     VaultQuestionsRead,
     VaultQuestionsAnswers,
+    VaultDecisionsAsksAnswer,
+    VaultDecisionsAsksClimb,
+    SelfDecisionsAsks,
     ConnectorList,
     ConnectorStatus,
     SelfBrowserOpen,
@@ -352,6 +355,9 @@ impl AgentVerb {
         Self::VaultQuestionsPause,
         Self::VaultQuestionsRead,
         Self::VaultQuestionsAnswers,
+        Self::VaultDecisionsAsksAnswer,
+        Self::VaultDecisionsAsksClimb,
+        Self::SelfDecisionsAsks,
         Self::ConnectorList,
         Self::ConnectorStatus,
         Self::SelfBrowserOpen,
@@ -565,6 +571,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "vault.questions.pause",
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
+            Self::VaultDecisionsAsksAnswer => "vault.decisions.asks.answer",
+            Self::VaultDecisionsAsksClimb => "vault.decisions.asks.climb",
+            Self::SelfDecisionsAsks => "self.decisions.asks",
             Self::ConnectorList => "connector.list",
             Self::ConnectorStatus => "connector.status",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -772,6 +781,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -987,6 +999,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -1058,6 +1073,7 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::VaultQuestionsAnswers
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::VaultCommit
                 | Self::VaultForget
@@ -1220,6 +1236,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
+                | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::SelfBrowserOpen
@@ -1361,6 +1380,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultDecisionsAsksAnswer
+                | Self::VaultDecisionsAsksClimb
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -1552,6 +1573,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
+            Self::VaultDecisionsAsksAnswer => &["spec"],
+            Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -1761,6 +1785,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
+            Self::VaultDecisionsAsksAnswer => &["spec"],
+            Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -2191,6 +2218,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "",
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsAnswers => "",
+            Self::VaultDecisionsAsksAnswer => "",
+            Self::VaultDecisionsAsksClimb => "",
+            Self::SelfDecisionsAsks => "",
             Self::ConnectorList => {
                 "Every live catalogued connector whose name or summary matches the query."
             }

@@ -48,6 +48,8 @@ pub(crate) use super::weave_doors::*;
 pub(crate) use super::graph_ask_doors::*;
 // The share doors past create (OF-491), likewise.
 pub(crate) use super::share_doors::*;
+// The role-holder decision-ask doors (OF-493), likewise.
+pub(crate) use super::decision_ask_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -466,6 +468,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.leave" => super::shared_act_doors::person(server, auth, verb).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
+        "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
+            super::decision_ask_doors::holder(auth, verb).map(drop)
+        }
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)

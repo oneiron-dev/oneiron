@@ -167,6 +167,9 @@ vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
+vaultDecisionsAsksAnswer(input: unknown): unknown
+vaultDecisionsAsksClimb(input: unknown): unknown
+selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
 vaultCommit(input: unknown): unknown

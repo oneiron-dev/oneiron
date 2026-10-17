@@ -168,6 +168,9 @@ export class Oneiron {
       /** Every loadable callable helper skill and its call contract: what it takes and returns. */
       callables: (input: Facade.EmptyRequest = {}): Facade.CallableCardView[] => this.#call(() => this.#client.selfSkillsCallables(input) as Facade.CallableCardView[]),
     },
+    decisions: {
+      asks: (input: Facade.DecisionAskListRequest): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
+    },
   }
   readonly vault = {
     people: {
@@ -461,6 +464,12 @@ export class Oneiron {
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.AnswerRecord[]),
+    },
+    decisions: {
+      asks: {
+        answer: (input: Facade.DecisionAskAnswerRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksAnswer(input) as Facade.DecisionAsk),
+        climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),
+      },
     },
     /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
     commit: (input: Facade.CommitRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitReceipt[]),
