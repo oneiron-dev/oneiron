@@ -349,6 +349,19 @@
       "section": true
     },
     {
+      "name": "tasks.wave",
+      "description": "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave.",
+      "input": "crate::task_verb::sdk::TaskWaveRequest",
+      "output": "crate::task_verb::sdk::TaskWaveReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"tasks.wave\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "tasks.update",
       "description": "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.",
       "refs": ["/task_ref"],
@@ -963,10 +976,10 @@
     },
     {
       "name": "vault.members.add",
-      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept.",
+      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
-      "output": "crate::federation::SharedActExecutionReceipt",
-      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
+      "output": "crate::task_verb::sdk::SharedMemberInvited",
+      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, None, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -1625,6 +1638,58 @@
       }
     },
     {
+      "name": "vault.code.diff",
+      "description": "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort.",
+      "input": "crate::code_document::CodeDiffRequest",
+      "output": "Option<crate::code_document::CodeDiffView>",
+      "call": "memory.code_diff(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The semantic changes between two tested states of one code file, each with the operations that made it.\n",
+          "ts": "/** The semantic changes between two tested states of one code file, each with the operations that made it. */",
+          "py": "The semantic changes between two tested states of one code file, each with the operations that made it."
+        }
+      }
+    },
+    {
+      "name": "vault.code.blame",
+      "description": "Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why.",
+      "input": "crate::code_document::CodeStateRequest",
+      "output": "Option<crate::code_document::CodeBlameView>",
+      "call": "memory.code_blame(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Every unit of one tested code file state, blamed by the operations that wrote it.\n",
+          "ts": "/** Every unit of one tested code file state, blamed by the operations that wrote it. */",
+          "py": "Every unit of one tested code file state, blamed by the operations that wrote it."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.export",
       "description": "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it.",
       "input": "crate::blob_artifact::ArtifactExportRequest",
@@ -1907,6 +1972,7 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
+      "task_work": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -1961,6 +2027,7 @@
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
@@ -1975,6 +2042,7 @@
       "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
@@ -1990,6 +2058,7 @@
       "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_answer(&input.handle, &input.word)?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },

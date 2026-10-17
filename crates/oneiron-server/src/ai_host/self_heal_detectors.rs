@@ -44,6 +44,7 @@ struct Detector {
 pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     config: &SelfHealConfig,
+    admit: crate::server::HousekeepingAdmission,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let detectors: Vec<Detector> = config
         .detectors
@@ -73,8 +74,16 @@ pub(crate) fn spawn(
             let Some(server) = weak.upgrade() else {
                 break;
             };
+            let Some(pass) = admit() else {
+                continue;
+            };
             let detectors = Arc::clone(&detectors);
-            match tokio::task::spawn_blocking(move || round(&server, &detectors)).await {
+            match tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                round(&server, &detectors)
+            })
+            .await
+            {
                 // By kind only: an engine error can quote the vault.
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "the self-heal detectors wait for the next pass");

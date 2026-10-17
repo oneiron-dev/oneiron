@@ -44,6 +44,10 @@ pub(crate) use graph::{
     keeps_dag_topology, parent as retained_parent, record_has_dag_topology, require_type,
 };
 pub(crate) use participation::{erased_thread_room_in_txn, offer_turns_in_txn};
+pub(crate) use policy::{
+    APPEND_ROW, AppendFailure, admit_append_prose, append_references, receipt_append_refusal,
+    require_append_references_in_txn,
+};
 pub(crate) use quote::{ProvenRoomQuote, QuotedReply, carries_quote};
 pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
