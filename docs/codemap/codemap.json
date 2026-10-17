@@ -2771,7 +2771,7 @@
      "path": "src/authority/task_actor.rs",
      "purpose": "Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -3398,7 +3398,7 @@
      "path": "src/authority/write_authorization.rs",
      "purpose": "Transaction-bound actor authorization for engine-owned write doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -13010,7 +13010,7 @@
      "path": "src/compaction/withdrawn.rs",
      "purpose": "What a withdrawn epoch summary keeps: its keyframe, without its words",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -14704,7 +14704,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -15377,9 +15377,9 @@
      "path": "src/conversation/attendee.rs",
      "purpose": "An attendee's first entry into a chat or room (OF-365, ILDF2 P5)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -19652,7 +19652,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/miner/feedback.rs",
@@ -27303,7 +27303,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "AskAct",
@@ -30286,10 +30286,10 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 26,
+      "crate-vis": 28,
       "enum": 3,
       "fn": 4,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2
      }
     },
@@ -30560,6 +30560,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "NoteLifecycleStatus",
+      "NoteLifecycleView",
+      "NoteRefRequest",
+      "NoteSeal"
+     ],
+     "path": "src/note/lifecycle.rs",
+     "purpose": "The one NOTE seal (ARCH-0032: `Active → Sealed → Archived → Tombstoned`)",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/note/live_body.rs",
      "purpose": "Live NOTE read projection without rewriting the immutable birth record",
@@ -30722,6 +30740,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/write_gate.rs",
+     "purpose": "Stage 1 of the NOTE write gate (ARCH-0032 #write-gate): the cheap checks a NOTE write meets before it lands…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -31003,7 +31031,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 17,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 7
      }
     },
@@ -31031,6 +31059,36 @@
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DocxBlockView",
+      "DocxBodyView",
+      "DocxCellView",
+      "OfficeBodyArtifactRequest",
+      "OfficeBodyEditRequest",
+      "OfficeBodyExportVerbRequest",
+      "OfficeBodyExportView",
+      "OfficeBodyForkEditRequest",
+      "OfficeBodyForkMergeRequest",
+      "OfficeBodyForkOpenRequest",
+      "OfficeBodyForkRequest",
+      "OfficeBodyImportRequest",
+      "OfficeBodyOps",
+      "OfficeBodyReadRequest",
+      "OfficeBodyView",
+      "XlsxBodyView",
+      "XlsxSheetView"
+     ],
+     "path": "src/office_body/verbs.rs",
+     "purpose": "`vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, \"An agent authors through…",
+     "surface": {
+      "enum": 2,
+      "fn": 12,
+      "struct": 15
      }
     },
     {
@@ -43034,7 +43092,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 7,
       "re-export": 2,
@@ -45841,7 +45899,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 278
+      "fn": 292
      }
     },
     {
@@ -46376,8 +46434,38 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "mod": 6,
-      "re-export": 6
+      "crate-vis": 1,
+      "mod": 9,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeamRunObservations"
+     ],
+     "path": "src/team/observations.rs",
+     "purpose": "OF-540: what the host measured of a team run, for its receipt",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeliverableReview",
+      "TeamDeliverableBinding"
+     ],
+     "path": "src/team/owner_outcome.rs",
+     "purpose": "OF-540: the owner's verdict on a team's deliverable settles the team",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -46428,6 +46516,7 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 8,
       "struct": 5
@@ -46449,9 +46538,22 @@
      "path": "src/team/run.rs",
      "purpose": "OF-540: a pattern-skill run's own team, from code mode",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeamRunBinding"
+     ],
+     "path": "src/team/run_binding.rs",
+     "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
+     "surface": {
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -47531,6 +47633,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ShapeGrantBound"
+     ],
+     "path": "src/vault_shape/grant.rs",
+     "purpose": "A standing grant's bound as a seed writes it (DEC-0006): who, which class, which envelope",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
@@ -47539,7 +47654,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ShapeCeiling",
@@ -47555,7 +47670,7 @@
       "const": 2,
       "enum": 3,
       "fn": 2,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -48353,12 +48468,12 @@
      "purpose": "The room join and consent doors (OF-531)",
      "surface": {
       "crate-vis": 3,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JoinParticipation",
@@ -51359,7 +51474,7 @@
     "llm": {
      "files": 94,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
     },
@@ -51399,7 +51514,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 38,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -51413,7 +51528,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51896,7 +52011,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 7,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51987,7 +52102,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52052,7 +52167,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3148,
+   "source_files": 3155,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59943,7 +60058,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 233
+      "fn": 247
      }
     },
     {
@@ -60959,7 +61074,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 234
+      "fn": 248
      }
     },
     {
@@ -63150,7 +63265,7 @@
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 26
      }
     },
     {
@@ -65568,6 +65683,7 @@
       "InitArgs",
       "McpArgs",
       "McpSurface",
+      "McpTransport",
       "ProvenanceArgs",
       "ReembedArgs",
       "RevokeArgs",
@@ -65585,7 +65701,7 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 9,
+      "enum": 10,
       "fn": 3,
       "re-export": 10,
       "struct": 21
@@ -65775,13 +65891,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -65991,6 +66107,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/mcp_bridge/link.rs",
+     "purpose": "The one connection `oneiron mcp` holds to its server (ARCH-0044 \"anything that loops holds a socket\"; owner…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -67236,6 +67362,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/handler/mcp_socket.rs",
+     "purpose": "MCP on the app-tier socket: `oneiron mcp` holds one `/ws` connection and sends every JSON-RPC message over…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
@@ -67257,7 +67393,7 @@
      "path": "src/handler/mod.rs",
      "purpose": "WebSocket upgrade handler and connection lifecycle",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -68327,7 +68463,7 @@
      "purpose": "The house model's decision read over llama.cpp's native API: the `LabelReadModel` the escalation rung is…",
      "surface": {
       "crate-vis": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -70304,7 +70440,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -70395,7 +70531,7 @@
      "purpose": "Deployment-selected feedback transport"
     },
     "handler": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70605,9 +70741,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 39,
+   "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 561,
+   "source_files": 563,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70833,6 +70969,11 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "BlockChange",
+      "BodyBlockKind",
+      "BodyCell",
+      "BodyConflict",
+      "BodyName",
       "BornFromArtifact",
       "BornFromRequest",
       "BornFromSource",
@@ -70847,6 +70988,7 @@
       "CallTransport",
       "CallableCardView",
       "CancelRejectionPathology",
+      "ChangeKind",
       "ClaimApprovalStatus",
       "CodeBlameView",
       "CodeChangeView",
@@ -70878,6 +71020,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConflictKind",
       "ConnectorCallReply",
       "ConnectorCallRequest",
       "ConnectorEntry",
@@ -70940,6 +71083,10 @@
       "DiscardedProposal",
       "DisclosureOfferRequest",
       "DisclosureOffered",
+      "DocxBlockView",
+      "DocxBodyOp",
+      "DocxBodyView",
+      "DocxCellView",
       "EditNoteRequest",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
@@ -70969,6 +71116,7 @@
       "FederationGrantRole",
       "FeedbackProposal",
       "FolderItemInput",
+      "ForkState",
       "GateDecisionId",
       "GeneratedLens",
       "GoalPreference",
@@ -71097,6 +71245,10 @@
       "NoteAnchor",
       "NoteEdit",
       "NoteEditOutcome",
+      "NoteLifecycleStatus",
+      "NoteLifecycleView",
+      "NoteRefRequest",
+      "NoteSeal",
       "NoteVersion",
       "NotificationKind",
       "NotificationMark",
@@ -71113,6 +71265,24 @@
       "OfferVoteRequest",
       "OffersPage",
       "OffersRequest",
+      "OfficeBodyArtifactRequest",
+      "OfficeBodyDiff",
+      "OfficeBodyEdit",
+      "OfficeBodyEditRequest",
+      "OfficeBodyExportRecord",
+      "OfficeBodyExportVerbRequest",
+      "OfficeBodyExportView",
+      "OfficeBodyFork",
+      "OfficeBodyForkEditRequest",
+      "OfficeBodyForkMergeRequest",
+      "OfficeBodyForkOpenRequest",
+      "OfficeBodyForkRequest",
+      "OfficeBodyHead",
+      "OfficeBodyImportRequest",
+      "OfficeBodyKind",
+      "OfficeBodyOps",
+      "OfficeBodyReadRequest",
+      "OfficeBodyView",
       "OrganWaitView",
       "OutcomeBinding",
       "OutcomeLabel",
@@ -71296,6 +71466,7 @@
       "ShapeApplyRequest",
       "ShapeCeiling",
       "ShapeChange",
+      "ShapeGrantBound",
       "ShapeItemClass",
       "ShapeItemState",
       "ShapePlan",
@@ -71415,6 +71586,7 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TextCommitReceipt",
       "TravelChoice",
       "TurnAction",
       "TurnActionReceipt",
@@ -71448,13 +71620,25 @@
       "WireWitnessReceipt",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
-      "WorkspaceRefRequest"
+      "WorkspaceRefRequest",
+      "XlsxArea",
+      "XlsxBodyOp",
+      "XlsxBodyView",
+      "XlsxBook",
+      "XlsxCell",
+      "XlsxLock",
+      "XlsxName",
+      "XlsxPreview",
+      "XlsxSheet",
+      "XlsxSheetView",
+      "XlsxStyle",
+      "XlsxValue"
      ],
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 190,
-      "struct": 483
+      "enum": 203,
+      "struct": 518
      }
     },
     {

@@ -124,7 +124,7 @@ declare namespace self {
   };
   const spawn: (input: { ask: string; intent_key: string; source: unknown }) => Promise<unknown>;
   const team: {
-    record(input: { axis: "converge" | "diverge"; calls?: number | null; confessions?: number | null; coverage?: { cellsFilled: number; cellsTotal: number } | null; decidedBy: { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number }; members: string[]; roles?: Record<string, number> | null; spend?: number | null; spendCap?: number | null; teamRef: string }): Promise<unknown>;
+    record(input: { axis: "converge" | "diverge"; coverage?: { cellsFilled: number; cellsTotal: number } | null; decidedBy: { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number }; members: string[]; roles?: Record<string, number> | null; teamRef: string }): Promise<unknown>;
     start(input: { intentKey: string; members: { agent: string; briefing?: string | null; intentKey: string }[]; pattern: string; tournament?: string | null }): Promise<unknown>;
   };
   const unfold: (input: { fold: string }) => Promise<unknown>;
@@ -143,6 +143,22 @@ declare const tasks: {
 declare const vault: {
   artifacts: {
     append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
+    body: {
+      commits(input: { artifact_ref: string }): Promise<unknown>;
+      edit(input: { artifact_ref: string; base?: number[] | null; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+      export(input: { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown }): Promise<unknown>;
+      fork: {
+        diff(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
+        discard(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
+        edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[] }): Promise<unknown>;
+        open(input: { artifact_ref: string; run_root_ref?: string | null }): Promise<unknown>;
+      };
+      head(input: { artifact_ref: string }): Promise<unknown>;
+      import(input: { artifact_ref: string; version?: number | null; made_by?: unknown }): Promise<unknown>;
+      preview(input: { artifact_ref: string }): Promise<unknown>;
+      read(input: { artifact_ref: string; at?: number[] | null }): Promise<unknown>;
+    };
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
     create(input: { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null }): Promise<unknown>;
     discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
@@ -299,6 +315,8 @@ declare const vault: {
     create(input: { kind: string; markdown: string }): Promise<unknown>;
     edit(input: { edit: object; note_ref: string }): Promise<unknown>;
     from_entity(input: { kind: string; source_ref: string }): Promise<unknown>;
+    lifecycle(input: { note_ref: string }): Promise<unknown>;
+    seal(input: { note_ref: string }): Promise<unknown>;
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
