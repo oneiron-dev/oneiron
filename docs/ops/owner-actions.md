@@ -694,6 +694,34 @@ participates, the vault keeps a standing grant on that channel for the sender, s
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
 
+## Model-graded self-heal detectors
+
+Canon ships no detector wording, so no model-graded detector runs until you write one. Each
+`[self_heal.detectors.<family>]` table is one detector over the retrieval telemetry:
+
+```toml
+[self_heal.detectors.recall_gaps]
+class = "retrieval_miss"   # the diagnostic class a finding carries (not agent_health)
+tier = "t3"                # t3 (default), t2 or session
+prompt = "…"               # what it looks for
+rubric = "…"               # how a positive is told from a negative
+consecutive = 3            # runs a window needs; for t2, positives in a row that raise
+window_secs = 3600         # one window of time; for session, how long a conversation is quiet
+```
+
+Every five minutes the server reads the newest 1,024 runs and asks each detector's question of
+each window it has not graded yet, up to 8 windows a pass, on the decision ladder's local and big
+rungs (never a person). `t3` judges each completed window of time at once. `t2` asks once per
+run. `session` judges one conversation's runs once it has been quiet for `window_secs`. A raised
+window becomes a proposed diagnostic: nothing is repaired. Changing a prompt or rubric grades
+windows again.
+
+`GET /v1/owner/self-heal/findings?family=<family>` lists one detector's raised `t3` findings,
+newest first, each with your label. `POST /v1/owner/self-heal/findings/label` with
+`{"family", "event", "positive"}` labels one finding; a label never changes. Once a family has
+`consecutive` positive labels and one negative, a `t2` detector of that family asks with the
+labeled findings.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the

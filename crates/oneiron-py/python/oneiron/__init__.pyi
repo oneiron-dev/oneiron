@@ -237,6 +237,7 @@ class Oneiron:
     def pair(cls, link: str) -> tuple["Oneiron", str]: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
+    def last_receipt_ref(self) -> str | None: ...
 # BEGIN GENERATED FACADE VERBS
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -489,6 +490,20 @@ class Oneiron:
             """The reader's own outcome notices for a shared vault."""
         def deletion(self, spec: Facade.EmptyRequest | None = None) -> Facade.SharedVaultDeletion | None:
             """The executed delete-the-vault act, if any."""
+        def object(self, spec: Facade.SharedActRequest) -> Facade.PendingAuthorityAct:
+            """A holder of a pending shared act's objector role objects inside its veto window."""
+        def withdraw_objection(self, spec: Facade.SharedActRequest) -> Facade.PendingAuthorityAct:
+            """The holder withdraws their objection; past the deadline the last withdrawal releases the act."""
+        def started(self, spec: Facade.SharedVaultRequest) -> list[Facade.PendingActStarted]:
+            """The caller's own notices of shared acts started in the vault."""
+        def matured(self, spec: Facade.SharedVaultRequest) -> list[Facade.PendingActMatured]:
+            """The caller's own notices of shared acts whose veto window has passed."""
+        def erase_ask(self, spec: Facade.SharedEraseAskRequest) -> Facade.SharedEraseAsk:
+            """A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing."""
+        def erase_asks(self, spec: Facade.SharedVaultRequest) -> list[Facade.SharedEraseAsk]:
+            """The erase asks the caller may see: every ask for an Owner, their own for anyone else."""
+        def close_erase_ask(self, spec: Facade.SharedEraseAskCloseRequest) -> Facade.SharedEraseAsk:
+            """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept."""

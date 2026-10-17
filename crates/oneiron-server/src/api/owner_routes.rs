@@ -39,7 +39,6 @@ use crate::owner::{
 use crate::server::SyncServer;
 mod commitment_routes;
 mod concern_routes;
-mod learning_setting_routes;
 mod widen_proposal_routes;
 mod conflict_routes;
 mod cooperative_deletion_routes;
@@ -51,6 +50,7 @@ mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
 mod inbox_routes;
+mod learning_setting_routes;
 mod legal_hold_routes;
 mod pack_routes;
 mod pad_routes;

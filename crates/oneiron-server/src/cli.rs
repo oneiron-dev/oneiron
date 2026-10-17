@@ -17,6 +17,10 @@ pub use hook_args::{
     HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
     HookRecallArgs,
 };
+pub use learning_setting_args::{
+    LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg,
+    LearningSettingPutArgs, LearningSettingsCommand,
+};
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
     ImportArchiveArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportFolderAttachArgs,
@@ -36,10 +40,6 @@ pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
     VaultKeyNamedArgs,
-};
-pub use learning_setting_args::{
-    LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg,
-    LearningSettingPutArgs, LearningSettingsCommand,
 };
 pub use widen_proposal_args::{
     WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand,

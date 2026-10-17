@@ -123,6 +123,15 @@ impl NativeClient {
         let inner = self.inner.in_room_turn(&room_ref).map_err(facade_error)?;
         Ok(Self { inner })
     }
+
+    /// The lasting call receipt the last verb's reply stated, as
+    /// `call:<32hex>`, whether it answered or refused. `null` for an embedded
+    /// handle, before any call, after a call that reached no server, and for
+    /// an anonymous off-record call.
+    #[napi]
+    pub fn last_receipt_ref(&self) -> Option<String> {
+        self.inner.last_receipt_ref()
+    }
 }
 
 mod agent_verbs;
