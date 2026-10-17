@@ -261,6 +261,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         suppressed_tasks: Vec::new(),
         custody_transitions: Vec::new(),
         room_turns: Vec::new(),
+        room_facts: Vec::new(),
     };
     for (key, bytes) in super::canonical::binary_rows(doc, "documents")? {
         let value: CanonicalDocument =

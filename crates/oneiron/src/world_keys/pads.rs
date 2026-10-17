@@ -352,6 +352,49 @@ fn reject_held_world_in_txn(store: &Store, txn: &heed::RoTxn<'_>, world: EntityI
     )
 }
 
+/// Whether `world`'s keys were destroyed here: the destroyed fact alone, never
+/// a delete marker. The world's holds were read when the fact was written.
+fn world_keys_destroyed_fact_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+) -> Result<bool> {
+    DESTROYED.contains(store, txn, &HexId(world))
+}
+
+/// Refuses erasing a pad row among `ids` while a legal hold stands on the pad's
+/// world or on a claim its key seals ([`reject_held_world_in_txn`]): the pad is
+/// the world key's erasable half, so erasing it destroys those sealed bytes too
+/// (OF-470). A missing row, a row of another kind and a header-only pad shell,
+/// whose pad is already gone, pass; so does a world whose keys were destroyed
+/// already, as in [`destroy_world_keys_in_txn`]. A hold on an id itself stays
+/// the caller's check. No pad byte leaves its row.
+pub(crate) fn reject_held_pad_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    ids: &[EntityId],
+) -> Result<()> {
+    let mut worlds = std::collections::BTreeSet::<EntityId>::new();
+    for id in ids {
+        let world = store
+            .port_entity_with_raw(txn, id, |raw| {
+                // A soft-erased pad keeps its header only.
+                if raw.len() == ENTITY_METADATA_HEADER_LEN {
+                    return Ok(None);
+                }
+                pad_body_world(raw).transpose()
+            })?
+            .flatten();
+        worlds.extend(world);
+    }
+    for world in worlds {
+        if !world_keys_destroyed_fact_in_txn(store, txn, world)? {
+            reject_held_world_in_txn(store, txn, world)?;
+        }
+    }
+    Ok(())
+}
+
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
 /// purges every pad row of the world, stages each one's hard tombstone, and
 /// writes the permanent destroyed fact with its receipt. `target` is any row
