@@ -301,6 +301,7 @@ fn apply_admitted(
         batch.origin,
     )?;
     after_apply(wtxn)?;
+    crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
