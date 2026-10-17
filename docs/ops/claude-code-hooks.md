@@ -39,7 +39,9 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
   worked on in other words; `high`, `xhigh` and `max` also rerank on the
   reranker the server's `[models]` routes, under the server's own budget
   (see [run-with-models.md](run-with-models.md#8-the-reranker)). A server that
-  does not list `vault.recall` gets the lexical `memory.query` instead. The query is
+  does not list `vault.recall` gets `memory.query` instead (on the one-space
+  preset it embeds the query through the text slot's declared space when it
+  can, and otherwise answers lexically). The query is
   the project's name: the git repository's folder name, or the working
   directory's.
 - **Write-back** needs no credential. `--queue` leaves one file that names the
