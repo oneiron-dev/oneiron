@@ -1,9 +1,10 @@
 //! The `ai.video` jobs a restart keeps (FIX-LIST 465). Each submitted job's
 //! rung, provider handle and call sit in a vault side table under its
 //! ticket, and so does its end once a poll sees one: a job a restart left
-//! running is taken up again on its next poll, and an ended job answers
-//! every poll from its row until its caller deletes it. A clip's bytes sit
-//! beside the row, one key a part, so the row stays small.
+//! running is taken up again when the server starts (or on its next poll,
+//! when that fails), and an ended job answers every poll from its row until
+//! its caller deletes it. A clip's bytes sit beside the row, one key a part,
+//! so the row stays small.
 use std::sync::Arc;
 
 use oneiron::llm::media::{AiOperation, MediaJobState, MediaPart, MediaRequest};
@@ -94,6 +95,22 @@ impl JobStore {
             }
         }
         Some(row)
+    }
+
+    /// The ticket of every kept job, ended or not.
+    pub(super) fn tickets(&self) -> Vec<String> {
+        match self.vault.sync_state_keys_with_prefix(JOB) {
+            Ok(keys) => keys
+                .iter()
+                .filter_map(|key| key.strip_prefix(JOB))
+                .filter(|ticket| !ticket.contains(':'))
+                .map(str::to_owned)
+                .collect(),
+            Err(error) => {
+                tracing::error!(%error, "the kept media jobs could not be listed");
+                Vec::new()
+            }
+        }
     }
 
     /// Drops job `ticket`'s row and its clips.
