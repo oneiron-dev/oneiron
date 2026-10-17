@@ -101,6 +101,9 @@ mod sessions;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+// OF-489: the held socket runs every facade verb through the facade's one
+// generated dispatch, under the credential its connection bound.
+pub(crate) use self::facade::{FacadeApiError, FacadeCall, call_verb as facade_call_verb};
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
