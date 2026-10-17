@@ -1,13 +1,18 @@
-//! OF-232: the owner withdraws one ask guest's access at this host.
+//! OF-232: the owner mints an ask guest's capability slip, bound to its
+//! grant, and withdraws one ask guest's access at this host.
 //!
-//! One writer deletes the guest's FEDERATION_GRANT, disconnects every live
-//! pact the grant still governs, and keeps a withdrawal row, so a repeat
-//! revoke reports the first one with `changed: false`. A host answers with
+//! A guest slip's signed claims name the guest FEDERATION_GRANT it was minted
+//! under (`grant_ref`). The withdrawal's one writer deletes the grant,
+//! disconnects every live pact the grant still governs, tombstones every
+//! slip minted under it, and keeps a withdrawal row, so a repeat revoke
+//! reports the first one with `changed: false`. A host answers with
 //! [`crate::receipt::project_guest_revoke`] over the outcome.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::slip_vault::require_host;
+use super::slip_vault::{random_slip_id, require_host};
 use super::*;
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
@@ -33,17 +38,101 @@ struct GuestWithdrawal {
 }
 
 impl Vault {
+    /// Mints the capability slip of one ask guest (OF-232; canon names no
+    /// issuance door, Engine ruling 2026-10-17): the vault owner's act, under
+    /// the host's `issuer`, for the live, unwithdrawn guest FEDERATION_GRANT
+    /// `grant_ref`. The slip's signed claims name that grant, carry its
+    /// scope, hold for its member, and bind `holder_key`, the public key the
+    /// guest generated on their own device; no private key is delivered
+    /// anywhere. It lives until `expires_at`, and withdrawing the grant
+    /// ([`Vault::revoke_guest_access`]) tombstones it.
+    pub fn mint_guest_slip(
+        &self,
+        owner: &AuthenticatedOwner,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+        holder_key: [u8; 32],
+        expires_at: u64,
+    ) -> Result<CapabilitySlip> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        require_host(&fold, issuer)?;
+        if WITHDRAWN.get(&self.store, &txn, &grant_ref)?.is_some() {
+            return Err(Error::EntityNotFound);
+        }
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, &txn, &grant_ref)?
+        else {
+            return Err(Error::EntityNotFound);
+        };
+        let grant = decode_federation_grant_body(&body)?;
+        if !grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Ask { .. }) {
+            return Err(Error::EntityNotFound);
+        }
+        let now = self.instant_in_txn(&txn)?.secs();
+        if !grant.confers_at(now) || expires_at <= now {
+            return Err(invalid_authority());
+        }
+        let claims = SlipClaims {
+            slip_id: random_slip_id(),
+            vault_id: fold.vault_id.ok_or_else(invalid_authority)?,
+            parent_id: None,
+            holder_ref: grant.member_ref.to_hex(),
+            binding_key: holder_key,
+            scope: grant.authority_scope,
+            issued_at: now,
+            expires_at,
+            ttl_secs: expires_at - now,
+            single_use: false,
+            records: BTreeSet::new(),
+            channels: BTreeSet::new(),
+            actor_class: None,
+            org_ref: None,
+            grant_ref: Some(grant_ref.to_hex()),
+        };
+        let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        txn.commit()?;
+        Ok(slip)
+    }
+
+    /// Tombstones, in the caller's writer, every slip minted under
+    /// `grant_ref` that no revoke names yet, expired ones included, and
+    /// answers their ids.
+    fn revoke_grant_slips_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+    ) -> Result<Vec<[u8; 32]>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let grant_hex = grant_ref.to_hex();
+        let bound: Vec<[u8; 32]> = fold
+            .slips
+            .mints
+            .iter()
+            .filter(|(id, mint)| {
+                mint.action.claims.grant_ref.as_deref() == Some(grant_hex.as_str())
+                    && !fold.slips.explicit_revoked.contains(*id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for slip_id in &bound {
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipRevoke { slip_id: *slip_id })?;
+        }
+        Ok(bound)
+    }
+
     /// Withdraws one ask guest's access at this host (OF-232) in one writer:
     /// deletes the guest's FEDERATION_GRANT, disconnects each live pact the
-    /// grant still governs, and keeps the withdrawal, so a repeat returns the
-    /// first revoke with `changed: false`. `owner` authorizes the act;
-    /// `issuer` is the host's own signing key, which signs the disconnects.
-    ///
-    /// No slip names the grant it was minted under, and an ask birth mints
-    /// none, so this revokes no slip: `revoked_slips` stays empty rather than
-    /// tombstoning every slip the guest's companion holds. A disconnect the
-    /// fold refuses (a multi-key roster wants a second signer) fails the
-    /// whole revoke; it never reports a partial one.
+    /// grant still governs, tombstones every slip minted under the grant, and
+    /// keeps the withdrawal, so a repeat returns the first revoke with
+    /// `changed: false` and no slips. `owner` authorizes the act; `issuer` is
+    /// the host's own signing key, which signs the disconnects and the slip
+    /// revokes. A disconnect the fold refuses (a multi-key roster wants a
+    /// second signer) fails the whole revoke; it never reports a partial one.
     pub fn revoke_guest_access(
         &self,
         owner: &AuthenticatedOwner,
@@ -84,6 +173,7 @@ impl Vault {
             {
                 self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
             }
+            let revoked_slips = self.revoke_grant_slips_in_txn(txn, issuer, grant_ref)?;
             apply_ops(
                 &self.store,
                 &self.config,
@@ -105,7 +195,7 @@ impl Vault {
                 guest_ref: withdrawal.guest_ref,
                 changed: true,
                 revoked_at,
-                revoked_slips: Vec::new(),
+                revoked_slips,
                 pact: federation_grant_activation(
                     &*self.authority_view_readonly_in_txn(txn)?,
                     &grant_ref,
