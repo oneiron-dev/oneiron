@@ -371,6 +371,42 @@ pub(super) fn case_reports(
 
 /// One report as the question's state reads it. The detail is the agent's
 /// own words: data for the ladder, never an instruction.
+/// Counts an owner's answer to one of the Coach's proposals as the review of
+/// its heal (ARCH-0066 #oversight), in the transaction that answers it. A
+/// claim that is no Coach proposal, or whose case or report the Coach filed
+/// under another proposal, counts nothing. Either answer reached a person, so
+/// both count as escalated.
+pub(crate) fn record_owner_review_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    claim: EntityId,
+    body: &crate::claim::ClaimBody,
+    proposed_at: u64,
+    now: u64,
+) -> Result<()> {
+    let field = match body.predicate.as_str() {
+        COACH_HEAL_PROPOSAL_PREDICATE => "case",
+        COACH_ISSUE_PROPOSAL_PREDICATE => "receipt",
+        _ => return Ok(()),
+    };
+    let Some(key) = body
+        .value
+        .as_str()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .and_then(|value| value.get(field)?.as_str().map(str::to_owned))
+    else {
+        return Ok(());
+    };
+    let Ok(id) = EntityId::from_hex(&key) else {
+        return Ok(());
+    };
+    match blocked_reports::settled_in_txn(vault, &*txn, &id)? {
+        Some(settled) if settled.proposal == claim => {}
+        _ => return Ok(()),
+    }
+    crate::failure_ladder::oversight::reviewed_in_txn(vault, txn, &key, proposed_at, now, true)
+}
+
 fn report_state(report: &BlockedReceipt) -> serde_json::Value {
     let mut end = report.untrusted_detail.len().min(DETAIL_BYTES);
     while !report.untrusted_detail.is_char_boundary(end) {
