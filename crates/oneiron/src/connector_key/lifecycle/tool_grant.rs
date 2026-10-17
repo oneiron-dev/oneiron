@@ -32,11 +32,13 @@ use crate::outbound_grant::{
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-use super::super::manifest_drift::{ConnectorToolSchema, ResolvedConnectorManifest};
+use super::super::manifest_drift::{
+    ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
+};
 use super::super::qualification::ConnectorQualificationReceipt;
 use super::super::record::{
-    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
-    canonical_scoped_server_segment, normalize_connector_key,
+    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, PendingConnectorManifest,
+    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
 };
 use super::super::slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, read_connector_slate_in_txn,
@@ -321,8 +323,9 @@ impl Vault {
     /// - an Active catalog re-derives each. A tool still allowed on the
     ///   owner-stamped slate, with the schema the key holds and that the
     ///   catalog's approved manifest still pins, carries to the catalog's
-    ///   revision and report, and its hold lifts unless a staged manifest
-    ///   change touches the tool. Any other is retired with its grant.
+    ///   revision and report, and its hold lifts. A staged manifest change
+    ///   to the tool is mirrored onto the key, whose calls then confirm
+    ///   first. Any other is retired with its grant.
     pub(in crate::connector_key) fn sync_derived_keys_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -400,7 +403,35 @@ impl Vault {
             } else {
                 derived_admission(record, tool_snapshot(&admitted.slate, &tool)?, admitted, at)?
             };
+            // A staged change to the key's tool is mirrored onto the key, so
+            // its calls confirm first as the catalog's own do; the key is
+            // held only when the catalog stages nothing to mirror.
+            let mirrored = staged
+                .then(|| staged_tool_change(catalog, &tool, next.retained_manifest.as_ref()))
+                .flatten();
             let op = match (staged, status) {
+                (true, _)
+                    if mirrored.is_some() && (status == ConnectorKeyStatus::Active || was_held) =>
+                {
+                    if current
+                        && status == ConnectorKeyStatus::Active
+                        && next.pending_manifest == mirrored
+                    {
+                        continue;
+                    }
+                    next = ConnectorKeyRecord {
+                        status: ConnectorKeyStatus::Active,
+                        status_changed_at: if was_held {
+                            Some(at)
+                        } else {
+                            next.status_changed_at
+                        },
+                        suspended_reason: None,
+                        pending_manifest: mirrored,
+                        ..next
+                    };
+                    "gate.connector_key.manifest_stage"
+                }
                 (true, ConnectorKeyStatus::Active) => {
                     next = held(next, at);
                     "gate.connector_key.suspend"
@@ -410,6 +441,7 @@ impl Vault {
                         status: ConnectorKeyStatus::Active,
                         status_changed_at: Some(at),
                         suspended_reason: None,
+                        pending_manifest: None,
                         ..next
                     };
                     if current {
@@ -417,6 +449,10 @@ impl Vault {
                     } else {
                         "gate.connector_key.carry"
                     }
+                }
+                (false, _) if next.pending_manifest.is_some() => {
+                    next.pending_manifest = None;
+                    "gate.connector_key.manifest_revert"
                 }
                 _ if current => continue,
                 _ => "gate.connector_key.carry",
@@ -640,8 +676,42 @@ fn derived_admission(
     })
 }
 
+/// The catalog's staged change to one tool, mirrored onto that tool's
+/// per-grant key: the key's own snapshot under the catalog's candidate,
+/// marked changed for that tool alone, so the key's calls confirm first as
+/// the catalog's do. `None` when the catalog stages no candidate, or one
+/// that needs re-registration as a whole.
+fn staged_tool_change(
+    catalog: &ConnectorKeyRecord,
+    tool: &str,
+    snapshot: Option<&ResolvedConnectorManifest>,
+) -> Option<PendingConnectorManifest> {
+    let pending = catalog.pending_manifest.as_ref()?;
+    if pending.drift.requires_reregistration {
+        return None;
+    }
+    Some(PendingConnectorManifest {
+        candidate_id: pending.candidate_id,
+        manifest: snapshot?.clone(),
+        protocol_revision: pending.protocol_revision.clone(),
+        drift: ConnectorManifestDrift {
+            kinds: pending.drift.kinds.clone(),
+            affected_tools: BTreeSet::from([tool.to_owned()]),
+            reconsent_tools: pending
+                .drift
+                .reconsent_tools
+                .iter()
+                .filter(|name| *name == tool)
+                .cloned()
+                .collect(),
+            requires_reregistration: false,
+        },
+        qualification_report_hash: None,
+    })
+}
+
 /// A per-grant key held while its catalog connector is not Active or holds
-/// a staged change to the key's tool.
+/// a staged change to the key's tool it cannot mirror.
 fn held(record: ConnectorKeyRecord, at: u64) -> ConnectorKeyRecord {
     ConnectorKeyRecord {
         status: ConnectorKeyStatus::Suspended,
