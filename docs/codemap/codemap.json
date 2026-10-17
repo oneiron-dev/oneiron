@@ -19781,6 +19781,7 @@
      "notable": [
       "SheetAnswerBundle",
       "SheetCellAnswer",
+      "SheetRowReads",
       "SheetRowsAsk"
      ],
      "path": "src/edit_roundtrip/judgment.rs",
@@ -19788,7 +19789,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -19878,7 +19879,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ParagraphAsk",
@@ -19887,7 +19888,7 @@
      "path": "src/edit_roundtrip/paragraph_review.rs",
      "purpose": "Typed questions over paragraphs (ARCH-0076 §2, \"Paragraph or clause\"): each selected paragraph of a DOCX…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 2
      }
@@ -20119,6 +20120,25 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ReaskShape",
+      "UnitWithdrawal",
+      "WithdrawReason",
+      "WithdrawnAnswer",
+      "WithdrawnUnit"
+     ],
+     "path": "src/edit_settle/carry.rs",
+     "purpose": "ARCH-0075 §4: a held answer proposal whose units change under it",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -20136,7 +20156,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 47
+      "crate-vis": 48
      }
     },
     {
@@ -20147,7 +20167,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -20177,7 +20197,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -20223,7 +20243,7 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -22527,7 +22547,7 @@
      "path": "src/gate/policy_values.rs",
      "purpose": "Typed behaviour values and deterministic, scoped manifest-row selection",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -22653,7 +22673,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 65
+      "crate-vis": 66
      }
     },
     {
@@ -26966,7 +26986,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 8
      }
     },
@@ -27034,6 +27054,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
+      "crate-vis": 1,
       "fn": 7,
       "struct": 2
      }
@@ -34238,7 +34259,7 @@
       "const": 1,
       "crate-vis": 10,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -49975,7 +49996,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50920,9 +50941,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 137,
+   "over_bar": 138,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3075,
+   "source_files": 3076,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65279,7 +65300,7 @@
      "path": "src/decision_artifact.rs",
      "purpose": "Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
