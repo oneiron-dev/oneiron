@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 258 facade rows, 798 generated types.
+// UniFFI census: 258 facade rows, 811 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 218.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -927,6 +927,34 @@ pub struct PersonRequest {
     pub pr: String,
 }
 
+/// `oneiron::vault_shape::member::ShapePreset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapePreset {
+    #[serde(rename = "personal")]
+    Personal,
+    #[serde(rename = "family")]
+    Family,
+    #[serde(rename = "team")]
+    Team,
+    #[serde(rename = "org")]
+    Org,
+    #[serde(rename = "community")]
+    Community,
+}
+
+/// `oneiron::vault_shape::member::ShapeMemberRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeMemberRole {
+    #[serde(rename = "owner")]
+    Owner,
+    #[serde(rename = "admin")]
+    Admin,
+    #[serde(rename = "member")]
+    Member,
+    #[serde(rename = "viewer")]
+    Viewer,
+}
+
 /// `oneiron::vault_shape::ShapeCeiling`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ShapeCeiling {
@@ -934,6 +962,111 @@ pub enum ShapeCeiling {
     Auto,
     #[serde(rename = "proposed")]
     Proposed,
+}
+
+/// `oneiron::vault_shape::skill::ShapeSkillSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "from")]
+pub enum ShapeSkillSource {
+    #[serde(rename = "library")]
+    Library {
+        #[serde(rename = "subtree")]
+        subtree: String,
+    },
+    #[serde(rename = "hub")]
+    Hub {
+        #[serde(rename = "hub")]
+        hub: String,
+        #[serde(rename = "folder")]
+        folder: String,
+        #[serde(rename = "pin_type")]
+        pin_type: String,
+        #[serde(rename = "pin_value")]
+        pin_value: String,
+        #[serde(rename = "publisher")]
+        publisher: String,
+    },
+}
+
+/// `oneiron::vault_shape::channel::ShapeSelfHeld`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeSelfHeld {
+    #[serde(rename = "dedicated_address")]
+    DedicatedAddress,
+    #[serde(rename = "dedicated_handle")]
+    DedicatedHandle,
+    #[serde(rename = "shared_presence")]
+    SharedPresence,
+}
+
+/// `oneiron::vault_shape::channel::ShapeMailScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeMailScope {
+    #[serde(rename = "mail.read")]
+    MailRead,
+    #[serde(rename = "mail.metadata")]
+    MailMetadata,
+    #[serde(rename = "mail.send")]
+    MailSend,
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelCustody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "held")]
+pub enum ShapeChannelCustody {
+    #[serde(rename = "self_held")]
+    SelfHeld {
+        #[serde(rename = "shape")]
+        shape: ShapeSelfHeld,
+    },
+    #[serde(rename = "delegated")]
+    Delegated {
+        #[serde(rename = "custody_record_ref")]
+        custody_record_ref: String,
+        #[serde(rename = "scopes")]
+        scopes: Vec<ShapeMailScope>,
+    },
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "to")]
+pub enum ShapeChannelBinding {
+    #[serde(rename = "actor")]
+    Actor {
+        #[serde(rename = "agent_id")]
+        agent_id: String,
+        #[serde(rename = "facet", default, skip_serializing_if = "Option::is_none")]
+        facet: Option<String>,
+    },
+    #[serde(rename = "vault")]
+    Vault {
+        #[serde(rename = "vault_id")]
+        vault_id: u64,
+    },
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelFulfillment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeChannelFulfillment {
+    #[serde(rename = "api")]
+    Api,
+    #[serde(rename = "manual")]
+    Manual,
+    #[serde(rename = "review")]
+    Review,
+}
+
+/// `oneiron::vault_shape::channel::ShapeChannelProvision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeChannelProvision {
+    #[serde(rename = "custody")]
+    pub custody: ShapeChannelCustody,
+    #[serde(rename = "binding")]
+    pub binding: ShapeChannelBinding,
+    #[serde(rename = "fulfillment")]
+    pub fulfillment: ShapeChannelFulfillment,
 }
 
 /// `oneiron::vault_shape::grant::ShapeGrantBound`.
@@ -980,6 +1113,13 @@ pub enum ShapeGrantBound {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 pub enum ShapeTarget {
+    #[serde(rename = "shared")]
+    Shared,
+    #[serde(rename = "member")]
+    Member {
+        #[serde(rename = "member")]
+        member: String,
+    },
     #[serde(rename = "world")]
     World {
         #[serde(rename = "name")]
@@ -1023,6 +1163,20 @@ pub enum ShapeTarget {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 pub enum ShapeRow {
+    #[serde(rename = "shared")]
+    Shared {
+        #[serde(rename = "vault_id")]
+        vault_id: u64,
+        #[serde(rename = "preset", default, skip_serializing_if = "Option::is_none")]
+        preset: Option<ShapePreset>,
+    },
+    #[serde(rename = "member")]
+    Member {
+        #[serde(rename = "member")]
+        member: String,
+        #[serde(rename = "role")]
+        role: ShapeMemberRole,
+    },
     #[serde(rename = "world")]
     World {
         #[serde(rename = "name")]
@@ -1050,6 +1204,8 @@ pub enum ShapeRow {
         skill_id: String,
         #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
         version: Option<String>,
+        #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+        source: Option<ShapeSkillSource>,
     },
     #[serde(rename = "channel")]
     Channel {
@@ -1057,6 +1213,8 @@ pub enum ShapeRow {
         channel: String,
         #[serde(rename = "address")]
         address: String,
+        #[serde(rename = "provision", default, skip_serializing_if = "Option::is_none")]
+        provision: Option<ShapeChannelProvision>,
     },
     #[serde(rename = "grant")]
     Grant {
@@ -1215,12 +1373,36 @@ pub struct ShapeRead {
     pub applies: Vec<ShapeApplyReceipt>,
 }
 
+/// `oneiron::vault_shape::member::ShapePresetMember`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapePresetMember {
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "role", default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ShapeMemberRole>,
+}
+
+/// `oneiron::vault_shape::member::ShapePresetPick`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapePresetPick {
+    #[serde(rename = "preset")]
+    pub preset: ShapePreset,
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "members", default, skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<ShapePresetMember>>,
+}
+
 /// `oneiron::vault_shape::ShapePlanRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ShapePlanRequest {
     #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<ShapeSeed>,
+    #[serde(rename = "preset", default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<ShapePresetPick>,
 }
 
 /// `oneiron::vault_shape::plan::ShapePlanSummary`.
@@ -6013,6 +6195,8 @@ pub struct LensDefaultRequest {
     pub dossiers: Option<Vec<LensDossierSource>>,
     #[serde(rename = "threads", default, skip_serializing_if = "Option::is_none")]
     pub threads: Option<Vec<String>>,
+    #[serde(rename = "as_of", default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<u64>,
 }
 
 /// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `GeneratedLens`.
@@ -7144,6 +7328,8 @@ pub struct ArtifactExportRequest {
     pub version: Option<u64>,
     #[serde(rename = "travel", default, skip_serializing_if = "Option::is_none")]
     pub travel: Option<TravelChoice>,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportFile`.
@@ -11597,6 +11783,33 @@ pub enum BodyBlockKind {
     Opaque,
 }
 
+/// `oneiron_docedit::docx_body::DocxMark`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DocxMark {
+    #[serde(rename = "bold")]
+    Bold,
+    #[serde(rename = "italic")]
+    Italic,
+    #[serde(rename = "underline")]
+    Underline,
+    #[serde(rename = "strike")]
+    Strike,
+    #[serde(rename = "subscript")]
+    Subscript,
+    #[serde(rename = "superscript")]
+    Superscript,
+}
+
+/// `oneiron_docedit::docx_body::DocxRun`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DocxRun {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "marks", default, skip_serializing_if = "Option::is_none")]
+    pub marks: Option<Vec<DocxMark>>,
+}
+
 /// `oneiron::office_body::verbs::DocxCellView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DocxCellView {
@@ -11623,6 +11836,8 @@ pub struct DocxBlockView {
     pub locked: bool,
     #[serde(rename = "text")]
     pub text: String,
+    #[serde(rename = "runs")]
+    pub runs: Vec<DocxRun>,
     #[serde(rename = "cells")]
     pub cells: Vec<DocxCellView>,
 }
@@ -12056,6 +12271,19 @@ pub enum DocxBodyOp {
         block: String,
         #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
         after: Option<String>,
+    },
+    #[serde(rename = "mark")]
+    Mark {
+        #[serde(rename = "block")]
+        block: String,
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "len")]
+        len: u64,
+        #[serde(rename = "mark")]
+        mark: DocxMark,
+        #[serde(rename = "on")]
+        on: bool,
     },
 }
 

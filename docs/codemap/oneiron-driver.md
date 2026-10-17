@@ -29,9 +29,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/tests/mod.rs` | test | m | 12 crate-vis | — | Shared fixtures for the supervisor test suites |
 | `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn | HybridTick | Hybrid tick: biased deadline-versus-push select with deadline priority and session-hint sidecar delegation |
 | `src/tick/mod.rs` | src | s | 1 type · 5 re-export · 2 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |
-| `src/tick/model.rs` | src | s | 4 struct · 1 enum · 2 trait · 3 crate-vis | CommitmentDeadline, DeadlineSource, HintSignal, SessionHintCarrier, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
+| `src/tick/model.rs` | src | s | 4 struct · 2 enum · 2 trait · 3 crate-vis | ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, SessionHintCarrier, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
 | `src/tick/policy.rs` | src | s | 1 struct · 1 fn · 1 type | WakePolicyTicks | One cancellable quiet sleep per tick source, driven by the vault's row policy |
-| `src/tick/push.rs` | src | m | 3 struct · 1 enum · 6 fn · 3 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
+| `src/tick/push.rs` | src | m | 3 struct · 1 enum · 7 fn · 4 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
 | `src/tick/tests/mod.rs` | test | s | — | — | Tick tests: shared helpers (scripted deadlines, frozen and movable clocks, vault seed helpers) |
 | `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
 | `src/tick/tests/tests_push.rs` | test | s | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
