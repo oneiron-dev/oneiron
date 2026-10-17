@@ -595,6 +595,7 @@ fn mcp_agent_verb_input(
             );
             Ok(Value::Object(map))
         }
+        "self.focus.scratchpad.recall" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
@@ -999,6 +1000,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("scopes") {
                 arguments.insert("scopes".to_owned(), value.clone());
             }
+        }
+        "self.focus.scratchpad.recall" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -1911,6 +1915,14 @@ async fn execute_agent_verb_row(
                 oneiron::task_verb::sdk::self_focus_unsubscribe(context, input)
             })
             .await
+        }
+        "self.focus.scratchpad.recall" => {
+            let input: oneiron::task_verb::sdk::ScratchpadRecallRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_focus_scratchpad_recall(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
         }
         "self.memory.diary" => {
             let input: oneiron::task_verb::sdk::DiaryEntryRequest =

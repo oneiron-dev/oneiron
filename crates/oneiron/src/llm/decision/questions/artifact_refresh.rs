@@ -522,6 +522,85 @@ fn baseline(
     Ok(Some(versions))
 }
 
+/// One standing artifact question's last ask of one artifact, read back by its principal
+/// (`vault.questions.answers`): the head it asked and where its answers stand. A later ask
+/// of the same artifact replaces it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactAskRecord {
+    pub artifact: EntityId,
+    /// The question version that asked.
+    pub question_version: u32,
+    /// The artifact's head version the ask read.
+    pub artifact_version: u64,
+    pub asked_at: u64,
+    /// The proposal its answers were held under for Keep; none when no unit was answered.
+    #[serde(default)]
+    pub proposal_ref: Option<String>,
+    pub standing: ArtifactAskStanding,
+}
+
+/// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:
+/// the ask's own proposal and every wake's re-ask of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ArtifactAskStanding {
+    /// No unit was answered, so nothing was held.
+    Unanswered,
+    /// The proposal, or a wake's re-ask of it, waits for Keep.
+    Waiting,
+    /// Nothing waits, and a Keep of the proposal or of a re-ask moved the artifact to
+    /// `version`.
+    Kept { version: u64 },
+    /// Nothing waits and no Keep moved the artifact: the answers were discarded, or an edit
+    /// withdrew them.
+    Closed,
+}
+
+/// Every artifact the caller's standing question has asked, at its last ask, in artifact
+/// order: the `TYPED_QUESTION_ARTIFACT_ASKED` stamps, each with where its answers stand.
+/// Another principal's question is not found, as [`super::answer_records`] refuses it.
+pub fn artifact_ask_records(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<ArtifactAskRecord>> {
+    let stamps = {
+        let txn = vault.store.env.read_txn()?;
+        owned_head(vault, &txn, principal, question)?;
+        ASKED.scan_from(&vault.store, &txn, question.as_bytes())?
+    };
+    stamps
+        .into_iter()
+        .map(|((_, artifact), stamp)| {
+            let asked = stamp
+                .versions
+                .iter()
+                .find(|(id, _)| *id == artifact)
+                .map_or(0, |(_, version)| *version);
+            let standing = match (&stamp.proposal_ref, baseline(vault, artifact, &stamp)?) {
+                (None, _) => ArtifactAskStanding::Unanswered,
+                (Some(_), None) => ArtifactAskStanding::Waiting,
+                (Some(_), Some(versions)) => versions
+                    .iter()
+                    .find(|(id, _)| *id == artifact)
+                    .filter(|(_, kept)| *kept > asked)
+                    .map_or(ArtifactAskStanding::Closed, |(_, kept)| {
+                        ArtifactAskStanding::Kept { version: *kept }
+                    }),
+            };
+            Ok(ArtifactAskRecord {
+                artifact,
+                question_version: stamp.question_version,
+                artifact_version: asked,
+                asked_at: stamp.asked_at,
+                proposal_ref: stamp.proposal_ref,
+                standing,
+            })
+        })
+        .collect()
+}
+
 /// The builder `selection` names, over the readable `files` of a folder ask, asking
 /// only the units in `only` when an arrival named them.
 fn ask_selection(

@@ -13,14 +13,16 @@
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
-    AnswerRecord, QuestionRecord, answer_records, create_question, edit_question, pause_question,
-    question_call_budget, read_question, run_graph_ask_receipted, select_graph_units_by_type,
+    QuestionRecord, answer_records, artifact_ask_records, create_question, edit_question,
+    pause_question, question_call_budget, read_question, run_graph_ask_receipted,
+    select_graph_units_by_type,
 };
 use oneiron::llm::decision::{DecisionDial, DecisionRung};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
-    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
+    GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionAnswersRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -32,10 +34,13 @@ use crate::server::SyncServer;
 /// `vault.graph.ask`: the caller's typed question over graph units, each
 /// unit read under the caller's own access and answered on the host's
 /// ladder from its first filled rung up to the request's ceiling (`big` when
-/// absent), each on its own clock. Every answer lands as a proposed claim
-/// private to the caller, written as the caller; a unit that fails stops the
-/// ask and names itself beside the answers already committed. The ladder
-/// runs on a blocking thread.
+/// absent), each on its own clock. A per-ask `posture` stricter than the
+/// vault's answers without the rungs that send unit text off the host where
+/// it forbids that; a looser one is held at the vault's, by the standing
+/// question's rule ([`crate::decision_graph::question_posture`]). Every
+/// answer lands as a proposed claim private to the caller, written as the
+/// caller; a unit that fails stops the ask and names itself beside the
+/// answers already committed. The ladder runs on a blocking thread.
 pub(crate) async fn vault_graph_ask(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -55,7 +60,8 @@ pub(crate) async fn vault_graph_ask(
         let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
         let budget = question_call_budget(server.vault(), input.unit_deadline_ms)?;
         let dial = server.decision_host().dial(ceiling);
-        let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?;
+        let mut answerer =
+            LadderGraphAnswerer::new(&server, asker, dial, budget)?.with_posture(input.posture);
         match run_graph_ask_receipted(
             &lane,
             asker,
@@ -169,18 +175,22 @@ pub(crate) async fn vault_questions_read(
     .map_err(|_| internal(VERB))?
 }
 
-/// `vault.questions.answers`: every answer receipt of the caller's standing
-/// question, across its versions.
+/// `vault.questions.answers`: every answer of the caller's standing
+/// question, across its versions, tagged by kind: each graph answer receipt,
+/// then each artifact the question asked at its last ask, with where its
+/// proposal stands ([`QuestionAnswer::union`]).
 pub(crate) async fn vault_questions_answers(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionAnswersRequest,
-) -> MemoryResult<Vec<AnswerRecord>> {
+) -> MemoryResult<Vec<QuestionAnswer>> {
     const VERB: &str = "vault.questions.answers";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<AnswerRecord>> {
-        Ok(answer_records(server.vault(), principal, input.id)?)
+    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
+        let graph = answer_records(server.vault(), principal, input.id)?;
+        let asks = artifact_ask_records(server.vault(), principal, input.id)?;
+        Ok(QuestionAnswer::union(graph, asks))
     })
     .await
     .map_err(|_| internal(VERB))?

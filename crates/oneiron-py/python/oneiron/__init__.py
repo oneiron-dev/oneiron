@@ -250,6 +250,9 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def focus(self) -> "Oneiron._SelfFocusVerbs":
+            return Oneiron._SelfFocusVerbs(self._client)
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
         @property
@@ -270,6 +273,18 @@ class Oneiron:
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
             return Oneiron._SelfDecisionsVerbs(self._client)
+    class _SelfFocusVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs":
+            return Oneiron._SelfFocusScratchpadVerbs(self._client)
+    class _SelfFocusScratchpadVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def recall(self, spec):
+            """Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."""
+            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_recall(json.dumps(spec))))
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

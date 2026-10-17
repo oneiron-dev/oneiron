@@ -19,6 +19,7 @@ pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub use artifact_refresh::{
     ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_due_artifact_questions,
 };
+pub use artifact_refresh::{ArtifactAskRecord, ArtifactAskStanding, artifact_ask_records};
 pub(crate) use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,

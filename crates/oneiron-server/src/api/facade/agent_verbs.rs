@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/report", post(facade_route))
+        .route("/self.focus.scratchpad.recall", post(facade_route))
         .route("/self.memory.diary", post(facade_route))
         .route("/self.memory.diary.reads", post(facade_route))
         .route("/self.memory.diary.review", post(facade_route))

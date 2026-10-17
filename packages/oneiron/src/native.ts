@@ -29,6 +29,7 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+selfFocusScratchpadRecall(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown

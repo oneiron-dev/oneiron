@@ -396,7 +396,50 @@ fn mcp_board_sections(
         .map_err(mcp_board_frame_error)?,
     );
     sections.extend(mcp_pack_sections(server, actor, served)?);
+    sections.extend(mcp_readers_section(server, actor));
     Ok((sections, omissions))
+}
+
+/// A connector's READERS: its agent's own reader list, which is actor-wide
+/// as its children are, so a world/facet-narrowed or record-restricted
+/// connector reads none of it.
+fn mcp_readers_section(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+) -> Option<oneiron::context_board::BoardSection> {
+    if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
+        return None;
+    }
+    let memory = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality());
+    agent_readers_section(&memory, actor.actor_class)
+}
+
+/// The READERS section of an agent's board (ARCH-0067; ARCH-0032
+/// #private-reads: the agent sees who may read its diary and sealed pads,
+/// and who did), from the engine's one producer the HTTP board serves too
+/// ([`oneiron::memory::Memory::board_readers_section`]). Any other actor
+/// class gets none. A list that does not read is logged by its code and
+/// left off, so it never costs the agent its board.
+fn agent_readers_section(
+    memory: &oneiron::memory::Memory<'_>,
+    class: oneiron::EdgeActorClass,
+) -> Option<oneiron::context_board::BoardSection> {
+    if class != oneiron::EdgeActorClass::Agent {
+        return None;
+    }
+    match memory.board_readers_section() {
+        Ok(section) => Some(section),
+        Err(error) => {
+            tracing::warn!(code = %error.code, "board readers section left off");
+            None
+        }
+    }
 }
 
 /// The board's WORLDS: the tiers the actor's planner reads, over the WORLD
@@ -1045,6 +1088,13 @@ fn run_board_sections(
         .map_err(mcp_board_frame_error)?,
     );
     sections.extend(run_pack_sections(server, read, served)?);
+    sections.extend(agent_readers_section(
+        &server
+            .vault
+            .memory(actor.entity_ref(), actor.actor_class())
+            .at(oneiron::claim::CallerLocality::OnDevice),
+        actor.actor_class(),
+    ));
     Ok((sections, omissions))
 }
 

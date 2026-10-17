@@ -5,6 +5,7 @@ pub enum AgentVerb {
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
+    SelfFocusScratchpadRecall,
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
@@ -270,6 +271,7 @@ impl AgentVerb {
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
+        Self::SelfFocusScratchpadRecall,
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
@@ -538,6 +540,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
+            Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
@@ -806,6 +809,7 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::SelfFocusScratchpadRecall
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -1078,6 +1082,7 @@ impl AgentVerb {
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusScratchpadRecall
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -1381,7 +1386,8 @@ impl AgentVerb {
     pub const fn requires_unscoped(self) -> bool {
         matches!(
             self,
-            Self::SelfMemoryDiary
+            Self::SelfFocusScratchpadRecall
+                | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
@@ -1807,6 +1813,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -2073,6 +2080,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -2345,6 +2353,9 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => "Subscribes the run's board stream to the named scopes.",
             Self::SelfFocusUnsubscribe => {
                 "Unsubscribes the run's board stream from the named scopes."
+            }
+            Self::SelfFocusScratchpadRecall => {
+                "Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."
             }
             Self::SelfMemoryDiary => {
                 "Writes one private entry in the bound actor's own diary, as an actor-private NOTE."
