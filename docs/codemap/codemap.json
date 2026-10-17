@@ -41987,7 +41987,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/gate/decision.rs",
@@ -42038,9 +42038,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "AnchorLabelScore",
       "AuditPair",
       "BlindPreference",
       "HonestyReplay",
@@ -42050,11 +42051,11 @@
       "WorldAxisScore"
      ],
      "path": "src/skill_optimize/gate/measurement.rs",
-     "purpose": "Receipt-only DecoEvo measurements and per-axis world-outcome calibration",
+     "purpose": "Receipt-only DecoEvo measurements, per-axis world-outcome calibration, and the judge against the human picks…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -42195,7 +42196,7 @@
      "purpose": "The judge-swap shadow ladder (ARCH-0053, ARCH-0079 #model-swaps, OF-184)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 5,
       "struct": 7,
@@ -42213,7 +42214,7 @@
      "path": "src/skill_optimize/labels.rs",
      "purpose": "Human-calibrated judge asks and the append-only label anchor",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -53254,7 +53255,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 168,
+   "over_bar": 169,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3230,
    "test_files": 902
