@@ -34,7 +34,7 @@ use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
 use oneiron::memory::{
     Memory, MemoryError, MessageStreamError, MessageStreamHandle, MessageStreamReceipt,
     MessageWriteMode, StreamCadence, StreamCancelReason, StreamSyncVisibility, WitnessAuthor,
-    WitnessMessage, WitnessTurn,
+    WitnessMessage, WitnessTurn, resolve_entity_ref,
 };
 use oneiron::runtime_hooks::verb::InvocationClaim;
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
@@ -479,10 +479,20 @@ fn start_turn(
     // turn before anything lands and a retry of it witnesses once.
     // The turn's hooks read under the caller's credential, where its
     // connection sits (ARCH-0080 §3). An owner-grade credential naming no
-    // principal reads as the owner it writes as.
-    let hooked = || match auth.principal_ref() {
-        Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
-        None => vault.memory(actor, class),
+    // principal reads as the owner it writes as. The surface is bound to the
+    // conversation this request starts its work in (OF-221), so a root TASK
+    // it creates carries that origin to the agent that realizes it; a ref
+    // that does not resolve binds none, and the witness refuses it.
+    let origin = resolve_entity_ref(&vault, &request.conversation_ref).ok();
+    let hooked = || {
+        let memory = match auth.principal_ref() {
+            Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
+            None => vault.memory(actor, class),
+        };
+        match origin {
+            Some(conversation) => memory.with_origin_conversation(conversation),
+            None => memory,
+        }
     };
     let reader =
         VerbCall::reader_of(&hooked(), HOST_TURN_GENERATE).map_err(|error| engine(&error))?;
