@@ -30,20 +30,23 @@ pub enum Refusal {
     /// or not a plain token and visible-ASCII value.
     #[error("request header refused")]
     Header,
-    /// The body is not one JSON object.
-    #[error("body is not one JSON object")]
+    /// The body, or its content type, is not the shape's: one JSON object,
+    /// one plain multipart form, or nothing for a shape that sends no body.
+    #[error("body is not the shape's")]
     Body,
-    /// The body has no top-level `model`.
+    /// The body has no top-level `model`, or its form no `model` field.
     #[error("body names no model")]
     SelectorMissing,
-    /// The body has more than one top-level `model`.
+    /// The body names the model more than once, or names one beside the
+    /// path's.
     #[error("body names the model twice")]
     SelectorRepeated,
-    /// The top-level `model` is not a string.
+    /// The `model` is not a string, or its form field is a file or typed.
     #[error("model is not a string")]
     SelectorNotString,
-    /// The body carries a top-level `models`, `route` or `provider` key, which
-    /// picks the model or the route by another way.
+    /// The body carries a top-level `models`, `route` or `provider` key, or a
+    /// form field of that name, which picks the model or the route by another
+    /// way.
     #[error("body carries a route override")]
     RouteOverride,
     /// The selector is not the offer's wire model.
@@ -76,6 +79,14 @@ pub enum Failure {
     /// The reply is content-encoded, so the key could not be stripped from it.
     #[error("reply is content-encoded")]
     ReplyEncoded,
+    /// The provider redirected where the shape does not follow, or again
+    /// after the one redirect it follows.
+    #[error("reply redirected where the shape does not follow")]
+    Redirect,
+    /// A streamed reply holds a form of the key, or a run too long to rule
+    /// one out. A binary body is cut, never rewritten.
+    #[error("streamed reply holds the key")]
+    ReplyHoldsKey,
 }
 
 /// The daemon side's error for one call.
