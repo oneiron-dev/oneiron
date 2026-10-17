@@ -243,7 +243,7 @@ declare const vault: {
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {
-    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; posture?: string | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
+    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; criteria?: object | null; posture?: string | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
   };
   guests: {
     mint_slip(input: { expires_at: number; grant_ref: string; holder_key: string }): Promise<unknown>;

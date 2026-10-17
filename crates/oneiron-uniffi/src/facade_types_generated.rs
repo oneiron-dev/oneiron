@@ -9683,6 +9683,18 @@ pub enum HostingPrivacyPosture {
     SelfHostLocal,
 }
 
+/// `oneiron::llm::decision::questions::records::QuestionCriteria`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionCriteria {
+    #[serde(rename = "yes_if_all")]
+    pub yes_if_all: Vec<String>,
+    #[serde(rename = "no_if_any")]
+    pub no_if_any: Vec<String>,
+    #[serde(rename = "not_a_reason_to_say_no")]
+    pub not_a_reason_to_say_no: Vec<String>,
+}
+
 /// `oneiron::receipt::questions::GraphAskRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -9703,6 +9715,8 @@ pub struct GraphAskRequest {
     pub unit_deadline_ms: Option<u64>,
     #[serde(rename = "posture", default, skip_serializing_if = "Option::is_none")]
     pub posture: Option<HostingPrivacyPosture>,
+    #[serde(rename = "criteria", default, skip_serializing_if = "Option::is_none")]
+    pub criteria: Option<QuestionCriteria>,
 }
 
 /// `oneiron::llm::decision::types::TypedDecision`.
@@ -9819,18 +9833,6 @@ pub struct RefreshPolicy {
         skip_serializing_if = "Option::is_none"
     )]
     pub every_seconds: Option<u64>,
-}
-
-/// `oneiron::llm::decision::questions::records::QuestionCriteria`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionCriteria {
-    #[serde(rename = "yes_if_all")]
-    pub yes_if_all: Vec<String>,
-    #[serde(rename = "no_if_any")]
-    pub no_if_any: Vec<String>,
-    #[serde(rename = "not_a_reason_to_say_no")]
-    pub not_a_reason_to_say_no: Vec<String>,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionAudience`.
