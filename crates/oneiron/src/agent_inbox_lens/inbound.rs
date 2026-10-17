@@ -66,6 +66,7 @@ impl Vault {
                 receipt_ref: None,
                 payload_ref: event.payload_ref,
                 concern: None,
+                diary_review: None,
             };
             // Retries retain one correlation. Current state/time breaks ties,
             // not physical queue-row order.
@@ -128,6 +129,7 @@ impl Vault {
                     receipt_ref: None,
                     payload_ref: None,
                     concern: None,
+                    diary_review: None,
                 });
             }
         }

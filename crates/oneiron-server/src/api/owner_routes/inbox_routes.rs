@@ -85,6 +85,20 @@ struct InboxRow {
     payload_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     concern: Option<ConcernRow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    diary_review: Option<DiaryReviewRow>,
+}
+
+/// Who waits on an agent's review of a diary read, and the reason they
+/// stated; the agent answers it.
+#[derive(Debug, Serialize)]
+struct DiaryReviewRow {
+    /// The request, as 32 hex.
+    request: String,
+    /// The reader, as 32 hex.
+    reader: String,
+    reader_class: String,
+    reason: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,6 +192,12 @@ async fn read(
                     agent: concern.subject.to_hex(),
                     signal: concern.signal.as_str(),
                     tone: concern.tone.as_str(),
+                }),
+                diary_review: item.diary_review.map(|review| DiaryReviewRow {
+                    request: review.request.to_hex(),
+                    reader: review.reader.to_hex(),
+                    reader_class: review.reader_class,
+                    reason: review.reason,
                 }),
             })
             .collect();

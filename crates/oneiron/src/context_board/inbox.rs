@@ -3,10 +3,14 @@
 //! inbox lens, in the lens's impact order. It stores nothing and hides when
 //! nothing is addressed to the agent.
 use super::frame::{BoardFrameError, BoardSection, SectionPolicy, ShedRank};
-use super::one_line_token;
 use super::people::PeopleView;
+use super::scratchpad::clip;
+use super::{one_line_token, quoted_leaf};
 use crate::agent_inbox_lens::{AgentInboxItemKind, AgentInboxLensItem};
 use crate::entity_id::EntityId;
+
+/// Longest stated reason a review row quotes, in bytes: READERS' bound.
+const REVIEW_REASON_SHOWN_BYTES: usize = 160;
 
 /// INBOX for `actor`, or `None` when its slice is empty. One row per item:
 /// the item handle, its kind, impact, the actor's own identity that carries
@@ -14,7 +18,9 @@ use crate::entity_id::EntityId;
 /// persons on it, named by handle (PEOPLE, ARCH-0067). A concern row (OF-568)
 /// names the agent it is about, its signal and tone, and sits with the other
 /// concerns on that agent. Rows hold refs only; foreign message text never
-/// renders here.
+/// renders here. The one quote is a pending diary-read review's (OF-490): it
+/// names its reader and quotes the reason they stated, clipped as READERS
+/// clips it, so the agent can answer without another read.
 pub fn assemble_inbox_section(
     actor: EntityId,
     items: &[AgentInboxLensItem],
@@ -70,6 +76,13 @@ pub fn assemble_inbox_section(
                     people.label(concern.subject),
                     concern.signal.as_str(),
                     concern.tone.as_str()
+                ));
+            } else if let Some(review) = &item.diary_review {
+                row.push_str(&format!(
+                    " reader={} class={} reason={}",
+                    people.label(review.reader),
+                    one_line_token(&review.reader_class),
+                    quoted_leaf(clip(&review.reason, REVIEW_REASON_SHOWN_BYTES))
                 ));
             } else if item.participants.len() > 1 {
                 row.push_str(&format!(" identities={}", item.participants.len()));

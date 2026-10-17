@@ -1700,6 +1700,7 @@ pub(crate) fn agent_health_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLe
                 signal: card.signal,
                 tone: card.tone,
             }),
+            diary_review: None,
         });
     }
     Ok(items)
