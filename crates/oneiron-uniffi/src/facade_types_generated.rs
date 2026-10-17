@@ -5739,6 +5739,8 @@ pub struct TaskAskReceipt {
     pub idempotent_replay: bool,
     #[serde(rename = "statement", default, skip_serializing_if = "Option::is_none")]
     pub statement: Option<FanoutStatement>,
+    #[serde(rename = "task_records")]
+    pub task_records: Vec<RecordRef>,
 }
 
 /// `oneiron::task_verb::sdk::TaskWaitRequest`.
@@ -5786,6 +5788,14 @@ pub struct TaskAskAnswer {
     pub result_ref: String,
     #[serde(rename = "word_ref")]
     pub word_ref: String,
+    #[serde(rename = "task_record")]
+    pub task_record: RecordRef,
+    #[serde(rename = "actor_record")]
+    pub actor_record: RecordRef,
+    #[serde(rename = "result_record")]
+    pub result_record: RecordRef,
+    #[serde(rename = "word_record")]
+    pub word_record: RecordRef,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskDecision`.

@@ -911,7 +911,7 @@ export type ExceptionalWidthCheck = { count: number; threshold: number; classifi
 /** `oneiron::agent_dispatch::fanout_statement::FanoutStatement` */
 export type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number }
 /** `oneiron::task_verb::ask_types::TaskAskReceipt` */
-export type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null }
+export type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[] }
 /** `oneiron::task_verb::sdk::TaskWaitRequest` */
 export type TaskWaitRequest = { handle: TaskAskHandle; step_key: string }
 /** `oneiron::task_verb::ask_types::TaskAskEffectAuthorization` */
@@ -919,7 +919,7 @@ export type TaskAskEffectAuthorization = "not_evaluated_by_ask"
 /** `oneiron::task_verb::ask_types::TaskAskCoverage` */
 export type TaskAskCoverage = { met: boolean; required: number; responded: EntityId[]; unknown: EntityId[]; unmet_people: EntityId[] }
 /** `oneiron::task_verb::ask_types::TaskAskAnswer` */
-export type TaskAskAnswer = { task_ref: EntityId; actor_ref: EntityId; result_ref: EntityId; word_ref: EntityId }
+export type TaskAskAnswer = { task_ref: EntityId; actor_ref: EntityId; result_ref: EntityId; word_ref: EntityId; task_record: RecordRef; actor_record: RecordRef; result_record: RecordRef; word_record: RecordRef }
 /** `oneiron::task_verb::ask_types::TaskAskDecision` */
 export type TaskAskDecision = "collected" | { first: TaskAskAnswer } | { answer: TaskAskOptionId } | "no" | "conflict" | "unknown"
 /** `oneiron::task_verb::ask_types::TaskAskFallback` */
