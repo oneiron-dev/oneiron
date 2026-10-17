@@ -38,9 +38,11 @@ impl Vault {
         if let Some(task) = RECONCILIATION_TASKS.get(&self.store, txn, &conflict.claim_id)? {
             return Ok(task);
         }
-        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &conflict.claim_id)?
-            .is_none()
-        {
+        if !crate::ports::EntityStoreRead::port_entity_present(
+            &self.store,
+            txn,
+            &conflict.claim_id,
+        )? {
             return Err(Error::EntityNotFound);
         }
         let memory = self.memory(owner, EdgeActorClass::Human);

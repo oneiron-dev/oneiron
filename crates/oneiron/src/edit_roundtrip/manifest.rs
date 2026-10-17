@@ -76,6 +76,10 @@ pub struct EditManifest {
     /// paragraph is asked again (ARCH-0075 §4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paragraph_question: Option<crate::llm::decision::DecisionQuestion>,
+    /// The question those slide judgments answer, which a changed slide is
+    /// asked again (ARCH-0075 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slide_question: Option<crate::llm::decision::DecisionQuestion>,
 }
 
 impl EditManifest {
