@@ -3281,7 +3281,7 @@
      "purpose": "The claim-authoring tournament as a strategy skill on an OF-351 campaign (OF-366)",
      "surface": {
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
      }
     },
@@ -10688,8 +10688,8 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 8,
-      "re-export": 1
+      "crate-vis": 9,
+      "re-export": 2
      }
     },
     {
@@ -10725,6 +10725,22 @@
      "purpose": "Deterministic conversation, turn and message ids derived from a run's identity",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WaitDeliveries",
+      "WaitDelivery",
+      "WaitKey"
+     ],
+     "path": "src/code_run/storage/wait_delivery.rs",
+     "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -17574,16 +17590,17 @@
       "IdentityHint",
       "IdentityOption",
       "IdentityRuling",
-      "IdentitySettled"
+      "IdentitySettled",
+      "MentionProvenance"
      ],
      "path": "src/dreamer_runner/maintenance/identity.rs",
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 8,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -20010,7 +20027,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
      }
     },
     {
@@ -20031,7 +20048,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 43
      }
     },
     {
@@ -20127,6 +20144,7 @@
       "JsResultCall",
       "JsResultRef",
       "JsResultTarget",
+      "ParkedWait",
       "SelfDispatchResponse"
      ],
      "path": "src/engine_executor/types.rs",
@@ -20135,8 +20153,8 @@
       "const": 6,
       "crate-vis": 3,
       "enum": 5,
-      "fn": 7,
-      "struct": 9,
+      "fn": 8,
+      "struct": 10,
       "trait": 2,
       "type": 1
      }
@@ -24799,7 +24817,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -27190,7 +27208,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5
      }
     },
@@ -27203,7 +27221,7 @@
      "path": "src/llm/step/peer_wait.rs",
      "purpose": "Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 1
      }
@@ -27292,7 +27310,7 @@
      "path": "src/llm/step/trap.rs",
      "purpose": "Unified dreamer.trap record lifecycle: open/wait/signal/consume and supersession-chain transitions",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 6
      }
     },
@@ -27303,7 +27321,7 @@
      "path": "src/llm/step/trap_binding.rs",
      "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -27967,7 +27985,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 33
+      "re-export": 34
      }
     },
     {
@@ -30801,7 +30819,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
+      "re-export": 1,
       "struct": 3
      }
     },
@@ -38629,7 +38648,7 @@
      "path": "src/skill_hub/pack_catalog/builtin.rs",
      "purpose": "Engine-embedded connector source and local first-open installation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -38686,7 +38705,7 @@
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 4,
       "struct": 3
@@ -38790,6 +38809,16 @@
       "crate-vis": 2,
       "fn": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/removal.rs",
+     "purpose": "The owner's removal door (OF-519)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -48543,7 +48572,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49530,7 +49559,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49784,7 +49813,7 @@
    },
    "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3005,
+   "source_files": 3007,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52841,7 +52870,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -52857,7 +52886,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 14,
+      "const": 15,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -60062,6 +60091,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/voices.rs",
+     "purpose": "The voice bank's provisioning door, the owner's alone: `POST /v1/ai/voices/{voice_id}/packs` banks a…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -65088,11 +65127,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "HostedCloner"
+     ],
      "path": "src/models/hosted_speech.rs",
      "purpose": "Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -65128,7 +65171,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MediaRow",
@@ -65139,7 +65182,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -65155,7 +65198,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 17,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 2
      }
     },
@@ -66758,7 +66801,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 252,
+     "files": 253,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67052,9 +67095,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 27,
+   "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 474,
+   "source_files": 475,
    "test_files": 182
   },
   "oneiron-spawn": {

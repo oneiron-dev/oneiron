@@ -533,14 +533,9 @@ pub(super) fn run_research_select(vault: &Vault, now: u64) -> Result<()> {
     Ok(())
 }
 
-/// The nightly learning upkeep. A run whose coordination will not derive is
+/// The nightly learning upkeep. A team whose coordination will not derive is
 /// left for the next night; the others still run.
 pub(super) fn run_learning_sweep(vault: &Vault, now: u64) -> Result<()> {
     crate::learning::reproject_all_cells(vault, now)?;
-    for run in crate::learning::coordination_runs(vault)? {
-        if let Err(error) = crate::learning::project_run_coordination(vault, &run, now) {
-            tracing::warn!(kind = ?error.kind(), "run coordination did not derive");
-        }
-    }
-    Ok(())
+    crate::learning::project_all_coordination(vault, now)
 }
