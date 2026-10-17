@@ -300,6 +300,70 @@ async fn vault_people_get(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_shape_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.shape.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_shape_plan(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.shape.plan",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_shape_apply(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shape.apply")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shape.apply", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shape.apply", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shape_apply(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn self_message(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4860,6 +4924,9 @@ pub(crate) async fn call_verb(
         "self.inbox.concern.move" => self_inbox_concern_move(server, call, input).await,
         "vault.people.list" => vault_people_list(server, call, input).await,
         "vault.people.get" => vault_people_get(server, call, input).await,
+        "vault.shape.read" => vault_shape_read(server, call, input).await,
+        "vault.shape.plan" => vault_shape_plan(server, call, input).await,
+        "vault.shape.apply" => vault_shape_apply(server, call, input).await,
         "self.message" => self_message(server, call, input).await,
         "self.grants.ask" => self_grants_ask(server, call, input).await,
         "self.memory.diary.query" => self_memory_diary_query(server, call, input).await,

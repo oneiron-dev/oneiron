@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 274 code-mode rows (256 host rows, 18 run rows), 847 declarations.
-// Replies: 221 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 277 code-mode rows (259 host rows, 18 run rows), 863 declarations.
+// Replies: 224 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 55; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -78,6 +78,23 @@ declare namespace Sdk {
   type PersonRow = { person: EntityId; actors: EntityId[]; handle: string; name: string; kind: PersonKind; role: string; about?: string | null };
   type PeoplePage = { vault: string; page: number; people: PersonRow[]; more: number };
   type PersonRequest = { pr: string };
+  type EmptyRequest = Record<string, never>;
+  type ShapeCeiling = "auto" | "proposed";
+  type ShapeTarget = { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
+  type ShapeRow = { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeSeed = { rows: ShapeRow[] };
+  type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
+  type ShapeChange = "create" | "update" | "retire";
+  type ShapeItemClass = "receipted" | "widening" | "authority";
+  type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
+  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
+  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
+  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean };
+  type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
+  type ShapePlanRequest = { seed?: ShapeSeed | null };
+  type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
+  type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary };
+  type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
   type MentionProvenance = { turn: string; message: string; start: number; end: number };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null };
   type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[] };
@@ -285,7 +302,6 @@ declare namespace Sdk {
   type SharedActExecuted = { receipt: SharedActExecutionReceipt; export?: MemoryExport | null };
   type SharedReceiptRequest = { receipt_id: string };
   type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: number; recipient: string; change: SharedVaultChange; completed_at: number };
-  type EmptyRequest = Record<string, never>;
   type SharedVaultDeletion = { vault_id: number; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number };
   type SharedMemberAddRequest = { vault_id: number; member: string; role?: FederationGrantRole | null; holder_key?: string | null };
   type InvitationSlip = { slip_id: string; slip: string; expires_at: number };
@@ -1437,6 +1453,14 @@ declare const vault: {
       /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
       set(input: Sdk.WakePolicySetRequest): Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>;
     };
+  };
+  shape: {
+    /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+    apply(input: Sdk.ShapeApplyRequest): Promise<Sdk.Reply<Sdk.ShapeApplyReceipt>>;
+    /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+    plan(input: Sdk.ShapePlanRequest): Promise<Sdk.Reply<Sdk.ShapePlan>>;
+    /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+    read(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.ShapeRead>>;
   };
   shared: {
     /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */

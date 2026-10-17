@@ -101,6 +101,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shape_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_plan(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.plan", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_apply(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.apply", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_message(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.message", input)

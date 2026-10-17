@@ -84,6 +84,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::PersonRequest>(),
             ),
             (
+                "vault.shape.read",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.shape.plan",
+                crate::code_run::vault_read::request_schema::<crate::vault_shape::ShapePlanRequest>(
+                ),
+            ),
+            (
+                "vault.shape.apply",
+                crate::code_run::vault_read::request_schema::<crate::vault_shape::ShapeApplyRequest>(
+                ),
+            ),
+            (
                 "self.message",
                 crate::code_run::vault_read::request_schema::<crate::memory::MessagePersonRequest>(
                 ),
@@ -1425,6 +1439,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.people.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.plan" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.apply" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2928,6 +2963,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.people.get" => {
             let _input: crate::memory::PersonRequest = decode(value.clone())?;
         }
+        "vault.shape.read" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.shape.plan" => {
+            let _input: crate::vault_shape::ShapePlanRequest = decode(value.clone())?;
+        }
+        "vault.shape.apply" => {
+            let _input: crate::vault_shape::ShapeApplyRequest = decode(value.clone())?;
+        }
         "self.message" => {
             let _input: crate::memory::MessagePersonRequest = decode(value.clone())?;
         }
@@ -3739,6 +3783,9 @@ pub fn invoke(
         "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
+        "vault.shape.read" => encode(vault_shape_read(memory, decode(value)?)?),
+        "vault.shape.plan" => encode(vault_shape_plan(memory, decode(value)?)?),
+        "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
@@ -4323,6 +4370,24 @@ pub fn vault_people_get(
     input: crate::memory::PersonRequest,
 ) -> MemoryResult<crate::context_board::PersonRow> {
     memory.people_get(&input)
+}
+pub fn vault_shape_read(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::vault_shape::ShapeRead> {
+    memory.shape_read()
+}
+pub fn vault_shape_plan(
+    memory: &Memory<'_>,
+    input: crate::vault_shape::ShapePlanRequest,
+) -> MemoryResult<crate::vault_shape::ShapePlan> {
+    memory.shape_plan(&input)
+}
+pub fn vault_shape_apply(
+    memory: &Memory<'_>,
+    input: crate::vault_shape::ShapeApplyRequest,
+) -> MemoryResult<crate::vault_shape::ShapeApplyReceipt> {
+    memory.shape_apply(&input)
 }
 pub fn self_message(
     memory: &Memory<'_>,

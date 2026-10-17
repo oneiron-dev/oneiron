@@ -17,6 +17,9 @@ pub enum AgentVerb {
     SelfInboxConcernMove,
     VaultPeopleList,
     VaultPeopleGet,
+    VaultShapeRead,
+    VaultShapePlan,
+    VaultShapeApply,
     SelfMessage,
     SelfGrantsAsk,
     SelfMemoryDiaryQuery,
@@ -276,6 +279,9 @@ impl AgentVerb {
         Self::SelfInboxConcernMove,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
+        Self::VaultShapeRead,
+        Self::VaultShapePlan,
+        Self::VaultShapeApply,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
         Self::SelfMemoryDiaryQuery,
@@ -538,6 +544,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => "self.inbox.concern.move",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
+            Self::VaultShapeRead => "vault.shape.read",
+            Self::VaultShapePlan => "vault.shape.plan",
+            Self::VaultShapeApply => "vault.shape.apply",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
@@ -800,6 +809,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -1066,6 +1078,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -1361,6 +1376,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -1604,6 +1622,7 @@ impl AgentVerb {
                 | Self::SelfInboxMark
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1779,6 +1798,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultShapeRead => &["spec"],
+            Self::VaultShapePlan => &["spec"],
+            Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
@@ -2039,6 +2061,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultShapeRead => &["spec"],
+            Self::VaultShapePlan => &["spec"],
+            Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
@@ -2320,6 +2345,15 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => "",
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
+            Self::VaultShapeRead => {
+                "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."
+            }
+            Self::VaultShapePlan => {
+                "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."
+            }
+            Self::VaultShapeApply => {
+                "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."
+            }
             Self::SelfMessage => {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
             }

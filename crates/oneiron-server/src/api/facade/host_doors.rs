@@ -52,6 +52,8 @@ pub(crate) use super::graph_ask_doors::*;
 pub(crate) use super::share_doors::*;
 // The role-holder decision-ask doors (OF-493), likewise.
 pub(crate) use super::decision_ask_doors::*;
+// The vault shape's apply door (ARCH-0070), likewise.
+pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
