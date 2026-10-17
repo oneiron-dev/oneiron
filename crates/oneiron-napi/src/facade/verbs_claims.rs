@@ -14,14 +14,14 @@ use oneiron::{ClaimListFilter, SafeDeleteReason};
 use super::boundary::{boundary_error, facade_error, ts_from_engine};
 use super::bridge::ActorScopedVault;
 use super::convert::{
-    claim_view_from_engine, commit_receipt_from_engine, entity_view_from_engine,
-    forget_active_matches, gate_receipt_from_engine, read_receipt_from_engine,
-    witness_receipt_from_engine, witness_turn_to_engine,
+    claim_view_from_engine, commit_outcome_from_engine, commit_receipt_from_engine,
+    entity_view_from_engine, forget_active_matches, gate_receipt_from_engine,
+    read_receipt_from_engine, witness_receipt_from_engine, witness_turn_to_engine,
 };
 use super::dtos::{
-    NapiClaimInput, NapiClaimListFilter, NapiClaimViews, NapiCommitReceipt, NapiDeleteReceipt,
-    NapiEntityRead, NapiEntityViews, NapiForgetSelector, NapiGateReceipt, NapiPendingWrite,
-    NapiWitnessReceipt, NapiWitnessTurn,
+    NapiClaimInput, NapiClaimListFilter, NapiClaimViews, NapiCommitOutcome, NapiCommitReceipt,
+    NapiDeleteReceipt, NapiEntityRead, NapiEntityViews, NapiForgetSelector, NapiGateReceipt,
+    NapiPendingWrite, NapiWitnessReceipt, NapiWitnessTurn,
 };
 use super::numeric::claim_input_to_engine;
 
@@ -45,16 +45,16 @@ impl ActorScopedVault {
         Ok(witness_receipt_from_engine(receipt))
     }
 
-    /// Commits claims, one individually gated write per element; rejected
-    /// elements come back with approval `rejected` and persist nothing.
+    /// Commits claims, one individually gated write per element; a refused
+    /// element answers its typed refusal and persists nothing (OF-063).
     #[napi]
-    pub fn commit(&self, claims: Vec<NapiClaimInput>) -> napi::Result<Vec<NapiCommitReceipt>> {
+    pub fn commit(&self, claims: Vec<NapiClaimInput>) -> napi::Result<Vec<NapiCommitOutcome>> {
         let mut engine_claims = Vec::with_capacity(claims.len());
         for claim in &claims {
             engine_claims.push(claim_input_to_engine(claim).map_err(facade_error)?);
         }
         let memory = self.facade()?;
-        let receipts = typed_row(
+        let outcomes = typed_row(
             &memory,
             "vault.commit",
             CommitRequest {
@@ -63,9 +63,9 @@ impl ActorScopedVault {
             |input| memory.commit(&input.claims),
         )
         .map_err(facade_error)?;
-        Ok(receipts
+        Ok(outcomes
             .into_iter()
-            .map(commit_receipt_from_engine)
+            .map(commit_outcome_from_engine)
             .collect())
     }
 

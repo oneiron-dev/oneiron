@@ -408,6 +408,27 @@ impl Memory<'_> {
             claims.push(claim);
         }
         claims.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
+        // FIX 1163: whom this reader may bring in by a roster write it could
+        // sign, among the PERSONs it reads.
+        let mut invitable = std::collections::BTreeSet::new();
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let reader = crate::WriteActor::new(self.actor(), self.actor_class());
+        if crate::workspace_roster::files_roster_joins_in_txn(vault, &txn, room, reader)? {
+            let persons = vault
+                .store
+                .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_PERSON, None)?
+                .collect::<crate::Result<Vec<_>>>()?;
+            let readable = read.entities_readable_in_txn(&txn, &persons)?;
+            for (person, readable) in persons.into_iter().zip(readable) {
+                if readable
+                    && crate::workspace_roster::roster_invitee_in_txn(vault, &txn, room, person)?
+                {
+                    invitable.insert(person);
+                }
+            }
+        }
+        drop(txn);
         Ok(RoomSection {
             room,
             roster,
@@ -417,6 +438,7 @@ impl Memory<'_> {
             offers: self.rooms_open_offers(room)?,
             receipt,
             host: None,
+            invitable,
         })
     }
 

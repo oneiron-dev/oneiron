@@ -35,6 +35,25 @@ pub struct RoomUpkeepThread {
     pub last_message_at: u64,
     /// The open TASKs bound to it that the reader reads.
     pub open_tasks: Vec<EntityId>,
+    /// What those TASKs wait on, where the one waited on is a live PERSON
+    /// the reader reads: a follow-up's next notice, an ask's due notice and
+    /// the TASK's cutoff (OF-417).
+    pub waits: Vec<RoomThreadWait>,
+}
+
+impl RoomUpkeepThread {
+    /// Whether a person's own schedule still holds the thread at `now`
+    /// (Unix seconds): some wait's next notice or cutoff is still ahead. A
+    /// wait with neither time holds nothing.
+    #[must_use]
+    pub fn waiting_for_person(&self, now: u64) -> bool {
+        self.waits.iter().any(|wait| {
+            wait.next_nudge
+                .into_iter()
+                .chain(wait.until)
+                .any(|at| now < at)
+        })
+    }
 }
 
 /// `room` as `read` reads it for upkeep, in one snapshot. A room `read`
@@ -108,6 +127,7 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
                 trunk,
                 last_message_at: turn.at,
                 open_tasks: Vec::new(),
+                waits: Vec::new(),
             },
         );
     }
@@ -119,12 +139,18 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
             thread.last_message_at = thread.last_message_at.max(turn.at);
         }
     }
-    for (task, thread) in open {
+    for (task, thread, wait) in open {
         if let Some(row) = threads.get_mut(&thread)
             && vault.thread_project_in_txn(&txn, room, thread)?.is_none()
             && read.is_ref_readable_with_policy_in(&txn, &policy, &task)?
         {
             row.open_tasks.push(task);
+            if let Some(wait) = wait
+                && crate::consent::person_is_live_in_txn(vault, &txn, &wait.who)?
+                && read.is_ref_readable_with_policy_in(&txn, &policy, &wait.who)?
+            {
+                row.waits.push(wait);
+            }
         }
     }
     let source_refs = turns

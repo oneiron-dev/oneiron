@@ -90,6 +90,7 @@ mod sequence_ancestry;
 mod sequence_observation;
 mod slip;
 mod slip_pairing;
+mod slip_renewal;
 mod slip_replay;
 mod slip_state;
 mod slip_vault;
@@ -196,17 +197,20 @@ pub use slip_pairing::{
     format_pairing_link, format_pinned_pairing_link, pairing_binding_transcript,
     pairing_binding_transcript_pinned, parse_pairing_link, parse_pinned_pairing_link,
 };
+pub use slip_renewal::OwnerDeviceRenewalProof;
 pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{ConnectOffer, HostSlipIssuer};
 pub use task_actor::AdmittedTaskGrant;
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
+pub use vault_api::AuthorityEntryStatus;
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
 pub(crate) use adopted_evidence::adopted_evidence_in_txn;
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
+pub(crate) use checkpoint_adopt::adopted_authority_checkpoint_in_txn;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
