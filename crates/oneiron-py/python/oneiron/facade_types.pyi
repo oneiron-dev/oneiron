@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 187 facade rows, 666 declarations.
+Census: 187 facade rows, 668 declarations.
 Inputs: 164 of 187 fully typed, 22 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 153 of 187 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 1.
@@ -2348,6 +2348,21 @@ class RoomRequest(TypedDict):
     room_ref: str
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
+class QuoteAnchorDocument(TypedDict):
+    anchor: Literal["document"]
+    message: EntityId
+    citation: EntityId
+class QuoteAnchorBody(TypedDict):
+    anchor: Literal["body"]
+    message: EntityId
+    body_hash: str
+    start: int
+    end: int
+    quote_hash: str
+QuoteAnchor = QuoteAnchorDocument | QuoteAnchorBody
+class RoomQuote(TypedDict):
+    target_turn: EntityId
+    anchor: QuoteAnchor
 class RoomTurn(TypedDict):
     turn_id: str
     room_id: str
@@ -2359,6 +2374,7 @@ class RoomTurn(TypedDict):
     at: int
     task_ids: NotRequired[list[str]]
     converted_project: NotRequired[str | None]
+    quote: NotRequired[RoomQuote | None]
 class RoomPage(TypedDict):
     rows: list[RoomTurn]
     next_after: NotRequired[str | None]

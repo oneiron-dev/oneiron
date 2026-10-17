@@ -4,18 +4,19 @@ use super::participation::{
     record_addressed_in_txn, thread_root_in_txn,
 };
 use super::*;
-use crate::conversation_dag::QuotedReply;
+use crate::conversation_dag::{ProvenRoomQuote, QuotedReply};
 use crate::edge::EdgeActorClass;
 use crate::memory::{WitnessAuthor, WitnessTurn};
 use crate::workspace_roster::JoinSubject;
 
-/// A quote rides a thread reply in a project room (OF-460).
-fn quote_outside_thread() -> Error {
-    Error::InvalidConfig("a room quote rides a reply in a project room's thread".into())
+/// A quote rides a turn in a project room (OF-460).
+fn quote_outside_project() -> Error {
+    Error::InvalidConfig("a room quote rides a turn in a project room".into())
 }
 
-/// Returns the turn's proven quote, which the witness mints into the TURN's
-/// first body and write (OF-460).
+/// Returns a thread reply's proven quote, which the witness mints into the
+/// TURN's first body and write (OF-460). A trunk turn's quote is kept in its
+/// room row instead, and its TURN is minted opaque: `None` comes back.
 #[expect(
     clippy::too_many_arguments,
     reason = "binds the witness transaction to its resolved actor, container and message ids"
@@ -32,7 +33,7 @@ pub(crate) fn admit_witness(
 ) -> Result<Option<QuotedReply>> {
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         if input.quote.is_some() {
-            return Err(quote_outside_thread());
+            return Err(quote_outside_project());
         }
         return Ok(None);
     }
@@ -175,13 +176,13 @@ pub(crate) fn admit_witness(
     // thread chain, never moved onto the quoted target, so a thread reply
     // may quote a trunk message. A thread's root, which names its anchor
     // and answers no turn, continues the anchor. The claim parent above
-    // stays `reply_to`.
-    let quoted = match input.quote {
-        None => None,
-        Some(quote) => {
-            let Some(anchor) = thread_of else {
-                return Err(quote_outside_thread());
-            };
+    // stays `reply_to`. A trunk turn's quote reads from the trunk alone and
+    // is kept in its room row: the TURN stays opaque and unchained, so the
+    // room's DAG keeps its one trunk root.
+    let mut trunk_quote = None;
+    let quoted = match (input.quote, thread_of) {
+        (None, _) => None,
+        (Some(quote), Some(anchor)) => {
             let parent = dag_parent_in_txn(vault, txn, anchor, reply_to.unwrap_or(anchor))?;
             Some(QuotedReply::prove_in_txn(
                 vault,
@@ -192,6 +193,18 @@ pub(crate) fn admit_witness(
                 quote,
                 turn_id,
             )?)
+        }
+        (Some(quote), None) => {
+            trunk_quote = Some(ProvenRoomQuote::prove_in_txn(
+                vault,
+                txn,
+                room,
+                None,
+                crate::WriteActor::new(actor, class),
+                quote,
+                turn_id,
+            )?);
+            None
         }
     };
     let mut turn = RoomTurn {
@@ -205,8 +218,21 @@ pub(crate) fn admit_witness(
         at: input.occurred_at,
         task_ids: Vec::new(),
         converted_project: None,
+        quote: trunk_quote.as_ref().map(ProvenRoomQuote::metadata),
     };
-    if let Some(old) = TURNS.get(&vault.store, txn, &turn_id)? {
+    let old = TURNS.get(&vault.store, txn, &turn_id)?;
+    // A kept quote is immutable: an append or retry carries the same one and
+    // never re-pins it; only its first attachment writes the citation pin.
+    match (
+        &trunk_quote,
+        old.as_ref().and_then(|old| old.quote.as_ref()),
+    ) {
+        (Some(proven), Some(stored)) => proven.require_stored_in_txn(vault, txn, stored)?,
+        (Some(proven), None) if old.is_none() => proven.pin_in_txn(vault, txn)?,
+        (None, None) => {}
+        _ => return Err(invalid()),
+    }
+    if let Some(old) = old {
         if old.actor != turn.actor
             || old.room_id != turn.room_id
             || old.addressed_agents != turn.addressed_agents

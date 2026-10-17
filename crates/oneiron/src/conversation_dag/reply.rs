@@ -4,11 +4,13 @@
 use super::graph::{
     CANONICAL, conversation_of, edge_ids, invalid, read_id, require_member, require_type,
 };
+use super::policy::{self, AppendFailure};
 use super::thread_projection::{chain_in_txn, selected_thread_in_txn};
 use super::{AppendRecord, AppendedRecord};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
+use crate::memory::{Memory, MemoryResult};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -389,15 +391,37 @@ impl Vault {
     /// Continues the thread chain on Parent without changing the conversation
     /// HEAD. The reply target stays the caller's (or the quoted message's
     /// TURN), so a thread reply may answer a trunk message; absent both, it
-    /// answers the chain's tip.
-    pub fn reply_in_thread(&self, trunk: EntityId, input: &AppendRecord) -> Result<AppendedRecord> {
-        self.with_write_txn_grouped(|txn| {
+    /// answers the chain's tip. `writer` binds it as it binds
+    /// [`Vault::append_dag_record`] (OF-063): the trunk and every typed ref
+    /// must read for the writer, and so must the parent this door picks, in
+    /// the reply's own transaction.
+    pub fn reply_in_thread(
+        &self,
+        writer: &Memory<'_>,
+        trunk: EntityId,
+        input: &AppendRecord,
+    ) -> MemoryResult<AppendedRecord> {
+        let lane = policy::open_append(self, writer, policy::REPLY_ROW, input)?;
+        let refs = policy::append_references(input, Some(trunk));
+        let replied = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
+            policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
             require_member(&self.store, txn, &input.conversation, &trunk)?;
             let mut target = trunk;
             let conversation = conversation_of(&self.store, txn, &trunk)?;
             let candidates = chain_in_txn(self, txn, conversation, trunk, Some(input.session))?;
             if let Some(last) = candidates.last() {
                 target = *last;
+            }
+            // The tip is chosen in this transaction, so a concurrent reply
+            // never puts an unchecked parent under the writer.
+            if target != trunk
+                && let Some(pointer) = policy::unresolved_append_reference_in_txn(
+                    &lane,
+                    txn,
+                    &[("/parent".to_owned(), target)],
+                )?
+            {
+                return Err(AppendFailure::Unresolved(pointer));
             }
             let mut input = input.clone();
             input.parent = Some(target);
@@ -411,7 +435,7 @@ impl Vault {
             let mut visited = HashSet::new();
             while let Some(id) = cursor {
                 if !visited.insert(id) || visited.len() > MAX_ANCESTOR_DEPTH {
-                    return Err(Error::IndexOverflow("conversation_dag_walk"));
+                    return Err(Error::IndexOverflow("conversation_dag_walk").into());
                 }
                 rebuild_thread_meta_in_txn(self, txn, id)?;
                 if !super::graph::is_thread_record(&self.store, txn, &id)? {
@@ -424,6 +448,7 @@ impl Vault {
                 rebuild_thread_meta_in_txn(self, txn, trunk)?;
             }
             Ok(appended)
-        })
+        });
+        policy::settle_append(writer, policy::REPLY_ROW, replied)
     }
 }

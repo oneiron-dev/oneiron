@@ -469,16 +469,24 @@ impl Memory<'_> {
             // Only a genuinely new child re-dirties an established TURN. A
             // byte-identical deterministic MESSAGE retry is a transcript no-op;
             // moving the TURN watermark on every CAS retry would make
-            // idempotency observable downstream.
+            // idempotency observable downstream. A pinned DAG TURN is never
+            // re-put: its new MESSAGE children land under it unchanged, and
+            // the same-transaction re-dirty below moves it (OF-460).
             AdmittedTurn::Existing(record) if admission.has_new_messages() => {
-                let redirtied_at = plan.learned_at.max(record.learned_at.saturating_add(1));
-                batch = batch.put(
+                if !crate::conversation_dag::record_is_append_only_in_txn(
+                    &self.vault.store,
+                    wtxn,
                     &plan.turn_id,
-                    ENTITY_TYPE_TURN,
-                    record.occurred,
-                    redirtied_at,
-                    &record.body,
-                );
+                )? {
+                    let redirtied_at = plan.learned_at.max(record.learned_at.saturating_add(1));
+                    batch = batch.put(
+                        &plan.turn_id,
+                        ENTITY_TYPE_TURN,
+                        record.occurred,
+                        redirtied_at,
+                        &record.body,
+                    );
+                }
             }
             AdmittedTurn::Existing(_) => {}
         }

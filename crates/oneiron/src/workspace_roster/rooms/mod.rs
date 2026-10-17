@@ -10,6 +10,7 @@ mod participation;
 mod replica;
 #[cfg(test)]
 mod tests;
+mod thread_projection;
 mod upkeep;
 mod witness;
 use super::ProjectRoom;
@@ -45,6 +46,7 @@ use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thr
 pub(crate) use replica::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use witness::admit_witness;
 
@@ -136,6 +138,9 @@ pub struct RoomTurn {
     pub task_ids: Vec<String>,
     #[serde(default)]
     pub converted_project: Option<String>,
+    /// A trunk turn's quote (OF-460). A thread reply's quote stays in its
+    /// TURN's reply pointer, never here.
+    pub quote: Option<crate::conversation_dag::RoomQuote>,
 }
 /// The first trunk entry is the origin card when this room came from a thread.
 /// It points to that thread without copying any of its messages.
