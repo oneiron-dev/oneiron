@@ -260,6 +260,7 @@ async fn memory_read_media(
             .map_err(native_error)?;
         (pack.media, pack.query)
     };
+    let falls_back = text_slot_refusal_falls_back(method, media.is_some());
     let decoded = media
         .map(|media| {
             crate::api::ContextPackMediaQuery::from(media)
@@ -268,9 +269,16 @@ async fn memory_read_media(
         .transpose()
         .map_err(media_error)?;
     let query = crate::api::non_empty_query(query.as_deref());
-    let seeds = crate::api::embed_media_seeds(server, decoded, query)
-        .await
-        .map_err(media_error)?;
+    let seeds = match crate::api::embed_media_seeds(server, decoded, query).await {
+        Ok(seeds) => seeds,
+        Err(_) if falls_back => {
+            tracing::warn!(
+                "memory.query text-slot embed refused or unavailable; answering from the text index"
+            );
+            return Ok(None);
+        }
+        Err(error) => return Err(media_error(error)),
+    };
     if seeds.is_empty() {
         return Ok(None);
     }
@@ -285,6 +293,14 @@ async fn memory_read_media(
             })
             .collect(),
     ))
+}
+
+/// Engine call (OF-370, open in CALLS.md): with no explicit `media`, a native
+/// query whose text-slot embed is refused or unavailable answers from the
+/// vault's own text index, as it did before media; explicit media refusals
+/// still fail. The context pack keeps #2153's refusal.
+fn text_slot_refusal_falls_back(method: VaultReadMethod, explicit_media: bool) -> bool {
+    method == VaultReadMethod::Query && !explicit_media
 }
 
 /// A media query's refusal as the native tool's error, its field named under
