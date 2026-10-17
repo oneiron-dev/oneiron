@@ -158,6 +158,11 @@ export_facade! {
     let output = client.tasks_update(&input)?;
     crate::codec::lift_record("tasks.update", &output)
 };
+"tasks.accept" => fn tasks_accept(&self, input: TaskAccept) -> TaskCallReceipt = |client| {
+    let input: oneiron::task_verb::TaskAccept = crate::codec::lower_record("tasks.accept", input)?;
+    let output = client.tasks_accept(&input)?;
+    crate::codec::lift_record("tasks.accept", &output)
+};
 "vault.witness" => fn vault_witness(&self, turn: WitnessTurn) -> WitnessReceipt = |client| {
     let turn: oneiron::memory::WitnessTurn = turn.lower()?;
     let output = client.vault_witness(&turn)?;

@@ -41,6 +41,7 @@ mod guest_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 mod policy_doors;
+mod project_card_doors;
 mod reaction_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;
@@ -94,8 +95,8 @@ use oneiron::memory::{
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::runtime_hooks::verb::{
-    InvocationClaim, InvocationEntry, InvocationOutcome, VerbAskCredential, VerbAskDoor,
-    VerbAskDrainPermit, VerbAskRefusal,
+    HOOK_RESULT_NOT_RETAINED, InvocationClaim, InvocationEntry, InvocationOutcome,
+    VerbAskCredential, VerbAskDoor, VerbAskDrainPermit, VerbAskRefusal,
 };
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
 use oneiron::task_verb::verb_hook_boundary;
@@ -682,7 +683,8 @@ async fn facade_hooks_pre(
     // credential's where its connection sits (an owner-grade credential that
     // calls as the host reads as the host, its owner), and the re-admission
     // of a rewritten ref. A key that does not build fails the call only when
-    // a hook may run.
+    // a hook may run; otherwise the call carries a key that reads nothing, so
+    // a binding installed meanwhile never reads as the host.
     let reader = match bound {
         Some(_) => VerbCall::reader_of(
             &credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
@@ -692,7 +694,11 @@ async fn facade_hooks_pre(
         None => match super::scoped_read_for_core_auth(&server.vault, auth) {
             Ok(read) => Some(read.actor_key().clone()),
             Err(error) if VerbCall::may_run(&server.vault, verb) => return Err(error.into()),
-            Err(_) => None,
+            Err(error) => Some(
+                ScopedReadActorKey::read_nothing(actor.to_hex(), class.gate_actor_class())
+                    .ok_or(error)?
+                    .at(auth.locality()),
+            ),
         },
     };
     let check = Some(facade_rewrite_admit(server, auth, &value));
@@ -798,6 +804,28 @@ pub(super) fn owner_authorship(
         .map_err(|_| refused())
 }
 
+/// The one verb whose direct request binds the requesting person's own
+/// proof rather than only the owner's (OF-417).
+const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
+
+/// The proof a direct request (outside any room turn) binds onto its
+/// caller's surface for `verb`. `vault.workspace.work_companion.set` takes
+/// the person's own proof ([`shared_act_doors::person`]): the owner's, or a
+/// live person's on their own verified human credential, whose
+/// workspace-settings power the engine then checks; any other caller binds
+/// none and the engine refuses it. Every other verb binds the owner's own
+/// authorship ([`owner_authorship`]), or none.
+pub(super) fn direct_authorship(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    verb: &str,
+) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
+    if verb == PERSON_PROOF_VERB {
+        return Ok(shared_act_doors::person(server, auth, verb).ok());
+    }
+    owner_authorship(auth, server)
+}
+
 /// Runs one SDK verb as the caller's credential reads, inside the named room
 /// turn when the call names one. Its reads list the rows they pick in
 /// `producers`.
@@ -827,8 +855,9 @@ fn facade_invoke(
             // The owner's own request on the owner's own full credential:
             // owner-authored writes carry their own confirmation. Any other
             // caller writes as itself; the owner's credential that no longer
-            // holds is refused.
-            let memory = match owner_authorship(auth, server)? {
+            // holds is refused. The work-companion setting takes the
+            // person's own proof instead (OF-417).
+            let memory = match direct_authorship(auth, server, verb)? {
                 Some(owner) => memory.with_owner_authorship(&owner),
                 None => memory,
             };
@@ -1214,11 +1243,6 @@ impl FacadeApiError {
         )
     }
 }
-
-/// The engine's code for a drained verb call that completed once its hook's
-/// ask was answered, but whose result was over what a retry keeps (OF-580):
-/// the call ran, and must not be sent again.
-const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
 
 /// The engine's refusal, forwarded whole.
 ///

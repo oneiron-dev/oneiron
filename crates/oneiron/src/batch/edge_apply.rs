@@ -195,7 +195,7 @@ pub(super) fn apply_edge_with_created_at(
 
     let value = encode_edge_value(kind, weight, created_at, vad, provenance)?;
     stage_edge_rows(store, wtxn, &src, kind, &tgt, &value)?;
-    if kind == EdgeKind::RepliesTo {
+    if matches!(kind, EdgeKind::RepliesTo | EdgeKind::Parent) {
         crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
     }
     crate::conversation::pin_room_message_edge(store, wtxn, src, kind, tgt)
@@ -242,7 +242,7 @@ pub(super) fn apply_delete_edge(
         )
         .into());
     }
-    if kind == EdgeKind::RepliesTo {
+    if matches!(kind, EdgeKind::RepliesTo | EdgeKind::Parent) {
         crate::conversation_dag::invalidate_thread_meta(store, wtxn, tgt)?;
     }
     store.port_remove_edge_rows(wtxn, &src, kind, &tgt)
