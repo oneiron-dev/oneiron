@@ -227,6 +227,8 @@ pub(super) async fn serve_with_config(
     if !ai.bind_question_timer(&sync_server) {
         workers.push(crate::decision_graph::spawn(&sync_server));
     }
+    // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
+    workers.push(crate::saved_query_sweep::spawn(&sync_server));
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
