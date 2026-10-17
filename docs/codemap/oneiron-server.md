@@ -149,9 +149,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
+| `src/api/facade/fanout_doors.rs` | src | s | 2 crate-vis | — | The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and… |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 7 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | m | 41 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 42 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 6 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
@@ -395,7 +396,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/owner.rs` | src | L | 19 fn · 2 re-export · 5 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
 | `src/commands/owner/recovery_kit.rs` | src | m | 1 fn · 2 crate-vis | — | `oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron… |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
-| `src/commands/owner/vault_key.rs` | src | L | 1 fn · 12 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |
+| `src/commands/owner/vault_key.rs` | src | L | 1 fn · 13 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
 | `src/commands/seat.rs` | src | s | 4 fn | — | `oneiron seat …`: the owner's official-seat sign-in surface (OF-375) |
@@ -639,7 +640,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/tests/mod.rs` | test | m | — | — | The slot's laws: configuration, the endpoint's wire and identity probe, the typed refusals, `init`, and the… |
 | `src/oneironer/tests/support.rs` | test | m | 38 crate-vis | — | A stub tagger server inside the test process, and the vaults and servers the slot's tests share |
 | `src/oneironer/tests/worker.rs` | test | m | 6 crate-vis | — | The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job… |
-| `src/owner/backup.rs` | src | L | 20 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
+| `src/owner/backup.rs` | src | L | 22 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
 | `src/owner/backup/tests.rs` | test | m | — | — | — |
 | `src/owner/cleanup.rs` | src | s | 13 crate-vis | — | Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup… |
 | `src/owner/cooperative_deletion.rs` | src | m | 10 crate-vis | — | Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer… |
@@ -660,7 +661,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/schedule.rs` | src | m | 7 crate-vis | — | Scheduled backups for a running `serve` |
 | `src/owner/secrets.rs` | src | m | 16 crate-vis | — | The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6) |
 | `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
-| `src/owner/vault_key.rs` | src | m | 16 crate-vis | — | The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`… |
+| `src/owner/vault_key.rs` | src | m | 17 crate-vis | — | The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`… |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 7 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
 | `src/protocol.rs` | src | m | 30 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |

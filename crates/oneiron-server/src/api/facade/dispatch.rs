@@ -596,19 +596,17 @@ async fn vault_fanout_resume(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.resume")?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.fanout.resume",
-        value,
-        &producers,
+    oneiron::task_verb::sdk::validate_input("vault.fanout.resume", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.resume", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_fanout_resume(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_fanout_ack(
     server: &Arc<SyncServer>,
@@ -618,19 +616,17 @@ async fn vault_fanout_ack(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.ack")?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.fanout.ack",
-        value,
-        &producers,
+    oneiron::task_verb::sdk::validate_input("vault.fanout.ack", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.ack", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_fanout_ack(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
     )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn tasks_update(
     server: &Arc<SyncServer>,
@@ -5384,6 +5380,62 @@ async fn vault_artifacts_body_fork_discard(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_artifacts_body_proposal_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.proposal.read",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.proposal.read"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.proposal.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_artifacts_body_proposal_settle(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.artifacts.body.proposal.settle",
+        oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.proposal.settle"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.proposal.settle",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_artifacts_body_export(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6158,6 +6210,12 @@ pub(crate) async fn call_verb(
         }
         "vault.artifacts.body.fork.discard" => {
             vault_artifacts_body_fork_discard(server, call, input).await
+        }
+        "vault.artifacts.body.proposal.read" => {
+            vault_artifacts_body_proposal_read(server, call, input).await
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            vault_artifacts_body_proposal_settle(server, call, input).await
         }
         "vault.artifacts.body.export" => vault_artifacts_body_export(server, call, input).await,
         "vault.artifacts.body.preview" => vault_artifacts_body_preview(server, call, input).await,

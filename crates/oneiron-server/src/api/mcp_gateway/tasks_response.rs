@@ -1007,6 +1007,8 @@ fn mcp_agent_verb_input(
         "vault.artifacts.body.fork.diff" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.body.fork.merge" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.body.fork.discard" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.body.proposal.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.body.proposal.settle" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.body.export" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.body.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.body.deck.review" => a.spec.clone().ok_or_else(invalid),
@@ -1834,6 +1836,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.artifacts.body.fork.discard" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.artifacts.body.proposal.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.artifacts.body.export" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2368,17 +2376,25 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.fanout.resume" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.fanout.resume", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FanoutResumeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_fanout_resume(&memory, input)
+            let output = crate::api::facade::host_doors::vault_fanout_resume(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.fanout.ack" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.fanout.ack", &input)
+                .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FanoutAckRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = oneiron::task_verb::sdk::vault_fanout_ack(&memory, input)
+            let output = crate::api::facade::host_doors::vault_fanout_ack(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -4664,6 +4680,24 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_body_fork_discard(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.body.proposal.read" => {
+            let input: oneiron::office_body::OfficeBodyProposalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_artifacts_body_proposal_read(&memory, input)
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            let input: oneiron::office_body::OfficeBodyProposalSettleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_artifacts_body_proposal_settle(&memory, input)
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
