@@ -4,14 +4,7 @@
 use crate::EntityId;
 use crate::memory::support::verify_deletion_authority_in_txn;
 use crate::memory::{DeleteReceipt, Memory, MemoryError, MemoryResult, SafeDeleteReason};
-use crate::side_table::{self, HexId, Raw, SideTable};
-
-/// The ARCH-0023b cleanup-archive marker (owned by `crate::deletion::tombstone`);
-/// read-only here for the purge preview. Other modules keep using
-/// `crate::deletion::archive_tombstone_key` plus their own raw `sync_state`
-/// access, per that module's own doc comment.
-const ARCHIVE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_ARCHIVE_MARKER);
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 
 /// One archived entity's retained record bytes. Secondary indexes and historical
 /// carriers are handled by ARCH-0038; this is not a filesystem-space estimate.
@@ -122,7 +115,7 @@ fn archive_marker(
     {
         return Err(stale_preview());
     }
-    ARCHIVE_MARKER
-        .get(&vault.store, txn, &HexId(id))?
+    vault
+        .port_deletion_marker(txn, DeletionMarker::Archive, &id)?
         .ok_or_else(stale_preview)
 }

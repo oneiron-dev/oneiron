@@ -30,7 +30,7 @@ use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind
 
 use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::OfferCooldowns;
-use super::hosted_speech::{CARTESIA_VERSION, HostedSpeech, HostedWire};
+use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder};
 use super::offer::{ServedOffer, media_offer};
@@ -238,6 +238,9 @@ pub struct MediaRuntime {
     /// The render targets (provider names) that render from a banked
     /// identity's reference clip on each call and keep no clone.
     reference_targets: BTreeSet<String>,
+    /// The hosted render targets (provider names) that clone a banked
+    /// identity, by name.
+    cloners: BTreeMap<String, Arc<HostedCloner>>,
 }
 
 impl MediaRuntime {
@@ -249,7 +252,14 @@ impl MediaRuntime {
             host: None,
             jobs: Mutex::default(),
             reference_targets: BTreeSet::new(),
+            cloners: BTreeMap::new(),
         }
+    }
+
+    /// The clone wire of hosted render target `target`, when it is one.
+    #[must_use]
+    pub fn voice_cloner(&self, target: &str) -> Option<Arc<HostedCloner>> {
+        self.cloners.get(target).cloned()
     }
 
     /// Whether `target` renders from a banked identity's reference clip on
@@ -281,6 +291,7 @@ impl MediaRuntime {
             .filter(|(_, provider)| provider.kind.renders_from_refs())
             .map(|(name, _)| name.clone())
             .collect();
+        runtime.cloners = voice_cloners(config);
         let backends = media_backends(config);
         for (operation, seat) in &config.media.seats {
             let mut rungs = Vec::new();
@@ -641,18 +652,7 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
         let provider = &config.providers[name];
         let built: anyhow::Result<Arc<dyn MediaBackend>> = match provider.kind {
             ProviderKind::Cartesia => {
-                // Every Cartesia call names its API version.
-                let mut provider = provider.clone();
-                if !provider
-                    .headers
-                    .keys()
-                    .any(|header| header.eq_ignore_ascii_case("cartesia-version"))
-                {
-                    provider
-                        .headers
-                        .insert("Cartesia-Version".into(), CARTESIA_VERSION.into());
-                }
-                ProviderHttp::new(&provider, KeyStyle::ApiKeyHeader).map(|http| {
+                ProviderHttp::new(&cartesia(provider), KeyStyle::ApiKeyHeader).map(|http| {
                     Arc::new(HostedSpeech {
                         http,
                         wire: HostedWire::Cartesia,
@@ -702,6 +702,53 @@ fn media_backends(config: &ModelsConfig) -> BTreeMap<String, Arc<dyn MediaBacken
         }
     }
     backends
+}
+
+/// `provider` as Cartesia takes it: every call names its API version.
+fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
+    let mut provider = provider.clone();
+    if !provider
+        .headers
+        .keys()
+        .any(|header| header.eq_ignore_ascii_case("cartesia-version"))
+    {
+        provider
+            .headers
+            .insert("Cartesia-Version".into(), CARTESIA_VERSION.into());
+    }
+    provider
+}
+
+/// The clone wire of each configured hosted speech provider, by name.
+fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
+    let mut cloners = BTreeMap::new();
+    for (name, provider) in &config.providers {
+        let built = match provider.kind {
+            ProviderKind::Cartesia => {
+                ProviderHttp::new(&cartesia(provider), KeyStyle::ApiKeyHeader)
+                    .map(|http| (http, HostedWire::Cartesia))
+            }
+            ProviderKind::Elevenlabs => ProviderHttp::new(provider, KeyStyle::Named("xi-api-key"))
+                .map(|http| (http, HostedWire::ElevenLabs)),
+            _ => continue,
+        };
+        match built {
+            Ok((http, wire)) => {
+                cloners.insert(
+                    name.clone(),
+                    Arc::new(HostedCloner {
+                        http,
+                        wire,
+                        locality: provider.locality,
+                    }),
+                );
+            }
+            Err(error) => {
+                tracing::warn!(provider = %name, %error, "voice clone wire unavailable");
+            }
+        }
+    }
+    cloners
 }
 
 /// `model` on `provider` as a media rung at `position` for `operation`.
@@ -763,4 +810,31 @@ fn job_ticket(provider_job: &str) -> String {
     digest.update(provider_job.as_bytes());
     digest.update(&nanos.to_le_bytes());
     format!("job_{}", &digest.finalize().to_hex()[..24])
+}
+
+impl MediaRuntime {
+    /// Opens one bounded `ai.transcribe` stream (live partials) on a run of
+    /// its own on the media meter: one permit for the whole stream,
+    /// reserving `bound_ms` of audio, started at its rung's media gate
+    /// before any audio leaves. As a [`HeldJob`] holds a job's permit to its
+    /// end, the lease holds the stream's: it meters the audio its wire sends
+    /// and settles when the stream ends or is cancelled.
+    pub fn open_stream(
+        &self,
+        request: MediaRequest,
+        bound_ms: u64,
+    ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
+        if request.operation != AiOperation::Transcribe || bound_ms == 0 {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let ladder = self.ladder(&request)?;
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
+        ladder.open_media_stream(&run, request, bound_ms)
+    }
 }

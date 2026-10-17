@@ -55,6 +55,18 @@ pub(crate) fn leader_task_body_in(
     Ok((body.label, body.spec))
 }
 
+/// Whether the TASK reports STUCK (OF-220). The Coach's agent-health review
+/// (OF-568) reads a blocked task as the agent's own honest report, never as
+/// silence.
+pub(crate) fn task_is_blocked_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<bool> {
+    Ok(task_verb_body_in(vault, txn, task_ref)?
+        .is_some_and(|body| matches!(body.state, Some(TaskExecutionState::Blocked { .. }))))
+}
+
 /// Transaction-scoped body read. The custody seal `get_raw` applies is not
 /// needed here: a non-TASK type byte returns `None` two lines below, so a
 /// SECRET_CUSTODY row can never be decoded through this door.
@@ -225,6 +237,9 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
             .transpose()?,
         brief: task_body_optional(entries, "brief")?
             .map(decode_stored_brief)
+            .transpose()?,
+        subproject_ref: task_body_optional(entries, "subproject_ref")?
+            .map(|value| decode_entity_ref(value, "tasks.body.subproject_ref"))
             .transpose()?,
     })
 }

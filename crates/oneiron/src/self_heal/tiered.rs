@@ -189,6 +189,7 @@ pub(super) fn propose(
     let event = DiagnosticEvent {
         detector_id: format!("{}.{}", tier.token(), policy.family),
         event_class: policy.class,
+        signal: None,
         actor_class: "system".into(),
         actor_ref: None,
         source: DiagnosticSourceKind::RetrievalTelemetry,

@@ -4,7 +4,7 @@
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
 use crate::store::Store;
 
@@ -201,10 +201,7 @@ pub(super) fn desired_shell_edges_for_store_entity_in_txn(
         .copied()
         .unwrap_or(EntityLifecycleState::Active);
     if state == EntityLifecycleState::Active
-        || store
-            .sync_state
-            .get(rtxn, &crate::deletion::local_hard_delete_key(entity))?
-            .is_some()
+        || store.port_deletion_marked(rtxn, DeletionMarker::HardDelete, entity)?
     {
         return Ok(Vec::new());
     }
@@ -216,11 +213,7 @@ pub(super) fn desired_shell_edges_for_store_entity_in_txn(
         .ok_or(Error::CorruptedIndex("identity topology event index"))?;
     Ok(match (&record.action, state) {
         (StoredIdentityOpAction::Merge { survivor, .. }, EntityLifecycleState::Merged) => {
-            if store
-                .sync_state
-                .get(rtxn, &crate::deletion::local_hard_delete_key(survivor))?
-                .is_some()
-            {
+            if store.port_deletion_marked(rtxn, DeletionMarker::HardDelete, survivor)? {
                 Vec::new()
             } else {
                 vec![(EdgeKind::MergedInto, *survivor, record.at)]

@@ -21,8 +21,10 @@
 //! before its audio is handed back.
 //!
 //! These calls are buffered: one call per flushed sentence and one per cut
-//! utterance. Live partial transcripts need a streaming media lease, which
-//! the media gate does not hold yet.
+//! utterance. Live partial transcripts (Soniox) ride a [`LeasedAsrStream`]
+//! instead: one permit per bounded stream, opened through the host's
+//! [`VoiceStreamDoor`], with each chunk of audio metered on its lease before
+//! it leaves and the audio settled when the stream ends or is cancelled.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -40,6 +42,7 @@ use crate::llm::media::wav::{WavClip, pcm16_wav};
 use crate::llm::media::{
     AiMediaDoor, AiOperation, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaVoice,
 };
+use crate::llm::run_admission::MediaStreamLease;
 use crate::llm::{CallEnvelope, LlmResult, ModelId, ModelLocality, ModelTierRef, VoiceLane};
 use crate::voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip, VoiceRenderGrant};
 
@@ -48,6 +51,9 @@ pub const MAX_SENTENCE_BYTES: usize = 8 * 1024;
 /// The longest utterance one transcription call carries; the host cuts
 /// sooner.
 pub const MAX_UTTERANCE_SECONDS: u32 = 120;
+/// The most audio one live stream holds its permit for. A longer live
+/// session ends its stream and opens the next on a fresh permit.
+pub const MAX_STREAM_AUDIO_MS: u64 = 10 * 60 * 1_000;
 
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(format!("voice media: {message}"))
@@ -824,4 +830,163 @@ impl<Q: VoiceMediaQueue> AsrStream for MediaAsrAdapter<Q> {
         self.buffer.clear();
         Ok(())
     }
+}
+
+impl MediaVoiceRoute {
+    /// The admission request of one bounded live stream on a transcription
+    /// route: the route's call with no audio yet, naming the PCM16LE the
+    /// stream carries. Its audio is admitted as it goes, on the stream's
+    /// lease ([`LeasedAsrStream`]).
+    pub fn stream_request(&self, sample_rate: u32, channels: u16) -> Result<MediaRequest> {
+        if self.operation() != AiOperation::Transcribe {
+            return Err(invalid("a live stream hears on a transcription route"));
+        }
+        if !(8_000..=192_000).contains(&sample_rate) || !(1..=2).contains(&channels) {
+            return Err(invalid("unsupported PCM rate or channels"));
+        }
+        let mut request = self.request(
+            MediaPart::Audio {
+                media_type: "audio/pcm".into(),
+                bytes: Vec::new(),
+            },
+            None,
+        );
+        request
+            .params
+            .insert("audio_format".to_owned(), "pcm_s16le".into());
+        request
+            .params
+            .insert("sample_rate".to_owned(), sample_rate.into());
+        request
+            .params
+            .insert("num_channels".to_owned(), channels.into());
+        Ok(request)
+    }
+}
+
+/// The host's door for one bounded live stream: it admits the stream on
+/// the route's rung under a run of its own, on one permit that reserves
+/// `bound_ms` of audio, and starts it at the rung's media gate before any
+/// audio leaves.
+pub trait VoiceStreamDoor: Send + Sync {
+    fn open_stream<'a>(
+        &'a self,
+        request: MediaRequest,
+        bound_ms: u64,
+    ) -> MediaFuture<'a, MediaStreamLease>;
+}
+
+/// A live ASR stream (Soniox partials) on one bounded stream lease. Each
+/// chunk of the host's PCM16LE is metered on the lease before the inner
+/// stream sends it, so audio past the bound never leaves; the stream
+/// settles the audio it admitted when it ends, and when it is cancelled or
+/// dropped. The inner stream's provider frames are read through
+/// [`Self::inner_mut`].
+pub struct LeasedAsrStream<S> {
+    inner: S,
+    lease: Option<MediaStreamLease>,
+    sample_rate: u32,
+    channels: u16,
+    bytes: u64,
+}
+
+impl<S: AsrStream> LeasedAsrStream<S> {
+    /// `sample_rate` and `channels` describe the PCM16LE the host hands to
+    /// `accept_audio`, as the stream's request named them.
+    pub fn new(inner: S, lease: MediaStreamLease, sample_rate: u32, channels: u16) -> Result<Self> {
+        if !(8_000..=192_000).contains(&sample_rate) || !(1..=2).contains(&channels) {
+            return Err(invalid("unsupported PCM rate or channels"));
+        }
+        Ok(Self {
+            inner,
+            lease: Some(lease),
+            sample_rate,
+            channels,
+            bytes: 0,
+        })
+    }
+
+    /// Opens one bounded stream on `route` through `door`, and wraps
+    /// `inner`, the provider's stream, in its lease.
+    pub async fn open(
+        door: &dyn VoiceStreamDoor,
+        route: &MediaVoiceRoute,
+        sample_rate: u32,
+        channels: u16,
+        inner: S,
+    ) -> Result<Self> {
+        let request = route.stream_request(sample_rate, channels)?;
+        let lease = door
+            .open_stream(request, MAX_STREAM_AUDIO_MS)
+            .await
+            .map_err(|error| Error::InvalidConfig(format!("voice media: {error}")))?;
+        Self::new(inner, lease, sample_rate, channels)
+    }
+
+    /// The provider's stream, for the frames it hands back.
+    pub fn inner_mut(&mut self) -> &mut S {
+        &mut self.inner
+    }
+
+    /// The audio the stream may still carry, in milliseconds; 0 once it
+    /// ended.
+    #[must_use]
+    pub fn remaining_ms(&self) -> u64 {
+        self.lease
+            .as_ref()
+            .map_or(0, MediaStreamLease::remaining_ms)
+    }
+
+    /// Stops the stream: the audio it sent is paid for, and no more leaves.
+    pub fn cancel(&mut self) -> Result<()> {
+        match self.lease.take() {
+            Some(lease) => lease.cancel().map(drop).map_err(settlement),
+            None => Ok(()),
+        }
+    }
+
+    /// The whole milliseconds `bytes` of the stream's PCM16LE play for,
+    /// rounded up.
+    fn played_ms(&self, bytes: u64) -> u64 {
+        let per_second = u64::from(self.sample_rate) * u64::from(self.channels) * 2;
+        bytes.saturating_mul(1_000).div_ceil(per_second.max(1))
+    }
+}
+
+impl<S: AsrStream> AsrStream for LeasedAsrStream<S> {
+    fn accept_audio(&mut self, pcm: &[u8]) -> Result<()> {
+        let bytes = self
+            .bytes
+            .checked_add(pcm.len() as u64)
+            .ok_or_else(|| invalid("stream exhausted"))?;
+        let played = self.played_ms(bytes);
+        let lease = self
+            .lease
+            .as_mut()
+            .ok_or_else(|| invalid("audio after end"))?;
+        // Metered before it leaves: audio the lease refuses is never sent.
+        lease
+            .admit_audio(played.saturating_sub(lease.admitted_ms()))
+            .map_err(|_| invalid("stream bound reached; end it and open the next"))?;
+        self.bytes = bytes;
+        self.inner.accept_audio(pcm)
+    }
+
+    fn end(&mut self) -> Result<()> {
+        let Some(lease) = self.lease.take() else {
+            return Ok(());
+        };
+        match self.inner.end() {
+            Ok(()) => lease.end(None).map(drop).map_err(settlement),
+            Err(error) => {
+                // The refusal, if any, is on the Settled receipt.
+                lease.cancel().ok();
+                Err(error)
+            }
+        }
+    }
+}
+
+fn settlement(denied: crate::llm::run_admission::RunDenied) -> Error {
+    Error::InvalidConfig(format!("voice media: stream settlement refused: {denied}"))
 }
