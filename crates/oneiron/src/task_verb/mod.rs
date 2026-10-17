@@ -100,7 +100,7 @@ pub use consult_ladder_facade::{
 pub use consult_payload::{ConsultPayload, ConsultPayloadRef, ConsultRecovery};
 pub use consult_result::{
     ConsultDigestRoute, ConsultExpiryReport, ConsultFanOutReceipt, ConsultFanOutSpec,
-    ConsultResultInput, ConsultResultKind, TaskResultReceipt,
+    ConsultMeasuredSpend, ConsultResultInput, ConsultResultKind, TaskResultReceipt,
 };
 pub use create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 pub use create_validation::check_task_label;

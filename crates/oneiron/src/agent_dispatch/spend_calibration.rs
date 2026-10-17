@@ -9,8 +9,9 @@
 //!
 //! A peer consult is a TASK delivery, never a local agent, so it has its own
 //! key (`consult:{peer hex}:{unit}`) and never reads an agent's row (OF-393).
-//! No measured consult usage is folded yet, so every consult states the
-//! labelled prior.
+//! A consult completion that carries its executor's measured total folds
+//! one sample, in the commit that lands it; an unmeasured consult leaves its
+//! peer on the labelled prior.
 
 use serde::{Deserialize, Serialize};
 
@@ -207,7 +208,29 @@ impl AgentDispatcher<'_> {
         units: u64,
         now: u64,
     ) -> Result<AgentSpendCalibration> {
-        let key = calibration_key(&agent, unit);
+        self.fold_sample_in_txn(txn, calibration_key(&agent, unit), units, now)
+    }
+
+    /// Folds one landed consult's measured spend into its peer's consult
+    /// calibration. The caller fences replay: one sample per consult.
+    pub(crate) fn fold_consult_spend_sample_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        peer: EntityId,
+        unit: &LeaseUnit,
+        units: u64,
+        now: u64,
+    ) -> Result<AgentSpendCalibration> {
+        self.fold_sample_in_txn(txn, consult_calibration_key(&peer, unit), units, now)
+    }
+
+    fn fold_sample_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        key: String,
+        units: u64,
+        now: u64,
+    ) -> Result<AgentSpendCalibration> {
         let previous = CALIBRATION.get(&self.vault.store, txn, &key)?;
         let row = AgentSpendCalibration::fold(previous, units, now);
         CALIBRATION.put(&self.vault.store, txn, &key, &row)?;
