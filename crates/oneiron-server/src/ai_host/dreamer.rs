@@ -244,6 +244,7 @@ async fn supervise(
             question_timer,
             serve,
             admission,
+            settle_after: None,
         };
         let lifecycle = SessionLifecycleDriver::new(
             &vault,
@@ -370,6 +371,9 @@ struct ObservedFactory {
     /// responder's model calls block on.
     serve: tokio::runtime::Handle,
     admission: PassAdmission,
+    /// The last parked conflict a settlement pass asked about: the next
+    /// starts after it.
+    settle_after: Option<oneiron::EntityId>,
 }
 
 /// A pass's admission, held while the pass runs.
@@ -638,36 +642,44 @@ impl PassExecutorFactory for ObservedFactory {
             return Ok(());
         };
         let dreamer = self.actor;
-        std::thread::scope(|scope| {
+        let after = self.settle_after;
+        let joined = std::thread::scope(|scope| {
             scope
                 .spawn(|| {
                     let pumped = crate::decision_graph::pump_due(&server, now_secs);
-                    settle_parked(&server, dreamer, now_secs);
-                    pumped
+                    (pumped, settle_parked(&server, dreamer, after, now_secs))
                 })
                 .join()
-        })
-        .unwrap_or_else(|_| {
-            Err(oneiron::Error::InvalidConfig(
+        });
+        let Ok((pumped, settled_to)) = joined else {
+            return Err(oneiron::Error::InvalidConfig(
                 "standing question pump panicked".into(),
-            ))
-        })
+            ));
+        };
+        self.settle_after = settled_to;
+        pumped
     }
 }
 
 /// Asks the ladder to settle the parked conflicts the Dreamer's own review
 /// Grant covers (OF-023), on the home node only: `pump_due`'s home gate is
 /// its own. With no Grant the listing is empty and nothing is asked; a
-/// conflict the ladder leaves stays for the owner. A failure logs by kind
+/// conflict the ladder leaves stays for the owner, and the next pass starts
+/// after the last one asked: the cursor this returns. A failure logs by kind
 /// only, since its text can quote the vault.
-fn settle_parked(server: &crate::server::SyncServer, dreamer: WriteActor, now_secs: u64) {
+fn settle_parked(
+    server: &crate::server::SyncServer,
+    dreamer: WriteActor,
+    after: Option<oneiron::EntityId>,
+    now_secs: u64,
+) -> Option<oneiron::EntityId> {
     let vault = server.vault();
     match crate::decision_graph::at_home(vault, now_secs) {
         Ok(true) => {}
-        Ok(false) => return,
+        Ok(false) => return after,
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), "parked conflicts wait: the home check failed");
-            return;
+            return after;
         }
     }
     let host = server.decision_host();
@@ -683,13 +695,18 @@ fn settle_parked(server: &crate::server::SyncServer, dreamer: WriteActor, now_se
         wording: CONFLICT_SETTLE_WORDING.to_owned(),
         deadline: &deadline,
     };
-    if let Err(error) = settle_parked_conflicts(
+    match settle_parked_conflicts(
         &vault.memory(dreamer.entity_ref(), dreamer.actor_class()),
         &decisions,
+        after,
         CONFLICT_SETTLE_LIMIT,
         now_secs.saturating_mul(1000),
     ) {
-        tracing::warn!(code = %error.code, "parked conflicts wait for the next pass");
+        Ok(pass) => pass.last.or(after),
+        Err(error) => {
+            tracing::warn!(code = %error.code, "parked conflicts wait for the next pass");
+            after
+        }
     }
 }
 
