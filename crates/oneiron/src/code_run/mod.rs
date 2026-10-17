@@ -56,8 +56,11 @@ pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
 };
-pub use self::storage::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
-pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row};
+pub use self::storage::{
+    CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,
+    bind_wait_trap,
+};
+pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.

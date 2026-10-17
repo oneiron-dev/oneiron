@@ -237,6 +237,9 @@ class Oneiron:
         @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs":
             return Oneiron._SelfMemoryVerbs(self._client)
+        @property
+        def identity(self) -> "Oneiron._SelfIdentityVerbs":
+            return Oneiron._SelfIdentityVerbs(self._client)
         def message(self, spec):
             return json.loads(_translate(lambda: self._client.self_message(json.dumps(spec))))
         @property
@@ -262,6 +265,13 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_memory_diary_review(json.dumps(spec))))
         def query(self, spec):
             return json.loads(_translate(lambda: self._client.self_memory_diary_query(json.dumps(spec))))
+    class _SelfIdentityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.self_identity_answer(json.dumps(spec))))
+        def settle(self, spec):
+            return json.loads(_translate(lambda: self._client.self_identity_settle(json.dumps(spec))))
     class _SelfGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -335,6 +345,9 @@ class Oneiron:
         @property
         def members(self) -> "Oneiron._VaultMembersVerbs":
             return Oneiron._VaultMembersVerbs(self._client)
+        @property
+        def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
+            return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
@@ -457,6 +470,14 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
         def digest(self, spec):
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
+        @property
+        def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
+            return Oneiron._VaultWeaveLinkVerbs(self._client)
+    class _VaultWeaveLinkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_link_wrong(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -524,6 +545,19 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_members_remove(json.dumps(spec))))
         def leave(self, spec):
             return json.loads(_translate(lambda: self._client.vault_members_leave(json.dumps(spec))))
+    class _VaultLegalHoldsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def place(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_place(json.dumps(spec))))
+        def widen(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_widen(json.dumps(spec))))
+        def list(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_list(json.dumps(spec))))
+        def log(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_log(json.dumps(spec))))
+        def lift_and_erase(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -624,10 +658,32 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
         def consent(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))
-        def host(self, spec):
-            return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
+        @property
+        def offer(self) -> "Oneiron._VaultRoomsOfferVerbs":
+            return Oneiron._VaultRoomsOfferVerbs(self._client)
+        def offers(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_offers(json.dumps(spec))))
+        @property
+        def host(self) -> "Oneiron._VaultRoomsHostVerbs":
+            return Oneiron._VaultRoomsHostVerbs(self._client)
         def sharing(self, spec):
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultRoomsOfferVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer(json.dumps(spec))))
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_offer_answer(json.dumps(spec))))
+    class _VaultRoomsHostVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_host(json.dumps(spec))))
+        def pin(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_host_pin(json.dumps(spec))))
+        def hand(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_rooms_host_hand(json.dumps(spec))))
     class _VaultProjectsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -677,6 +733,8 @@ class Oneiron:
             self._client = client
         def get(self, spec):
             return json.loads(_translate(lambda: self._client.vault_companions_sharing_get(json.dumps(spec))))
+        def set(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

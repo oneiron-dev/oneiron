@@ -226,7 +226,8 @@ impl Vault {
     /// Checks one connection through the host's verifier and records the
     /// result. The connection's credentials must be stored and its required
     /// permissions allowed first; the provider's reported scopes must match
-    /// what the owner allowed, no more and no less.
+    /// what the owner allowed, no more and no less. A built-in pack whose
+    /// every connection is then ready qualifies Active in the same flow.
     pub fn verify_pack_connection(
         &self,
         owner: &AuthenticatedOwner,
@@ -258,7 +259,8 @@ impl Vault {
                 checked_at: at,
             },
         };
-        self.record_pack_connection_check(owner, pack, content_hash, &declared, record)
+        let view = self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
+        self.qualify_checked_builtin(owner, pack, view)
     }
 
     /// Checks a connection whose bound connector key is Pending through the
@@ -322,7 +324,23 @@ impl Vault {
                 checked_at: at,
             },
         };
-        self.record_pack_connection_check(owner, pack, content_hash, &declared, record)
+        let view = self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
+        self.qualify_checked_builtin(owner, pack, view)
+    }
+
+    /// A built-in pack qualifies on its checked setup (Engine ruling 10-17):
+    /// once every connection is ready, its Candidate turns Active in the same
+    /// flow and the view shows it. Any other pack's view returns unchanged.
+    fn qualify_checked_builtin(
+        &self,
+        owner: &AuthenticatedOwner,
+        pack: &str,
+        view: PackSetupView,
+    ) -> Result<PackSetupView> {
+        if !view.ready || !self.qualify_builtin_on_checked_setup(pack, &view.content_hash)? {
+            return Ok(view);
+        }
+        self.pack_setup(owner, pack, Some(&view.content_hash))
     }
 
     /// A connection of an Active pack runs only once checked: some owner's
@@ -346,6 +364,63 @@ impl Vault {
         Err(invalid(
             "the connection is not checked; run the pack's setup before using it",
         ))
+    }
+
+    /// The same check over one exact source, Candidate or installed: a
+    /// built-in qualifies on it before it is Active. Some owner's session
+    /// over that source holds a check that still matches its live grants,
+    /// stored credentials and key; that check is returned.
+    pub fn require_candidate_pack_connection_verified(
+        &self,
+        pack: &str,
+        content_hash: &str,
+        connection: &str,
+    ) -> Result<PackSetupCheckRecord> {
+        let txn = self.store.env.read_txn()?;
+        let receipt = self.pack_setup_receipt_in_txn(&txn, pack, Some(content_hash))?;
+        let source = self
+            .pack_source_in_txn(&txn, &EntityId::from_hex(&receipt.source_id)?)?
+            .ok_or_else(|| invalid("the pack source is no longer live"))?;
+        if source.content_hash().to_hex() != receipt.content_hash {
+            return Err(invalid("the pack source is no longer live"));
+        }
+        let setup = source
+            .manifest()
+            .setup
+            .as_ref()
+            .ok_or_else(|| invalid("the pack declares no setup"))?;
+        let declared = declared_connection(&setup.connections, connection)?;
+        for session in self.pack_setup_sessions_in_txn(&txn, pack, &receipt.content_hash)? {
+            if self.connection_state_in_txn(&txn, declared, &session)?.ready
+                && let Some(check) = session
+                    .checks
+                    .into_iter()
+                    .find(|check| check.connection == declared.id)
+            {
+                return Ok(check);
+            }
+        }
+        Err(invalid(
+            "the connection is not checked; run the pack's setup before using it",
+        ))
+    }
+
+    /// The credential a checked connection presents to its provider: the
+    /// first one it declares. A served send reads its value only through the
+    /// credential door for the declared effector (OF-187).
+    pub fn verified_pack_connection_secret(
+        &self,
+        pack: &str,
+        connection: &str,
+    ) -> Result<PackSetupSecret> {
+        self.require_pack_connection_verified(pack, connection)?;
+        let txn = self.store.env.read_txn()?;
+        let (setup, _) = self.installed_pack_setup_in_txn(&txn, pack)?;
+        declared_connection(&setup.connections, connection)?
+            .secrets
+            .first()
+            .cloned()
+            .ok_or_else(|| invalid("the connection names no credential"))
     }
 
     /// Every grant a run asks for that a setup connection serves needs one

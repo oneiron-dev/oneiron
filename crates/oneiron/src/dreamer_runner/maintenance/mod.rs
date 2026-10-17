@@ -3,12 +3,14 @@
 //! Dreamer facets ride the nightly wake: the curator grades the Dreamer's own
 //! consolidations and applies what the owner approved, and the harness audit
 //! flags the Dreamer's tuning config for a retune. Neither deploys anything.
+pub mod agent_health;
 pub mod coach;
 mod curator;
 mod evaluation;
 pub mod honesty;
+pub mod identity;
 pub(crate) mod optimize;
-pub use optimize::CoachSkillOptimizer;
+pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod proposals;
 pub mod representation;
 mod retrieval_policy;
@@ -59,8 +61,8 @@ impl DreamerRunnerStore<'_> {
     }
     /// The Dreamer's nightly maintenance, co-committed with a Timer wake or
     /// a Nightly recipe: the curator pass (one per rubric cadence, however
-    /// many wakes ask), the relationship-stewardship pass and the harness
-    /// self-audit (one per wake key each).
+    /// many wakes ask), the relationship-stewardship pass, the identity
+    /// re-check and the harness self-audit (one per wake key each).
     pub(crate) fn enqueue_dreamer_nightly_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -77,6 +79,7 @@ impl DreamerRunnerStore<'_> {
             now,
         )?;
         self.enqueue_stewardship_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
+        self.enqueue_identity_recheck_in_txn(txn, parent_attempt, wake_key, run_id.clone(), now)?;
         self.enqueue_harness_audit_in_txn(txn, parent_attempt, wake_key, run_id, now)?;
         Ok(())
     }
@@ -136,6 +139,9 @@ pub(crate) fn execute(
         stewardship::STEWARDSHIP_FACET => {
             stewardship::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
+        identity::IDENTITY_RECHECK_FACET => {
+            identity::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
+        }
         super::COACH_RETRIEVAL_TUNE_FACET => {
             retrieval_policy::run(ctx.vault)?;
         }
@@ -157,6 +163,9 @@ pub(crate) fn execute(
         }
         coach::COACH_LEARNING_SWEEP_FACET => {
             coach::run_learning_sweep(ctx.vault, ctx.now_ms / 1000)?;
+        }
+        agent_health::COACH_AGENT_HEALTH_FACET => {
+            agent_health::run(ctx.vault, ctx.now_ms / 1000)?;
         }
         _ => return Err(invalid()),
     }

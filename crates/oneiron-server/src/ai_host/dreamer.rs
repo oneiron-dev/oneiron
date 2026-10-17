@@ -16,7 +16,8 @@ use oneiron::agent_def::DreamingMode;
 use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, ResidentDreamModel,
     RoleBackend, RoleBackends, TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel,
-    resident_of_dream_input, run_resident_dream, run_task_realize,
+    WEAVE_LENS_UNLENT_PARK_REASON, WeaveLensModel, resident_of_dream_input, run_resident_dream,
+    run_task_realize, run_weave_lens,
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::llm::manifest::ModelRole;
@@ -382,7 +383,12 @@ impl ObservedFactory {
             self.egress.then(|| extraction_egress(selected.collect())),
             Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
         )
-        .with_role_backends(roles);
+        .with_role_backends(roles)
+        // A fired commitment proposes its reminder where the vault already
+        // reaches the obligor; the owner approves it in run review (OF-187).
+        .with_commitment_wake_planner(Box::new(
+            oneiron::commitment_wake::CommitmentReminderPlanner,
+        ))?;
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
@@ -502,6 +508,7 @@ struct ObservedExecutor<'p, E> {
     /// What a resident's own dreaming borrows; none without an instruction.
     resident: Option<ResidentLend<'p>>,
     /// What a Dreamer-lane TASK's realization borrows; none without a route.
+    /// A weave lens render borrows the same route.
     task: Option<TaskLend<'p>>,
 }
 
@@ -540,6 +547,34 @@ impl TaskLend<'_> {
                 role: self.role,
                 actor: self.actor,
                 instruction: self.instruction,
+            },
+        )
+        .await
+    }
+
+    /// The weave lens's generate step on the same route; the shipped
+    /// weave-report skill is its instruction.
+    async fn render_lens(
+        self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+    ) -> oneiron::Result<DreamerAttemptExecution> {
+        let egress = self
+            .egress
+            .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
+        run_weave_lens(
+            attempt,
+            ctx,
+            WeaveLensModel {
+                backend: self.route.backend.as_ref(),
+                guard: self.guard,
+                model: self.route.model.clone(),
+                inference: HostInferenceContext {
+                    binding: self.route.binding.clone(),
+                    extraction_egress: egress.as_deref(),
+                },
+                role: self.role,
+                actor: self.actor,
             },
         )
         .await
@@ -654,6 +689,15 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 Some(lend) => lend.realize(attempt, ctx).await,
                 None => Ok(DreamerAttemptExecution::Park {
                     reason: TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
+                }),
+            }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
+        {
+            match self.task {
+                Some(lend) => lend.render_lens(attempt, ctx).await,
+                None => Ok(DreamerAttemptExecution::Park {
+                    reason: WEAVE_LENS_UNLENT_PARK_REASON.to_owned(),
                 }),
             }
         } else {

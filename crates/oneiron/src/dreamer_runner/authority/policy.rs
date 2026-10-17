@@ -77,6 +77,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         coach::COACH_TRAINING_OFFERS_FACET => Some(coach::COACH_TRAINING_OFFERS_FACET),
         coach::COACH_RESEARCH_SELECT_FACET => Some(coach::COACH_RESEARCH_SELECT_FACET),
         coach::COACH_LEARNING_SWEEP_FACET => Some(coach::COACH_LEARNING_SWEEP_FACET),
+        super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET => {
+            Some(super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET)
+        }
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
         super::super::maintenance::HARNESS_FACET => Some(super::super::maintenance::HARNESS_FACET),
         super::super::maintenance::representation::REPRESENTATION_FACET => {
@@ -84,6 +87,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         }
         super::super::maintenance::stewardship::STEWARDSHIP_FACET => {
             Some(super::super::maintenance::stewardship::STEWARDSHIP_FACET)
+        }
+        super::super::maintenance::identity::IDENTITY_RECHECK_FACET => {
+            Some(super::super::maintenance::identity::IDENTITY_RECHECK_FACET)
         }
         crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE => {
             Some(crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE)

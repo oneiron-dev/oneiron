@@ -1,6 +1,6 @@
 //! Explicit, resident-authored context recipes over immutable graph questions.
 
-use super::{GraphAnswerer, GraphAskFailure, GraphAskResult, read_question};
+use super::{GraphAnswerer, GraphAskFailure, GraphAskResult, GraphDecision, read_question};
 use crate::llm::decision::DecisionAnswer;
 use crate::{EntityId, Error, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
@@ -103,17 +103,38 @@ pub(crate) fn run_graph_question_with_proposals(
                 Err(Error::EntityNotFound) => return Ok(None),
                 Err(error) => return Err(error),
             };
-            let Some(prediction) = answerer.answer(&record.definition.question, &context)? else {
-                return Ok(None);
+            let question = &record.definition.question;
+            let images = if answerer.reads_images() {
+                let lane = vault.scoped_read(super::graph_ask::asker_reader(vault, principal)?);
+                super::graph_ask::unit_images(&lane, &context)?
+            } else {
+                Vec::new()
             };
-            if prediction.answer == DecisionAnswer::Abstain {
-                return Ok(None);
+            match answerer.decide(question, &context, &images)? {
+                None => Ok(None),
+                Some(GraphDecision::Prediction(prediction)) => {
+                    if prediction.answer == DecisionAnswer::Abstain {
+                        return Ok(None);
+                    }
+                    super::graph_ask::validate_prediction(question, &prediction)?;
+                    super::standing::backfill_graph_answer(
+                        vault, principal, reference, actor, context, frontier, prediction,
+                        proposals, now,
+                    )
+                    .map(Some)
+                }
+                Some(GraphDecision::Decision(decision)) => {
+                    super::graph_ask::validate_decision(question, principal, &decision)?;
+                    if decision.answer == DecisionAnswer::Abstain {
+                        return Ok(None);
+                    }
+                    super::standing::backfill_graph_decision(
+                        vault, principal, reference, actor, context, frontier, &images,
+                        *decision, proposals, now,
+                    )
+                    .map(Some)
+                }
             }
-            super::graph_ask::validate_prediction(&record.definition.question, &prediction)?;
-            super::standing::backfill_graph_answer(
-                vault, principal, reference, actor, context, frontier, prediction, proposals, now,
-            )
-            .map(Some)
         })();
         match answer {
             Ok(Some(answer)) => completed.answers.push(answer),

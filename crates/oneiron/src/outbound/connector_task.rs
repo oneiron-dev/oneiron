@@ -55,6 +55,8 @@ pub(super) struct ConnectorSendTaskBody {
     pub(super) trigger_ref: String,
     pub(super) job_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) mention: Option<super::MentionProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) originating_session_ref: Option<String>,
     /// Additive synced execution marker. Absence means no visible attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -207,6 +209,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         intent_source: intent.intent_source.clone(),
         trigger_ref: intent.trigger_ref.clone(),
         job_ref: intent.job_ref.clone(),
+        mention: intent.mention.clone(),
         originating_session_ref: originating_session_ref.map(str::to_owned),
         attempt_started_node_id: None,
         outcome: None,
@@ -387,6 +390,7 @@ impl Vault {
                 intent_source: body.intent_source,
                 trigger_ref: body.trigger_ref,
                 job_ref: body.job_ref,
+                mention: body.mention,
             },
             counterparty_ref: body.counterparty_ref,
             originating_session_ref: body.originating_session_ref,
