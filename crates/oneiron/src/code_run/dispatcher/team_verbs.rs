@@ -14,7 +14,10 @@ use crate::context_projection::ContextSpec;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::team::run::{member_spawn_key, record_led_team, start_stamp};
-use crate::team::{SelfTeamCall, TeamMemberAnswer, TeamRecordInput, TeamRunAnswer, TeamStartInput};
+use crate::team::{
+    SelfTeamCall, TeamMemberAnswer, TeamRecordInput, TeamRunAnswer, TeamRunBinding, TeamStartInput,
+    record_team_start,
+};
 
 type Answered = std::result::Result<TeamRunAnswer, &'static str>;
 
@@ -41,9 +44,19 @@ impl HostSelfDispatcher<'_> {
             Ok(stamp) => stamp,
             Err(code) => return Ok(Err(code)),
         };
+        // What this start's spawns answered: the host's fact of the team.
+        let mut observed = TeamRunBinding {
+            stamp: stamp.clone(),
+            leader,
+            root_task: None,
+            started_at: crate::unix_seconds_now(),
+            members: Vec::new(),
+            proposals: Vec::new(),
+        };
         let mut members = Vec::with_capacity(input.members.len());
         for member in &input.members {
             let Ok(agent) = crate::EntityId::from_hex(&member.agent) else {
+                self.keep_team_start(&observed)?;
                 return Ok(Err("team_start_invalid_agent"));
             };
             let mut context = AgentSpawnContext::default().with_team(stamp.clone());
@@ -59,12 +72,19 @@ impl HostSelfDispatcher<'_> {
             })?;
             let (attempt_ref, proposal_ref) = match spawned {
                 SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref }) => {
+                    observed.members.push(attempt_ref);
                     (Some(bytes_to_hex_lower(attempt_ref.as_bytes())), None)
                 }
                 SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
                     proposal_ref,
-                }) => (None, Some(proposal_ref)),
-                _ => return Ok(Err("team_start_spawn_refused")),
+                }) => {
+                    observed.proposals.push(proposal_ref.clone());
+                    (None, Some(proposal_ref))
+                }
+                _ => {
+                    self.keep_team_start(&observed)?;
+                    return Ok(Err("team_start_spawn_refused"));
+                }
             };
             members.push(TeamMemberAnswer {
                 agent: agent.to_hex(),
@@ -72,11 +92,26 @@ impl HostSelfDispatcher<'_> {
                 proposal_ref,
             });
         }
+        self.keep_team_start(&observed)?;
         Ok(Ok(TeamRunAnswer::Started {
             team_ref: stamp.team_ref,
             pattern: stamp.pattern,
             members,
         }))
+    }
+
+    /// Keeps what a team start's spawns answered. Each spawn committed on
+    /// its own, so a start a later member refused still keeps the members
+    /// it queued; a replayed start adds to the same row. An off-record run
+    /// keeps none.
+    fn keep_team_start(&self, observed: &TeamRunBinding) -> Result<()> {
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Ok(());
+        };
+        if observed.members.is_empty() && observed.proposals.is_empty() {
+            return Ok(());
+        }
+        record_team_start(vault, observed)
     }
 
     fn team_record(&self, input: &TeamRecordInput) -> Result<Answered> {

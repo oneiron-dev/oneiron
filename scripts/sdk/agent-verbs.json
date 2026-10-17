@@ -423,6 +423,7 @@
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?",
+      "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -433,6 +434,7 @@
       "input": "crate::task_verb::sdk::FanoutAckRequest",
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?",
+      "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -543,7 +545,6 @@
       "section": false,
       "binding": {
         "assemble": true,
-        "defaults": true,
         "options": "RecallOptions",
         "args": [
           {
@@ -579,12 +580,16 @@
           {
             "name": "media",
             "kind": "media"
+          },
+          {
+            "name": "query_affect",
+            "kind": "query_affect"
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        "
         }
       },
       "uniffi": {
@@ -596,7 +601,8 @@
           "format": "Option<String>",
           "as_of": "Option<u64>",
           "deadline_ms": "Option<u64>",
-          "media": "Option<RecallMedia>"
+          "media": "Option<RecallMedia>",
+          "query_affect": "Option<QueryAffect>"
         },
         "output": "MemoryPack"
       }
@@ -872,8 +878,9 @@
     },
     {
       "name": "vault.weave.lens",
+      "description": "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events.",
       "input": "crate::claim::WeaveReportRequest",
-      "output": "crate::lens::GeneratedLens",
+      "output": "crate::lens::LensFrameCard",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.lens\", &input)?",
       "host_door": true,
       "scope": "Read",
@@ -4181,10 +4188,11 @@
     },
     {
       "name": "vault.artifacts.body.fork.open",
-      "description": "Opens a fork of the live body at its head for machine work, in an optional run.",
+      "description": "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own.",
       "refs": [
         "/artifact_ref",
-        "/run_root_ref"
+        "/run_root_ref",
+        "/proposal_ref"
       ],
       "input": "crate::office_body::OfficeBodyForkOpenRequest",
       "output": "crate::office_body::OfficeBodyFork",
@@ -4284,7 +4292,7 @@
     },
     {
       "name": "vault.artifacts.body.fork.merge",
-      "description": "A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses.",
+      "description": "Lands one reviewed fork, naming the head and fork head the review read, on the caller's word from outside the opener's lineage or on a standing grant; a moved head, a blocking conflict or no answer refuses.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"
@@ -4309,9 +4317,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// A person lands a reviewed fork.\n",
-          "ts": "/** A person lands a reviewed fork. */",
-          "py": "A person lands a reviewed fork."
+          "remote": "    /// Lands one reviewed fork on an answer.\n",
+          "ts": "/** Lands one reviewed fork on an answer. */",
+          "py": "Lands one reviewed fork on an answer."
         }
       }
     },
@@ -4345,6 +4353,73 @@
           "remote": "    /// Abandons an open fork's unlanded work.\n",
           "ts": "/** Abandons an open fork's unlanded work. */",
           "py": "Abandons an open fork's unlanded work."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.proposal.read",
+      "description": "An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement.",
+      "refs": [
+        "/artifact_ref",
+        "/proposal_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyProposalRequest",
+      "output": "crate::office_body::OfficeBodyProposal",
+      "call": "memory.artifacts_body_proposal_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// An office proposal: its members, answers and settlement.\n",
+          "ts": "/** An office proposal: its members, answers and settlement. */",
+          "py": "An office proposal: its members, answers and settlement."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.proposal.settle",
+      "description": "Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits.",
+      "refs": [
+        "/artifact_ref",
+        "/proposal_ref",
+        "/reviewed/*/fork_ref"
+      ],
+      "input": "crate::office_body::OfficeBodyProposalSettleRequest",
+      "output": "crate::office_body::OfficeBodyProposal",
+      "call": "memory.artifacts_body_proposal_settle(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Accepts or rejects an office proposal's reviewed forks.\n",
+          "ts": "/** Accepts or rejects an office proposal's reviewed forks. */",
+          "py": "Accepts or rejects an office proposal's reviewed forks."
         }
       }
     },
@@ -4563,6 +4638,33 @@
           "remote": "    /// Records the deck oracle's receipt for its export profile.\n",
           "ts": "/** Records the deck oracle's receipt for its export profile. */",
           "py": "Records the deck oracle's receipt for its export profile."
+        }
+      }
+    },
+    {
+      "name": "vault.artifacts.body.deck.preview",
+      "description": "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed.",
+      "input": "crate::office_body::DeckPreviewRequest",
+      "output": "crate::office_body::DeckPreview",
+      "call": "memory.artifacts_body_deck_preview(&input, None)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The asked slides of a deck's head, drawn by the host's review renderer (provisional).\n",
+          "ts": "/** The asked slides of a deck's head, drawn by the host's review renderer (provisional). */",
+          "py": "The asked slides of a deck's head, drawn by the host's review renderer (provisional)."
         }
       }
     },

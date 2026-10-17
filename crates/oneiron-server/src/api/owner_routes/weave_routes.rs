@@ -18,7 +18,7 @@ use oneiron::claim::{
     WeaveDigestRequest, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
     WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveWrongLinkRequest,
 };
-use oneiron::lens::GeneratedLens;
+use oneiron::lens::LensFrameCard;
 use serde::Serialize;
 
 use super::{OwnerReply, blocking, owner};
@@ -60,8 +60,8 @@ async fn schedules(
         Ok(server
             .vault()
             .weave_digest_schedules(&owner)?
-            .iter()
-            .map(WeaveScheduleView::from_schedule)
+            .into_iter()
+            .map(|(row, held)| WeaveScheduleView::from_schedule(&row, held))
             .collect())
     })
     .await?;
@@ -80,7 +80,7 @@ async fn set_schedule(
     let set = blocking(move || -> OwnerResult<WeaveScheduleView> {
         let row = request.into_schedule().map_err(memory_invalid)?;
         server.vault().set_weave_digest_schedule(&owner, &row)?;
-        Ok(WeaveScheduleView::from_schedule(&row))
+        Ok(WeaveScheduleView::from_schedule(&row, None))
     })
     .await?;
     Ok(Json(set))
@@ -127,18 +127,16 @@ async fn report(
 }
 
 /// `POST /v1/owner/weave/lens`: the owner lens, live, rendered through the
-/// weave-report skill on this server's Dreamer narrative route.
+/// weave-report skill on this server's Dreamer narrative route, as a card
+/// whose frame this server holds for the credential's events on it.
 async fn lens(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<WeaveReportRequest>, JsonRejection>,
-) -> OwnerReply<GeneratedLens> {
+) -> OwnerReply<LensFrameCard> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let caller = crate::ai_host::WeaveLensCaller::Owner {
-        owner,
-        locality: auth.locality(),
-    };
+    let caller = crate::ai_host::WeaveLensCaller::Owner { owner, auth };
     let lens = crate::ai_host::render_live_weave_lens(&server, caller, request)
         .await
         .map_err(|error| super::owner_error(memory_refused(error)))?;
