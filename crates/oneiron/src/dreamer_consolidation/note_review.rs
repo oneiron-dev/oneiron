@@ -6,6 +6,12 @@
 //! belief in text the note does not hold. A NOTE whose markdown has not
 //! changed since its last review is not read again.
 //!
+//! Each review records its verdict on the NOTE, the stage-2 classification
+//! (Engine ruling C, 10-17): `promote` when the model rates the note's
+//! importance at least [`PROMOTE_IMPORTANCE`], else `extract` when it
+//! grounded a belief, else `skip`. A NOTE's kind, privacy and write policy
+//! stay as born; the review never re-kinds one.
+//!
 //! A sealed scratchpad, whose kind extracts after the seal, is read once it
 //! is sealed (ARCH-0032 #scratchpad-marks): its `scratch` lines are blanked
 //! before the model reads it, each `keep` line is asked for, and every other
@@ -42,8 +48,33 @@ use crate::{EntityId, Result, Vault};
 
 const CURSOR: SideTable<(), EntityId, Named> =
     SideTable::new(&side_table::DREAMER_NOTE_REVIEW_CURSOR);
-const SEEN: SideTable<EntityId, [u8; 32], Named> =
+const SEEN: SideTable<EntityId, NoteReviewRecord, Named> =
     SideTable::new(&side_table::DREAMER_NOTE_REVIEW_SEEN);
+/// The importance at which a note's verdict is `promote` (ARCH-0032
+/// `dr:P16`: a scratchpad item promotes at `importance >= 0.75`).
+const PROMOTE_IMPORTANCE: f64 = 0.75;
+
+/// The review's verdict on one NOTE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NoteVerdict {
+    /// The note grounded at least one belief.
+    Extract,
+    /// Nothing in it is worth keeping.
+    Skip,
+    /// The note itself matters to keep.
+    Promote,
+}
+
+/// What the last review of one NOTE read and decided.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct NoteReviewRecord {
+    /// BLAKE3 of the markdown read: an unchanged NOTE is not read again.
+    fingerprint: [u8; 32],
+    verdict: NoteVerdict,
+    /// The model's importance for the note itself, 0 to 1, when it gave one.
+    importance: Option<f64>,
+}
 /// NOTEs per page. The cursor moves a page at a time, so a review cut by
 /// its deadline resumes where it stopped.
 const PAGE: usize = 32;
@@ -227,6 +258,11 @@ impl ConsolidationExecutor<'_> {
             Ok(reply) => reply,
             Err(error) => return Ok(Some(charges.park(&error.to_string()))),
         };
+        let importance = reply
+            .importance
+            .as_ref()
+            .and_then(serde_json::Value::as_f64)
+            .filter(|importance| (0.0..=1.0).contains(importance));
         let mut candidates = Vec::new();
         for item in &reply.candidates {
             match note_candidate(item, note, run) {
@@ -239,6 +275,13 @@ impl ConsolidationExecutor<'_> {
                 ),
             }
         }
+        let verdict = if importance.is_some_and(|importance| importance >= PROMOTE_IMPORTANCE) {
+            NoteVerdict::Promote
+        } else if candidates.is_empty() {
+            NoteVerdict::Skip
+        } else {
+            NoteVerdict::Extract
+        };
         if !candidates.is_empty() {
             // A refusal is the gate's answer about one belief (a persona
             // belief, say, needs turns from two sessions), never a reason
@@ -254,7 +297,16 @@ impl ConsolidationExecutor<'_> {
             }
         }
         ctx.vault.with_write_txn_grouped(|txn| {
-            SEEN.put(&ctx.vault.store, txn, &note.id, &note.fingerprint)
+            SEEN.put(
+                &ctx.vault.store,
+                txn,
+                &note.id,
+                &NoteReviewRecord {
+                    fingerprint: note.fingerprint,
+                    verdict,
+                    importance,
+                },
+            )
         })?;
         Ok(None)
     }
@@ -301,7 +353,10 @@ fn readable_notes(
             continue;
         }
         let fingerprint = *blake3::hash(decoded.markdown.as_bytes()).as_bytes();
-        if SEEN.get(&vault.store, &txn, id)? == Some(fingerprint) {
+        if SEEN
+            .get(&vault.store, &txn, id)?
+            .is_some_and(|seen| seen.fingerprint == fingerprint)
+        {
             continue;
         }
         let Some(facet) = crate::federation::record_scope::birth_facet(&vault.store, &txn, *id)?
