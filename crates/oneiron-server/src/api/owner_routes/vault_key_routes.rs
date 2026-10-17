@@ -42,7 +42,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 /// `GET /v1/owner/vault-key`: whether the vault has a data key, whether this
 /// server holds it, and its wraps, each passkey's with its PRF input.
-async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<VaultKeyReport> {
+async fn status(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<VaultKeyReport> {
     owner(&auth, &server)?;
     let report = blocking(move || Ok(view::report(server.vault())?)).await?;
     Ok(Json(report))
@@ -73,8 +76,7 @@ async fn prf_input(
 ) -> OwnerReply<PrfInput> {
     owner(&auth, &server)?;
     let query = query_params(query)?;
-    let input =
-        blocking(move || Ok(view::prf_input(server.vault(), &query.credential)?)).await?;
+    let input = blocking(move || Ok(view::prf_input(server.vault(), &query.credential)?)).await?;
     Ok(Json(input))
 }
 
