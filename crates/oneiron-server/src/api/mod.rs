@@ -95,6 +95,8 @@ mod esign;
 pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
+#[cfg(unix)]
+pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
 mod off_record_rooms;
 mod org_admin;
 mod pairing;
@@ -109,7 +111,8 @@ mod facade;
 // OF-489: the held socket runs every facade verb through the facade's one
 // generated dispatch, under the credential its connection bound.
 pub(crate) use self::facade::{
-    FacadeApiError, FacadeCall, call_verb as facade_call_verb, connector_call_as, self_use_as,
+    FacadeApiError, FacadeCall, ai_speech_for_run, call_verb as facade_call_verb,
+    connector_call_as, self_use_as,
 };
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;

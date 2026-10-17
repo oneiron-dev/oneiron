@@ -9,9 +9,9 @@
 //! every formula that names a renamed or deleted sheet; row and column inserts
 //! and deletes come next, moving cells, ranges and every reference into the
 //! sheet, and a deleted reference reads `#REF!`. The cell formats a body
-//! composed go into the stylesheet before any cell names them. The body itself
-//! (its Loro document, actors and forks) lives in the engine; this module
-//! knows only SpreadsheetML.
+//! composed go into the stylesheet before any cell names them; a workbook
+//! with none gets a minimal one. The body itself (its Loro document, actors
+//! and forks) lives in the engine; this module knows only SpreadsheetML.
 
 use crate::edit::xml::{escape_attribute, next_part, set_attribute, splice};
 use crate::ooxml::{
@@ -73,7 +73,8 @@ pub struct XlsxBook {
     /// Worksheets in workbook order; chart and dialog sheets hold no cells.
     pub sheets: Vec<XlsxSheet>,
     pub names: Vec<XlsxName>,
-    /// The workbook's cell formats (`cellXfs`), by index.
+    /// The workbook's cell formats (`cellXfs`), by index. A workbook with no
+    /// stylesheet has one, Excel's default (General).
     pub styles: Vec<XlsxStyle>,
 }
 
@@ -847,9 +848,14 @@ impl Book {
             .iter()
             .find(|rel| !rel.external && rel.kind.ends_with("/styles"))
             .map(|rel| rel.target.clone());
+        // With no stylesheet every cell reads in the default format, so a
+        // body may compose from it; the first composed format seeds one.
         let styles = match &styles_part {
             Some(part) => styles(&parse(&package, part)?)?,
-            None => Vec::new(),
+            None => vec![XlsxStyle {
+                num_fmt: 0,
+                format: None,
+            }],
         };
         let names = names(&tree, &order)?;
         Ok(Self {
@@ -866,11 +872,14 @@ impl Book {
     }
 
     /// Write the body's cell formats into the stylesheet: each one's index in
-    /// `cellXfs`, in order. The workbook's formats are read again after.
+    /// `cellXfs`, in order. A workbook with none gets a minimal one first.
+    /// The workbook's formats are read again after.
     fn resolve_formats(&mut self, formats: &[XlsxFormat]) -> Result<Vec<u32>> {
-        let part = self.styles_part.clone().ok_or(refused(
-            "the workbook has no stylesheet to add a cell format to",
-        ))?;
+        let part = match self.styles_part.clone() {
+            Some(part) => part,
+            None if formats.is_empty() => return Ok(Vec::new()),
+            None => self.seed_styles()?,
+        };
         let bytes = self
             .package
             .part(&part)?
@@ -886,6 +895,42 @@ impl Book {
             self.styles = styles(&parse(&self.package, &part)?)?;
         }
         Ok(indices)
+    }
+
+    /// Add a stylesheet beside the workbook part, related from it, whose one
+    /// cell format is the default every cell read in (General, the one font,
+    /// no fill, no border), as Excel writes a new workbook's.
+    fn seed_styles(&mut self) -> Result<String> {
+        const STYLES_TYPE: &str =
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
+        let dir = self.part.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let mut n = 0_u32;
+        let name = loop {
+            let file = if n == 0 {
+                "styles.xml".to_owned()
+            } else {
+                format!("styles{n}.xml")
+            };
+            let name = if dir.is_empty() {
+                file
+            } else {
+                format!("{dir}/{file}")
+            };
+            if self.package.part(&name)?.is_none() {
+                break name;
+            }
+            n += 1;
+        };
+        let sheet = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<styleSheet xmlns=\"{SML}\"><fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>"
+        );
+        self.package
+            .add_part(&name, STYLES_TYPE, sheet.into_bytes())?;
+        self.package
+            .relate(&self.part, &format!("{REL}/styles"), &name)?;
+        self.styles_part = Some(name.clone());
+        self.styles = styles(&parse(&self.package, &name)?)?;
+        Ok(name)
     }
 
     /// A worksheet's stored cells, its read-only ranges and its shared

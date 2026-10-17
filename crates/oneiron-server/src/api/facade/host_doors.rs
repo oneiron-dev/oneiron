@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
@@ -426,10 +427,8 @@ fn ai_options_answer(
     })
 }
 
-/// One media call's answer, from its seat's ladder. A banked voice
-/// withdrawn or re-recorded while it rendered, on the rung that answered, is
-/// not handed back; nor is a call that found the voice withdrawn everywhere
-/// while it waited (FIX 1746).
+/// One owner's media call's answer, from its seat's ladder, on the media
+/// meter.
 async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -437,11 +436,39 @@ async fn answered(
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
     let (request, voices) = admit(server, auth, operation, input)?;
+    rendered(server, operation, request, voices, None).await
+}
+
+/// `ai.speech` for a pumped agent run (FIX 3194): prepared as the owner's
+/// call is, and spent on `run`, the run's own line, as its other model calls
+/// are. The run's door admitted it; no owner credential stands behind it.
+pub(crate) async fn ai_speech_for_run(
+    server: &SyncServer,
+    run: &RunAdmission,
+    input: AiCallRequest,
+) -> MemoryResult<AiAnswer> {
+    let (request, voices) = prepare(server, AiOperation::Speech, input)?;
+    rendered(server, AiOperation::Speech, request, voices, Some(run)).await
+}
+
+/// One media call's answer, from its seat's ladder: on `run` when its caller
+/// admitted it on a line of its own, else on the media meter. A banked voice
+/// withdrawn or re-recorded while it rendered, on the rung that answered, is
+/// not handed back; nor is a call that found the voice withdrawn everywhere
+/// while it waited (FIX 1746).
+async fn rendered(
+    server: &SyncServer,
+    operation: AiOperation,
+    request: MediaRequest,
+    voices: Option<RungVoices>,
+    run: Option<&RunAdmission>,
+) -> MemoryResult<AiAnswer> {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
-    let answer = match &voices {
-        Some(voices) => media.run_voiced(request, voices).await,
-        None => media.run(request).await,
+    let answer = match (run, &voices) {
+        (Some(run), voices) => media.run_admitted(run, request, voices.as_ref()).await,
+        (None, Some(voices)) => media.run_voiced(request, voices).await,
+        (None, None) => media.run(request).await,
     };
     let withdrawn = || {
         MemoryError::new(
@@ -463,9 +490,18 @@ async fn answered(
         Err(error) if error.is_provider_unavailable() => {
             Err(unavailable(operation, &error, hint.seconds()))
         }
+        Err(error @ LlmError::BudgetDenied(_)) if run.is_some() => {
+            let mut refusal = failure(operation, &error);
+            refusal.suggestions = vec![RUN_LINE_SPENT.to_owned()];
+            Err(refusal)
+        }
         Err(error) => Err(failure(operation, &error)),
     }
 }
+
+/// What a run's media call refused for its spent line suggests: it spends
+/// the run's own line, not the media meter.
+const RUN_LINE_SPENT: &str = "The run's spend line is spent.";
 
 /// A media call no offer answered (FIX 3194): `MODEL_UNAVAILABLE`, with the
 /// seconds until the first offer that could serve it is back as
@@ -925,9 +961,7 @@ pub(super) fn read_beside<S: AsRef<str>>(named: impl IntoIterator<Item = S>) -> 
         .collect()
 }
 
-/// The owner's call of `operation`, admitted against the vault's inference
-/// policy for the model it names, ready for its seat's ladder, with the
-/// banked voice it renders in, if any (bound as `/v1/ai/speech` binds it).
+/// The owner's call of `operation`, [`prepare`]d.
 fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -935,6 +969,18 @@ fn admit(
     input: AiCallRequest,
 ) -> MemoryResult<(MediaRequest, Option<RungVoices>)> {
     owner_grade(auth, MEDIA_OWNERS)?;
+    prepare(server, operation, input)
+}
+
+/// A call of `operation`, admitted against the vault's inference policy for
+/// the model it names, ready for its seat's ladder, with the banked voice it
+/// renders in, if any (bound as `/v1/ai/speech` binds it). Its caller's door
+/// admitted the caller.
+fn prepare(
+    server: &SyncServer,
+    operation: AiOperation,
+    input: AiCallRequest,
+) -> MemoryResult<(MediaRequest, Option<RungVoices>)> {
     let media = server.ai.model_runtime().media();
     let Some((seat, _)) = media.seat(operation) else {
         return Err(MemoryError::new(
