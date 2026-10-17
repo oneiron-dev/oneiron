@@ -310,6 +310,16 @@ impl AgentDispatcher<'_> {
         self.spend_read_in_txn(&txn, &target)
     }
 
+    /// [`Self::spend_read`] in the caller's snapshot.
+    pub(crate) fn spend_read_at_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        scope: &SpendScopeId,
+    ) -> Result<SpendRead> {
+        let target = self.effective_scope_in_txn(txn, scope)?;
+        self.spend_read_in_txn(txn, &target)
+    }
+
     /// [`Self::available_units`] in the caller's snapshot.
     pub(crate) fn available_units_in_txn(
         &self,
