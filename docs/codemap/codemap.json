@@ -10838,7 +10838,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 4,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -10999,13 +10999,21 @@
      "kind": "src",
      "notable": [
       "AgentSpawnInput",
+      "AgentSpawnKind",
+      "AgentSpawnOutput",
       "LeaderAdviceInput",
+      "LeaderPatternFile",
       "LeaderPatternInput",
+      "LeaderPatternOutput",
       "MemoryClaimInput",
       "MemoryEdgeInput",
+      "MemoryEdgeOutput",
+      "MemorySearchHit",
       "MemorySearchInput",
+      "MemorySearchOutput",
       "MemorySupersedeInput",
       "MemoryTimeRange",
+      "MemoryWriteOutput",
       "ReaderSpawnInput",
       "SkillCallInput",
       "SpawnCare",
@@ -11013,15 +11021,16 @@
       "SpawnPattern",
       "TaskRefuseDomain",
       "TaskRefuseInput",
+      "TaskRefuseOutput",
       "TaskWaitSetRequest"
      ],
      "path": "src/code_run/run_verbs.rs",
-     "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
+     "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "enum": 4,
+      "enum": 6,
       "fn": 1,
-      "struct": 12
+      "struct": 19
      }
     },
     {
@@ -12764,13 +12773,21 @@
      "kind": "src",
      "notable": [
       "FoldCompactAsk",
+      "FoldCompactAsked",
       "FoldCompactInput",
+      "FoldDescription",
       "FoldLedger",
+      "FoldList",
       "FoldMark",
       "FoldMarkInput",
+      "FoldMarked",
+      "FoldPending",
       "FoldRecord",
+      "FoldReply",
+      "FoldSpan",
       "FoldUnfold",
       "FoldUnfoldInput",
+      "FoldUnfolded",
       "FoldsInput",
       "SelfFoldCall"
      ],
@@ -12778,9 +12795,9 @@
      "purpose": "Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 3,
       "fn": 12,
-      "struct": 9
+      "struct": 15
      }
     },
     {
