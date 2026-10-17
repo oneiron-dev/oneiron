@@ -472,7 +472,8 @@ fn words(text: &str) -> Vec<String> {
 }
 
 /// Up to k heads about `subject` the Dreamer may read and the branch may
-/// hold as priors, newest first, with their rows.
+/// hold as priors, newest first but an observed head below a stated one on
+/// its question, with their rows.
 fn newest_claims(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -512,9 +513,6 @@ fn newest_claims(
     let rows = read.get_entities_parts_in_txn(txn, &ids)?;
     let mut claims = Vec::new();
     for (id, row) in ids.into_iter().zip(rows) {
-        if claims.len() == CLAIMS_PER_ENTITY {
-            break;
-        }
         // A head awaiting its owner's confirmation is no prior for anyone.
         if let Some(row) = row
             && crate::gate::claim_consolidation_eligible_in_txn(
@@ -525,10 +523,19 @@ fn newest_claims(
             )?
             && let Some(known) = listable(subject, id, &row, axes, bound, &device_only)
         {
-            claims.push((known, (id, row)));
+            let body = decode_claim_body(&row.2, true).ok();
+            claims.push(((known, (id, row)), body));
         }
     }
-    Ok(claims)
+    // Held both (OF-023): an observed head never lists above a stated one
+    // on its question, so the stated one keeps its place in the k.
+    crate::context_pack::source_ranking::clamp_order(
+        &mut claims,
+        &Default::default(),
+        |(_, body)| body.as_ref(),
+    )?;
+    claims.truncate(CLAIMS_PER_ENTITY);
+    Ok(claims.into_iter().map(|(claim, _)| claim).collect())
 }
 
 /// A head about `subject` the branch may list and hold as a prior: a
