@@ -39,6 +39,7 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
         &spawn.room,
         &spawn.team,
         &spawn.plan,
+        &spawn.objectives,
     ))
     .map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -526,6 +527,7 @@ impl<'a> AgentDispatcher<'a> {
             join: None,
             team,
             plan: spawn.plan,
+            objectives: spawn.objectives,
         })
     }
 
