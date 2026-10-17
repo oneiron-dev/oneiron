@@ -56,6 +56,8 @@ pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The owner's context-widen proposal doors (OF-568), likewise.
+pub(crate) use super::widen_proposal_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::policy_doors::*;
 
@@ -467,6 +469,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
+        | "vault.widen_proposals"
+        | "vault.widen_proposals.approve"
+        | "vault.widen_proposals.decline"
         | "vault.settings.wake_policy.set" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
