@@ -51,8 +51,12 @@ pub enum ModelRole {
     /// pixels and answers a question about them in text (`ask_image`,
     /// OF-329), through the LLM slot. No model is chosen for it.
     LocalVision,
+    /// The Coach's own seat (agent-mind AGM-5): its agent-health asks,
+    /// code-fix drafts and session-end distill. Optional: with no seat of its
+    /// own the Coach rides the generative reasoner's.
+    Coach,
 }
-pub const MODEL_ROLES: [ModelRole; 16] = [
+pub const MODEL_ROLES: [ModelRole; 17] = [
     ModelRole::RetrievalEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
@@ -69,6 +73,7 @@ pub const MODEL_ROLES: [ModelRole; 16] = [
     ModelRole::AudioVad,
     ModelRole::TtsDeferred,
     ModelRole::LocalVision,
+    ModelRole::Coach,
 ];
 impl ModelRole {
     /// A role of the generative family: it generates or rules through the
@@ -84,7 +89,14 @@ impl ModelRole {
                 | Self::DreamerTarget
                 | Self::DreamerDistilled
                 | Self::ExtractionTeacher
+                | Self::Coach
         )
+    }
+    /// A role a v2 manifest may leave unbound: a trained checkpoint the owner
+    /// has not bound yet, or the Coach, which falls back to the chat seat.
+    #[must_use]
+    pub const fn is_optional(self) -> bool {
+        matches!(self, Self::DreamerDistilled | Self::Coach)
     }
     /// The disposition a row that names none takes: the extraction teacher
     /// is offline, every other role served (ARCH-0036 "one base, two roles").
@@ -245,7 +257,7 @@ impl ModelManifest {
         if self.version != 2
             || MODEL_ROLES
                 .iter()
-                .any(|role| *role != ModelRole::DreamerDistilled && !self.roles.contains_key(role))
+                .any(|role| !role.is_optional() && !self.roles.contains_key(role))
         {
             return Err(invalid("manifest v2 requires every role key"));
         }
