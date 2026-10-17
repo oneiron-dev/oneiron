@@ -16,6 +16,9 @@ pub struct PreparedAsr {
     revision: u64,
     event: AsrEvent,
     externally_tainted: bool,
+    /// The audience revision it was prepared at; an audience change since
+    /// makes it obsolete, with or without output in flight.
+    audience: u64,
 }
 
 impl PreparedAsr {
@@ -35,6 +38,7 @@ impl PreparedAsr {
             revision: self.revision,
             event: self.event.clone(),
             externally_tainted: self.externally_tainted,
+            audience: self.audience,
         }
     }
 }
@@ -97,6 +101,7 @@ impl VoiceCascadeSession {
             revision,
             event,
             externally_tainted,
+            audience: self.audience_revision,
         };
         self.preparation_serial = serial;
         self.prepared_asr = Some(prepared.snapshot());
@@ -122,14 +127,16 @@ impl VoiceCascadeSession {
         Ok(())
     }
 
-    /// Tests exact session/utterance/revision/event/generation/attempt binding.
-    /// This check has no vault effects. Apply repeats it while holding &mut self.
+    /// Tests exact session/utterance/revision/event/generation/attempt and
+    /// audience binding. This check has no vault effects. Apply repeats it
+    /// while holding &mut self.
     #[must_use]
     pub fn accepts_prepared_asr(&self, prepared: &PreparedAsr) -> bool {
         !self.ended
             && self.preparation_active
             && prepared.session == self.id
             && prepared.epoch == self.epoch
+            && prepared.audience == self.audience_revision
             && prepared.generation
                 == self
                     .generation

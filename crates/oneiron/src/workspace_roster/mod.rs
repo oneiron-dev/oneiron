@@ -180,6 +180,11 @@ pub use rooms::{
 };
 
 pub(crate) use rooms::RoomThreadTask;
+pub use rooms::{HostPin, HostPinKind, RoomHostHand, RoomHostPin};
+pub use rooms::{
+    OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferSettlement, OfferState,
+    OffersPage, OffersRequest,
+};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
 pub(crate) use rooms::project_room_audience_in;
@@ -195,6 +200,7 @@ pub use crate::gate::RoomThreadFill;
 mod join_consent;
 mod join_door;
 mod join_receipt;
+mod workplace_join;
 pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
