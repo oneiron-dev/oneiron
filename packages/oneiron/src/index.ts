@@ -927,7 +927,7 @@ export class Oneiron {
   /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly ai = {
-    /** The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left. */
+    /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
     /** One image out of the host's image model; reference images make it an edit. */
     image: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiImage(input) as Facade.AiAnswer),

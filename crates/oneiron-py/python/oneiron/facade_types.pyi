@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 287 facade rows, 1086 declarations.
+Census: 287 facade rows, 1087 declarations.
 Inputs: 241 of 287 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 235 of 287 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
@@ -2333,9 +2333,15 @@ class SharedActExecutionReceipt(TypedDict):
     export: NotRequired[SharedActExport | None]
     authority_entry: NotRequired[str | None]
     completed_at: int
+class RemovalExportDelivery(TypedDict):
+    receipt_id: str
+    recipient: str
+    digest: str
+    delivered_at: int
+    expires_at: int
 class SharedActExecuted(TypedDict):
     receipt: SharedActExecutionReceipt
-    export: NotRequired[MemoryExport | None]
+    delivery: NotRequired[RemovalExportDelivery | None]
 class SharedReceiptRequest(TypedDict):
     receipt_id: str
 class SharedActOutcome(TypedDict):
@@ -3623,7 +3629,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId

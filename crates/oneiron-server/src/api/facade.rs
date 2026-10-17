@@ -95,8 +95,8 @@ use oneiron::memory::{
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError,
 };
 use oneiron::runtime_hooks::verb::{
-    InvocationClaim, InvocationEntry, InvocationOutcome, VerbAskCredential, VerbAskDoor,
-    VerbAskDrainPermit, VerbAskRefusal,
+    HOOK_RESULT_NOT_RETAINED, InvocationClaim, InvocationEntry, InvocationOutcome,
+    VerbAskCredential, VerbAskDoor, VerbAskDrainPermit, VerbAskRefusal,
 };
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbHookPre, VerbHookStop, hook_class};
 use oneiron::task_verb::verb_hook_boundary;
@@ -683,7 +683,8 @@ async fn facade_hooks_pre(
     // credential's where its connection sits (an owner-grade credential that
     // calls as the host reads as the host, its owner), and the re-admission
     // of a rewritten ref. A key that does not build fails the call only when
-    // a hook may run.
+    // a hook may run; otherwise the call carries a key that reads nothing, so
+    // a binding installed meanwhile never reads as the host.
     let reader = match bound {
         Some(_) => VerbCall::reader_of(
             &credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
@@ -693,7 +694,11 @@ async fn facade_hooks_pre(
         None => match super::scoped_read_for_core_auth(&server.vault, auth) {
             Ok(read) => Some(read.actor_key().clone()),
             Err(error) if VerbCall::may_run(&server.vault, verb) => return Err(error.into()),
-            Err(_) => None,
+            Err(error) => Some(
+                ScopedReadActorKey::read_nothing(actor.to_hex(), class.gate_actor_class())
+                    .ok_or(error)?
+                    .at(auth.locality()),
+            ),
         },
     };
     let check = Some(facade_rewrite_admit(server, auth, &value));
@@ -1238,11 +1243,6 @@ impl FacadeApiError {
         )
     }
 }
-
-/// The engine's code for a drained verb call that completed once its hook's
-/// ask was answered, but whose result was over what a retry keeps (OF-580):
-/// the call ran, and must not be sent again.
-const HOOK_RESULT_NOT_RETAINED: &str = "HOOK_RESULT_NOT_RETAINED";
 
 /// The engine's refusal, forwarded whole.
 ///

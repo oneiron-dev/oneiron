@@ -6930,7 +6930,8 @@ pub(crate) async fn call_verb(
         | "self.desktop.zoom"
         | "self.desktop.batch"
         | "self.desktop.windows"
-        | "self.desktop.window" => Err(context_required(verb, VerbContext::Browser)),
+        | "self.desktop.window"
+        | "self.desktop.handover" => Err(context_required(verb, VerbContext::Browser)),
         "vault.search"
         | "vault.claims.put"
         | "vault.claims.supersede"
@@ -6943,6 +6944,7 @@ pub(crate) async fn call_verb(
         | "self.agents.spawn"
         | "self.leader.advice"
         | "self.leader.pattern"
+        | "self.leader.split"
         | "self.skills.call"
         | "self.team.start"
         | "self.team.record"

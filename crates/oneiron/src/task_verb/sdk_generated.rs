@@ -1360,6 +1360,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::WindowInput>(),
             ),
             (
+                "self.desktop.handover",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
+            ),
+            (
                 "vault.commit",
                 crate::code_run::vault_read::request_schema::<CommitRequest>(),
             ),
@@ -1672,6 +1676,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.leader.pattern",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderPatternInput>(
                 ),
+            ),
+            (
+                "self.leader.split",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderSplitInput>(),
             ),
             (
                 "self.skills.call",
@@ -4641,6 +4649,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.desktop.window" => {
             let _input: oneiron_browser::WindowInput = decode(value.clone())?;
         }
+        "self.desktop.handover" => {
+            let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
+        }
         "vault.commit" => {
             let input: CommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -5457,6 +5468,10 @@ pub fn invoke_browser(
             serde_json::from_value(value).map_err(invalid)?,
         )?),
         "self.desktop.window" => serde_json::to_value(self_desktop_window(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.desktop.handover" => serde_json::to_value(self_desktop_handover(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -7552,6 +7567,12 @@ pub fn self_desktop_window(
     input: oneiron_browser::WindowInput,
 ) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
     driver.window(input)
+}
+pub fn self_desktop_handover(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::HandoverInput,
+) -> Result<oneiron_browser::HandoverOutput, oneiron_browser::BrowserError> {
+    driver.handover(input)
 }
 pub fn vault_commit(
     memory: &Memory<'_>,

@@ -1,7 +1,8 @@
 //! Coordination cost of a team (ARCH-0079 #coordination-cost, DLM-005):
 //! where its time went. Three optional fields: wait by reason, reuse delay
 //! from a peer's publication to its first use, and duplicate work an audit
-//! labelled.
+//! or the health recipe labelled (a `dup_of` label: redundant, a planned
+//! check, or unknown).
 //!
 //! They are diagnostics, never a score, a payoff input or a limit. They are
 //! gathered off the hot path: a projector derives them from event times the
@@ -29,7 +30,7 @@ use crate::side_table::{self, Named, SideTable};
 const COORDINATION: SideTable<String, CoordinationCost, Named> =
     SideTable::new(&side_table::LEARNING_COORDINATION);
 
-/// Audit labels of duplicate work. Key: team reference NUL first NUL second.
+/// Duplicate-work labels. Key: team reference NUL first NUL second.
 const DUPLICATE_LABEL: SideTable<String, DuplicateWork, Named> =
     SideTable::new(&side_table::LEARNING_DUPLICATE_LABEL);
 
@@ -78,13 +79,40 @@ pub struct ReuseDelay {
     pub delay: u64,
 }
 
-/// Work two agents did twice, as an audit labelled it.
+/// Work two agents did twice: a `dup_of` label saying `second` repeated
+/// `first`. It cites receipts and never changes the closed work it names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuplicateWork {
     pub first: String,
+    /// The work that repeated `first`.
     pub second: String,
-    /// The audit receipt that labelled it.
-    pub audit_receipt: String,
+    pub kind: DuplicateWorkKind,
+    pub labelled_by: DuplicateLabeller,
+    /// What the label cites: the audit's receipt, or the health recipe's
+    /// diagnostic.
+    pub receipt: String,
+}
+
+/// What a repeat was (ARCH-0079 #coordination-cost): only a redundant one
+/// is waste.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateWorkKind {
+    /// Unplanned work on the same input.
+    Redundant,
+    /// Overlap the team's pattern plans, such as a committee's second look.
+    PlannedCheck,
+    /// Not enough context to tell.
+    Unknown,
+}
+
+/// Who wrote a duplicate-work label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateLabeller {
+    Audit,
+    /// The agent-health recipe's digest pairs.
+    Health,
 }
 
 /// A team's coordination cost, shown beside elapsed time and calls.
@@ -364,8 +392,9 @@ pub fn project_all_coordination(vault: &Vault, now: u64) -> Result<()> {
     Ok(())
 }
 
-/// Records an audit's label that two pieces of a team's work duplicated each
-/// other. Only an audit labels duplicate work; the next projection shows it.
+/// Records a `dup_of` label: two pieces of a team's work duplicated each
+/// other. An audit or the health recipe labels duplicate work, citing its
+/// receipt or diagnostic; the next projection shows it.
 ///
 /// # Errors
 ///
@@ -381,8 +410,8 @@ pub fn label_duplicate_work(vault: &Vault, team_ref: &str, label: &DuplicateWork
         "a work reference is 1..=256 bytes without NUL",
     )?;
     bounded(
-        &label.audit_receipt,
-        "an audit receipt is 1..=256 bytes without NUL",
+        &label.receipt,
+        "a label's receipt is 1..=256 bytes without NUL",
     )?;
     if label.first == label.second {
         return Err(Error::InvalidClaimBody(

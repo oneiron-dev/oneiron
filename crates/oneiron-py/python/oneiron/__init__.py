@@ -1631,7 +1631,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def options(self, spec):
-            """The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."""
+            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
         def image(self, spec):
             """One image out of the host's image model; reference images make it an edit."""

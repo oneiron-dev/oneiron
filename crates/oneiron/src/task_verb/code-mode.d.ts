@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 346 code-mode rows (327 host rows, 19 run rows), 1191 declarations.
-// Replies: 284 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 348 code-mode rows (328 host rows, 20 run rows), 1196 declarations.
+// Replies: 286 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
+// Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -459,7 +459,8 @@ declare namespace Sdk {
   type ExportDiaryRead = { agent: string; diaries: number; reason: string };
   type SharedActExport = { member: string; records: number; digest: string; diary_reads: ExportDiaryRead[] };
   type SharedActExecutionReceipt = { id: string; vault_id: number; act_id?: string | null; request_id?: string | null; actor: string; change: SharedVaultChange; grants: string[]; revoked_slips: string[]; export?: SharedActExport | null; authority_entry?: string | null; completed_at: number };
-  type SharedActExecuted = { receipt: SharedActExecutionReceipt; export?: MemoryExport | null };
+  type RemovalExportDelivery = { receipt_id: string; recipient: string; digest: string; delivered_at: number; expires_at: number };
+  type SharedActExecuted = { receipt: SharedActExecutionReceipt; delivery?: RemovalExportDelivery | null };
   type SharedReceiptRequest = { receipt_id: string };
   type SharedActOutcome = { receipt_id: string; act_id?: string | null; vault_id: number; recipient: string; change: SharedVaultChange; completed_at: number };
   type SharedVaultDeletion = { vault_id: number; act_id: string; receipt_id: string; deleted_at: number; backup_retain_until: number };
@@ -729,7 +730,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "Team";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
@@ -978,6 +979,8 @@ declare namespace Sdk {
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
   type WindowInput = { window: string };
+  type HandoverInput = { reason: string };
+  type HandoverOutput = { reason: string; asked_at_ms: number };
   type CommitRequest = { claims: ClaimInput[] };
   type ClaimRefRequest = { claim_ref: string };
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
@@ -1187,6 +1190,8 @@ declare namespace Sdk {
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };
   type LeaderPatternOutput = { skill: EntityId; skill_id: string; version: string; desc: string; files?: LeaderPatternFile[] | null };
+  type LeaderSplitInput = { leader?: string | null; slice?: unknown | null };
+  type LeaderSplitOutput = { project: EntityId; task: EntityId; parent: EntityId; leader: EntityId; depth_remaining: number };
   type SkillCallInput = { skill: string; args: unknown };
   type TeamMemberInput = { agent: string; intentKey: string; briefing?: string | null };
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
@@ -1213,7 +1218,7 @@ declare const ai: {
   embed(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** One image out of the host's image model; reference images make it an edit. */
   image(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
-  /** The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left. */
+  /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
   options(input: Sdk.AiOptionsRequest): Promise<Sdk.AiOptions | StoredResult>;
   /** Speech audio out of text, from the host's speech model. */
   speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
@@ -1324,6 +1329,8 @@ declare namespace self {
     expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
     /** Finds the window rows whose role and name match. */
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
+    /** Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record. */
+    handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
     /** Presses a key combination in the current window. */
     hotkey(input: Sdk.HotkeyInput): Promise<Sdk.Observation | StoredResult>;
     /** Presses one key, with modifiers, on a window target or the window's focus. */
@@ -1392,6 +1399,7 @@ declare namespace self {
   const leader: {
     advice(input: Sdk.LeaderAdviceInput): Promise<unknown>;
     pattern(input: Sdk.LeaderPatternInput): Promise<Sdk.LeaderPatternOutput | StoredResult>;
+    split(input: Sdk.LeaderSplitInput): Promise<Sdk.LeaderSplitOutput | StoredResult>;
   };
   const memory: {
     /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */

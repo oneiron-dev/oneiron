@@ -812,7 +812,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.skills.save": { description: "An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.skills.fork": { description: "An agent forks a stored skill under its own identity, keeping its import ancestry.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.skills.callables": { description: "Every loadable callable helper skill and its call contract: what it takes and returns.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "ai.options": { description: "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "ai.options": { description: "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.image": { description: "One image out of the host's image model; reference images make it an edit.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.speech": { description: "Speech audio out of text, from the host's speech model.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.transcribe": { description: "Text out of speech audio, from the host's transcription model.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1654,7 +1654,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
     /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
     wait: (input: Facade.TaskWaitRequest, options?: O): FacadeReturns<"wait">[K] => invoke("wait", input, options, newInvocation()),
     ai: {
-      /** The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left. */
+      /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
       options: (input: Facade.AiOptionsRequest, options?: O): FacadeReturns<"ai.options">[K] => invoke("ai.options", input, options, newInvocation()),
       /** One image out of the host's image model; reference images make it an edit. */
       image: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.image">[K] => invoke("ai.image", input, options, newInvocation()),
