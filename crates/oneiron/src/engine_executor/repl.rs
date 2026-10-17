@@ -558,7 +558,7 @@ impl EngineNativeExecutor<'_> {
         }
         let generation = self
             .storage
-            .put_code_run_replay_record_if_generation_with_heal(record, expected, None)?;
+            .put_code_run_wait_resume_record(record, expected, key)?;
         self.storage.clear_wait(key)?;
         Ok(Some(generation))
     }

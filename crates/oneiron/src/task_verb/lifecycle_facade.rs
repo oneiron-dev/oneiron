@@ -491,3 +491,43 @@ impl Memory<'_> {
         )?)
     }
 }
+
+/// A delegated TASK's terminal result, for the code runs parked on it, in
+/// the caller's transaction (OF-533): the TASK ref is their wait id. The
+/// reply is refs only, `{task_ref, disposition, result_ref, finished_at}`,
+/// and a run reads the result through `result_ref`. A TASK no canonical run
+/// is parked on, or one not yet terminal, delivers nothing, so a commit
+/// that puts any TASK may pass it here, and so may a run's park.
+pub(crate) fn deliver_task_result_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+) -> crate::Result<()> {
+    if !crate::code_run::has_parked_run_in_txn(vault, txn, task)? {
+        return Ok(());
+    }
+    let Some(body) = super::wire_decode::task_verb_body_in(vault, txn, task)? else {
+        return Ok(());
+    };
+    let Some(terminal) = body.terminal() else {
+        return Ok(());
+    };
+    let reply = serde_json::json!({
+        "task_ref": task,
+        "disposition": terminal.disposition,
+        "result_ref": terminal.result_ref,
+        "finished_at": terminal.finished_at,
+    });
+    let now_ms = vault.store.clock.now_recorded_at().saturating_mul(1000);
+    crate::code_run::deliver_wait_in_txn(vault, txn, task, &reply, now_ms).map(drop)
+}
+
+impl Vault {
+    /// The sweep of the waits a pumped code run parks on (OF-533): settles
+    /// every due ask an external step or a canonical run waits on. A host
+    /// drives it from the recheck it already runs, so a parked ask's
+    /// deadline lands with no Dreamer enabled.
+    pub fn settle_code_run_waits(&self) -> crate::Result<()> {
+        super::ask_facade::settle_waiting_asks(self)
+    }
+}

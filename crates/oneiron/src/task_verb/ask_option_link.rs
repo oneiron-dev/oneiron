@@ -194,7 +194,7 @@ pub(super) fn voided_friends_in_txn(
     txn: &heed::RoTxn<'_>,
     group_ref: EntityId,
     group: &ask_record::AskGroup,
-) -> MemoryResult<Vec<EntityId>> {
+) -> crate::Result<Vec<EntityId>> {
     let mut voided = Vec::new();
     for member in &group.members {
         let friend = ask_record::entity(&member.actor)?;
@@ -267,7 +267,12 @@ impl Memory<'_> {
                 "only the asking actor may read link voids",
             ));
         }
-        voided_friends_in_txn(self.vault(), &txn, ask.group_ref, &group)
+        Ok(voided_friends_in_txn(
+            self.vault(),
+            &txn,
+            ask.group_ref,
+            &group,
+        )?)
     }
 }
 
@@ -405,6 +410,7 @@ impl Vault {
         }
         let group = row.group;
         VOIDS.put(&self.store, &mut txn, &(group, row.friend), b"1")?;
+        deliver_ask_change_in_txn(self, &mut txn, group)?;
         super::ask_facade::signal_waiters(
             self,
             &mut txn,
@@ -417,6 +423,42 @@ impl Vault {
         crate::llm::send_peer_result_signal(self, group, self.store.clock.now_recorded_at())?;
         Ok(())
     }
+}
+
+/// Leads a verb hook's ask intent key; the hook runner parses the rest
+/// (`crate::runtime_hooks::verb_ask_settled_in_txn`).
+const VERB_HOOK_INTENT: &str = "hook.verb/";
+
+/// The ask's Changed status for the code runs parked on its wait, in the
+/// caller's transaction (OF-533): its current void generation and voided
+/// friends, delivered to each waiter that has not seen that generation and
+/// never as the ask's settlement. A void and a run's park both call it, so
+/// a void before the park still reaches the run. A verb hook's stopped call
+/// resumes on its ask's settlement alone, so its ask delivers no change.
+pub(crate) fn deliver_ask_change_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    group_ref: EntityId,
+) -> crate::Result<()> {
+    let Some(group) = ask_record::read_group(vault, txn, group_ref)? else {
+        return Ok(());
+    };
+    if group.requested.intent_key.starts_with(VERB_HOOK_INTENT) {
+        return Ok(());
+    }
+    let generation = option_void_generation_in(vault, txn, group_ref)?;
+    if generation == 0 {
+        return Ok(());
+    }
+    let voided = voided_friends_in_txn(vault, txn, group_ref, &group)?;
+    if voided.is_empty() {
+        return Ok(());
+    }
+    let reply = serde_json::to_value(super::TaskAskStatus::Changed { voided, generation })
+        .map_err(|_| crate::Error::InvariantViolation("a changed ask status is not JSON"))?;
+    let now_ms = vault.store.clock.now_recorded_at().saturating_mul(1000);
+    crate::code_run::deliver_changed_wait_in_txn(vault, txn, group_ref, generation, &reply, now_ms)
+        .map(drop)
 }
 
 #[cfg(test)]

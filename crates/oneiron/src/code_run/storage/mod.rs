@@ -36,3 +36,6 @@ pub(crate) use self::wait_delivery::deliver_wait_in_txn;
 pub use self::wait_delivery::{
     WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, park_and_bind_wait_trap,
 };
+pub(crate) use self::wait_delivery::{
+    canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
