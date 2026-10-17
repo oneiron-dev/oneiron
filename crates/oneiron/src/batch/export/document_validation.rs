@@ -186,6 +186,7 @@ impl WholeVaultDocument {
             }
         }
         self.validate_bundles()?;
+        self.validate_embedding_setup()?;
         Ok(())
     }
 }
