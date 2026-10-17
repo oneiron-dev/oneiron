@@ -143,7 +143,9 @@ pub use federation_activation::federation_grant_activation;
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
 pub use causal_write::CausalWriteDisposition;
-pub use checkpoint_adopt::VerifiedAuthorityCheckpoint;
+pub use checkpoint_adopt::{
+    AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint,
+};
 pub use checkpoint_attest::*;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;

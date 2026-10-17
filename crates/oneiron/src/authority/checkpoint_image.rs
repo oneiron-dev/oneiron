@@ -295,6 +295,7 @@ impl AuthorityCheckpointV2 {
                 row_body_matches(hash, row, body)?;
             }
         }
+        self.shape_graph()?;
         if !self
             .rows
             .keys()
@@ -302,6 +303,46 @@ impl AuthorityCheckpointV2 {
             .eq(self.frontier.iter())
         {
             return Err(refused("checkpoint image frontier"));
+        }
+        Ok(())
+    }
+
+    /// The covered rows form one acyclic graph whose only parentless row is
+    /// the genesis, so every covered row descends from it: a second root or
+    /// a cycle refuses. Parent membership is checked before this.
+    fn shape_graph(&self) -> Result<()> {
+        let mut children = BTreeMap::<&AuthorityEntryHash, Vec<&AuthorityEntryHash>>::new();
+        let mut waiting = BTreeMap::<&AuthorityEntryHash, usize>::new();
+        let mut ready = Vec::new();
+        for (hash, row) in &self.rows {
+            let parents: BTreeSet<_> = row.parents.iter().collect();
+            for parent in &parents {
+                children.entry(*parent).or_default().push(hash);
+            }
+            if parents.is_empty() {
+                if *hash != self.genesis {
+                    return Err(refused("checkpoint image has a second parentless row"));
+                }
+                ready.push(hash);
+            } else {
+                waiting.insert(hash, parents.len());
+            }
+        }
+        let mut reached = 0_usize;
+        while let Some(hash) = ready.pop() {
+            reached += 1;
+            for child in children.get(hash).into_iter().flatten() {
+                let count = waiting
+                    .get_mut(*child)
+                    .ok_or_else(|| refused("checkpoint image coverage graph"))?;
+                *count -= 1;
+                if *count == 0 {
+                    ready.push(*child);
+                }
+            }
+        }
+        if reached != self.rows.len() {
+            return Err(refused("checkpoint image coverage has a cycle"));
         }
         Ok(())
     }

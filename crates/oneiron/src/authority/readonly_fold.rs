@@ -29,7 +29,7 @@ pub(crate) fn advance_authority_cache_generation(
     Ok(())
 }
 
-fn authority_cache_generation(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u64> {
+pub(super) fn authority_cache_generation(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u64> {
     AUTHORITY_CACHE_GENERATION
         .get(store, txn, &())
         .map(|value| value.unwrap_or(0))
