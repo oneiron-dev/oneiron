@@ -15,7 +15,7 @@ use super::{
 use crate::code_run::blocked::BlockedCategory;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::failure_ladder::{BlockedReportRef, ingest_report_blocked};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 
 /// Reports waiting for the Coach. Key: the receipt.
@@ -24,6 +24,20 @@ const PENDING: SideTable<EntityId, BlockedIssue, Named> =
 /// What the Coach filed for a report or a case. Key: the receipt, or the case.
 const SETTLED: SideTable<EntityId, IssueSettled, Named> =
     SideTable::new(&side_table::COACH_ISSUE_SETTLED);
+/// Every report a durable run filed, and when, kept after the Coach settles
+/// it. Key: [`by_run_key`].
+const BY_RUN: SideTable<[u8; 32], u64, Raw> = SideTable::new(&side_table::COACH_BLOCKED_RUN);
+
+/// Most reports one failure carries: the healer case's own bound.
+const MAX_RUN_REPORTS: usize = 128;
+
+/// The run's id, then the receipt's.
+fn by_run_key(run: EntityId, receipt: EntityId) -> [u8; 32] {
+    let mut key = [0; 32];
+    key[..16].copy_from_slice(run.as_bytes());
+    key[16..].copy_from_slice(receipt.as_bytes());
+    key
+}
 
 /// One blocked report waiting for the Coach's Issues job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,10 +130,37 @@ impl Vault {
                     retries: 0,
                 },
             )?;
+            if let Some(run) = run {
+                BY_RUN.put(&self.store, txn, &by_run_key(run, receipt), &reported_at)?;
+            }
             DreamerRunnerStore::new(self).enqueue_coach_issues_in_txn(txn, None, None, now)
         })?;
         self.store.notify_attempt_observers();
         Ok(())
+    }
+
+    /// The blocked reports a durable run filed, oldest receipt first, at most
+    /// 128 (a healer case's bound). A pumped agent's run id is its attempt's
+    /// id, so these are a failing attempt's own reports for the failure
+    /// ladder, which re-verifies each receipt and drops what no longer reads.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn blocked_reports_of_run(&self, run: EntityId) -> Result<Vec<BlockedReportRef>> {
+        let txn = self.store.env.read_txn()?;
+        BY_RUN
+            .iter_from(&self.store, &txn, run.as_bytes())?
+            .take(MAX_RUN_REPORTS)
+            .map(|row| {
+                let (key, _) = row?;
+                let mut receipt = [0; 16];
+                receipt.copy_from_slice(&key[16..]);
+                Ok(BlockedReportRef {
+                    receipt_ref: EntityId::from_bytes(receipt)?.to_hex(),
+                })
+            })
+            .collect()
     }
 }
 
