@@ -45,6 +45,15 @@ impl Vault {
         Ok(binding)
     }
 
+    /// The slip `binding` keeps, verified again in a snapshot of its own, for
+    /// a host that runs work the binding's request queued: a verb hook's
+    /// settled call (ARCH-0080 §3 Ask). The request's freshness is not judged
+    /// again; every other check is.
+    pub fn verify_invocation_slip(&self, binding: &InvocationSlipBinding) -> Result<VerifiedSlip> {
+        let txn = self.store.env.read_txn()?;
+        self.invocation_slip_in_txn(&txn, binding)
+    }
+
     /// The slip `binding` keeps, verified in `txn`: its mint's signer, every
     /// caveat, the holder's signature, and its standing at this snapshot's
     /// clock (expiry, revocation, vault and pact).

@@ -3,15 +3,17 @@
 //! actor and reads the artifact through the facade's admission. Reads and the
 //! three-way diff take any reader. Live edits stay a person's; machine work
 //! opens a fork, and a fork merges by a person other than its opener (CALLS
-//! "OF-505 body verbs").
+//! "OF-505 body verbs"). A deck reads, edits and forks through these rows
+//! too; its review, merge, export and gate are `vault.artifacts.body.deck.*`
+//! (`pptx::verbs`).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    BodyBlockKind, BodyCell, BodyName, DocxBody, DocxBodyOp, OfficeBodyDiff, OfficeBodyEdit,
-    OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead,
-    OfficeBodyKind, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
+    BodyBlockKind, BodyCell, BodyName, DeckBodyView, DocxBody, DocxBodyOp, OfficeBodyDiff,
+    OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork,
+    OfficeBodyHead, OfficeBodyKind, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -19,6 +21,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use crate::provenance::text_commit::TextCommitReceipt;
 use crate::write_envelope::WriteActor;
+use oneiron_docedit::live::DeckOp;
 
 /// `vault.artifacts.body.head`, `.commits` and `.preview`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -56,6 +59,7 @@ pub struct OfficeBodyReadRequest {
 pub enum OfficeBodyOps {
     Docx { ops: Vec<DocxBodyOp> },
     Xlsx { ops: Vec<XlsxBodyOp> },
+    Pptx { ops: Vec<DeckOp> },
 }
 
 /// `vault.artifacts.body.edit`: a person's operations on the live body, read
@@ -171,6 +175,7 @@ pub struct XlsxBodyView {
 pub enum OfficeBodyView {
     Docx { body: DocxBodyView },
     Xlsx { body: XlsxBodyView },
+    Pptx { body: DeckBodyView },
 }
 
 /// `vault.artifacts.body.export`: the frontier exported, and the version's
@@ -229,17 +234,17 @@ fn invalid(reason: &str) -> MemoryError {
 }
 
 impl Memory<'_> {
-    fn body_actor(&self) -> WriteActor {
+    pub(super) fn body_actor(&self) -> WriteActor {
         WriteActor::new(self.actor(), self.actor_class())
     }
 
-    fn body_ref(&self, reference: &str) -> MemoryResult<EntityId> {
+    pub(super) fn body_ref(&self, reference: &str) -> MemoryResult<EntityId> {
         crate::memory::resolve_entity_ref(self.vault(), reference)
     }
 
     /// The caller's envelope, or its own: this actor as the process, stated
     /// by a person and concluded by a machine, under `identity`.
-    fn body_made_by(
+    pub(super) fn body_made_by(
         &self,
         made_by: Option<&serde_json::Value>,
         identity: &str,
@@ -292,8 +297,7 @@ impl Memory<'_> {
         Ok(self.vault().office_body_head(&artifact)?)
     }
 
-    /// `vault.artifacts.body.read`: a DOCX or XLSX body; a deck reads
-    /// through its own door.
+    /// `vault.artifacts.body.read`: the body in its format.
     pub fn artifacts_body_read(
         &self,
         input: &OfficeBodyReadRequest,
@@ -311,9 +315,9 @@ impl Memory<'_> {
             OfficeBodyKind::Xlsx => OfficeBodyView::Xlsx {
                 body: self.vault().read_xlsx_body(&artifact, at)?.into(),
             },
-            OfficeBodyKind::Pptx => {
-                return Err(invalid("a deck body reads through the deck doors"));
-            }
+            OfficeBodyKind::Pptx => OfficeBodyView::Pptx {
+                body: self.vault().read_pptx_body(&artifact, at)?.into(),
+            },
         })
     }
 
@@ -337,14 +341,15 @@ impl Memory<'_> {
         let base = input.base.as_deref();
         let actor = self.body_actor();
         Ok(match &input.ops {
-            OfficeBodyOps::Docx { ops } => {
-                self.vault()
-                    .edit_docx_body(&artifact, base, ops, actor, &made_by)?
-            }
-            OfficeBodyOps::Xlsx { ops } => {
-                self.vault()
-                    .edit_xlsx_body(&artifact, base, ops, actor, &made_by)?
-            }
+            OfficeBodyOps::Docx { ops } => self
+                .vault()
+                .edit_docx_body(&artifact, base, ops, actor, &made_by)?,
+            OfficeBodyOps::Xlsx { ops } => self
+                .vault()
+                .edit_xlsx_body(&artifact, base, ops, actor, &made_by)?,
+            OfficeBodyOps::Pptx { ops } => self
+                .vault()
+                .edit_pptx_body(&artifact, base, ops, actor, &made_by)?,
         })
     }
 
@@ -374,14 +379,15 @@ impl Memory<'_> {
         let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.fork_edit")?;
         let actor = self.body_actor();
         Ok(match &input.ops {
-            OfficeBodyOps::Docx { ops } => {
-                self.vault()
-                    .edit_docx_body_fork(&artifact, &fork, ops, actor, &made_by)?
-            }
-            OfficeBodyOps::Xlsx { ops } => {
-                self.vault()
-                    .edit_xlsx_body_fork(&artifact, &fork, ops, actor, &made_by)?
-            }
+            OfficeBodyOps::Docx { ops } => self
+                .vault()
+                .edit_docx_body_fork(&artifact, &fork, ops, actor, &made_by)?,
+            OfficeBodyOps::Xlsx { ops } => self
+                .vault()
+                .edit_xlsx_body_fork(&artifact, &fork, ops, actor, &made_by)?,
+            OfficeBodyOps::Pptx { ops } => self
+                .vault()
+                .edit_pptx_body_fork(&artifact, &fork, ops, actor, &made_by)?,
         })
     }
 

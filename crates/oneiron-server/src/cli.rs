@@ -199,6 +199,22 @@ pub enum SeatCommand {
     /// Print the sign-in plan for one seat: placement verdict, the login you
     /// run yourself, and what the seat does when its plan window is dry.
     LoginPlan(Box<SeatLoginPlanArgs>),
+    /// List every named Dreamer runner a seat policy may name — the CLI
+    /// runners and the official seat adapters — with where a login seat on
+    /// each may run (no vendor approvals assumed).
+    Runners,
+    /// Validate an owner runner-seat policy (JSON settings) and print the
+    /// effective order: which runner takes Dreamer work, and where the work
+    /// goes when a seat's quota is spent.
+    RunnerPolicy(Box<SeatRunnerPolicyArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SeatRunnerPolicyArgs {
+    /// Runner-seat policy settings as JSON (`seats`, `on_spent`, optional
+    /// `official` seat registrations). `-` reads stdin.
+    #[arg(long)]
+    pub settings: PathBuf,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -1008,5 +1024,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Oneironer(command) => commands::oneironer(command),
         Command::Seat(SeatCommand::Routes) => commands::seat_routes(),
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
+        Command::Seat(SeatCommand::Runners) => commands::seat_runners(),
+        Command::Seat(SeatCommand::RunnerPolicy(args)) => commands::seat_runner_policy(*args),
     }
 }

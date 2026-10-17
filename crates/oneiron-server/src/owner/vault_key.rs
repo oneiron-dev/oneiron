@@ -6,7 +6,10 @@
 
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
-use oneiron::world_keys::{VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind};
+use oneiron::world_keys::{HybridSecretKey, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind};
+use oneiron_vault_contract::escrow::{
+    ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
+};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -89,6 +92,9 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
 pub(crate) struct BackupUnlocks {
     pub(crate) kind: &'static str,
     pub(crate) vault_id: String,
+    /// The commitment naming the vault key, hex: the registry's escrow
+    /// capsule for this key names the same one (`--capsule`).
+    pub(crate) key_commitment: String,
     pub(crate) wraps: Vec<WrapView>,
 }
 
@@ -100,6 +106,7 @@ impl From<ArtifactUnlocks> for BackupUnlocks {
                 ArtifactKind::Checkpoint => "checkpoint",
             },
             vault_id: hex(&unlocks.vault_id),
+            key_commitment: hex(&unlocks.commitment),
             wraps: unlocks
                 .wraps
                 .into_iter()
@@ -196,6 +203,118 @@ pub(crate) fn parse_pins(text: &str) -> anyhow::Result<Vec<CheckpointSigner>> {
     };
     anyhow::ensure!(!pins.is_empty(), "the signer pin file names no signer");
     pins.into_iter().map(CheckpointSigner::try_from).collect()
+}
+
+/// The roles a registry's escrow capsule is sealed for (CROSS-ARCH-0022
+/// #ov-custody): the node's managed recipient and the owner's break-glass one.
+const CAPSULE_ROLES: [&str; 2] = ["managed", "break-glass"];
+
+/// One escrow capsule as a registry kept it ([`EscrowCapsuleReport`]),
+/// checked and decoded: what `oneiron restore --capsule` opens a backup
+/// with. None of it is secret.
+pub(crate) struct CapsuleReport {
+    pub(crate) vault_id: [u8; 32],
+    pub(crate) commitment: [u8; 32],
+    pub(crate) role: String,
+    pub(crate) label: String,
+    /// The E0 `VaultDek` envelope.
+    pub(crate) capsule: Vec<u8>,
+}
+
+/// The escrow capsule report `text` holds. Refused: an unknown field, another
+/// schema version or report type, a role the registry does not seal for, a
+/// wrap id other than `escrow:<label>`, and a report id other than the
+/// capsule's BLAKE3.
+pub(crate) fn parse_capsule_report(text: &str) -> anyhow::Result<CapsuleReport> {
+    let report: EscrowCapsuleReport = serde_json::from_str(text)
+        .map_err(|error| anyhow::anyhow!("an escrow capsule report is JSON: {error}"))?;
+    anyhow::ensure!(
+        report.schema_version == ESCROW_REPORT_SCHEMA_VERSION,
+        "the escrow capsule report is schema version {}; this host reads {}",
+        report.schema_version,
+        ESCROW_REPORT_SCHEMA_VERSION
+    );
+    anyhow::ensure!(
+        report.report_type == ESCROW_REPORT_TYPE,
+        "the report is not an escrow capsule report (`report_type` is not {ESCROW_REPORT_TYPE:?})"
+    );
+    let role = CAPSULE_ROLES
+        .iter()
+        .find(|role| **role == report.role)
+        .ok_or_else(|| {
+            anyhow::anyhow!("an escrow capsule report's role is managed or break-glass")
+        })?;
+    anyhow::ensure!(
+        report
+            .label
+            .strip_prefix(role)
+            .is_some_and(|rest| rest.starts_with('.')),
+        "an escrow capsule report's label is `<role>.<recipient fingerprint>`"
+    );
+    anyhow::ensure!(
+        report.wrap_id == format!("escrow:{}", report.label),
+        "an escrow capsule report's wrap_id is `escrow:<label>`"
+    );
+    let id32 = |text: &str, what: &str| {
+        unhex(text)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or_else(|| anyhow::anyhow!("an escrow capsule report's {what} is 64 hex digits"))
+    };
+    let vault_id = id32(&report.vault_id, "vault_id")?;
+    let commitment = id32(&report.key_commitment, "key_commitment")?;
+    let capsule = unhex(&report.capsule)
+        .filter(|capsule| !capsule.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("an escrow capsule report's capsule is hex"))?;
+    anyhow::ensure!(
+        blake3::hash(&capsule)
+            .to_hex()
+            .eq_ignore_ascii_case(&report.report_id),
+        "an escrow capsule report's report_id is not its capsule's BLAKE3"
+    );
+    Ok(CapsuleReport {
+        vault_id,
+        commitment,
+        role: (*role).to_owned(),
+        label: report.label,
+        capsule,
+    })
+}
+
+/// An escrow recipient's secret half as given, the one door for the forms
+/// `restore --capsule` reads: a 32-byte seed
+/// ([`oneiron::world_keys::escrow_recipient`]), as `--unlock escrow` reads
+/// it, or the key's own 96 bytes of seeds, ML-KEM-1024's 64 (`d ‖ z`) then
+/// X25519's 32 (`HybridSecretKey::from_seeds`). Either is raw, hex or
+/// base64url.
+pub(crate) fn escrow_secret(raw: &[u8]) -> anyhow::Result<HybridSecretKey> {
+    const SEEDS: usize = 96;
+    let seeds = match raw.len() {
+        SEEDS => Some(Zeroizing::new(raw.to_vec())),
+        len if len == 2 * SEEDS => std::str::from_utf8(raw)
+            .ok()
+            .and_then(unhex)
+            .map(Zeroizing::new),
+        _ => std::str::from_utf8(raw)
+            .ok()
+            .and_then(unb64)
+            .map(Zeroizing::new),
+    };
+    if let Some(seeds) = seeds.filter(|seeds| seeds.len() == SEEDS) {
+        anyhow::ensure!(
+            seeds.iter().any(|byte| *byte != 0),
+            "an escrow recipient's seeds are not all zero"
+        );
+        let mut mlkem = Zeroizing::new([0u8; 64]);
+        let mut x25519 = Zeroizing::new([0u8; 32]);
+        mlkem.copy_from_slice(&seeds[..64]);
+        x25519.copy_from_slice(&seeds[64..]);
+        return Ok(HybridSecretKey::from_seeds(&mlkem, &x25519));
+    }
+    let seed = secret32(
+        raw,
+        "an escrow recipient's secret (a 32-byte seed, or 96 bytes of seeds)",
+    )?;
+    Ok(oneiron::world_keys::escrow_recipient(&seed)?)
 }
 
 /// A 32-byte secret as given: 32 raw bytes, 64 hex digits or base64url.

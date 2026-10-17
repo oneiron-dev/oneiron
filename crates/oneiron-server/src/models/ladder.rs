@@ -838,6 +838,26 @@ impl OfferLadder {
             .map(|(response, _)| response)
     }
 
+    /// [`Self::generate_within`] for a caller that must know the model it
+    /// named is the one that answered (an exact-model decision, OF-184):
+    /// only a ladder that is one picked model takes the call, and no owner's
+    /// fallback does. A seat's ladder refuses it as an invalid request.
+    pub async fn generate_exact_within(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        wait_budget: Duration,
+    ) -> LlmResult<LlmResponse> {
+        if !self.picked || self.rungs.len() != 1 {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        self.generate_from(run, request, selector, may_send, wait_budget, false)
+            .await
+            .map(|(response, _)| response)
+    }
+
     /// [`Self::generate`], with the model of the rung that answered, the
     /// owner's fallback included: the executor a caller stamps on the
     /// attempt it ran for (OF-540).
