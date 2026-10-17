@@ -26568,7 +26568,7 @@
       "DecisionReadProvider"
      ],
      "path": "src/llm/decision/read.rs",
-     "purpose": "The escalation rung's decision read: the house model reads the paired \"does this need more thinking?\"…",
+     "purpose": "The escalation rung's decision read: the house model reads the pack's questions over the same state in one…",
      "surface": {
       "fn": 1,
       "struct": 1
@@ -57465,7 +57465,7 @@
      "purpose": "Label-read seam: a host model scores a closed label set instead of generating text",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 3,
       "trait": 1
      }
