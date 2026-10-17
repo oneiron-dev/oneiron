@@ -419,6 +419,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_fanout_launch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.launch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.launch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_fanout_resume(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.resume")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.resume", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_fanout_ack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.ack")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.ack", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn tasks_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "tasks.update")?;
         let output = py
