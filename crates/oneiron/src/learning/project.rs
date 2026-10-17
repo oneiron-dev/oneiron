@@ -472,7 +472,10 @@ fn retract_heads_in_txn(
 }
 
 /// Keeps the vault-scope fit cache in step with the claim: only a root-typed
-/// setting cell with no executor, axis or consent scope is the vault's fit.
+/// setting cell on its knob's global subject
+/// (`learning_setting::global_setting_subject`), with no executor, axis or
+/// consent scope, is the vault's fit. A project's or a skill's root-typed
+/// cell never writes or clears it (OF-542).
 fn cache_setting_fit_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -494,6 +497,9 @@ fn cache_setting_fit_in_txn(
     let Some(key) = cell.setting_key.clone() else {
         return Ok(());
     };
+    if crate::learning_setting::global_setting_subject(&key).ok() != Some(cell.subject) {
+        return Ok(());
+    }
     match estimate {
         Some(estimate) => SETTING_FIT.put(
             &vault.store,

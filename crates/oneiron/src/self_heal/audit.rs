@@ -363,6 +363,9 @@ impl Vault {
             }
             receipt.checks[index].outcome = Some(outcome.clone());
             crate::learning::honesty::project_seal_check_in_txn(self, txn, &receipt, index, now)?;
+            crate::skill_optimize::audit_rate::fit_audit_rate_in_txn(
+                self, txn, &receipt, index, now,
+            )?;
             SEALS.put(&self.store, txn, attempt.as_bytes(), &receipt)?;
             Ok(receipt)
         })

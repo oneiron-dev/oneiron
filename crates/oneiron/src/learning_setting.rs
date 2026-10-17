@@ -645,3 +645,52 @@ pub fn record_setting_check(
     );
     crate::learning::record_evidence(vault, &cell, &evidence, now)
 }
+
+/// The one subject `key`'s vault-wide fit is learned on: an id derived from
+/// the key, since a vault-wide knob has no one skill that uses it. Only a
+/// root-typed check on this subject fits the vault (OF-542); a project's or
+/// a skill's check fits that subject alone.
+///
+/// # Errors
+///
+/// The derivation's refusal of a reserved id.
+pub fn global_setting_subject(key: &str) -> Result<crate::entity_id::EntityId> {
+    crate::entity_id::EntityId::derive(
+        crate::entity_id::derived_domains::GLOBAL_SETTING_SUBJECT,
+        &[key.as_bytes()],
+    )
+}
+
+/// [`record_setting_check`] inside `wtxn`, for a writer whose own row and
+/// the check commit together: a random audit's outcome and the audit rate it
+/// fits (OF-542).
+///
+/// # Errors
+///
+/// As [`record_setting_check`].
+pub(crate) fn record_setting_check_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    check: &SettingCheck,
+    now: u64,
+) -> Result<Option<crate::learning::Estimate>> {
+    let spec = setting_spec(&check.key).ok_or(invalid("no learned setting has this key"))?;
+    if !check.observed.is_finite() || check.observed < spec.min || check.observed > spec.max {
+        return Err(invalid(
+            "a fitting check's value lies within its catalog bounds",
+        ));
+    }
+    let cell = crate::learning::LearningCell::new(
+        crate::learning::LearningPredicate::Setting,
+        check.subject,
+    )
+    .setting_key(spec.key)
+    .type_ref(check.type_ref.clone());
+    let evidence = crate::learning::LearningEvidence::anchored(
+        check.receipt.clone(),
+        check.at,
+        check.anchor,
+        crate::learning::Observation::Magnitude(check.observed),
+    );
+    crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, now)
+}

@@ -131,6 +131,7 @@
 //! silent double edit — nothing here writes canon.
 
 mod ask_band;
+pub(crate) mod audit_rate;
 mod brief;
 mod decisions;
 mod dials;
