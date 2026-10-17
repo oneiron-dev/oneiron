@@ -33,7 +33,8 @@ pub(crate) enum TaskActorProof<'a> {
     },
     /// An ask guest no slip names, by its own FEDERATION_GRANT: live, not
     /// withdrawn, an ask guest's grant whose member is `actor`, and
-    /// conferring now.
+    /// conferring now. A host binds it as an [`AdmittedTaskGrant`]
+    /// (`Memory::presented_task_grant`).
     Grant { actor: EntityId, grant: EntityId },
     /// The in-process host's own caller (`Memory::native_invocation`: no
     /// transport reached it, no slip or read proof is bound to it), such as
@@ -52,6 +53,53 @@ pub(crate) struct RunnerLease<'a> {
     pub(crate) attempt: AttemptId,
     pub(crate) lease_owner: &'a str,
     pub(crate) attempt_count: u32,
+}
+
+/// The FEDERATION_GRANT an ask minted for one guest, admitted for the
+/// companion it names as member: what a host binds to that companion's
+/// surface (`Memory::with_task_grant`) so its task verbs prove it by
+/// [`TaskActorProof::Grant`], checked again on every verb. Only
+/// [`Vault::admit_ask_guest_grant`] builds one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdmittedTaskGrant {
+    grant: EntityId,
+    member: EntityId,
+}
+
+impl AdmittedTaskGrant {
+    /// The FEDERATION_GRANT's id.
+    #[must_use]
+    pub const fn grant(&self) -> EntityId {
+        self.grant
+    }
+
+    /// The companion the grant names as its member.
+    #[must_use]
+    pub const fn member(&self) -> EntityId {
+        self.member
+    }
+}
+
+impl Vault {
+    /// Admits the guest grant the ask `ask` recorded for guest `person`, for
+    /// that guest's companion `member`: only that ask's own grant, never
+    /// another grant the companion holds, and only while it is live, not
+    /// withdrawn, names `member` and confers now. An ask that recorded no
+    /// grant for `person`, or one that no longer holds, is refused.
+    pub fn admit_ask_guest_grant(
+        &self,
+        ask: crate::task_verb::TaskAskHandle,
+        person: EntityId,
+        member: EntityId,
+    ) -> Result<AdmittedTaskGrant> {
+        let txn = self.store.env.read_txn()?;
+        let grant = crate::task_verb::ask_guest_grant_in(self, &txn, ask.group_ref, person)?
+            .ok_or_else(|| refused("the ask recorded no grant for this guest"))?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        self.require_live_guest_grant_in_txn(&txn, grant, &member.to_hex(), now)
+            .map_err(|_| refused("the guest's grant does not prove this actor"))?;
+        Ok(AdmittedTaskGrant { grant, member })
+    }
 }
 
 /// The task verbs whose actor [`Vault::prove_task_actor_in_txn`] judges.

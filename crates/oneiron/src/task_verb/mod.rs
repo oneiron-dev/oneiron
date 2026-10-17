@@ -236,6 +236,7 @@ mod sdk_legal_hold;
 mod sdk_record_erase;
 mod sdk_scratchpad;
 mod sdk_secret;
+mod sdk_secret_use;
 mod sdk_self;
 mod sdk_share;
 mod sdk_shared;
@@ -248,6 +249,7 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub(crate) use ask_guest::ask_guest_grant_in;
 pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
     ack_option_void_generation, has_option_link_void, option_void_generation,

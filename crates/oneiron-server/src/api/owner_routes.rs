@@ -60,6 +60,7 @@ mod peer_confidence_routes;
 mod proactivity_routes;
 mod recovery_kit_routes;
 mod secret_reveal_routes;
+mod secret_use_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
 mod vault_key_routes;
@@ -130,6 +131,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(space_posting_routes::routes())
         .merge(vault_key_routes::routes())
         .merge(recovery_kit_routes::routes())
+        .merge(secret_use_routes::routes())
         .merge(secret_reveal_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())

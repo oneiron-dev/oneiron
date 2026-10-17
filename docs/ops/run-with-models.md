@@ -121,7 +121,12 @@ the list says so; a `local-openai-compat` provider declares `streaming`, `json_r
 model's own list in place of `capabilities`, keyed by the model's name, so
 two models on one provider can differ: `model_capabilities = { "gpt-audio" =
 ["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
-whose list has `audio_input`),
+whose list has `audio_input`), `family` (the line of models one developer
+trains, for every model on the provider; unset, a model's family is unknown,
+never read off the provider's name), `model_families` (one wire model's own
+family in place of `family`: `model_families = { "claude-opus-5-5" = "claude",
+"gpt-6.1" = "gpt" }`; a judge's tie-breaker is asked only of a model whose
+family neither judge has),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
@@ -503,6 +508,20 @@ first `granted` answer carries the value as `value` (or `value_base64`), and
 later ones carry only the receipt. The run's record keeps that answer without
 the value, so a resumed step must reveal again. The rows are `reveal`,
 `reveal.wait` and `reveal.describe` on every other door too.
+
+A run can also hand a secret to a trusted operation without reading it:
+`self.use({handle, operation, arguments})`. The operation presents the value
+at its own door and the run reads only what came back, with each copy of the
+value replaced by the handle. The v1 operations are the read-only provider
+checks `slack.auth_test`, `line.bot_info`, `gmail.profile` and
+`linkedin.session`, each answering the account the credential belongs to. The
+only grant is the secret's binding for the operation's effector (such as
+`connector:slack`): there is no ask, and a reveal's grant does not reach it. A
+secret the mask on write found has no binding, so `self.use` refuses it and
+names the owner door that adds one. Every use, and every refused one, leaves a
+Gate record with the handle, generation, effector, operation and send status.
+When the host's model ladder served the turn, each verb call the turn's
+program makes carries the provider that answered it.
 
 ### Reader children, summaries and fold receipts
 
