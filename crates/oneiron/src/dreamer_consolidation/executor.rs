@@ -547,6 +547,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 reason: crate::dreamer_consolidation::TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
             });
         }
+        // A weave lens renders on the model its host lends; this executor
+        // holds none.
+        if attempt.status.payload.attempt_type
+            == crate::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
+        {
+            return Ok(DreamerAttemptExecution::Park {
+                reason: crate::dreamer_consolidation::WEAVE_LENS_UNLENT_PARK_REASON.to_owned(),
+            });
+        }
         if self.actor
             != ctx
                 .vault

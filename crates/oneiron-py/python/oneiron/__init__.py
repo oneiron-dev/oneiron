@@ -470,6 +470,14 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
         def digest(self, spec):
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
+        @property
+        def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
+            return Oneiron._VaultWeaveLinkVerbs(self._client)
+    class _VaultWeaveLinkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_link_wrong(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

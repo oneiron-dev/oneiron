@@ -27,6 +27,7 @@ pub(super) mod host_doors;
 mod legal_hold_doors;
 pub(super) mod role_picks;
 mod shared_act_doors;
+mod weave_doors;
 #[cfg(test)]
 pub(super) mod tests;
 

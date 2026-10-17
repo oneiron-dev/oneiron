@@ -82,6 +82,12 @@ pub const DREAMER_RESIDENT_DREAM_ATTEMPT_KIND: &str = "dreamer.resident_dream";
 /// model step writes the research NOTE the TASK's result names.
 pub const DREAMER_TASK_REALIZE_ATTEMPT_KIND: &str =
     crate::task_verb::highway_runner::REALIZE_ATTEMPT_KIND;
+/// The weave lens's generate step (OF-499): one saved digest period
+/// rendered through the shipped `weave-report` skill on a lent model, queued
+/// in the period's publication. Its render lands on the period's row.
+///
+/// Doubles as the payload `job_type`.
+pub const DREAMER_WEAVE_LENS_ATTEMPT_KIND: &str = "dreamer.weave_lens";
 /// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
 /// failure-ladder case the escalation hands to the Coach. Host-run, like agent
 /// dispatch: the wake driver never admits it; a host Coach leases it with

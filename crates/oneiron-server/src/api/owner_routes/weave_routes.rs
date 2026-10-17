@@ -1,8 +1,9 @@
 //! `/v1/owner/weave`: the owner's doors to the weave lens (OF-499). The
-//! owner sets each reader's digest schedule, reads the owner lens live, and
-//! opens its own digest, which renders its due period first. A person's or
-//! agent's report and digests are its own, through the `vault.weave.*`
-//! verbs; owning the vault reads none of them.
+//! owner sets each reader's digest schedule, reads the owner lens live,
+//! opens its own digest, which renders its due period first, and labels a
+//! link in the owner lens as wrong. A person's or agent's report and digests
+//! are its own, through the `vault.weave.*` verbs; owning the vault reads
+//! none of them.
 
 use std::sync::Arc;
 
@@ -13,8 +14,8 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
 use oneiron::claim::{
-    WeaveDigestRequest, WeaveDigestView, WeaveReaderRef, WeaveReportRequest, WeaveReportView,
-    WeaveScheduleView,
+    WeaveDigestRequest, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
+    WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveWrongLinkRequest,
 };
 use serde::Serialize;
 
@@ -30,6 +31,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/weave/schedules/clear", post(clear_schedule))
         .route("/weave/report", post(report))
         .route("/weave/digest", get(digest))
+        .route("/weave/link/wrong", post(wrong_link))
 }
 
 #[derive(Debug, Serialize)]
@@ -142,4 +144,27 @@ async fn digest(
     })
     .await?;
     Ok(Json(view))
+}
+
+/// `POST /v1/owner/weave/link/wrong`: the owner labels a link it sees in the
+/// owner lens as wrong. The label is not a retraction.
+async fn wrong_link(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<WeaveWrongLinkRequest>, JsonRejection>,
+) -> OwnerReply<WeaveLinkCorrectionView> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let locality = auth.locality();
+    let filed = blocking(move || -> OwnerResult<WeaveLinkCorrectionView> {
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        vault
+            .memory(actor, EdgeActorClass::Human)
+            .at(locality)
+            .weave_wrong_link(Some(&owner), &owner, &request)
+            .map_err(memory_refused)
+    })
+    .await?;
+    Ok(Json(filed))
 }
