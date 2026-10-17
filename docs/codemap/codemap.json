@@ -28625,7 +28625,7 @@
      "path": "src/llm/run_admission/permit.rs",
      "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5,
       "struct": 1
      }
@@ -28640,6 +28640,7 @@
       "RunEvent",
       "RunReceipt",
       "RunReceiptSink",
+      "RunStreamUsage",
       "RunTokenUsage",
       "TeacherReport"
      ],
@@ -28648,7 +28649,7 @@
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 6,
+      "struct": 7,
       "trait": 1
      }
     },
