@@ -65076,7 +65076,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -66756,10 +66756,20 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/broker_media.rs",
+     "purpose": "A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68863,7 +68873,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68984,7 +68994,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 524,
+   "source_files": 525,
    "test_files": 182
   },
   "oneiron-spawn": {
