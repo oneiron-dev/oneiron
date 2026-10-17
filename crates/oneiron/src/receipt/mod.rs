@@ -72,7 +72,7 @@ pub use self::pack_attribution::{
 };
 pub(crate) use self::pack_attribution::{
     attempt_pack_attribution_in_txn, has_attempt_pack_attribution_in_txn,
-    put_attempt_pack_attribution_in_txn, take_attempt_pack_attribution_in_txn,
+    put_attempt_pack_attribution_in_txn, reference, take_attempt_pack_attribution_in_txn,
 };
 pub use self::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,
