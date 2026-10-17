@@ -18,6 +18,13 @@ header = """
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.
+ *
+ * Embedded engine (OF-237): oneiron_engine_start runs the full server in this
+ * process with the app's OneironAppHost callbacks; oneiron_engine_request
+ * sends it one buffered HTTP/1.1 request, oneiron_engine_vault shares its
+ * open vault with the storage functions, and oneiron_engine_free stops it in
+ * order. Engine calls block: make them from app threads, never from a
+ * callback.
  */
 """
 
@@ -41,6 +48,10 @@ include = [
   "OneironSubtreeEntry",
   "OneironSubtreeEntryArray",
   "OneironVault",
+  "OneironAppHost",
+  "OneironSecretSink",
+  "OneironReply",
+  "OneironEngine",
   "oneiron_buffer_free",
   "oneiron_edge_info_array_free",
   "oneiron_scored_entity_array_free",
@@ -67,4 +78,12 @@ include = [
   "oneiron_vault_subtree",
   "oneiron_vault_ancestors",
   "oneiron_vault_would_create_cycle",
+  "oneiron_secret_sink_write",
+  "oneiron_engine_start",
+  "oneiron_engine_request",
+  "oneiron_engine_reply_free",
+  "oneiron_engine_wake",
+  "oneiron_engine_stop",
+  "oneiron_engine_vault",
+  "oneiron_engine_free",
 ]

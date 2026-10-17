@@ -8115,10 +8115,14 @@ dependencies = [
 name = "oneiron-ffi"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cbindgen",
  "oneiron",
+ "oneiron-server",
+ "oneiron-vault-contract",
  "serde_json",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]

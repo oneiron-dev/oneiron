@@ -1,8 +1,12 @@
 //! repr(C) status/types/handles and ABI limit constants.
 
-use std::{ptr, sync::Arc};
+use std::{ffi::c_void, ptr, sync::Arc};
 
 use oneiron::Vault;
+use oneiron_server::embedded::BlockingEngine;
+use zeroize::Zeroizing;
+
+use super::engine::CAppHost;
 
 pub(super) const DEFAULT_FFI_SEARCH_LIMIT: u32 = 10;
 
@@ -183,4 +187,75 @@ impl OneironSubtreeEntryArray {
 pub struct OneironVault {
     pub(super) vault: Arc<Vault>,
     pub(super) dimensions: usize,
+}
+
+/// The app's side of an embedded engine, handed to `oneiron_engine_start`:
+/// its keychain, its wake timer and its readiness signal.
+///
+/// The engine calls these from threads of its own, so `user_data` and every
+/// callback must be safe to use from any thread until `release`. A callback
+/// must not call back into the engine; such a call fails `EngineError`. A
+/// null callback does nothing, and a null `keychain` holds no secret.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct OneironAppHost {
+    /// Handed back to every callback unchanged.
+    pub user_data: *mut c_void,
+    /// One secret from the app keychain by its exact UTF-8 name, borrowed for
+    /// the call. Answer with `oneiron_secret_sink_write(sink, ...)` before
+    /// returning, which copies the bytes at once; return without writing when
+    /// the keychain holds no such secret. `sink` is valid only for the call.
+    pub keychain: Option<
+        unsafe extern "C" fn(
+            user_data: *mut c_void,
+            name_ptr: *const u8,
+            name_len: usize,
+            sink: *mut OneironSecretSink,
+        ),
+    >,
+    /// Arms the app's timer for `at_unix_ms` when `has_at` is 1, or clears
+    /// it when `has_at` is 0. When the timer fires the app calls
+    /// `oneiron_engine_wake`.
+    pub schedule_wake:
+        Option<unsafe extern "C" fn(user_data: *mut c_void, has_at: u8, at_unix_ms: u64)>,
+    /// The engine opened its vault and takes requests.
+    pub ready: Option<unsafe extern "C" fn(user_data: *mut c_void)>,
+    /// Called exactly once, when the engine holds no copy of this table,
+    /// whatever `oneiron_engine_start` returned: free `user_data` here.
+    pub release: Option<unsafe extern "C" fn(user_data: *mut c_void)>,
+}
+
+/// Where a `keychain` callback answers, through `oneiron_secret_sink_write`.
+pub struct OneironSecretSink {
+    pub(super) secret: Option<Zeroizing<Vec<u8>>>,
+}
+
+/// Rust-owned reply of `oneiron_engine_request`. Free it with
+/// `oneiron_engine_reply_free`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct OneironReply {
+    /// The HTTP status; a 4xx or 5xx is a reply, not an error.
+    pub status: u16,
+    /// Every reply header as one `name: value` line ended by CRLF, repeats
+    /// kept.
+    pub headers: OneironBuffer,
+    pub body: OneironBuffer,
+}
+
+impl OneironReply {
+    pub(super) const fn empty() -> Self {
+        Self {
+            status: 0,
+            headers: OneironBuffer::empty(),
+            body: OneironBuffer::empty(),
+        }
+    }
+}
+
+/// Opaque embedded-engine handle returned by `oneiron_engine_start`.
+///
+/// Release the handle with `oneiron_engine_free` exactly once.
+pub struct OneironEngine {
+    pub(super) engine: BlockingEngine<CAppHost>,
 }

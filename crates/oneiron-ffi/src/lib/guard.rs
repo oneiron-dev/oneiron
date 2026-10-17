@@ -6,7 +6,7 @@ use std::{
     ptr, slice,
 };
 
-use super::types::{OneironStatus, OneironVault};
+use super::types::{OneironEngine, OneironStatus, OneironVault};
 
 pub(super) fn ffi_guard(f: impl FnOnce() -> OneironStatus) -> OneironStatus {
     match catch_unwind(AssertUnwindSafe(f)) {
@@ -77,4 +77,17 @@ pub(super) fn with_vault<R>(
     // `oneiron_vault_open` and not yet freed by `oneiron_vault_free`.
     let vault = unsafe { &*vault };
     f(vault)
+}
+
+pub(super) fn with_engine<R>(
+    engine: *mut OneironEngine,
+    f: impl FnOnce(&OneironEngine) -> Result<R, OneironStatus>,
+) -> Result<R, OneironStatus> {
+    if engine.is_null() {
+        return Err(OneironStatus::NullArg);
+    }
+    // SAFETY: `engine` is a non-null handle previously returned by
+    // `oneiron_engine_start` and not yet freed by `oneiron_engine_free`.
+    let engine = unsafe { &*engine };
+    f(engine)
 }
