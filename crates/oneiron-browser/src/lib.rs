@@ -6,6 +6,11 @@
 //! never from its position, so a ref read in one observation still names the
 //! same element after the page changes around it. Every action waits for the
 //! page to settle and returns the next observation as a diff.
+//!
+//! The same verbs drive a Linux desktop (`self.desktop.*`, OF-523): one
+//! window of an isolated desktop guest, read as rows from its accessibility
+//! tree through cua-driver, with keys, hotkeys, scrolling and the guest's
+//! windows on top.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -14,13 +19,19 @@ use std::collections::BTreeMap;
 #[cfg(feature = "driver")]
 mod cdp;
 #[cfg(feature = "driver")]
+mod desktop;
+#[cfg(feature = "driver")]
 mod driver;
 mod library;
+#[cfg(feature = "driver")]
+mod mcp;
 #[cfg(feature = "driver")]
 mod outline;
 #[cfg(feature = "driver")]
 mod session;
 
+#[cfg(feature = "driver")]
+pub use desktop::{DesktopGuest, DesktopSession};
 pub use library::{
     LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRunInput, LibraryRunOutput,
     ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
@@ -64,6 +75,11 @@ pub struct Observation {
     /// work on a site tries them first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub library: Vec<LibraryCard>,
+    /// The desktop window shows no accessibility tree: the program reads
+    /// it by a `no_accessibility_tree` screenshot and acts by locate steps
+    /// or `click_at`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_tree: bool,
 }
 
 /// One effect's receipt: what acted, on which page, under which press, and
@@ -292,6 +308,94 @@ pub struct ImageOutput {
     pub source: String,
 }
 
+/// A key press, as `"Return"`, `"Tab"` or `"a"`, with `modifiers` (`ctrl`,
+/// `shift`, `alt`, `super`) held. It goes to the row `ref` names, focused
+/// first, or else to whatever the window has focused. A Return sends, so it
+/// takes the press of a send.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KeyInput {
+    pub key: String,
+    #[serde(default)]
+    pub modifiers: Vec<String>,
+    #[serde(default, rename = "ref")]
+    pub target: Option<String>,
+}
+
+/// A key combination, as `["ctrl", "s"]`: two keys or more, the last one
+/// pressed while the others are held.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HotkeyInput {
+    pub keys: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl ScrollDirection {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+/// Scrolls the row `ref` names, or the window, by `amount` steps (one when
+/// absent).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScrollInput {
+    pub direction: ScrollDirection,
+    #[serde(default)]
+    pub amount: Option<u32>,
+    #[serde(default, rename = "ref")]
+    pub target: Option<String>,
+}
+
+/// The desktop's windows, or only those of the app `app` names.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WindowsInput {
+    #[serde(default)]
+    pub app: Option<String>,
+}
+
+/// One window of the desktop. `window` names it for `self.desktop.window`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DesktopWindow {
+    pub window: String,
+    pub app: String,
+    pub title: String,
+    /// The window the session reads and acts on now.
+    pub current: bool,
+    /// The window in front of all the others.
+    pub front: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WindowsOutput {
+    pub windows: Vec<DesktopWindow>,
+}
+
+/// Moves the session onto another window: later reads and actions are
+/// that window's.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WindowInput {
+    pub window: String,
+}
+
 /// The effect classes a browser control can fall in. A vault grant names one
 /// of these to set its press.
 pub const EFFECT_SEND: &str = "browser.send";
@@ -401,6 +505,26 @@ pub enum BatchStep {
     },
     Screenshot {
         trigger: ScreenshotTrigger,
+    },
+    /// A desktop key press.
+    Key {
+        key: String,
+        #[serde(default)]
+        modifiers: Vec<String>,
+        #[serde(default, rename = "ref")]
+        target: Option<String>,
+    },
+    /// A desktop key combination.
+    Hotkey {
+        keys: Vec<String>,
+    },
+    /// A desktop scroll.
+    Scroll {
+        direction: ScrollDirection,
+        #[serde(default)]
+        amount: Option<u32>,
+        #[serde(default, rename = "ref")]
+        target: Option<String>,
     },
     /// A routine step: the host's decider picks the step's target, and the
     /// step acts on it.
@@ -601,13 +725,16 @@ pub enum BrowserError {
     NoWorkflow(String),
     #[error("the workflow library failed: {0}")]
     Library(String),
+    #[error("this driver does not serve {0}")]
+    Unsupported(String),
 }
 
 /// Steps one batched subgoal program may hold.
 pub const BATCH_MAX_STEPS: usize = 64;
 
 /// The verbs a browser serves. The CDP driver implements it for a Chromium
-/// guest; a desktop driver (cua-driver-rs) can implement it later.
+/// guest, and the desktop driver for a Linux desktop guest through
+/// cua-driver; each refuses the other's own verbs.
 pub trait BrowserDriver: Send {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError>;
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError>;
@@ -650,6 +777,31 @@ pub trait BrowserDriver: Send {
         Err(BrowserError::Library(
             "this browser host keeps no library".to_owned(),
         ))
+    }
+
+    /// A desktop key press.
+    fn press_key(&mut self, _input: KeyInput) -> Result<Observation, BrowserError> {
+        Err(BrowserError::Unsupported("key".to_owned()))
+    }
+
+    /// A desktop key combination.
+    fn hotkey(&mut self, _input: HotkeyInput) -> Result<Observation, BrowserError> {
+        Err(BrowserError::Unsupported("hotkey".to_owned()))
+    }
+
+    /// A desktop scroll.
+    fn scroll(&mut self, _input: ScrollInput) -> Result<Observation, BrowserError> {
+        Err(BrowserError::Unsupported("scroll".to_owned()))
+    }
+
+    /// The desktop's windows.
+    fn windows(&mut self, _input: WindowsInput) -> Result<WindowsOutput, BrowserError> {
+        Err(BrowserError::Unsupported("windows".to_owned()))
+    }
+
+    /// Moves a desktop session onto another window.
+    fn window(&mut self, _input: WindowInput) -> Result<Observation, BrowserError> {
+        Err(BrowserError::Unsupported("window".to_owned()))
     }
 
     /// Runs one batched program for a subgoal; a routine step has no
@@ -748,6 +900,29 @@ pub trait BrowserDriver: Send {
                 BatchStep::Screenshot { trigger } => {
                     self.screenshot(ScreenshotInput { trigger }).map(|_| None)
                 }
+                BatchStep::Key {
+                    key,
+                    modifiers,
+                    target,
+                } => self
+                    .press_key(KeyInput {
+                        key,
+                        modifiers,
+                        target,
+                    })
+                    .map(Some),
+                BatchStep::Hotkey { keys } => self.hotkey(HotkeyInput { keys }).map(Some),
+                BatchStep::Scroll {
+                    direction,
+                    amount,
+                    target,
+                } => self
+                    .scroll(ScrollInput {
+                        direction,
+                        amount,
+                        target,
+                    })
+                    .map(Some),
                 BatchStep::Decide(step) => routine.step(self, step).map(Some),
             };
             output.decisions.append(&mut routine.decisions);
@@ -821,7 +996,19 @@ impl Routine<'_> {
         let mut trigger = step.locate.then_some(ScreenshotTrigger::OutlineThin);
         for _ in 0..ROUTINE_LOOKS {
             let page = driver.observe(ObserveInput::default())?;
-            let candidates: Vec<(String, Row)> = if step.locate {
+            // A desktop window with no tree is read by its pixels: a step
+            // that only clicks locates its target in a screenshot there.
+            let blind = page.no_tree
+                && step.text.is_none()
+                && step.option.is_none()
+                && step.targets.is_empty();
+            let locate = step.locate || blind;
+            let look = match trigger {
+                Some(ScreenshotTrigger::DeciderReobserve) => trigger,
+                _ if blind => Some(ScreenshotTrigger::NoAccessibilityTree),
+                _ => trigger,
+            };
+            let candidates: Vec<(String, Row)> = if locate {
                 Vec::new()
             } else {
                 page.rows
@@ -836,7 +1023,7 @@ impl Routine<'_> {
                     .map(|row| (candidate(row), row.clone()))
                     .collect()
             };
-            if !step.locate && candidates.is_empty() {
+            if !locate && candidates.is_empty() {
                 return Err(BrowserError::AskUp(
                     "no row on the page matches the step".to_owned(),
                 ));
@@ -846,7 +1033,7 @@ impl Routine<'_> {
                     "a decide step offers at most {ROUTINE_MAX_CANDIDATES} rows; name its targets, role or name"
                 )));
             }
-            let shot = match trigger {
+            let shot = match look {
                 Some(trigger) => {
                     let shot = driver.screenshot(ScreenshotInput { trigger })?;
                     let png = driver
@@ -870,7 +1057,7 @@ impl Routine<'_> {
             self.until_ms = reply.until_ms.or(self.until_ms);
             self.decisions.push(reply.decision);
             match reply.answer {
-                RoutineAnswer::Act { candidate } if !step.locate => {
+                RoutineAnswer::Act { candidate } if !locate => {
                     self.misses = 0;
                     let target = candidates
                         .into_iter()
@@ -889,7 +1076,7 @@ impl Routine<'_> {
                         (None, None) => driver.click(ClickInput { target }),
                     };
                 }
-                RoutineAnswer::Point { x, y } if step.locate => {
+                RoutineAnswer::Point { x, y } if locate => {
                     self.misses = 0;
                     let (image, _) = shot.ok_or_else(|| {
                         BrowserError::Decider("a point without a screenshot".to_owned())
@@ -962,6 +1149,7 @@ impl BrowserError {
             Self::Decider(_) => "routine_decider_failed",
             Self::NoWorkflow(_) => "browser_no_workflow",
             Self::Library(_) => "browser_library_failed",
+            Self::Unsupported(_) => "browser_unsupported",
         }
     }
 }

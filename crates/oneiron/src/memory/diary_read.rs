@@ -21,6 +21,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::authorship::*;
 use super::{Memory, MemoryError, MemoryResult};
+use crate::agent_inbox_lens::{
+    AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
+};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
 };
@@ -38,6 +41,8 @@ pub const DIARY_READ_VERB: &str = "diary.read";
 const REASON_MAX_BYTES: usize = 512;
 const READS_LIMIT_DEFAULT: u32 = 50;
 const READS_LIMIT_MAX: u32 = 500;
+/// A review waiting on its agent ranks with the other rows that wait on it.
+const REVIEW_INBOX_IMPACT: u16 = 100;
 
 const DIARY_READ_REVIEW: SideTable<EntityId, DiaryReadReview, Raw> =
     SideTable::new(&side_table::DIARY_READ_REVIEW);
@@ -302,6 +307,11 @@ impl DiaryReadGate {
     /// Logs each agent's admitted entries as one read stating the reason,
     /// spends the yes that admitted it, and opens a pending review for a
     /// reader whose reason the agent has not answered.
+    ///
+    /// The admissions may come from an earlier snapshot (an export admits in
+    /// its read snapshot), so each agent's standing is read again here: a
+    /// Grant revoked, a review turned on, or a yes another read spent since
+    /// then refuses the whole read before its bytes leave.
     pub fn finish_in_txn(
         self,
         vault: &Vault,
@@ -312,12 +322,35 @@ impl DiaryReadGate {
         let reader_class = self.reader.actor_class().gate_actor_class();
         let mut agents = Vec::with_capacity(self.agents.len());
         for (agent, state) in self.agents {
-            let mut request = state.request;
+            let now = AgentRead::load(vault, txn, self.reader, &self.reason, agent)?;
+            if !state.read.is_empty() {
+                let yes = !now.review
+                    || now
+                        .request
+                        .as_ref()
+                        .is_some_and(|request| request.state == DiaryReviewState::Approved);
+                if !yes {
+                    return Err(authority_denied(
+                        "a diary read's yes was spent or withdrawn before the read finished",
+                    ));
+                }
+                if now.whole.is_none() {
+                    for entry in &state.read {
+                        let bound = action_bound(vault, txn, self.reader, DIARY_READ_VERB, *entry)?;
+                        if delegated_grant(vault, txn, &bound)?.is_none() {
+                            return Err(authority_denied(
+                                "a diary read's Grant was revoked before the read finished",
+                            ));
+                        }
+                    }
+                }
+            }
+            let mut request = now.request;
             let mut read_ref = None;
             if !state.read.is_empty() {
                 let read = vault.store.clock.entity_id()?;
                 let mut spent = None;
-                if state.review
+                if now.review
                     && let Some(yes) = request
                         .as_mut()
                         .filter(|request| request.state == DiaryReviewState::Approved)
@@ -369,7 +402,7 @@ impl DiaryReadGate {
                 request: request
                     .filter(|request| request.state != DiaryReviewState::Used)
                     .map(|request| request.request),
-                whole_diary: state.whole.is_some(),
+                whole_diary: now.whole.is_some(),
             });
         }
         Ok(DiaryReadReceipt {
@@ -478,6 +511,40 @@ impl Vault {
     pub fn agent_diary_read_review(&self, agent: EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         agent_reviews_diary_reads_in_txn(self, &txn, &agent)
+    }
+
+    /// Each pending review as a row of its agent's INBOX: one unthreaded
+    /// update per request, named by its `diary-read:` handle, until the agent
+    /// answers it. The row says a reader is waiting; the reader and reason
+    /// stay behind `self.memory.diary.reads`, and `self.memory.diary.review`
+    /// answers it.
+    pub(crate) fn diary_read_inbox_items(&self) -> Result<Vec<AgentInboxLensItem>> {
+        let txn = self.store.env.read_txn()?;
+        let mut items = Vec::new();
+        for ((agent, request), row) in DIARY_READ_REQUEST.scan(&self.store, &txn)? {
+            if row.state != DiaryReviewState::Pending {
+                continue;
+            }
+            let handle = format!("diary-read:{}:{}", agent.to_hex(), request.to_hex());
+            items.push(AgentInboxLensItem {
+                item_id: handle.clone(),
+                kind: AgentInboxItemKind::CoordinationUpdate,
+                thread_ref: None,
+                identity_ref: agent,
+                actor_ref: agent,
+                facet_ref: None,
+                participants: vec![AgentInboxParticipant {
+                    identity_ref: agent,
+                    actor_ref: agent,
+                }],
+                impact: InboxImpact(REVIEW_INBOX_IMPACT),
+                occurred_at: row.asked_at,
+                receipt_ref: None,
+                payload_ref: Some(handle),
+                concern: None,
+            });
+        }
+        Ok(items)
     }
 }
 
@@ -736,5 +803,126 @@ impl Memory<'_> {
         }
         verify_live_actor(self.vault, txn, actor)?;
         Ok(actor)
+    }
+}
+
+impl Memory<'_> {
+    /// Reads `agent`'s sealed scratchpads as this caller, stating `reason`, in
+    /// ONE transaction (AGM-1+8, agent-mind §2.6). The ruled readers need no
+    /// Grant: a live vault owner reads their agents' sealed pads, and the
+    /// Coach reads a work agent's, never a companion's. The read lands in the
+    /// agent's read log beside its diary reads, so the agent sees who read
+    /// and why, and an agent that reviews reads answers the reason first. Any
+    /// other reader is not covered: a health flag never grants access.
+    pub fn read_agent_sealed_pads(
+        &self,
+        reader: Option<&AuthenticatedOwner>,
+        agent: EntityId,
+        reason: &str,
+    ) -> MemoryResult<DiaryReadOutcome> {
+        self.with_verified_actor_write_txn(|txn| {
+            let actor = self.diary_reader_in_txn(txn, reader)?;
+            let reason = DiaryReadGate::new(actor, reason)?.reason;
+            let reader = actor.entity_ref();
+            let ruled = reader == agent
+                || (actor.actor_class() == EdgeActorClass::Human
+                    && crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &reader)?)
+                || (reader == crate::dreamer_runner::authority::coach_actor_id()?
+                    && self
+                        .vault
+                        .read_agent_definition_in_txn(txn, &agent)
+                        .is_ok_and(|definition| {
+                            !matches!(
+                                definition.wake_cadence,
+                                Some(crate::agent_def::AgentWakeCadence::Companion { .. })
+                            )
+                        }));
+            if !ruled {
+                return Ok(DiaryReadOutcome::NotCovered);
+            }
+            let review = reader != agent && agent_reviews_diary_reads_in_txn(self.vault, txn, &agent)?;
+            let mut request = if review {
+                standing_request_in_txn(self.vault, txn, agent, reader, &reason)?
+            } else {
+                None
+            };
+            let at = self.vault.store.clock.now_recorded_at();
+            let reader_class = actor.actor_class().gate_actor_class();
+            match request.as_ref().map(|request| (request.state, request.request)) {
+                _ if !review => {}
+                Some((DiaryReviewState::Approved, _)) => {}
+                Some((DiaryReviewState::Declined, request)) => {
+                    return Ok(DiaryReadOutcome::Declined { request });
+                }
+                Some((DiaryReviewState::Pending, request)) => {
+                    return Ok(DiaryReadOutcome::PendingReview { request });
+                }
+                // A standing request is never a spent one.
+                Some((DiaryReviewState::Used, _)) | None => {
+                    let row = DiaryReadRequest {
+                        request: self.vault.store.clock.entity_id()?,
+                        reader,
+                        reader_class: reader_class.to_owned(),
+                        reason: reason.clone(),
+                        asked_at: at,
+                        state: DiaryReviewState::Pending,
+                        answered_at: None,
+                        read: None,
+                    };
+                    DIARY_READ_REQUEST.put(&self.vault.store, txn, &(agent, row.request), &row)?;
+                    return Ok(DiaryReadOutcome::PendingReview {
+                        request: row.request,
+                    });
+                }
+            }
+            let kind = NoteKind::Registered("scratchpad".to_owned());
+            let mut entries = Vec::new();
+            for pad in self.vault.sealed_scratchpads_in_txn(txn, agent)? {
+                if let Some((note, learned_at)) = live_note_in_txn(self.vault, txn, &pad)?
+                    && note.kind == kind
+                    && note.author_ref == agent
+                {
+                    entries.push(DiaryEntry {
+                        id: pad,
+                        learned_at,
+                        markdown: note.markdown,
+                    });
+                }
+            }
+            if reader == agent {
+                return Ok(DiaryReadOutcome::Granted {
+                    read: None,
+                    entries,
+                });
+            }
+            // Every read states its reason and is logged, an empty one too.
+            let read = self.vault.store.clock.entity_id()?;
+            let mut spent = None;
+            if let Some(yes) = request.as_mut() {
+                yes.state = DiaryReviewState::Used;
+                yes.read = Some(read);
+                DIARY_READ_REQUEST.put(&self.vault.store, txn, &(agent, yes.request), yes)?;
+                spent = Some(yes.request);
+            }
+            DIARY_READ_LOG.put(
+                &self.vault.store,
+                txn,
+                &(agent, read),
+                &DiaryReadRecord {
+                    read,
+                    reader,
+                    reader_class: reader_class.to_owned(),
+                    reason,
+                    at,
+                    entries: entries.iter().map(|entry| entry.id).collect(),
+                    grants: Vec::new(),
+                    request: spent,
+                },
+            )?;
+            Ok(DiaryReadOutcome::Granted {
+                read: Some(read),
+                entries,
+            })
+        })
     }
 }

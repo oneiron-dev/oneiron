@@ -146,6 +146,7 @@ mod goal_axis;
 mod ledger;
 mod live;
 mod measurement;
+mod preflight;
 mod project_goal;
 mod tradeoff;
 mod verdict;
@@ -179,6 +180,7 @@ pub use measurement::{
     AuditPair, BlindPreference, HonestyReplay, HonestyReplayObservation, JudgeMeasurements,
     PreferredResponse, WorldAxisScore,
 };
+pub use preflight::{SkillEditPreflight, preflight_skill_edit_offline_floors};
 pub use project_goal::{
     ProjectGoalRevisionProposal, TradeoffRole, dismiss_project_goal_revision_proposal,
     project_goal_revision_proposals, set_skill_goal_project, skill_goal_project,
@@ -202,6 +204,9 @@ pub(crate) use admission::{
 pub(crate) use ledger::{
     displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_receipts,
     validate_judge_revision,
+};
+pub(crate) use preflight::{
+    SkillEditTrialBasis, skill_edit_preflight_passed_in_txn, skill_edit_trial_basis_in_txn,
 };
 pub(crate) use project_goal::project_goal_revision_proposals_in_txn;
 

@@ -2,19 +2,22 @@
 
 use super::codec::{
     decode_counterparty_contact_body, encode_counterparty_contact_body,
-    is_counterparty_contact_claim_predicate,
+    is_counterparty_contact_claim_predicate, normalize_counterparty,
 };
 use super::lifecycle::{
-    comm_fold_error, counterparty_contact_record_from_claims_in_txn,
+    comm_fold_error, counterparty_contact_in_claims_in_txn, live_counterparty_contact_heads_in_txn,
     rematerialize_contact_cache_in_txn, rematerialize_party_contact_cache_in_txn,
     supersede_family_owned_claim_in_txn,
 };
 use super::storage::{
-    CONTACT_INDEX, counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
-    counterparty_contact_index_key_parts, put_counterparty_contact_party_channel_index,
-    read_counterparty_contact_in_txn,
+    CONTACT_INDEX, contact_deleted_in_txn, contact_ids_with_live_head_in_txn,
+    counterparty_contact_channel_class, counterparty_contact_index_key_for_record,
+    put_counterparty_contact_party_channel_index, read_counterparty_contact_in_txn,
 };
-use super::types::{CounterpartyContactRecord, CounterpartyOptOutReason};
+use super::types::{
+    CounterpartyContactRecord, CounterpartyOptOutReason,
+    PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY, PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+};
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -40,6 +43,7 @@ impl Vault {
         encode_counterparty_contact_body(record)?;
         let mut wtxn = self.store.env.write_txn()?;
         if self.store.port_entity_record(&wtxn, id)?.is_some()
+            || live_counterparty_contact_heads_in_txn(self, &wtxn, id)?.is_some()
             || self.counterparty_contact_assignment_conflict_in_txn(&wtxn, id, record)?
         {
             return Err(Error::Record(RecordError::CounterpartyContactAlreadyExists));
@@ -138,24 +142,31 @@ impl Vault {
     /// the contact family never asserted, and the family-owned CLEAR would then
     /// have a channel-scoped STOP to undo that no CLEAR is scoped to reach.
     ///
-    /// The row is still READ first, so a missing subject and a wrong entity
-    /// type fail exactly as they did when the body came from it.
+    /// Existence is the family's own (OF-272): a contact whose row a cache
+    /// drop removed is still a contact its writers can move, and a missing or
+    /// deleted one fails `EntityNotFound`. A row of another type still fails
+    /// on its type.
     fn counterparty_contact_for_update_in_txn(
         &self,
         wtxn: &heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<CounterpartyContactRecord> {
-        let raw = self
-            .store
-            .port_entity_record(wtxn, id)?
-            .map(|row| row.encode())
-            .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-            return Err(Error::InvalidEntityType(header.entity_type));
+        self.reject_non_contact_row_in_txn(wtxn, id)?;
+        live_counterparty_contact_heads_in_txn(self, wtxn, id)?.ok_or(Error::EntityNotFound)
+    }
+
+    /// A row at `id` of any other entity type is not a contact. A deleted id
+    /// is answered by the claims reader's deletion check, whatever its shell.
+    fn reject_non_contact_row_in_txn(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<()> {
+        if contact_deleted_in_txn(&self.store, rtxn, id)? {
+            return Ok(());
         }
-        counterparty_contact_record_from_claims_in_txn(self, wtxn, id)
+        if let Some(raw) = self.store.port_entity_record(rtxn, id)?
+            && raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT
+        {
+            return Err(Error::InvalidEntityType(raw.entity_type));
+        }
+        Ok(())
     }
 
     /// Moves this contact's `counterparty_contact.*` heads to `record`.
@@ -278,7 +289,12 @@ impl Vault {
         )
     }
 
-    /// Reads and decodes a CounterpartyContact record.
+    /// Reads one contact, from its claims (OF-272).
+    ///
+    /// The record is the contact's own `counterparty_contact.*` heads with the
+    /// party's standing `comm.opt_out` heads folded in — what the type-132 row
+    /// holds when it is there, and the same answer when a cache drop removed
+    /// it. `None` when `id` names no contact, or a deleted one.
     pub fn get_counterparty_contact(
         &self,
         id: &EntityId,
@@ -293,22 +309,11 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
-        let Some(raw) = self
-            .store
-            .port_entity_record(rtxn, id)?
-            .map(|row| row.encode())
-        else {
-            return Ok(None);
-        };
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
-        decode_counterparty_contact_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+        self.reject_non_contact_row_in_txn(rtxn, id)?;
+        counterparty_contact_in_claims_in_txn(self, rtxn, id)
     }
 
-    /// Finds one contact record by `(identity_ref, counterparty)`.
+    /// Finds one contact record by `(identity_ref, counterparty)`, from claims.
     pub fn find_counterparty_contact(
         &self,
         identity_ref: &EntityId,
@@ -318,110 +323,74 @@ impl Vault {
         self.find_counterparty_contact_in_txn(&rtxn, identity_ref, counterparty)
     }
 
+    /// The contact is found through its live `counterparty_contact.counterparty`
+    /// posting and matched on its identity head (OF-272): neither
+    /// `CONTACT_INDEX` nor the type-132 rows are asked, so a cache drop cannot
+    /// hide a contact the gate still sees.
     pub(crate) fn find_counterparty_contact_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         identity_ref: &EntityId,
         counterparty: &str,
     ) -> Result<Option<(EntityId, CounterpartyContactRecord)>> {
-        let index_key = counterparty_contact_index_key_parts(identity_ref, counterparty)?;
-        // A leg naming a deleted row (a delete before H105 left it) is no
-        // answer: the scan below is.
-        if let Some(id) = CONTACT_INDEX.get(&self.store, rtxn, &index_key)?
-            && let Some(raw) = self.store.port_entity_record(rtxn, &id)?
-        {
-            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-                return Err(Error::CorruptedIndex(
-                    "counterparty contact lookup index entity type",
-                ));
-            }
-            let record = decode_counterparty_contact_body(&raw.body)?;
-            if !record.matches_counterparty(identity_ref, counterparty) {
-                return Err(Error::CorruptedIndex(
-                    "counterparty contact lookup index assignment",
-                ));
-            }
-            return Ok(Some((id, record)));
-        }
-
-        for entry in
-            self.store
-                .port_entity_ids_by_type(rtxn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
-        {
-            let id = entry?;
-            let Some(raw) = self.store.port_entity_record(rtxn, &id)? else {
-                return Err(Error::CorruptedIndex("counterparty contact entity row"));
-            };
-
-            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-                return Err(Error::CorruptedIndex("counterparty contact entity type"));
-            }
-            let record = decode_counterparty_contact_body(&raw.body)?;
-            if record.matches_counterparty(identity_ref, counterparty) {
+        let counterparty = normalize_counterparty(counterparty.to_owned())?;
+        for id in contact_ids_with_live_head_in_txn(
+            &self.store,
+            rtxn,
+            PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+            &counterparty,
+        )? {
+            if let Some(record) = counterparty_contact_in_claims_in_txn(self, rtxn, &id)?
+                && record.matches_counterparty(identity_ref, &counterparty)
+            {
                 return Ok(Some((id, record)));
             }
         }
         Ok(None)
     }
 
-    /// Lists contact records visible for a channel identity.
+    /// Lists contact records visible for a channel identity, from the
+    /// identity's `counterparty_contact.identity_ref` postings (OF-272).
     pub fn counterparty_contacts_for_identity(
         &self,
         identity_ref: &EntityId,
     ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut records = Vec::new();
-        for entry in
-            self.store
-                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
-        {
-            let id = entry?;
-            let Some(raw) = self.store.port_entity_record(&rtxn, &id)? else {
-                return Err(Error::CorruptedIndex("counterparty contact entity row"));
-            };
-
-            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-                return Err(Error::CorruptedIndex("counterparty contact entity type"));
-            }
-            let record = decode_counterparty_contact_body(&raw.body)?;
-            if record.identity_ref.as_bytes() == identity_ref.as_bytes() {
+        for id in contact_ids_with_live_head_in_txn(
+            &self.store,
+            &rtxn,
+            PREDICATE_COUNTERPARTY_CONTACT_IDENTITY_REF,
+            &identity_ref.to_hex(),
+        )? {
+            if let Some(record) = counterparty_contact_in_claims_in_txn(self, &rtxn, &id)? {
                 records.push((id, record));
             }
         }
         Ok(records)
     }
 
+    /// Whether another live contact already holds `record`'s
+    /// `(identity, counterparty)` pair, by the contacts' claims (OF-272). The
+    /// cache's own index uniqueness stays its writer's check.
     fn counterparty_contact_assignment_conflict_in_txn(
         &self,
         txn: &heed::RwTxn<'_>,
         id: &EntityId,
         record: &CounterpartyContactRecord,
     ) -> Result<bool> {
-        let index_key = counterparty_contact_index_key_for_record(record)?;
-        if let Some(existing_id) = CONTACT_INDEX.get(&self.store, txn, &index_key)?
-            && existing_id != *id
-            && self.store.port_entity_record(txn, &existing_id)?.is_some()
-        {
-            return Ok(true);
-        }
-
-        for entry in
-            self.store
-                .port_entity_ids_by_type(txn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)?
-        {
-            let existing_id = entry?;
+        for existing_id in contact_ids_with_live_head_in_txn(
+            &self.store,
+            txn,
+            PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+            &record.counterparty,
+        )? {
             if existing_id == *id {
                 continue;
             }
-            let Some(raw) = self.store.port_entity_record(txn, &existing_id)? else {
-                return Err(Error::CorruptedIndex("counterparty contact entity row"));
-            };
-
-            if raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-                return Err(Error::CorruptedIndex("counterparty contact entity type"));
-            }
-            let stored = decode_counterparty_contact_body(&raw.body)?;
-            if stored.matches_counterparty(&record.identity_ref, &record.counterparty) {
+            if live_counterparty_contact_heads_in_txn(self, txn, &existing_id)?.is_some_and(
+                |stored| stored.matches_counterparty(&record.identity_ref, &record.counterparty),
+            ) {
                 return Ok(true);
             }
         }

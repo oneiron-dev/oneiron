@@ -191,7 +191,7 @@ pub(crate) fn open_thread_task_holder_in(
     }
 }
 
-pub(crate) use owner_index::index_owner_fact;
+pub(crate) use owner_index::{index_owner_fact, indexed_tasks_of_in};
 pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
 };
@@ -221,6 +221,7 @@ pub mod sdk;
 mod sdk_connector;
 mod sdk_diary;
 mod sdk_disclosure;
+mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_self;
