@@ -34,6 +34,11 @@ pub enum RecordError {
     /// Project revisions are engine-written; no public door writes one.
     #[error("project revisions are written by the engine only")]
     ProjectRevisionWrite,
+    /// An effect's person target came from a mention that is not settled
+    /// yet (OF-123 act-now guard): its identity ask is open, or it still
+    /// names more than one person.
+    #[error("which person \"{name}\" names is not settled; settle it with self.identity.settle first")]
+    IdentityUnsettled { name: String },
     /// A project's signed history passed its budget; it serves its last
     /// verified frontier and takes no new authority until the owner acts.
     #[error("project {} history over budget: {held} revisions, limit {max}", project.to_hex())]
@@ -262,6 +267,7 @@ impl RecordError {
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
             Self::ProjectRevisionCollision { .. } => ErrorKind::ProjectRevisionCollision,
             Self::ProjectRevisionWrite => ErrorKind::ProjectRevisionWrite,
+            Self::IdentityUnsettled { .. } => ErrorKind::IdentityUnsettled,
             Self::ProjectHistoryOverBudget { .. } => ErrorKind::ProjectHistoryOverBudget,
             Self::ProjectAuthorityUnresolved { .. } => ErrorKind::ProjectAuthorityUnresolved,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,

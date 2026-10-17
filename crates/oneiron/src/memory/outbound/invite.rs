@@ -74,6 +74,10 @@ pub struct CalendarInviteSurfaceInput {
     pub ics_blob_ref: String,
     /// Delivery target.
     pub recipient: String,
+    /// The saved mention `recipient` came from, when the agent named the
+    /// person (OF-123): the invite refuses while that mention is unsettled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 impl CalendarInviteSurfaceInput {
@@ -129,6 +133,7 @@ impl CalendarInviteSurfaceInput {
             trigger_ref: self.trigger_ref(),
             job_ref: None,
             occurred_at: None,
+            mention: self.mention.clone(),
         }
     }
 
@@ -153,6 +158,7 @@ impl CalendarInviteSurfaceInput {
             sequence: self.sequence,
             ics_blob_ref: self.ics_blob_ref.clone(),
             recipient: self.recipient.clone(),
+            mention: self.mention.clone(),
         }
     }
 

@@ -132,6 +132,11 @@ pub struct OutboundScheduleRequest {
     /// Unix seconds; now when absent.
     #[serde(default)]
     pub occurred_at: Option<u64>,
+    /// The saved mention `target` came from, when the agent named the
+    /// person: the send refuses while it is unsettled, so settle it with
+    /// `self.identity.settle` first.
+    #[serde(default)]
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 impl From<OutboundScheduleRequest> for OutboundDraftInput {
@@ -148,6 +153,7 @@ impl From<OutboundScheduleRequest> for OutboundDraftInput {
             trigger_ref: request.trigger_ref,
             job_ref: request.job_ref,
             occurred_at: request.occurred_at,
+            mention: request.mention,
         }
     }
 }

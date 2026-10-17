@@ -1104,6 +1104,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentInboxConcern",
       "AgentInboxItemKind",
       "AgentInboxLensItem",
       "AgentInboxLensQuery",
@@ -1116,7 +1117,7 @@
       "const": 1,
       "enum": 1,
       "fn": 4,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -17446,6 +17447,27 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AgentHealthCard",
+      "AgentHealthConfidence",
+      "AgentHealthCounter",
+      "AgentHealthMove",
+      "AgentHealthOutcome",
+      "AgentHealthTone"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health.rs",
+     "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
+     "surface": {
+      "const": 9,
+      "crate-vis": 2,
+      "enum": 5,
+      "fn": 7,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -17552,16 +17574,17 @@
       "IdentityHint",
       "IdentityOption",
       "IdentityRuling",
-      "IdentitySettled"
+      "IdentitySettled",
+      "MentionProvenance"
      ],
      "path": "src/dreamer_runner/maintenance/identity.rs",
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 8,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -17574,7 +17597,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 6,
+      "mod": 7,
       "re-export": 3
      }
     },
@@ -27945,7 +27968,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 2,
-      "re-export": 33
+      "re-export": 34
      }
     },
     {
@@ -30779,7 +30802,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
+      "re-export": 1,
       "struct": 3
      }
     },
@@ -36735,6 +36759,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentHealthSignal",
       "DeterministicDetector",
       "DiagnosticCriticality",
       "DiagnosticEvent",
@@ -36749,8 +36774,8 @@
      "surface": {
       "const": 2,
       "crate-vis": 12,
-      "enum": 3,
-      "fn": 7,
+      "enum": 4,
+      "fn": 10,
       "struct": 4,
       "trait": 1
      }
@@ -38606,7 +38631,7 @@
      "path": "src/skill_hub/pack_catalog/builtin.rs",
      "purpose": "Engine-embedded connector source and local first-open installation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -38663,7 +38688,7 @@
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 4,
       "struct": 3
@@ -38767,6 +38792,16 @@
       "crate-vis": 2,
       "fn": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/removal.rs",
+     "purpose": "The owner's removal door (OF-519)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -44289,7 +44324,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -48779,7 +48814,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 37,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49507,7 +49542,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49759,9 +49794,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 111,
+   "over_bar": 112,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3004,
+   "source_files": 3006,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52818,7 +52853,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -52834,7 +52869,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 14,
+      "const": 15,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -60039,6 +60074,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/voices.rs",
+     "purpose": "The voice bank's provisioning door, the owner's alone: `POST /v1/ai/voices/{voice_id}/packs` banks a…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -61522,6 +61567,16 @@
      "notable": [],
      "path": "src/api/owner_routes/commitment_routes.rs",
      "purpose": "Owner doors for where commitment reminders go (OF-187)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/concern_routes.rs",
+     "purpose": "`/v1/owner/inbox/concern/outcome`: the owner settles one of the Coach's agent-health cards (OF-568)…",
      "surface": {
       "crate-vis": 1
      }
@@ -65055,11 +65110,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "HostedCloner"
+     ],
      "path": "src/models/hosted_speech.rs",
      "purpose": "Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -65095,7 +65154,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MediaRow",
@@ -65106,7 +65165,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -65122,7 +65181,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 17,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 2
      }
     },
@@ -66725,7 +66784,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 251,
+     "files": 253,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67019,9 +67078,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 27,
+   "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 473,
+   "source_files": 475,
    "test_files": 182
   },
   "oneiron-spawn": {

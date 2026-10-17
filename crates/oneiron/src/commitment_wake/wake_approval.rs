@@ -374,6 +374,7 @@ pub fn schedule_approved_commitment_wake(
         // never alias the attempt run index.
         job_ref: None,
         occurred_at: Some(approved.occurred_at),
+        mention: None,
     };
     facade.schedule_outbound_with_context(&draft, &context)
 }
