@@ -185,6 +185,7 @@ impl SyncConnection {
     ) -> Result<crate::sync::carrier::SyncSocket, String> {
         client.note_session_bound = false;
         client.artifact_publication_resend.clear();
+        client.home_peer = crate::authority::PeerMachine::Unknown;
         // Sync pulls the full root snapshot. The upgrade therefore proves an
         // unattenuated logged slip with a fresh holder signature; a device-key
         // lease or an issuer secret never grants this read. Each reconnect has
@@ -195,26 +196,33 @@ impl SyncConnection {
         let mut request = url
             .into_client_request()
             .map_err(|e| format!("WS connect failed: {e}"))?;
+        let mut binding = None;
         if let Some(credential) = &self.config.client_config.transport_credential {
-            credential
-                .sign_upgrade(
-                    self.manager.vault(),
-                    self.manager.vault().store.clock.wall_now(),
-                    &mut request,
-                )
-                .map_err(str::to_owned)?;
+            binding = Some(
+                credential
+                    .sign_upgrade(
+                        self.manager.vault(),
+                        self.manager.vault().store.clock.wall_now(),
+                        &mut request,
+                    )
+                    .map_err(str::to_owned)?,
+            );
         } else if !self.config.client_config.auth_token.is_empty() {
             let header_value = format!("Bearer {}", self.config.client_config.auth_token)
                 .parse()
                 .map_err(|_| "Auth token is not a valid header value".to_string())?;
             request.headers_mut().insert(AUTHORIZATION, header_value);
         }
-        let ws_stream = crate::sync::carrier::connect_sync_socket(
+        let (ws_stream, response) = crate::sync::carrier::connect_sync_socket(
             request,
             self.config.client_config.mesh_dialer.as_deref(),
         )
         .await
         .map_err(|e| format!("WS connect failed: {e}"))?;
+        // Every send on this socket is judged for the machine the home
+        // proved over this upgrade's own proof (OF-534 G6), before the first.
+        client.home_peer =
+            crate::sync::home_proof::home_peer(self.manager.vault(), &response, binding.as_ref());
 
         let (mut write, mut read) = ws_stream.split();
 

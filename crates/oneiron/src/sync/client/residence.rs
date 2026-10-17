@@ -152,6 +152,8 @@ struct ResidenceRpc {
     socket: Socket,
     next_id: u64,
     timeout: Duration,
+    /// The machine the home proved on this socket's upgrade (OF-534 G7).
+    home: crate::authority::PeerMachine,
 }
 
 impl ResidenceRpc {
@@ -173,10 +175,13 @@ impl ResidenceRpc {
         // The upgrade proves the device's transport slip, as the sync
         // socket does, signed on the wall clock as it is; the bind below
         // then attenuates it to the actor.
+        let mut binding = None;
         if let Some(credential) = &config.transport_credential {
-            credential
-                .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
-                .map_err(|_| refused())?;
+            binding = Some(
+                credential
+                    .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
+                    .map_err(|_| refused())?,
+            );
         } else if !config.auth_token.is_empty() {
             let header = format!("Bearer {}", config.auth_token)
                 .parse()
@@ -189,13 +194,13 @@ impl ResidenceRpc {
             .mesh_dialer
             .as_deref()
             .filter(|_| config.residence_url() == config.server_url);
-        let mut socket = match tokio::time::timeout_at(
+        let (mut socket, response) = match tokio::time::timeout_at(
             deadline,
             crate::sync::carrier::connect_sync_socket(request, dialer),
         )
         .await
         {
-            Ok(Ok(socket)) => socket,
+            Ok(Ok(connected)) => connected,
             Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => return Err(refused()),
             Ok(Err(_)) | Err(_) => return Ok(None),
         };
@@ -235,6 +240,11 @@ impl ResidenceRpc {
                         socket,
                         next_id: 1,
                         timeout,
+                        home: crate::sync::home_proof::home_peer(
+                            vault,
+                            &response,
+                            binding.as_ref(),
+                        ),
                     }));
                 }
                 Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE) => continue,

@@ -501,14 +501,14 @@ impl SyncClient {
                 Ok(Vec::new())
             }
             window_sub_tags::SEALED_REQUEST => {
-                // The peer is judged as an unknown destination here: this
-                // client cannot name its server's machine, so only a sealed
-                // copy that may rest with any holder (the cloud setting)
-                // leaves. A named destination rides the server lane.
+                // The peer is judged as the machine the home proved on this
+                // connection: a home that proved none is an unknown
+                // destination, so only a sealed copy that may rest with any
+                // holder (the cloud setting) leaves for it.
                 let Some(world) = key.world() else {
                     return Ok(Vec::new());
                 };
-                let destination = crate::authority::Destination::Unknown;
+                let destination = self.home_destination();
                 let mut frames = Vec::new();
                 match self.manager.sealed_residence_content_for(
                     world,
@@ -1122,11 +1122,13 @@ impl SyncClient {
         payload: &[u8],
         server_vv: &VersionVector,
     ) -> std::result::Result<Option<Vec<u8>>, TransportError> {
-        let export = crate::sync::window::export_window_updates_since(
+        let export = crate::sync::window::export_window_since_for(
             &self.vault,
             &window.key,
             &window.doc,
             payload,
+            None,
+            crate::sync::window::Withhold::Peer(self.home_peer),
         )
         .map_err(map_delta_export_err)?;
         Ok(match export {
@@ -1137,9 +1139,9 @@ impl SyncClient {
     }
 
     /// The sealed packet this reader pushes alongside a version exchange, for
-    /// a home node that may hold it unread. The server is an unknown
-    /// destination from here, so only the cloud sealed-copy setting sends;
-    /// the server's live-window vector is not a mirror vector, so the packet
+    /// a home node that may hold it unread. The home is judged as the machine
+    /// it proved on this connection, else an unknown destination, for which
+    /// only the cloud sealed-copy setting sends; the server's live-window vector is not a mirror vector, so the packet
     /// is a replacement until a mirror vector rides `SEALED_REQUEST`.
     /// `None` for a base window, a world that reads everywhere, or a machine
     /// that seals nothing: the plain exchange stands on its own.
@@ -1152,12 +1154,7 @@ impl SyncClient {
         let world = key.world()?;
         let packet = self
             .manager
-            .sealed_residence_content_for(
-                world,
-                key,
-                Some(server_vv),
-                crate::authority::Destination::Unknown,
-            )
+            .sealed_residence_content_for(world, key, Some(server_vv), self.home_destination())
             .ok()??;
         transport::encode_window_sync(
             window_key,

@@ -138,12 +138,13 @@ impl SyncTransportCredential {
     /// Proves the slip on a WebSocket upgrade with a fresh holder signature.
     /// Each upgrade has its own nonce, so a proof cannot be replayed. An
     /// enrolled install also names its machine, signed over the same proof.
+    /// Returns the proof, which the home's answer must bind.
     pub(in crate::sync) fn sign_upgrade(
         &self,
         vault: &crate::Vault,
         timestamp: u64,
         request: &mut tokio_tungstenite::tungstenite::handshake::client::Request,
-    ) -> Result<(), &'static str> {
+    ) -> Result<crate::sync::home_proof::UpgradeBinding, &'static str> {
         use ed25519_dalek::Signer;
         use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
@@ -187,7 +188,11 @@ impl SyncTransportCredential {
                 .headers_mut()
                 .insert(crate::authority::MACHINE_PROOF_HEADER, value);
         }
-        Ok(())
+        Ok(crate::sync::home_proof::UpgradeBinding {
+            token: self.token.clone(),
+            timestamp,
+            nonce,
+        })
     }
 }
 impl std::fmt::Debug for SyncTransportCredential {
