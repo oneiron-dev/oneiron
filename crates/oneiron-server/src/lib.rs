@@ -65,6 +65,7 @@ pub mod runtime;
 mod saved_query_sweep;
 pub mod server;
 mod skills_pack;
+mod slide_render;
 pub mod usage;
 mod wake_adapters;
 pub mod web_client;
