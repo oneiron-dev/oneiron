@@ -17814,7 +17814,7 @@
      "purpose": "The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418)",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "struct": 2
