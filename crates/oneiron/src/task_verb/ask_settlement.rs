@@ -81,10 +81,40 @@ pub(super) fn settle_with_owner_in(
     now: u64,
     owner: Option<&crate::consent::AuthenticatedOwner>,
 ) -> Result<Option<TaskAskResult>> {
+    settle_with_cutoff_in(vault, txn, id, now, owner, false)
+}
+
+/// Cuts the ask `id` now as Stale because the domain question it carried
+/// was replaced outside the ask (a routed project tradeoff whose gate
+/// question moved): its witnessed TURN reads the same, but it no longer asks
+/// anything. Stale is Unknown with a Hold fallback, never a pick. Earlier
+/// answers stay evidence, and an ask already settled keeps its receipt. A
+/// missing group, or a revision this node does not admit, fails, so a caller
+/// never closes its own side while the ask stays open.
+pub(super) fn void_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    now: u64,
+) -> Result<TaskAskResult> {
+    settle_with_cutoff_in(vault, txn, id, now, None, true)?.ok_or_else(ask_record::invalid)
+}
+
+/// The cutoff behind [`settle_with_owner_in`] and [`void_in`]; `invalidated`
+/// cuts Stale whatever the ask's own question and electorate read.
+fn settle_with_cutoff_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    now: u64,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+    invalidated: bool,
+) -> Result<Option<TaskAskResult>> {
     if let Some(result) = read_result(vault, txn, id)? {
         // A replay runs the continuation again; it acts at most once.
         super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
         deliver_to_parked_runs(vault, txn, id, &result, now)?;
+        crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
         return Ok(Some(result));
     }
     let Some(group) = ask_record::read_group(vault, txn, id)? else {
@@ -103,7 +133,7 @@ pub(super) fn settle_with_owner_in(
     let mut evidence = ask_record::evidence_in(vault, txn, id, &group)?;
     let mut unmet_sources = BTreeSet::new();
     let (coverage, decision) = reduce(&group.effective, &who, &mut evidence, &mut unmet_sources)?;
-    let stale = is_stale(vault, txn, &group)?;
+    let stale = invalidated || is_stale(vault, txn, &group)?;
     if stale {
         for entry in &mut evidence {
             entry.ladder_changed = None;
@@ -265,6 +295,8 @@ pub(super) fn settle_with_owner_in(
     // OF-220: an engine block's ask moves its TASK in the settling commit.
     super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
     deliver_to_parked_runs(vault, txn, id, &result, now)?;
+    // A verb hook's ask marks its stopped call ready for the hook runner.
+    crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
     Ok(Some(result))
 }
 

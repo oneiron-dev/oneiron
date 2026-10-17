@@ -579,6 +579,7 @@ impl Vault {
                     content_hash: crate::provenance::birth::RowBirth::content_hash_of(&[
                         content_hash.as_slice(),
                     ]),
+                    withheld: Vec::new(),
                 },
             )?;
         }

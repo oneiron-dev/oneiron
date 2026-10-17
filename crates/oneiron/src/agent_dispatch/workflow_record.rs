@@ -68,6 +68,10 @@ pub(super) struct WorkflowIntent {
     pub context_from: Vec<String>,
     pub depth_remaining: Option<u8>,
     pub project_ref: Option<String>,
+    /// OF-543: the type the spawner placed the workflow at, as supplied. None
+    /// leaves each leaf to dispatch's own placement. A retry naming another
+    /// type is another intent.
+    pub type_ref: Option<crate::task_type::TaskTypeRef>,
     /// The spawn's `budget`: a hard carve for the whole workflow.
     #[serde(default)]
     pub budget: Option<u64>,
