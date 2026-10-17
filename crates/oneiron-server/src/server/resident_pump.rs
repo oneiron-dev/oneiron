@@ -18,18 +18,19 @@
 //!
 //! A run binds no agent verb door: a run holds no MCP credential, so a
 //! host-row verb answers `agent_verb_door_unbound` and its run verbs are its
-//! own.
+//! own. It may spawn reader children under its attempt's spend scope.
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, ResidentAgentSpec,
+    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, ResidentAgentSpec, SpendScopeId,
     agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
-use oneiron::code_run::{HostSelfDispatcher, bind_wait_trap};
+use oneiron::claim::CallerLocality;
+use oneiron::code_run::{HostSelfDispatcher, SpawnHostSeat, bind_wait_trap};
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, ParkDreamerAttempt};
 use oneiron::engine_executor::{
@@ -46,7 +47,7 @@ use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use tokio::sync::broadcast;
 
-use super::SyncServer;
+use super::{ReaderSeats, SyncServer};
 use crate::decision_host::DecisionHost;
 use crate::mcp::{McpCodeModeProvider, enter_engine_native_run};
 
@@ -274,7 +275,13 @@ impl SyncServer {
                 return true;
             }
         };
-        let ran = run_bound(vault, host.provider().as_ref(), &claimed, key);
+        let ran = run_bound(
+            vault,
+            host.provider().as_ref(),
+            &claimed,
+            key,
+            &self.reader_runner.seats(),
+        );
         if let Err(error) = settle(vault, self.decision_host(), &claimed, ran) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
@@ -317,6 +324,7 @@ fn run_bound(
     provider: &dyn McpCodeModeProvider,
     claimed: &Claimed,
     key: &str,
+    seats: &ReaderSeats,
 ) -> Result<EngineExecutorOutcome, String> {
     let status = &claimed.status;
     let actor = agent_dispatch_actor(&status.input).map_err(text)?;
@@ -326,6 +334,15 @@ fn run_bound(
     let config = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
+    // Its reader children spend under the attempt's scope. An unmetered
+    // attempt names the scope it would spend under, which is not open, so
+    // its spawns answer `reader_spawn_unmetered`. The run binds no door, so
+    // its children's reads withhold nothing, as its own do.
+    let spend = AgentDispatcher::new(vault)
+        .spend_scope_for_attempt(status.attempt.id)
+        .map_err(text)?
+        .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
+    let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -339,6 +356,7 @@ fn run_bound(
             status,
             actor,
             &config,
+            &seat,
             compaction.as_mut(),
             &reactor,
         )?;
@@ -357,18 +375,25 @@ fn run_bound(
 
 /// One entry of the run, as `execute_code` enters its runs, but bound to the
 /// leased attempt: its dispatcher carries the attempt, so `tasks.refuse`
-/// reaches the TASK it realizes.
+/// reaches the TASK it realizes, and `seat`, which its reader children spawn
+/// under.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the run's host binding"
+)]
 fn enter_run(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     status: &AgentDispatchStatus,
     actor: WriteActor,
     config: &EngineExecutorConfig,
+    seat: &SpawnHostSeat,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
 ) -> Result<EngineExecutorOutcome, String> {
     let bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
-        .map_err(text)?;
+        .map_err(text)?
+        .with_reader_spawn(seat.clone());
     enter_engine_native_run(
         vault,
         provider,

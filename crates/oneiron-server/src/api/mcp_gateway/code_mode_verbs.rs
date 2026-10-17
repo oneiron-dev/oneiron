@@ -744,6 +744,74 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     }
 }
 
+/// The door a reader child's run binds (ARCH-0079 #reader-forks). It runs
+/// no verb, and of the calls the run serves itself admits only its report,
+/// `self.context`, `self.think` and reads of what it recorded. What the
+/// child read leaves this device again by its parent caller's rule
+/// (DEC-0005), as the door that caller's run binds rules. It holds no
+/// credential of the parent's.
+pub(crate) struct ReaderChildDoor {
+    vault: Arc<oneiron::Vault>,
+    /// Where the parent run's caller sits.
+    caller: oneiron::claim::CallerLocality,
+}
+
+impl ReaderChildDoor {
+    pub(crate) fn new(vault: Arc<oneiron::Vault>, caller: oneiron::claim::CallerLocality) -> Self {
+        Self { vault, caller }
+    }
+}
+
+fn read_only() -> AgentVerbRefusal {
+    AgentVerbRefusal {
+        code: crate::server::READER_CHILD_READ_ONLY.to_owned(),
+    }
+}
+
+impl AgentVerbDoor for ReaderChildDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &HostWriteOrigin,
+        _: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(read_only()))
+    }
+
+    fn admit_run_call(
+        &self,
+        call: RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        match call {
+            RunCall::RecordedOutput
+            | RunCall::Bridge(SelfEffect::ReaderReport | SelfEffect::Context | SelfEffect::Think) => {
+                Ok(None)
+            }
+            _ => Err(read_only()),
+        }
+    }
+
+    /// The parent caller's rule: on this device nothing is withheld; off
+    /// it, a result leaves again only while every row it was served from
+    /// may, and one with no row set stays.
+    fn withholds_retained(
+        &self,
+        rows: Option<&[oneiron::EntityId]>,
+    ) -> Result<bool, AgentVerbRefusal> {
+        if self.caller == oneiron::claim::CallerLocality::OnDevice {
+            return Ok(false);
+        }
+        let Some(rows) = rows else {
+            return Ok(true);
+        };
+        crate::device_local::withholds_retained(&self.vault, self.caller, rows, &[]).map_err(
+            |_| AgentVerbRefusal {
+                code: "engine_error".to_owned(),
+            },
+        )
+    }
+}
+
 /// A refused call as the run takes it: a verb hook's stop as the typed stop,
 /// any other refusal as its stable code.
 fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, AgentVerbRefusal>> {

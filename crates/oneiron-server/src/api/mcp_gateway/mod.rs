@@ -16,6 +16,7 @@ pub(crate) use self::actor_dispatch::{
     resolve_mcp_gateway_actor,
 };
 pub(crate) use self::admission::mcp_admit_scoped_call;
+pub(crate) use self::code_mode_verbs::ReaderChildDoor;
 use self::admission::{
     mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_tasks_section,
     mcp_validated_call_args,
