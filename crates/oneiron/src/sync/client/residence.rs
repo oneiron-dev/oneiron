@@ -435,10 +435,11 @@ impl SyncClient {
                     .get(txn, &format!("rp:w:{window}"))?
                     .is_some()
                 {
-                    if crate::ports::EntityStoreRead::port_entity_raw_wiped(
+                    if crate::ports::EntityStoreRead::port_entity_with_raw(
                         &self.vault.store,
                         txn,
                         &item,
+                        |_| Ok(()),
                     )?
                     .is_none()
                     {

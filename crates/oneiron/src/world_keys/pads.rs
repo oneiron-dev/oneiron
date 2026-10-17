@@ -24,13 +24,10 @@ use zeroize::Zeroizing;
 use super::{WorldKeyId, os_fill, refused};
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::deletion::{
-    HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, TombstoneReason, TombstoneValueV2,
-    stage_engine_row_hard_erasure_in_txn,
-};
+use crate::deletion::{TombstoneReason, TombstoneValueV2, stage_engine_row_hard_erasure_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::side_table::{self, HexId, Named, SideTable};
 use crate::store::Store;
@@ -183,8 +180,8 @@ pub(crate) fn world_keys_destroyed_in_txn(
 ) -> Result<bool> {
     let id = HexId(world);
     Ok(DESTROYED.contains(store, txn, &id)?
-        || HARD_DELETE_MARKER.contains(store, txn, &id)?
-        || IDENTITY_SOFT_DELETE_MARKER.contains(store, txn, &id)?)
+        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, &world)?
+        || store.port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, &world)?)
 }
 
 /// The world whose key a pad row `raw` splits: `None` for a row that is not

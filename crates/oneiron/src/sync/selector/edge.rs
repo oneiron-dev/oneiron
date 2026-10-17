@@ -309,8 +309,10 @@ pub(super) fn release_born_stamps(
     let mut stamps = std::collections::BTreeMap::new();
     for (src, blob) in births {
         if !born.contains(src)
-            || crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, src)?.as_deref()
-                != Some(blob.as_slice())
+            || crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, &rtxn, src, |raw| {
+                Ok(raw != blob.as_slice())
+            })?
+            .unwrap_or(true)
         {
             continue;
         }

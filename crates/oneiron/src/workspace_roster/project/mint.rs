@@ -84,10 +84,11 @@ fn checked_ref(
 ) -> Result<EntityId> {
     let id = EntityId::from_hex(reference).map_err(|_| invalid())?;
     if id.to_hex() != reference
-        || !EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &id)?.is_some_and(|raw| {
-            EntityMetadataHeader::parse(&raw).is_some_and(|h| h.entity_type == kind)
-                && raw.len() > ENTITY_METADATA_HEADER_LEN
-        })
+        || !EntityStoreRead::port_entity_with_raw(&vault.store, txn, &id, |raw| {
+            Ok(EntityMetadataHeader::parse(raw).is_some_and(|h| h.entity_type == kind)
+                && raw.len() > ENTITY_METADATA_HEADER_LEN)
+        })?
+        .unwrap_or(false)
     {
         return Err(invalid());
     }
@@ -258,7 +259,7 @@ impl Vault {
         if self.project_tap_in_txn(txn, tap_key, digest)?.is_some() {
             return Err(invalid());
         }
-        if EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &id)?.is_some() {
+        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &id, |_| Ok(()))?.is_some() {
             return Err(invalid());
         }
         let root_id = ROOT.get(&self.store, txn, &())?.ok_or_else(invalid)?;
