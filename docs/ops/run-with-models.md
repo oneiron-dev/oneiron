@@ -541,11 +541,15 @@ agent = "sys.team_lead"                  # a seeded definition's logical ID, or 
 ```
 
 The planned child runs the chosen seat's definition, its type placed on the
-need's text. The pick and the placement go through the host's decision
-ladder (section 13), each on its own 10-second clock. A seat whose
-definition this vault does not hold is skipped, with a log line. With no
-seat, the server lends no planner: a spawn that names an `agent` runs it
-directly, and a planned spawn or a leader call answers `planner_unbound`.
+need's text. On a host with a model manifest it is born on the chosen seat's
+model; its effort follows the seat's own ladder. If the host cannot seat that
+model (it is not in the catalog, or its description or route does not fit the
+run), the child's birth fails. It is never moved to another model. The pick
+and the placement go through the host's decision ladder (section 13), each on
+its own 10-second clock. A seat whose definition this vault does not hold is
+skipped, with a log line. With no seat, the server lends no planner: a spawn
+that names an `agent` runs it directly, and a planned spawn or a leader call
+answers `planner_unbound`.
 
 ## 7. Raw calls
 
