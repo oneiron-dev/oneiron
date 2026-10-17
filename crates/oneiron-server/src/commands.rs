@@ -98,6 +98,7 @@ use self::serve::serve_with_config;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
+pub(crate) use self::serve::{DRAIN_GRACE, build_server, sign_root_project, start_desktop_workers};
 mod dreamer;
 pub use self::dreamer::dreamer_grant;
 mod oneironer;
