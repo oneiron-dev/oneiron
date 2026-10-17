@@ -261,6 +261,7 @@ impl Vault {
             channels: BTreeSet::new(),
             actor_class: None,
             org_ref: None,
+            grant_ref: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
