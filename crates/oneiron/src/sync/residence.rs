@@ -11,7 +11,10 @@ mod policy;
 mod prune;
 mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
-pub use authority_tail::{AUTHORITY_TAIL_PAGE_MAX, authority_tail_for, held_authority_entries};
+pub use authority_tail::{
+    AUTHORITY_TAIL_PAGE_MAX, authority_append_for, authority_tail_for, authority_wanted,
+    held_authority_entries,
+};
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,

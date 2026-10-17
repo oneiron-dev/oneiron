@@ -27358,7 +27358,7 @@
      "purpose": "One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 19,
       "struct": 2
@@ -32095,7 +32095,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AffectRetrievalPolicy"
@@ -32104,7 +32104,7 @@
      "purpose": "Affect-weighted retrieval availability (OF-423; ARCH-0034 `scour:A53`, eiri pick A66)",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -36412,7 +36412,7 @@
      "purpose": "`host.budget.hit` (ARCH-0080 §5): a budget line spent under its exhaustion policy",
      "surface": {
       "const": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -36510,7 +36510,7 @@
      "path": "src/runtime_hooks/replay.rs",
      "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -38585,6 +38585,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/host.rs",
+     "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -38639,7 +38650,7 @@
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 6,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -39314,10 +39325,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "HookActorClass",
+      "HookAuthor",
       "HookOutcomeKind",
       "HookPhase",
       "HookRenderClass",
@@ -39328,9 +39340,10 @@
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
-      "crate-vis": 8,
-      "enum": 4,
-      "fn": 4,
+      "const": 1,
+      "crate-vis": 11,
+      "enum": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -39422,6 +39435,8 @@
      "notable": [
       "ConnectorPackQualification",
       "PackConnectorReceipt",
+      "PackHookQualification",
+      "PackHookReplay",
       "ProbePackQualifier",
       "QualifiedPackFitPolicy",
       "SetupCheckQualifier"
@@ -39430,8 +39445,8 @@
      "purpose": "Connector packs use the engine's real wire probes, never a publisher's grade",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
-      "struct": 5
+      "fn": 2,
+      "struct": 7
      }
     },
     {
@@ -39667,7 +39682,7 @@
      "path": "src/skill_hub/publisher.rs",
      "purpose": "A publisher is a foreign actor with an owner-minted, revocable offer-only grant",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 1
      }
@@ -41876,7 +41891,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 16,
       "struct": 1
      }
@@ -42308,6 +42323,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/home_proof.rs",
+     "purpose": "OF-534 G6/G7: the home names itself to the device that dials it",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/ingest/birth_watch.rs",
      "purpose": "The rows a federated import watches for their births",
      "surface": {
@@ -42481,7 +42508,7 @@
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
       "crate-vis": 8,
-      "mod": 21,
+      "mod": 22,
       "re-export": 16
      }
     },
@@ -42782,7 +42809,7 @@
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
       "const": 1,
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -50270,7 +50297,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50354,7 +50381,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 152,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50536,9 +50563,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 132,
+   "over_bar": 133,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3051,
+   "source_files": 3053,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53375,7 +53402,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 39,
+      "const": 40,
       "crate-vis": 1
      }
     },
@@ -57764,7 +57791,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -65344,7 +65371,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/residence.rs",
@@ -66339,7 +66366,7 @@
      "purpose": "Where the server's run receipts go by default: one structured log line per row",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -67405,6 +67432,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChatBrain",
+      "ChatBrainBindings"
+     ],
+     "path": "src/voice_host/brain.rs",
+     "purpose": "The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67455,7 +67496,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -68223,7 +68264,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68258,9 +68299,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 30,
+   "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 500,
+   "source_files": 501,
    "test_files": 182
   },
   "oneiron-spawn": {
