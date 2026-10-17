@@ -59,8 +59,9 @@ pub enum SecretError {
     },
     /// A file the write door could not read whole (an encrypted, malformed or
     /// over-bound container) is stored as it is and served to the vault
-    /// owner only; this reader gets no copy of it (owner ruling C2).
-    #[error("a sealed file is withheld: only the vault owner reads it")]
+    /// owner and to an agent a grant covers; this reader gets no copy of it
+    /// (owner ruling C2).
+    #[error("a sealed file is withheld: the vault owner and a granted agent read it")]
     SealedFileWithheld,
     /// The credential-door dial no longer admits this door-bound T0/T1
     /// materialization. The reason never contains secret or manifest bytes.
