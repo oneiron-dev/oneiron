@@ -1,7 +1,7 @@
 //! Flags for the owner's own commands: doctor, backup, maintain, restore,
 //! window recovery, export, the secret scan switch, registering and rotating a
-//! secret, importing history, import consent, agent-run consent and legal
-//! holds.
+//! secret, the vault key's wraps, importing history, import consent,
+//! agent-run consent and legal holds.
 //!
 //! Every command that opens the vault reads the same config as `serve`
 //! (`--config`, `--vault-path`, `ONEIRON_*`) and needs the vault stopped: the
@@ -132,6 +132,117 @@ pub struct RestoreArgs {
     /// copy in it, at `<DIR>/vault`.
     #[arg(long, requires = "rehearse")]
     pub scratch: Option<PathBuf>,
+
+    /// How the backup's vault key unlocks: `device` (this install's
+    /// keystore, from the device wrap the backup carries), `password`,
+    /// `passkey` or `escrow`. Every way but `device` needs `--trust`. Where
+    /// no vault is yet, the restore makes it and wraps its key to this
+    /// install.
+    #[arg(long, value_enum, default_value_t = UnlockMethod::Device, conflicts_with = "activate")]
+    pub unlock: UnlockMethod,
+
+    /// With `--unlock passkey`: the passkey's credential name.
+    #[arg(long, value_name = "NAME")]
+    pub credential: Option<String>,
+
+    /// With `--unlock escrow`: the escrow wrap's label.
+    #[arg(long, value_name = "NAME")]
+    pub label: Option<String>,
+
+    /// Trust exactly the checkpoint signers in this file, in place of this
+    /// install's: `oneiron vault-key signer` prints one on a host that holds
+    /// the vault. A backup's own head is never trusted.
+    #[arg(long, value_name = "FILE", conflicts_with = "activate")]
+    pub trust: Option<PathBuf>,
+
+    /// Print what the backup's head says unlocks it, with each passkey's PRF
+    /// input, and restore nothing.
+    #[arg(long, conflicts_with_all = ["activate", "rehearse"])]
+    pub inspect: bool,
+
+    #[command(flatten)]
+    pub secret: SecretSourceArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// How a backup's vault key unlocks.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum UnlockMethod {
+    /// This install's keystore, from the device wrap the backup carries.
+    #[default]
+    Device,
+    /// The vault password.
+    Password,
+    /// A passkey's PRF output at the input `--inspect` prints.
+    Passkey,
+    /// An escrow recipient's seed, from a recovery box or as a secret.
+    Escrow,
+}
+
+/// Where a secret is read, and the recovery box that keeps escrow seeds. A
+/// secret is read from stdin unless a file is named, exactly as given but
+/// for one trailing line break; a PRF output or a seed is 32 bytes, raw, hex
+/// or base64url.
+#[derive(Args, Clone, Debug, Default)]
+pub struct SecretSourceArgs {
+    /// Read the secret from this file, which only its owner may read.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["box_dir", "box_command"])]
+    pub secret_file: Option<PathBuf>,
+
+    /// A recovery box that is a directory the owner holds: removable media,
+    /// or a self-hoster's own box. Seeds rest there owner-only.
+    #[arg(long, value_name = "DIR", conflicts_with = "box_command")]
+    pub box_dir: Option<PathBuf>,
+
+    /// A recovery box that is a program: `PROGRAM store <vault> <label>`
+    /// keeps the seed it reads on stdin, `PROGRAM release <vault> <label>`
+    /// prints it after its own sign-in.
+    #[arg(long, value_name = "PROGRAM")]
+    pub box_command: Option<PathBuf>,
+}
+
+/// A stopped vault's data key and the wraps that unlock it.
+#[derive(Subcommand, Clone, Debug)]
+pub enum VaultKeyCommand {
+    /// Whether the vault has a data key, and its wraps.
+    Status(Box<VaultKeyArgs>),
+    /// This install's checkpoint signer: the pin another host trusts this
+    /// vault's backups by (`oneiron restore --trust`).
+    Signer(Box<VaultKeyArgs>),
+    /// The PRF input a passkey is asked for its output at.
+    PrfInput(Box<VaultKeyNamedArgs>),
+    /// Set the vault password, read as a secret; it replaces an earlier one.
+    SetPassword(Box<VaultKeyArgs>),
+    /// Wrap the key to a passkey by its PRF output, read as a secret.
+    AddPasskey(Box<VaultKeyNamedArgs>),
+    /// Seal the key to a new escrow recipient whose seed a recovery box keeps.
+    AddEscrow(Box<VaultKeyNamedArgs>),
+    /// Wrap the key to this install's keystore.
+    AddDevice(Box<VaultKeyArgs>),
+    /// Remove one wrap by its id (`password`, `passkey:<name>`, ...); the
+    /// last one stays.
+    Remove(Box<VaultKeyNamedArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyArgs {
+    #[command(flatten)]
+    pub secret: SecretSourceArgs,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct VaultKeyNamedArgs {
+    /// The passkey's credential name, the escrow wrap's label (1 to 64
+    /// letters, digits, dots, dashes or underscores), or the wrap's id.
+    pub name: String,
+
+    #[command(flatten)]
+    pub secret: SecretSourceArgs,
 
     #[command(flatten)]
     pub serve: ServeArgs,

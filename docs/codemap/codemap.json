@@ -915,7 +915,7 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 14
      }
     },
@@ -10440,7 +10440,7 @@
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
       "crate-vis": 7,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -25839,6 +25839,7 @@
      "path": "src/linear_sync/effect.rs",
      "purpose": "External-effect admission for Linear mirror mutations",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -25865,7 +25866,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 6
      }
     },
@@ -26568,7 +26569,7 @@
       "DecisionReadProvider"
      ],
      "path": "src/llm/decision/read.rs",
-     "purpose": "The escalation rung's decision read: the house model reads the paired \"does this need more thinking?\"…",
+     "purpose": "The escalation rung's decision read: the house model reads the pack's questions over the same state in one…",
      "surface": {
       "fn": 1,
       "struct": 1
@@ -28493,8 +28494,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 36,
-      "fn": 15,
+      "crate-vis": 37,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -30791,7 +30792,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -30799,7 +30800,7 @@
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
      "purpose": "O2 dispatch: shared request preparation, ledger replay, execution and receipts",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -30862,7 +30863,7 @@
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
       "crate-vis": 3,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -31216,7 +31217,7 @@
      "path": "src/outbound_chokepoint/types.rs",
      "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -34504,7 +34505,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 18,
-      "re-export": 14
+      "re-export": 16
      }
     },
     {
@@ -34542,6 +34543,30 @@
       "crate-vis": 8,
       "fn": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphAskDeclined",
+      "GraphAskOutcome",
+      "GraphAskRequest",
+      "GraphAskSelection",
+      "QuestionAnswersRequest",
+      "QuestionCreateRequest",
+      "QuestionEditRequest",
+      "QuestionPauseRequest",
+      "QuestionPaused",
+      "QuestionReadRequest"
+     ],
+     "path": "src/receipt/questions.rs",
+     "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 9
      }
     },
     {
@@ -34603,6 +34628,21 @@
      "surface": {
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShareRevokeReceipt",
+      "SharedBriefCitation",
+      "SharedBriefView"
+     ],
+     "path": "src/receipt/share_doors.rs",
+     "purpose": "OF-491: what `vault.shares.revoke` and `vault.shares.view` answer",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -34679,6 +34719,7 @@
      "kind": "src",
      "notable": [
       "ArtifactKind",
+      "ArtifactUnlocks",
       "CheckpointKey"
      ],
      "path": "src/recovery/checkpoint/artifact.rs",
@@ -34686,8 +34727,8 @@
      "surface": {
       "crate-vis": 8,
       "enum": 1,
-      "fn": 5,
-      "struct": 1
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -34943,6 +34984,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostOrderHolds"
+     ],
+     "path": "src/recovery/checkpoint/host_holds.rs",
+     "purpose": "Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -34956,7 +35011,7 @@
      "surface": {
       "enum": 1,
       "fn": 15,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -35065,6 +35120,7 @@
      "path": "src/recovery/checkpoint/tiers.rs",
      "purpose": "Snapshot classification",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1
      }
@@ -40179,13 +40235,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 29
      }
     },
     {
@@ -43604,8 +43660,18 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/create_origin.rs",
+     "purpose": "The creator a created TASK's realizing agent runs under (OF-532)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -43924,7 +43990,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -44094,7 +44160,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "re-export": 10,
       "struct": 32
      }
@@ -44154,7 +44220,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 179
+      "fn": 187
      }
     },
     {
@@ -44264,13 +44330,16 @@
      "kind": "src",
      "notable": [
       "ShareCreateRequest",
-      "ShareCreated"
+      "ShareCreated",
+      "ShareRevokeRequest",
+      "ShareViewNarrowing",
+      "ShareViewRequest"
      ],
      "path": "src/task_verb/sdk_share.rs",
      "purpose": "`vault.shares.create`: the caller shares one stored brief with one recipient and chooses which born-with…",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 3,
+      "struct": 5
      }
     },
     {
@@ -44535,7 +44604,7 @@
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -47492,7 +47561,7 @@
      "surface": {
       "crate-vis": 10,
       "fn": 3,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 2
      }
     },
@@ -47642,9 +47711,10 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "NewVaultKeyWrap",
       "VaultKeyStatus",
       "VaultKeyUnlock",
       "VaultKeyWrapInfo",
@@ -47653,9 +47723,9 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 6,
-      "enum": 3,
-      "fn": 14,
+      "crate-vis": 7,
+      "enum": 4,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -49563,14 +49633,14 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 27,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -49871,7 +49941,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 108,
+     "files": 109,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50025,9 +50095,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3021,
+   "source_files": 3025,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57465,7 +57535,7 @@
      "purpose": "Label-read seam: a host model scores a closed label set instead of generating text",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 3,
       "trait": 1
      }
@@ -57701,7 +57771,7 @@
      "path": "src/facade/boundary.rs",
      "purpose": "JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -57735,13 +57805,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 153
+      "fn": 161
      }
     },
     {
@@ -57792,6 +57862,7 @@
       "NapiMemoryItem",
       "NapiMemoryPack",
       "NapiMemoryProvenance",
+      "NapiMentionProvenance",
       "NapiNeighborHit",
       "NapiNeighborHits",
       "NapiNeighborOpts",
@@ -57814,7 +57885,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 52
+      "struct": 53
      }
     },
     {
@@ -57962,7 +58033,7 @@
     "facade": {
      "files": 12,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade"
     },
@@ -58754,7 +58825,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 154
+      "fn": 162
      }
     },
     {
@@ -61227,13 +61298,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/graph_ask_doors.rs",
+     "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -61254,6 +61335,16 @@
      "purpose": "OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/share_doors.rs",
+     "purpose": "The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -61992,6 +62083,16 @@
      "notable": [],
      "path": "src/api/owner_routes/space_posting_routes.rs",
      "purpose": "`/v1/owner/space-posting`: the per-space ghost-mode dial (ARCH-0063 R10, INB-08)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/vault_key_routes.rs",
+     "purpose": "`/v1/owner/vault-key`: the vault data key's wraps on a running server (OF-570 E1), the host half of the…",
      "surface": {
       "crate-vis": 1
      }
@@ -62987,15 +63088,20 @@
       "SecretRotateArgs",
       "SecretScanArgs",
       "SecretScanSwitch",
+      "SecretSourceArgs",
       "SecretsCommand",
       "ServeOnlyArgs",
+      "UnlockMethod",
+      "VaultKeyArgs",
+      "VaultKeyCommand",
+      "VaultKeyNamedArgs",
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 8,
-      "struct": 28
+      "enum": 10,
+      "struct": 31
      }
     },
     {
@@ -63271,7 +63377,8 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 13
+      "fn": 13,
+      "re-export": 1
      }
     },
     {
@@ -63281,6 +63388,17 @@
      "path": "src/commands/owner/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/vault_key.rs",
+     "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1
+     }
     },
     {
      "bucket": "s",
@@ -65813,13 +65931,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -65927,7 +66045,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -66008,6 +66126,16 @@
      "purpose": "UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/vault_key.rs",
+     "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -67115,7 +67243,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 253,
+     "files": 256,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67164,7 +67292,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -67325,9 +67453,9 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
     },
@@ -67423,9 +67551,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 28,
+   "over_bar": 29,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 481,
+   "source_files": 486,
    "test_files": 182
   },
   "oneiron-spawn": {
