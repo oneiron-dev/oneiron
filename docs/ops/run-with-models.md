@@ -114,7 +114,11 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
-`reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
+`assistant_prefill`, `reasoning`; `assistant_prefill` lets Continue send the
+saved reply as an open trailing assistant message instead of an instruction to
+go on, and only counts when every rung of the ladder has it: list it only for a
+model whose endpoint and serving template continue a trailing assistant message
+(no model has it by default); `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
 `reasoning` unless the list is written out), `model_capabilities` (one wire
