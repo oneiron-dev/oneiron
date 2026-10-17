@@ -9,6 +9,8 @@ use crate::memory::support::{
     verify_owner_actor_binding_in_txn,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
@@ -181,6 +183,26 @@ impl Memory<'_> {
         if !text_fields.is_empty() {
             self.vault.ensure_text_index_trusted()?;
         }
+        // Rule A: an ASSET_TEXT is born in its writer's class from the ASSETs
+        // it derives from, the first MAX_BIRTH_INPUTS of them; a non-person's
+        // text that derives from none names no input, so it has no birth.
+        let birth = if type_byte == ENTITY_TYPE_ASSET_TEXT {
+            let inputs: Vec<_> = sources
+                .iter()
+                .map(|(source, _)| *source)
+                .take(MAX_BIRTH_INPUTS)
+                .collect();
+            RowBirth::written(
+                WriteActor::new(self.actor, self.actor_class),
+                MadeByClass::of_writer(self.actor_class),
+                "structural.asset_text",
+                &inputs,
+                &[],
+                learned_at,
+            )
+        } else {
+            None
+        };
 
         // Marker check and put share ONE write transaction (A1): a
         // concurrent hard delete either commits first (refused here) or
@@ -207,6 +229,7 @@ impl Memory<'_> {
                     .batch_in()
                     .asset_text_birth(&id, occurred, learned_at, &data, &sources)
             };
+            batch = batch.made_by(&id, birth);
             for (kind, target, weight) in &resolved_edges {
                 batch = batch.edge(&id, *kind, target, *weight);
             }

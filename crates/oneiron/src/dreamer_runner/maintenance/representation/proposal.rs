@@ -7,6 +7,8 @@ use super::{
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result, TimeRange,
@@ -180,6 +182,29 @@ pub(in crate::dreamer_runner::maintenance) fn run(
         1.0,
     )
     .with_evidence(evidence);
+    // Rule A: the draft is concluded from the claims it cites, over their
+    // validated quotes, the first MAX_BIRTH_INPUTS citations.
+    let birth = {
+        let cited: Vec<_> = packet
+            .evidence
+            .iter()
+            .chain(&packet.voice)
+            .take(MAX_BIRTH_INPUTS)
+            .collect();
+        let inputs: Vec<EntityId> = cited.iter().map(|citation| citation.claim).collect();
+        let quotes: Vec<&[u8]> = cited
+            .iter()
+            .map(|citation| citation.quote.as_bytes())
+            .collect();
+        RowBirth::written(
+            envelope.actor(),
+            MadeByClass::Concluded,
+            "dreamer.representation",
+            &inputs,
+            &quotes,
+            now,
+        )
+    };
     vault.with_write_txn_grouped(|txn| {
         if let Some(existing) = PROPOSAL.get(&vault.store, &*txn, &id)? {
             if existing.packet != packet || vault.get_claim_in_txn(&*txn, &id)?.is_none() {
@@ -205,6 +230,7 @@ pub(in crate::dreamer_runner::maintenance) fn run(
                 },
                 now,
             )
+            .made_by(&id, birth)
             .apply_recording_gate_decisions(txn)?;
         let landed = vault.get_claim_in_txn(&*txn, &id)?.ok_or_else(invalid)?;
         if landed.approval != ClaimApprovalStatus::Proposed {

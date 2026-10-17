@@ -1,6 +1,8 @@
 //! A judge outage is an open question, persisted through the shared write gate.
 use super::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
 use super::{ConflictSet, conflict_open_marker_id};
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result,
     SourceLineage, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
@@ -112,6 +114,26 @@ pub(super) fn park_open_conflict(
     candidate = candidate
         .with_scope(super::persistence::identity_scope(&conflict.identity)?)
         .with_evidence_taint(meet)?;
+    // Rule A: the marker is concluded from its members' verified evidence, the
+    // MESSAGEs it cites and the heads they dispute, the first
+    // MAX_BIRTH_INPUTS of them.
+    let birth = {
+        let inputs: Vec<EntityId> = verified
+            .refs()
+            .into_iter()
+            .chain(verified.cited_messages())
+            .chain(conflict.prior_heads.iter().copied())
+            .take(MAX_BIRTH_INPUTS)
+            .collect();
+        RowBirth::written(
+            actor,
+            MadeByClass::Concluded,
+            "dreamer.conflict",
+            &inputs,
+            &[],
+            now,
+        )
+    };
     vault.with_write_txn_grouped(|txn| {
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
@@ -153,6 +175,10 @@ pub(super) fn park_open_conflict(
                 now,
             )
             .apply_recording_gate_decisions(txn)?;
+        // The marker's id is the attempt's: a retry keeps its first birth.
+        if let Some(birth) = &birth {
+            crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, birth)?;
+        }
         verified.record_message_dependencies_in_txn(vault, txn, &id)
     })?;
     Ok(id)

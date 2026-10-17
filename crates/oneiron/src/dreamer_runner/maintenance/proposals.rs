@@ -4,6 +4,8 @@
 //! Every finding cites the records it was read from: GATE-12 refuses a
 //! Dreamer claim with no live evidence ref.
 use crate::attempt_queue::AttemptId;
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{ClaimCandidate, ClaimSubject, EntityId, Result, TimeRange, Vault};
 use rmpv::Value;
@@ -114,6 +116,16 @@ pub(super) fn emit_in_txn(
     ));
     let mut envelope = envelope.clone();
     vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
+    // Rule A: the finding is concluded from the records it cites, the first
+    // MAX_BIRTH_INPUTS of them.
+    let birth = RowBirth::written(
+        envelope.actor(),
+        MadeByClass::Concluded,
+        "dreamer.finding",
+        &evidence[..evidence.len().min(MAX_BIRTH_INPUTS)],
+        &[],
+        now,
+    );
     vault
         .batch_in()
         .claim_candidate(
@@ -126,6 +138,7 @@ pub(super) fn emit_in_txn(
             },
             now,
         )
+        .made_by(&id, birth)
         .apply_recording_gate_decisions(txn)?;
     vault.record_finding_notification_in_txn(txn, id, subject, now)?;
     Ok(id)

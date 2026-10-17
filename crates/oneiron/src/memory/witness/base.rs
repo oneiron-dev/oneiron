@@ -15,8 +15,11 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
+use crate::write_envelope::WriteActor;
 
 /// Tags an importer holds for the turn it lands, and the cell the program
 /// leaves what they did to the turn's tagging marker in. They are settled in
@@ -502,11 +505,22 @@ impl Memory<'_> {
             if *exists {
                 continue;
             }
+            // Rule A: the message is born in its writer's class from nothing
+            // the door read, so only a person's message has a birth to name.
+            let birth = RowBirth::written(
+                WriteActor::new(self.actor, self.actor_class),
+                MadeByClass::of_writer(self.actor_class),
+                "witness.message",
+                &[],
+                &[],
+                plan.learned_at,
+            );
             // The PUT consumes the authorization itself, not a body handed
             // alongside it: `put_witness_message` is reachable only with the
             // door's own value and writes exactly the bytes it proved.
             batch = batch
                 .put_witness_message(&planned.id, planned.occurred, plan.learned_at, authorized)
+                .made_by(&planned.id, birth)
                 .edge(&planned.id, EdgeKind::PartOf, &plan.turn_id, 1.0)
                 .edge(&planned.id, EdgeKind::BelongsTo, &plan.conversation_id, 1.0);
             // An imported row's author is the source's speaker, named in its

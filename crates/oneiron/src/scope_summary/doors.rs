@@ -19,6 +19,8 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::{Memory, MemoryError};
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_TURN,
@@ -311,6 +313,23 @@ pub(super) fn mint_in_txn(
     }
     let _permit = super::producer::admit(&vault.store, id, &encoded);
     batch.apply(txn)?;
+    // Rule A: the summary is concluded from every record and MESSAGE its words
+    // came from, the first MAX_BIRTH_INPUTS of them. A re-entered attempt
+    // keeps its first birth.
+    let inputs: Vec<EntityId> = word_sources(&body)
+        .copied()
+        .take(MAX_BIRTH_INPUTS)
+        .collect();
+    if let Some(birth) = RowBirth::written(
+        actor,
+        MadeByClass::Concluded,
+        "scope_summary.mint",
+        &inputs,
+        &[],
+        now,
+    ) {
+        crate::provenance::birth::stamp_birth_if_absent_in_txn(&vault.store, txn, &id, &birth)?;
+    }
     for source in word_sources(&body) {
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, &id, source)?;
     }
@@ -454,6 +473,15 @@ pub(super) fn land_in_txn(
             .collect(),
     ));
     let claim = vault.store.clock.entity_id()?;
+    // Rule A: the header is concluded from the summary it lands.
+    let birth = RowBirth::written(
+        actor,
+        MadeByClass::Concluded,
+        "scope_summary.header",
+        &[*summary],
+        &[],
+        now,
+    );
     vault
         .batch_in()
         .claim_candidate(
@@ -466,6 +494,7 @@ pub(super) fn land_in_txn(
             },
             now,
         )
+        .made_by(&claim, birth)
         .apply(txn)?;
     let reply = if let Some(lane) = reply {
         let scope = ScopeSelector {
