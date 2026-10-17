@@ -51,6 +51,7 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest`
 - `vault.weave.lens`
 - `vault.weave.link.wrong`
+- `vault.weave.owner.link.wrong`
 - `vault.packs.put`
 - `vault.packs.setup.prepare`
 - `vault.packs.setup.get`

@@ -60,8 +60,9 @@ for row in ROWS:
     # takes effect at once and needs write capability.
     if row.get('proposes') and row['scope'] != 'Write': raise ValueError(f'{row["name"]}: only a Write row proposes')
     # ARCH-0026 RD-26: `lands_turn` marks a write that lands a conversation
-    # turn, so every served door (the HTTP facade and the MCP dispatch) wakes
-    # the Dreamer's turn producer after it.
+    # turn, so every served door (the HTTP facade and the MCP dispatch, a host
+    # door's too) wakes the Dreamer's turn producer after it. A host door that
+    # lands its turn itself leaves the flag off.
     if row.get('lands_turn') and row['scope'] != 'Write': raise ValueError(f'{row["name"]}: only a Write row lands a turn')
     if row.get('lands_turn') and row.get('context') == 'board': raise ValueError(f'{row["name"]}: a board verb lands no turn')
     # `host_door` marks a row only a server's own state answers (the owner's
@@ -601,6 +602,12 @@ def mcp_argument_projection(row):
             lines.append(f'if let Some(value) = input.get({json.dumps(path.removeprefix("="))}) {{ arguments.insert({json.dumps(field)}.to_owned(), value.clone()); }}')
     return f'{json.dumps(row["name"])} => {{\n' + '\n'.join(lines) + '\n},\n'
 
+# OF-533: the task rows that may ask the host's decision ladder: a post's take
+# question, a report's done and ask-up questions. A model rung may block on the
+# server's runtime, so MCP and the facade run these rows on a blocking thread,
+# on a credential surface built there with the ladder bound.
+TASK_DECISION_ROWS = ('tasks.create', 'tasks.update')
+
 def mcp_input_dispatch(row):
     'One row of the input dispatcher every MCP door shares.'
     name, method = row['name'], row['name'].replace('.', '_')
@@ -664,7 +671,14 @@ def mcp_input_dispatch(row):
         if 'mcp_served' in row:
             # The rows the verb reads by name: a continuation of its result is released only while they may leave.
             body += f'served.extend({row["mcp_served"]});\n'
-        body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
+        if name in TASK_DECISION_ROWS:
+            # Its hooks stay here; the typed row alone crosses to the worker.
+            body += (f'let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input)).await?;\n'
+                     '// Derived from the rows its reads listed, on a refusal too.\n'
+                     'served.extend(listed);\n'
+                     'let output = output.map_err(mcp_facade_error)?;\n')
+        else:
+            body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
         if 'mcp_served_output' in row:
             body += f'served.extend({row["mcp_served_output"]});\n'
     if row.get('lands_turn'):
@@ -765,11 +779,8 @@ async fn execute_agent_verb_listing(
         position.facet = Some(facet);
     }
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
-    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(position).listing_producers(producers).with_invocation(invocation);
-    let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
-    // OF-063: the off-record session the request named; inside an anonymous
-    // one a reference refusal writes no receipt (Engine ruling 10-17).
-    let memory = match actor.off_record_session.as_deref() { Some(session) => memory.in_off_record_session(session), None => memory };
+    let surface = McpRowSurface { position, invocation, origin };
+    let memory = surface.memory(server, actor, producers);
     // Rule 5: a task-work row takes its one turn here, for MCP and code mode
     // alike, and holds it through its hooks and its row.
     let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work) {
@@ -778,18 +789,21 @@ async fn execute_agent_verb_listing(
         None
     };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
-    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served, board_hooks).await?;
+    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     Ok((output, source, carrier, epoch))
     }
 
-/// One row of [`execute_agent_verb_listing`], on the args its pre chain left.
+/// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
+/// on `memory`, the caller's surface `surface` built. A task row that may ask
+/// the host's decision ladder builds its own from `surface`, off the runtime.
 async fn execute_agent_verb_row(
         server: &Arc<SyncServer>,
         tool: &str,
         input: Value,
         actor: &McpCallContext,
         memory: oneiron::Memory<'_>,
+        surface: McpRowSurface,
         served: &mut Vec<oneiron::EntityId>,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
@@ -1090,16 +1104,19 @@ def facade_dispatch(facade_rows):
             # A host door answers from the server's own state, outside any
             # room turn, under the credential the call presented. It opens its
             # own handles, so no list here names the rows it read, unless the
-            # door lists them itself (`host_door_lists`).
+            # door lists them itself (`host_door_lists`). A flagged one wakes
+            # the turn producer after it, as its MCP arm does.
+            lands = r.get('lands_turn')
+            landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             door = f'super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
             answer = (f'''let (output, listed) = {door};
-                let output = facade_output(output?)?;
+                let output = facade_output(output?)?;{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(listed) }})''' if r.get('host_door_lists') else
-                      f'''let output = facade_output({door}?)?;
+                      f'''let output = facade_output({door}?)?;{landed}
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
                 {record_scope_guard(r)}
-                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}
+                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(auth)?;" if lands else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
@@ -1109,9 +1126,11 @@ def facade_dispatch(facade_rows):
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
         room_guard, ref_guard = '', ''
-        result = f'facade_invoke(server, call, actor, class, "{name}", value, &producers)?'
+        # A task-decision row invokes on its worker's own server and call.
+        on = '&server, &call' if name in TASK_DECISION_ROWS else 'server, call'
+        result = f'facade_invoke({on}, actor, class, "{name}", value, &producers)?'
         if r.get('admission', {}).get('born_record_scope'):
-            result = f'facade_invoke_born(server, call, actor, class, "{name}", value, position, &producers)?'
+            result = f'facade_invoke_born({on}, actor, class, "{name}", value, position, &producers)?'
         result += ';'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
@@ -1166,6 +1185,23 @@ def facade_dispatch(facade_rows):
             continue
         # Rule 5: a task-work row's turn, held until its engine call returns.
         turn = '\nlet _turn = server.admit_task_work(actor).await;' if r.get('task_work') else ''
+        if name in TASK_DECISION_ROWS:
+            # OF-533: after the call's own refusals, the whole invoke runs on a
+            # blocking thread, its surface, rewrite admission, drain, room turn
+            # and hooks with it as one row, since a model rung of the decision
+            # ladder its surface binds may block on the server's runtime.
+            dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}{turn}
+        let (server, owned) = (Arc::clone(server), call.owned());
+        tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
+        let call = owned.call();
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = {result}{landed}
+        Ok(FacadeCallOutput::listed(output, &producers))
+        }})
+        .await
+        .map_err(|_| FacadeApiError::from(super::host_doors::internal("{name}")))?
+        }}\n'''
+            continue
         dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}{turn}
         let producers = oneiron::memory::ProducerRows::default();
         let output = {result}{landed}
@@ -1399,8 +1435,8 @@ def outputs():
     files['packages/oneiron-client/src/facade-types.ts'] = facade_types
     files['crates/oneiron-py/python/oneiron/facade_types.pyi'] = INVENTORY.python(census)
     # ONE-2510 S2: the code-mode catalog fragment over every row code mode
-    # serves, with its revision; its own inventory leaves the facade types above
-    # as they are.
+    # serves, at catalog_fragment.d.ts and at code-mode.d.ts, with its
+    # revision; its own inventory leaves the facade types above as they are.
     files.update(catalog_fragment(ROOT, ROWS + RUN_ROWS, HEADER))
     for path, text in list(files.items()):
         if path.endswith('.rs'):
@@ -1573,35 +1609,9 @@ def uniffi_facade(facade_rows):
     ]
     return HEADER + 'export_facade! {\n' + arms + '}\n', types.render(HEADER, lines)
 
-# The code-mode declarations a model is taught and a shadow type check reads.
-# The engine renders each row's signature from its compiled input schema
-# (`code_mode_declarations`), which this script cannot see, and its test keeps
-# the checked-in copy current; here the copy must declare exactly the rows code
-# mode serves, so a table edit flags it without a build.
-CODE_MODE_DTS = 'crates/oneiron/src/task_verb/code-mode.d.ts'
-CODE_MODE_DTS_REGENERATE = 'ONEIRON_UPDATE_TEST_FIXTURES=1 cargo test -p oneiron --lib code_mode_declarations_file_is_the_verb_table'
-# A declaration line opens a root, a namespace or a verb: `declare namespace
-# self {`, `declare const vault: {`, `declare function describe(input: …`,
-# `const focus: {`, `claims: {`, `upsert(input: …`, or a verb that holds
-# verbs, `diary: ((input: …) => Promise<unknown>) & {`.
-# `self.fold` is the one positional verb, `fold: (span: …` (ARCH-0067 #folds).
-DTS_LINE = re.compile(r'(?:declare (?:namespace|const|function) |const )?(\w+)(\(input: |: \(\(input: |: \(input: |: \(span: |: \{| \{)')
-def code_mode_dts_current():
-    declared, scope = set(), []
-    for line in (ROOT/CODE_MODE_DTS).read_text().splitlines():
-        text = line.strip()
-        if text in ('}', '};'):
-            scope.pop(); continue
-        head = DTS_LINE.match(text)
-        if not head: continue
-        name, form = head.groups()
-        if 'input' in form or 'span' in form: declared.add('.'.join(scope + [name]))
-        if text.endswith('{'): scope.append(name)
-    return declared == {r['name'] for r in ROWS + RUN_ROWS}
-
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--check',action='store_true');args=parser.parse_args()
-    stale=[] if code_mode_dts_current() else [f'{CODE_MODE_DTS} (regenerate: {CODE_MODE_DTS_REGENERATE})']
+    stale=[]
     for path,text in outputs().items():
         p=ROOT/path
         if text is None:
@@ -1615,8 +1625,6 @@ def main():
             p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
     if args.check and stale:
         raise SystemExit('SDK-GENERATED-STALE: '+', '.join(stale))
-    if not args.check and not code_mode_dts_current():
-        print(f'{CODE_MODE_DTS} is stale; regenerate: {CODE_MODE_DTS_REGENERATE}')
     # OF-246: how many row types read fully, and each leaf that did not.
     if not args.check:
         print('\n'.join(INVENTORY.census(FACADE_ROWS)))
