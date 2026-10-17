@@ -30313,7 +30313,7 @@
      "path": "src/office_body/mod.rs",
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 17,
       "re-export": 5,
@@ -30331,8 +30331,8 @@
      "path": "src/office_body/pptx.rs",
      "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) kept in this module's tables (ARCH-0077…",
      "surface": {
-      "crate-vis": 7,
-      "fn": 6,
+      "crate-vis": 8,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -53529,13 +53529,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ArtifactError"
+      "ArtifactError",
+      "LiveDeckRefusal"
      ],
      "path": "src/error/artifact.rs",
      "purpose": "Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1
+      "enum": 2,
+      "fn": 1
      }
     },
     {
@@ -54987,7 +54989,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EditRefusal",
@@ -55014,6 +55016,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/edit/structure/arrange.rs",
+     "purpose": "The live-deck projector's shape verbs: a sibling reorder (z-order), an empty group framed over slide space…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/edit/structure/check.rs",
      "purpose": "The independent check for structural edits",
      "surface": {
@@ -55024,6 +55036,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "NewGroup",
       "NewShape",
       "Preset",
       "StructureEdit",
@@ -55035,7 +55048,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -55049,13 +55062,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/slides/lifecycle.rs",
+     "purpose": "A blank slide over a layout, and a slide's removal from the list: the live-deck projector's slide verbs",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit/structure/slides/mod.rs",
      "purpose": "Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -55348,7 +55371,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ExportKey",
@@ -55364,7 +55387,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 5,
+      "fn": 8,
       "struct": 6
      }
     },
@@ -55405,16 +55428,21 @@
       "OpaqueChange",
       "Paragraph",
       "PreflightReport",
+      "RelationshipChange",
+      "RenderPair",
+      "RenderSide",
       "Run",
+      "SlideRender",
       "StampedOp",
       "TextBody"
      ],
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
+      "crate-vis": 3,
       "enum": 6,
-      "fn": 20,
-      "struct": 16
+      "fn": 23,
+      "struct": 20
      }
     },
     {
@@ -55703,7 +55731,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 15,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55773,9 +55801,9 @@
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
     }
    },
-   "over_bar": 6,
+   "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 59,
+   "source_files": 61,
    "test_files": 14
   },
   "oneiron-driver": {
