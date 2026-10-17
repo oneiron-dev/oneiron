@@ -6845,12 +6845,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "Retired",
       "WorkflowRecord"
      ],
      "path": "src/browser_library.rs",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
-      "fn": 5,
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -45917,7 +45920,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 292
+      "fn": 293
      }
     },
     {
@@ -54407,6 +54410,8 @@
       "LibraryCard",
       "LibraryFindInput",
       "LibraryFindOutput",
+      "LibraryRetireInput",
+      "LibraryRetireOutput",
       "LibraryRunInput",
       "LibraryRunOutput",
       "ProposeInput",
@@ -54423,7 +54428,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 3,
-      "struct": 9,
+      "struct": 11,
       "trait": 1
      }
     },
