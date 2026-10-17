@@ -41,7 +41,7 @@ pub use self::lifecycle::{
     CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute, ConnectorConsentRowView,
     ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription, ConnectorManifestQualifier,
     ConnectorQualificationError, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
-    ProbeManifestQualifier,
+    PROXY_CONNECTOR, ProbeManifestQualifier,
 };
 pub use self::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,

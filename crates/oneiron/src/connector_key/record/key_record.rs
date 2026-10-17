@@ -389,7 +389,7 @@ impl ConnectorKeyRecord {
             return Err(invalid_body("active catalog key lacks qualification"));
         }
         if let Some(receipt) = &self.qualification_receipt {
-            receipt.validate()?;
+            receipt.validate_for_key(&self.connector)?;
             if self.protocol_revision.as_deref() != Some(receipt.protocol_revision.as_str())
                 || receipt.qualified_at < self.registered_at
                 || self.catalog.is_none()

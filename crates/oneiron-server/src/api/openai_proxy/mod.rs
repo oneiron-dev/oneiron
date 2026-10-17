@@ -22,6 +22,7 @@ use axum::{
     routing::post,
 };
 use oneiron::claim::CallerLocality;
+use oneiron::connector_key::PROXY_CONNECTOR;
 use oneiron::memory::RecallEffort;
 use oneiron::task_verb::sdk::RecallRequest;
 use oneiron::{
@@ -154,7 +155,8 @@ async fn complete(
 /// proposes or writes, over the whole record scope, and binds both verbs
 /// when it binds verbs. The exchange lands Proposed whatever the ceiling,
 /// so either write grant serves. A narrowed credential's bounds are not
-/// projected here: it is refused, never widened.
+/// projected here: it is refused, never widened. The actor also holds a live
+/// key on the proxy's own connector, its grant slate stamped.
 async fn admit_connector(
     headers: &HeaderMap,
     locality: CallerLocality,
@@ -186,6 +188,18 @@ async fn admit_connector(
         return Err(forbidden(
             "verb_unbound",
             "the connector binds verbs without vault.recall and vault.remember",
+        ));
+    }
+    // An Active key bound to this actor, whose slate's owner stamp holds at
+    // the revision the key admitted. A read that fails admits nothing.
+    let registered = server
+        .vault
+        .live_connector_registration(PROXY_CONNECTOR, &actor.actor_ref)
+        .is_ok_and(|registration| registration.is_some());
+    if !registered {
+        return Err(forbidden(
+            "connector_unregistered",
+            "the paired actor holds no live openai_proxy connector key with a stamped grant slate; the owner admits it at POST /v1/owner/connectors/proxy",
         ));
     }
     Ok(actor)

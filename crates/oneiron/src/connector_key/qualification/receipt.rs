@@ -10,6 +10,10 @@ pub const CONNECTOR_QUALIFICATION_SUITE: &str = "oneiron.connector.qualification
 /// rides its Verified setup connection instead of a probe suite. Only an
 /// embedded built-in source may carry it.
 pub const SETUP_CHECK_QUALIFICATION_SUITE: &str = "oneiron.connector.setup_check.v1";
+/// The OpenAI proxy's own connector (ARCH-0028): the engine is the
+/// connector, so no probe suite runs. Its admission is the owner's stamp on
+/// the proxy's fixed slate. Only the proxy connector's key may carry it.
+pub const PROXY_ADMISSION_QUALIFICATION_SUITE: &str = "oneiron.connector.proxy_admission.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,8 +62,38 @@ impl ConnectorQualificationReceipt {
         Ok(receipt)
     }
 
+    /// The receipt the proxy's own connector activates under. Its digest
+    /// names the actor and the slate the owner stamped.
+    pub(crate) fn proxy_admission(
+        report_hash: String,
+        protocol_revision: String,
+        manifest_hash: [u8; 32],
+        qualified_at: u64,
+    ) -> Result<Self> {
+        let receipt = Self {
+            suite: PROXY_ADMISSION_QUALIFICATION_SUITE.to_owned(),
+            report_hash,
+            protocol_revision,
+            manifest_hash,
+            qualified_at,
+        };
+        receipt.validate_as(PROXY_ADMISSION_QUALIFICATION_SUITE)?;
+        Ok(receipt)
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         self.validate_as(CONNECTOR_QUALIFICATION_SUITE)
+    }
+
+    /// A connector key's receipt: the probe suite's, or on the proxy's own
+    /// connector the proxy admission's.
+    pub(crate) fn validate_for_key(&self, connector: &str) -> Result<()> {
+        if self.suite == PROXY_ADMISSION_QUALIFICATION_SUITE
+            && connector == crate::connector_key::PROXY_CONNECTOR
+        {
+            return self.validate_as(PROXY_ADMISSION_QUALIFICATION_SUITE);
+        }
+        self.validate()
     }
 
     pub(crate) fn validate_setup_check(&self) -> Result<()> {
