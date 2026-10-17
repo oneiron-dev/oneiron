@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 9 | 0 | 2 |
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
 | [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 9 | 0 | 0 |
-| [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 55 | 1 | 1 |
+| [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 56 | 1 | 1 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 15 | 8 | 0 |
 | [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 67 | 14 | 7 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 18 | 10 | 0 |
@@ -384,6 +384,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `registry` | dir | 8 | m | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `retrieval_quality` | file | 1 | s | Shared retrieval execution quality, independent of result counts and ranking |
 | `retrieval_telemetry` | file | 1 | s | The retrieval signal and blend-weight vocabulary: what retrieval's fusion scores with, what the retrieval… |
+| `room_join` | file | 1 | s | The consent vocabulary of a room join (OF-531): who asks, which consents a join collects, and the party each… |
 | `secret_custody` | file | 1 | s | ARCH-0069 S1 custody classes and tiers |
 | `secret_lease` | file | 1 | s | Secret lease status |
 | `serialize` | file+dir | 2 | s | Serde adapters shared by the engine crates' serialized envelopes |
