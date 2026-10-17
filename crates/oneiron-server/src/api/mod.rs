@@ -130,6 +130,7 @@ mod operator_routes;
 // scan switch, whole-batch import consent and whole-run agent consent.
 mod owner_origin;
 mod owner_routes;
+pub(crate) use owner_routes::owner;
 mod packs;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
@@ -430,6 +431,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
+        // OF-516: a role holder's door to the ladder's person asks.
+        .merge(self::facade::decision_role_asks::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",

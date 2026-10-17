@@ -171,6 +171,11 @@ pub struct SharedActExecutionReceipt {
     pub revoked_slips: Vec<String>,
     /// The export made for a removed Owner before the removal.
     pub export: Option<SharedActExport>,
+    /// The hash (hex) of the host-signed `OwnerHandover` AUTHORITY_LOG
+    /// entry an ownership change wrote in this writer, which names this
+    /// receipt back. `None` when nothing was signed: a membership change, or
+    /// an act run with no slip issuer.
+    pub authority_entry: Option<String>,
     pub completed_at: u64,
 }
 
@@ -510,6 +515,7 @@ impl Vault {
             }
             SharedActKind::Erase => return Err(invalid()),
         };
+        let mut authority_entry = None;
         if let Some(issuer) = slips {
             let handover = match &effect.change {
                 SharedVaultChange::OwnershipTransferred {
@@ -530,7 +536,7 @@ impl Vault {
                 _ => None,
             };
             if let Some((cause, from, to, keeps)) = handover {
-                self.append_owner_handover_in_txn(
+                authority_entry = Some(self.append_owner_handover_in_txn(
                     &mut txn,
                     issuer,
                     OwnerHandover {
@@ -540,9 +546,10 @@ impl Vault {
                         to: to.map(|to| hex_id(to)).transpose()?,
                         from_keeps: keeps.map(|role| role.as_str().to_owned()),
                         act: Some(act.id.clone()),
+                        proof: None,
                         receipt: receipt_id.clone(),
                     },
-                )?;
+                )?);
             }
         }
         let export = export.take().map(|(member, records, archive)| {
@@ -564,6 +571,7 @@ impl Vault {
             owners,
             effect,
             summary,
+            authority_entry,
             now,
         )?;
         txn.commit()?;
@@ -586,6 +594,7 @@ impl Vault {
         owners: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
+        authority_entry: Option<crate::authority::AuthorityEntryHash>,
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
         let (act_id, request_id) = act.unzip();
@@ -603,6 +612,9 @@ impl Vault {
                 .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
                 .collect(),
             export,
+            authority_entry: authority_entry
+                .as_ref()
+                .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
             completed_at: now,
         };
         self.store

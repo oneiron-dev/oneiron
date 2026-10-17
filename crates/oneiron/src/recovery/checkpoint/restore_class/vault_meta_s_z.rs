@@ -216,6 +216,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TYPED_BODY_FORK_DOC, CONTENT),
     (&t::TYPED_BODY_HEAD, CONTENT),
     (&t::TYPED_QUESTION_PENDING, CONTENT),
+    (&t::TYPED_QUESTION_RESTS_ON, CONTENT),
+    (&t::TYPED_QUESTION_ROOT_SOURCES, CONTENT),
     (&t::TYPED_QUESTION_UNIT_WATCH, CONTENT),
     (&t::TYPED_QUESTION, CONTENT),
     (&t::TYPED_QUESTION_WATCH, CONTENT),
@@ -231,6 +233,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED, CONTENT),
     (&t::VAULT_IDENTITY_LOCAL, LIVE),
     // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_ESCROW_SPOOLED, LIVE),
     (&t::VAULT_KEY_STATE, LIVE),
     (&t::VAULT_KEY_WRAP, LIVE),
     (&t::VOICE_OWNER_REF, LIVE),
