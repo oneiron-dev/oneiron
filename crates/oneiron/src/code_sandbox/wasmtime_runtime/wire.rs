@@ -615,6 +615,7 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "team_submit_not_led",
     "team_submit_output_missing",
     "team_submit_output_unscoped",
+    "team_submit_scope_stale",
     "team_submit_id_occupied",
     "team_submit_unreviewed",
     // the bridge

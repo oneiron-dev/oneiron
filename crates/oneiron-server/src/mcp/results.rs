@@ -10,6 +10,7 @@ use super::surface::{
     MCP_SETUP_INSTRUCTIONS, MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpGeneratedVerbTool,
     McpSurfaceConstructionError, McpSurfaceMode, generated_verb_tools,
 };
+use crate::server::LiveRunRefusal;
 use oneiron::context_board::{
     BoardBlockHeader, BoardBudgetRequest, BoardRenderMetadata, BoardSection,
 };
@@ -93,8 +94,14 @@ pub fn mcp_effective_scope_label(scope: &McpConnectorScope) -> String {
 ///
 /// Closed mapping with an explicit default arm, so a new refusal cannot ship a
 /// bare code with nothing a caller can act on.
+///
+/// A live-run refusal of `invoke_action` (OF-181) carries the suggestion its
+/// HTTP door states, `LiveRunRefusal::suggestion`, after the arm's own. Only
+/// `code_run_busy` has an arm of its own: it is also `execute_code`'s
+/// refusal, so that door's suggestions come first.
 #[must_use]
 pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
+    let live_run = LiveRunRefusal::from_code(error_code).map(LiveRunRefusal::suggestion);
     let suggestions: &[&str] = match error_code {
         "unknown_tool" => &[
             "call tools/list on this endpoint and use a name it registered",
@@ -156,6 +163,7 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "page cursors are bound to one connector, tool, argument set, and board snapshot",
             "re-request page one with the same arguments and follow its fresh cursor",
         ],
+        // Also a busy live run's code; its own suggestion follows these.
         "code_run_busy" => &[
             "this run is still active; no second worker was started",
             "retry later with the SAME run_ref and task",
@@ -168,9 +176,16 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "retry with the SAME run_ref to re-enter the durable run",
             "report the run_ref and request id to the vault owner",
         ],
+        // Every other live-run refusal: its own suggestion alone, below.
+        _ if live_run.is_some() => &[],
         _ => &["retry once, then report the error_code and request id to the vault owner"],
     };
-    suggestions.iter().copied().map(String::from).collect()
+    suggestions
+        .iter()
+        .copied()
+        .chain(live_run)
+        .map(String::from)
+        .collect()
 }
 
 /// The board keyframe half of `setup_oneiron`, with the engine's render

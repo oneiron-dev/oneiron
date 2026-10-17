@@ -158,6 +158,12 @@ impl HostSelfDispatcher<'_> {
                     }
                     return Err(stopped());
                 }
+                // A relationship the output's scope names that is gone since
+                // the output was recorded refuses here, before the write would.
+                if let Err(code) = descriptor.scope_stands_in_txn(vault, txn)? {
+                    refusal.set(Some(code));
+                    return Err(stopped());
+                }
                 Ok(())
             },
             |vault, txn, id| {
