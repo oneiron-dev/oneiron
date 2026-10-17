@@ -186,7 +186,7 @@ pub use self::judge_swap::{
     judge_swap_policy, judge_swap_receipts, pick_judge_swap_case, set_judge_swap_policy,
 };
 pub(crate) use self::judge_swap::{
-    judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask,
+    judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask, swap_case_retest_picked,
 };
 pub use self::labels::{
     JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,

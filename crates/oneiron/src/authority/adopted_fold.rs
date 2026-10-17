@@ -21,14 +21,19 @@
 //! peer set), or a guard a resumed fold declines at. That request names
 //! every covered row not held here, since only the whole history folds past
 //! such a row; a parent neither covered nor held is named alone.
+//!
+//! A later image on the adopting vault folds the same tail the same way, with
+//! no clock and no install view, and keeps the fold at the new frontier
+//! image-grade ([`capture_adopted_checkpoint_tail`], OF-469 slice D).
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::fold_engine::FoldContext;
 use super::fold_project::Settled;
-use super::fold_resume::{Resumed, RowMeta};
+use super::fold_resume::{ConfirmKeys, ImageFold, Resumed, RowMeta};
 use super::*;
+use crate::EntityId;
 use crate::error::Result;
 
 /// The fold past an adopted image.
@@ -99,127 +104,24 @@ pub(super) fn fold_adopted_checkpoint_tail(
         .copied()
         .collect();
     // What only the whole history closes: every covered row not held here.
-    let whole = || {
-        let mut missing = gaps.clone();
-        missing.extend(
-            image
-                .covered
-                .iter()
-                .filter(|hash| !log.held_covered.contains(*hash)),
-        );
-        need(missing)
+    let whole = || AdoptedTailFold::NeedHistory(whole_history(adopted, &gaps, log.held_covered));
+    let confirms = if image_stands_here(image, log) {
+        tail_folds_past(image, &tail, log)
+    } else {
+        None
     };
-    if !image_stands_here(image, log) || !tail_folds_past(image, &tail, log) {
+    let Some(confirms) = confirms else {
         return Ok(whole());
-    }
+    };
     if !gaps.is_empty() {
         return Ok(need(gaps.clone()));
     }
-    let mut issues = image.safety.issues.clone();
-    let judged = judged_tail(image, &tail, &mut issues);
-    let uncounted: BTreeSet<_> = image
-        .safety
-        .uncounted
-        .iter()
-        .copied()
-        .chain(
-            judged
-                .iter()
-                .filter(|(_, entry)| super::log_budget::is_uncounted(entry, &image.safety.issuers))
-                .map(|(hash, _)| *hash),
-        )
-        .collect();
-    let (pairs, counted_pairs) = tail_pairs(image, &judged, &uncounted);
-    let memory_floor_bytes = super::log_budget::fold_memory_floor(Some(&log.observations.policy));
-    if super::log_budget::fold_projected_bytes(image.covered.len() + judged.len(), pairs)
-        > memory_floor_bytes
-    {
+    let Some(settled) = settle_tail(image, &tail, log, confirms)? else {
         return Ok(whole());
-    }
-    // Each tail row folds on its parents' states as the scheduler folds it,
-    // the frontier's kept states seeding it.
-    let (consent_arm, _) = super::fold_engine::own_log_inputs(log.posture, None);
-    let no_handoff_line = BTreeSet::new();
-    let context = FoldContext {
-        sequence_floors: Some(&log.observations.sequence_floors),
-        floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
-        install_held: None,
-        entry_ancestors: None,
-        peer_consent_roots: log.peer_consent_roots,
-        consent_arm,
-        hosted: log.posture == crate::HostingPrivacyPosture::Hosted,
-        machine_standing: &super::machine_standing::every_chain,
-        pre_handoff_entries: Some(&no_handoff_line),
-        memory_floor_bytes,
-        pin: log.pin,
     };
-    let seed: BTreeMap<_, _> = image
-        .per_parent
-        .iter()
-        .filter_map(|(hash, state)| Some((*hash, state.clone()?)))
-        .collect();
-    let mut states =
-        super::fold_schedule::fold_entry_states_seeded(&judged, &seed, context, &mut issues);
-    states.retain(|hash, _| judged.contains_key(hash));
-    if states
-        .values()
-        .any(|state| state.federation_pacts != image.aggregate.merged.federation_pacts)
-    {
-        return Ok(whole());
-    }
-    let mut merged = image.aggregate.merged.clone();
-    let mut writers = image.safety.writers.clone();
-    for state in states.values() {
-        merged = merge_states(&merged, state);
-        super::fold_resume::add_writers(&mut writers, state);
-    }
-    let mut valid_entries = image.fold().valid_entries.clone();
-    valid_entries.extend(states.keys().copied());
-    // The rows a fold past the image reads whole: carried bodies of the
-    // projected kinds alone, whatever else an image carries.
-    let mut projected = BTreeMap::new();
-    for (hash, row) in &image.rows {
-        if let Some(body) = &row.body {
-            let entry = decode_authority_log_entry_body(body)?;
-            if super::fold_resume::is_projected(&entry.op) {
-                projected.insert(*hash, entry);
-            }
-        }
-    }
-    let rows = Resumed {
-        marks: &image.safety.marks,
-        fold: image.fold(),
-        revocations: &image.safety.revocations,
-        bound_keys: &image.safety.bound_keys,
-        chain: states.iter().map(|(hash, state)| (*hash, state)).collect(),
-        writers: &writers,
-        missed: Cell::new(false),
-    };
-    // The projection reads rows only for world-key envelopes, and no tail
-    // row is a world-key record.
-    let (fold, _) = super::fold_project::project_once(
-        Settled {
-            merged: Some(merged),
-            valid_entries,
-            by_hash: &projected,
-            revoke_facts: &image.safety.revoke_facts,
-            retired_keys: image.safety.retired_keys.clone(),
-            closed_handoffs: image.safety.closed_handoffs.clone(),
-            unsettled: image.safety.unsettled,
-            counted_ancestor_pairs: counted_pairs,
-            issues,
-        },
-        &rows,
-        context,
-    );
-    if rows.missed.get()
-        || fold.machines != image.fold().machines
-        || fold.worlds != image.fold().worlds
-        || fold.refused_world_edits != image.fold().refused_world_edits
-        || approves_on_revoked_key(&fold, &judged, &states)
-    {
-        return Ok(whole());
-    }
+    let SettledTail {
+        projected, fold, ..
+    } = settled;
     // This install's own view, over the rows its stale-roster window reads:
     // the tail's first-seen times are the only ones it has.
     let window_secs = log.observations.policy.stale_roster_window_secs;
@@ -276,6 +178,332 @@ pub(super) fn fold_adopted_checkpoint_tail(
     })
 }
 
+/// What a later image built past the adopted one keeps of the tail's fold
+/// (OF-469, slice D): see [`capture_adopted_checkpoint_tail`].
+pub(super) enum AdoptedImageFold {
+    /// The fold at the new frontier, image-grade, and the covered approvals
+    /// the stale-roster window could still expire.
+    Captured {
+        fold: Box<ImageFold>,
+        stale_approvals: BTreeSet<AuthorityEntryHash>,
+    },
+    /// History the build needs, as [`AdoptedTailFold::NeedHistory`] names
+    /// it: a request naming nothing means every covered row is held here,
+    /// and the stored log builds the image whole.
+    NeedHistory(AuthorityHistoryRequest),
+}
+
+/// The image-grade fold of `log`'s tail past the adopted image, with no
+/// clock (OF-469, slice D). The tail folds on the image's frontier states
+/// exactly as [`fold_adopted_checkpoint_tail`] folds it, under the same
+/// guards, and the capture keeps what a fold past the new image reads: the
+/// state at each row of the new frontier (an untouched old frontier row keeps
+/// the image's), the merged state, the projected once fold before any
+/// install's stale window, and the safety indexes grown by the tail. The
+/// caller hands the ancestor-closed tail alone (a row above a gap stays
+/// unresolved) and no first-seen time: no install view is built.
+pub(super) fn capture_adopted_checkpoint_tail(
+    adopted: &VerifiedAuthorityCheckpoint,
+    log: AdoptedTail<'_>,
+) -> Result<AdoptedImageFold> {
+    let image = adopted.image();
+    let tail: BTreeMap<_, _> = log
+        .tail
+        .iter()
+        .map(|(hash, entry)| (*hash, entry))
+        .collect();
+    let gaps: BTreeSet<_> = tail
+        .values()
+        .flat_map(|entry| entry.parent_hashes.iter())
+        .filter(|parent| !image.rows.contains_key(*parent) && !tail.contains_key(*parent))
+        .copied()
+        .collect();
+    let whole = || AdoptedImageFold::NeedHistory(whole_history(adopted, &gaps, log.held_covered));
+    if !gaps.is_empty() {
+        return Ok(whole());
+    }
+    let confirms = if image_stands_here(image, log) {
+        tail_folds_past(image, &tail, log)
+    } else {
+        None
+    };
+    let Some(confirms) = confirms else {
+        return Ok(whole());
+    };
+    let Some(SettledTail {
+        judged,
+        states,
+        merged,
+        writers,
+        uncounted,
+        pairs,
+        counted_pairs,
+        ancestry,
+        confirms,
+        issues,
+        projected,
+        fold,
+        final_merged: Some(final_merged),
+    }) = settle_tail(image, &tail, log, confirms)?
+    else {
+        return Ok(whole());
+    };
+    // The new frontier: each old frontier row and tail row no tail row
+    // names. No covered row names a tail row.
+    let named: BTreeSet<_> = tail
+        .values()
+        .flat_map(|entry| entry.parent_hashes.iter().copied())
+        .collect();
+    let frontier: BTreeSet<_> = image
+        .frontier
+        .iter()
+        .chain(tail.keys())
+        .filter(|hash| !named.contains(*hash))
+        .copied()
+        .collect();
+    let per_parent = frontier
+        .iter()
+        .map(|hash| {
+            let state = if tail.contains_key(hash) {
+                states.get(hash).cloned()
+            } else {
+                image.per_parent.get(hash).cloned().flatten()
+            };
+            (*hash, state)
+        })
+        .collect();
+    let frontier_ancestry = frontier
+        .iter()
+        .filter_map(|hash| Some((*hash, *ancestry.get(hash)?)))
+        .collect();
+    let mut missing_parents = image.safety.missing_parents.clone();
+    missing_parents.extend(
+        judged
+            .values()
+            .flat_map(|entry| entry.parent_hashes.iter())
+            .filter(|parent| !judged.contains_key(*parent) && !image.rows.contains_key(*parent))
+            .copied(),
+    );
+    let mut bound_keys = image.safety.bound_keys.clone();
+    for state in states.values() {
+        super::fold_resume::add_bound_keys(&mut bound_keys, state);
+    }
+    // The approvals a covered revocation could expire on a reader's own
+    // clock: the stale-roster window reads only rows carried whole.
+    let read_whole: Vec<&AuthorityLogEntry> = projected.values().chain(judged.values()).collect();
+    let stale_approvals = super::stale_roster::stale_roster_subject_approvals(&read_whole, &fold);
+    let safety = super::checkpoint_image::CheckpointSafety {
+        issuers: image.safety.issuers.clone(),
+        uncounted,
+        pairs,
+        counted_pairs,
+        frontier_ancestry,
+        revoke_facts: image.safety.revoke_facts.clone(),
+        retired_keys: image.safety.retired_keys.clone(),
+        closed_handoffs: image.safety.closed_handoffs.clone(),
+        unsettled: image.safety.unsettled,
+        issues,
+        missing_parents,
+        marks: image.safety.marks.clone(),
+        revocations: final_merged.actor_revocation_hashes,
+        writers,
+        bound_keys,
+        confirm_ids: confirms.0,
+        confirm_nonces: confirms.1,
+        nonce_provenance: merged.critical_write_confirm_nonce_provenance.clone(),
+    };
+    Ok(AdoptedImageFold::Captured {
+        fold: Box::new(ImageFold {
+            per_parent,
+            merged,
+            fold,
+            safety,
+        }),
+        stale_approvals,
+    })
+}
+
+/// The request only the whole history closes: `gaps`, and every covered row
+/// not held here, since only the whole history folds past such a row.
+fn whole_history(
+    adopted: &VerifiedAuthorityCheckpoint,
+    gaps: &BTreeSet<AuthorityEntryHash>,
+    held_covered: &BTreeSet<AuthorityEntryHash>,
+) -> AuthorityHistoryRequest {
+    let image = adopted.image();
+    let mut missing = gaps.clone();
+    missing.extend(
+        image
+            .covered
+            .iter()
+            .filter(|hash| !held_covered.contains(*hash)),
+    );
+    AuthorityHistoryRequest {
+        vault_id: Some(image.vault_id),
+        checkpoint: Some(adopted.id()),
+        missing,
+    }
+}
+
+/// The tail's seeded fold past the image, settled and projected: what this
+/// install's fold past the image and a later image built past it share.
+struct SettledTail {
+    judged: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: BTreeMap<AuthorityEntryHash, FoldState>,
+    /// The image's merged state with every tail state merged in.
+    merged: FoldState,
+    writers: BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
+    uncounted: BTreeSet<AuthorityEntryHash>,
+    pairs: u64,
+    counted_pairs: u64,
+    /// The ancestors and counted ancestors of each image frontier row and
+    /// each judged tail row.
+    ancestry: BTreeMap<AuthorityEntryHash, (u64, u64)>,
+    /// The confirms in the log once the tail joined them.
+    confirms: ConfirmKeys,
+    /// The issues before the projection.
+    issues: Vec<AuthorityFoldIssue>,
+    /// The covered rows a fold past the image reads whole, from their
+    /// carried bodies.
+    projected: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    /// The projected once fold, before any install's stale window.
+    fold: AuthorityFold,
+    /// The projection's final merge.
+    final_merged: Option<FoldState>,
+}
+
+/// The tail's fold on the image's frontier states, merged into the image's
+/// fold and projected, with `confirms` the confirms once the tail joined
+/// them ([`tail_folds_past`]); None wherever only the whole history folds
+/// the tail. A carried body that does not decode is corruption.
+fn settle_tail(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    log: AdoptedTail<'_>,
+    confirms: ConfirmKeys,
+) -> Result<Option<SettledTail>> {
+    let mut issues = image.safety.issues.clone();
+    let judged = judged_tail(image, tail, &mut issues);
+    let uncounted: BTreeSet<_> = image
+        .safety
+        .uncounted
+        .iter()
+        .copied()
+        .chain(
+            judged
+                .iter()
+                .filter(|(_, entry)| super::log_budget::is_uncounted(entry, &image.safety.issuers))
+                .map(|(hash, _)| *hash),
+        )
+        .collect();
+    let (pairs, counted_pairs, ancestry) = tail_pairs(image, &judged, &uncounted);
+    let memory_floor_bytes = super::log_budget::fold_memory_floor(Some(&log.observations.policy));
+    if super::log_budget::fold_projected_bytes(image.covered.len() + judged.len(), pairs)
+        > memory_floor_bytes
+    {
+        return Ok(None);
+    }
+    // Each tail row folds on its parents' states as the scheduler folds it,
+    // the frontier's kept states seeding it.
+    let (consent_arm, _) = super::fold_engine::own_log_inputs(log.posture, None);
+    let no_handoff_line = BTreeSet::new();
+    let context = FoldContext {
+        sequence_floors: Some(&log.observations.sequence_floors),
+        floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
+        install_held: None,
+        entry_ancestors: None,
+        peer_consent_roots: log.peer_consent_roots,
+        consent_arm,
+        hosted: log.posture == crate::HostingPrivacyPosture::Hosted,
+        machine_standing: &super::machine_standing::every_chain,
+        pre_handoff_entries: Some(&no_handoff_line),
+        memory_floor_bytes,
+        pin: log.pin,
+    };
+    let seed: BTreeMap<_, _> = image
+        .per_parent
+        .iter()
+        .filter_map(|(hash, state)| Some((*hash, state.clone()?)))
+        .collect();
+    let mut states =
+        super::fold_schedule::fold_entry_states_seeded(&judged, &seed, context, &mut issues);
+    states.retain(|hash, _| judged.contains_key(hash));
+    if states
+        .values()
+        .any(|state| state.federation_pacts != image.aggregate.merged.federation_pacts)
+    {
+        return Ok(None);
+    }
+    let mut merged = image.aggregate.merged.clone();
+    let mut writers = image.safety.writers.clone();
+    for state in states.values() {
+        merged = merge_states(&merged, state);
+        super::fold_resume::add_writers(&mut writers, state);
+    }
+    let mut valid_entries = image.fold().valid_entries.clone();
+    valid_entries.extend(states.keys().copied());
+    // The rows a fold past the image reads whole: carried bodies of the
+    // projected kinds alone, whatever else an image carries.
+    let mut projected = BTreeMap::new();
+    for (hash, row) in &image.rows {
+        if let Some(body) = &row.body {
+            let entry = decode_authority_log_entry_body(body)?;
+            if super::fold_resume::is_projected(&entry.op) {
+                projected.insert(*hash, entry);
+            }
+        }
+    }
+    let rows = Resumed {
+        marks: &image.safety.marks,
+        fold: image.fold(),
+        revocations: &image.safety.revocations,
+        bound_keys: &image.safety.bound_keys,
+        chain: states.iter().map(|(hash, state)| (*hash, state)).collect(),
+        writers: &writers,
+        missed: Cell::new(false),
+    };
+    // The projection reads rows only for world-key envelopes, and no tail
+    // row is a world-key record.
+    let (fold, final_merged) = super::fold_project::project_once(
+        Settled {
+            merged: Some(merged.clone()),
+            valid_entries,
+            by_hash: &projected,
+            revoke_facts: &image.safety.revoke_facts,
+            retired_keys: image.safety.retired_keys.clone(),
+            closed_handoffs: image.safety.closed_handoffs.clone(),
+            unsettled: image.safety.unsettled,
+            counted_ancestor_pairs: counted_pairs,
+            issues: issues.clone(),
+        },
+        &rows,
+        context,
+    );
+    if rows.missed.get()
+        || fold.machines != image.fold().machines
+        || fold.worlds != image.fold().worlds
+        || fold.refused_world_edits != image.fold().refused_world_edits
+        || approves_on_revoked_key(&fold, &judged, &states)
+    {
+        return Ok(None);
+    }
+    Ok(Some(SettledTail {
+        judged,
+        states,
+        merged,
+        writers,
+        uncounted,
+        pairs,
+        counted_pairs,
+        ancestry,
+        confirms,
+        issues,
+        projected,
+        fold,
+        final_merged,
+    }))
+}
+
 /// Whether the image's fold is the one this install would reach: built under
 /// this install's pin (identity canon leaves no recount of world keys under
 /// another), its posture and its admitted peers' consent roots.
@@ -290,17 +518,18 @@ fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<'_>) -> boo
 /// the frontier is a late fork), a main-log op that leaves every earlier
 /// row's fate as it was, no row a sequence floor refuses, none signed by a
 /// retired key, none a covered row names, and no withdrawal on a frontier
-/// row the image holds rejected (only older states could judge it).
+/// row the image holds rejected (only older states could judge it). Some
+/// with the log's confirms once the tail's joined them; None otherwise.
 fn tail_folds_past(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
-) -> bool {
+) -> Option<ConfirmKeys> {
     let mut confirms = (
         image.safety.confirm_ids.clone(),
         image.safety.confirm_nonces.clone(),
     );
-    tail.iter().all(|(hash, entry)| {
+    let folds_past = tail.iter().all(|(hash, entry)| {
         let parents_stand = entry.parent_hashes.iter().all(|parent| {
             match (
                 image.rows.contains_key(parent),
@@ -324,7 +553,8 @@ fn tail_folds_past(
                 .get(hash)
                 .is_none_or(|floor| entry.seq >= *floor)
             && super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
-    })
+    });
+    folds_past.then_some(confirms)
 }
 
 /// The tail rows a fold judges, as `fold_engine::judged_entries` judges them:
@@ -371,12 +601,13 @@ fn judged_tail(
 /// `ancestor_index::entry_ancestor_index` counts them: the image's, and each
 /// judged tail row's ancestors over the image's rows and the tail. A row on
 /// one parent with known counts adds that parent's ancestry and the parent;
-/// any other row walks its ancestry.
+/// any other row walks its ancestry. With each image frontier row's and
+/// each judged tail row's ancestors and counted ancestors.
 fn tail_pairs(
     image: &AuthorityCheckpointV2,
     judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     uncounted: &BTreeSet<AuthorityEntryHash>,
-) -> (u64, u64) {
+) -> (u64, u64, BTreeMap<AuthorityEntryHash, (u64, u64)>) {
     let parents_of = |hash: &AuthorityEntryHash| {
         judged
             .get(hash)
@@ -408,7 +639,7 @@ fn tail_pairs(
         pairs = pairs.saturating_add(ancestors);
         counted_pairs = counted_pairs.saturating_add(counted(&hash) * counted_ancestors);
     }
-    (pairs, counted_pairs)
+    (pairs, counted_pairs, known)
 }
 
 /// `rows`' hashes, each after every parent of it among `rows`, ties by

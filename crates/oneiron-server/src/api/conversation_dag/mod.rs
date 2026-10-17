@@ -150,6 +150,14 @@ fn append_input(
         text: core_text_fields(req.text.as_deref(), &body),
         session: parse_optional(req.session.as_deref(), "session")?,
         actor: req.actor.parse(auth)?,
+        thread_audience: req
+            .thread_audience
+            .map(|ids| {
+                ids.iter()
+                    .map(|id| parse_entity_id_param(id, "thread_audience"))
+                    .collect::<Result<std::collections::BTreeSet<_>, _>>()
+            })
+            .transpose()?,
     })
 }
 
@@ -221,6 +229,45 @@ fn append_row(conversation: EntityId, req: DagAppendRequest) -> DagRecordAppendI
             start: quote.start,
             end: quote.end,
         }),
+        thread_audience: req.thread_audience,
+    }
+}
+
+/// `ids` less those `auth`'s own read withholds: the DAG ledger is read raw,
+/// so a private thread's records (FIX 2951) leave here, as hex.
+fn readable_ids(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    ids: Vec<EntityId>,
+) -> Result<Vec<String>, EnvelopedApiError> {
+    let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+    let mut kept = Vec::with_capacity(ids.len());
+    for id in ids {
+        if read
+            .is_entity_readable(&id)
+            .map_err(|e| core_engine_error("record access failed", e))?
+        {
+            kept.push(id.to_hex());
+        }
+    }
+    Ok(kept)
+}
+
+/// Refuses a `record` `auth`'s own read withholds as the missing record it
+/// reads as (FIX 2951).
+fn require_readable_record(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    record: EntityId,
+) -> Result<(), EnvelopedApiError> {
+    let read = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+    if read
+        .is_entity_readable(&record)
+        .map_err(|e| core_engine_error("record access failed", e))?
+    {
+        Ok(())
+    } else {
+        Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into())
     }
 }
 
@@ -255,11 +302,13 @@ pub(crate) async fn get_core_dag(
         )
         .map_err(|e| core_engine_error("DAG read failed", e))?;
     let thread_meta = if req.with.as_deref() == Some("thread_meta") {
+        // Each trunk's line counts only the replies this caller reads.
+        let read = crate::api::scoped_read_for_core_auth(&server.vault, &auth)?;
         let mut meta = std::collections::BTreeMap::new();
         for id in &page.main_line {
             let value = server
                 .vault
-                .thread_meta(*id)
+                .thread_meta_under(&read, *id)
                 .map_err(|e| core_engine_error("thread metadata read failed", e))?
                 .map(|row| DagThreadMetaResponse {
                     root: row.root.to_hex(),
@@ -334,7 +383,7 @@ pub(crate) async fn resolve_core_scope(
         .resolve_dag_scope(&scope)
         .map_err(|e| core_engine_error("scope read failed", e))?;
     Ok(Json(DagRecordsResponse {
-        records: ids(resolved.records),
+        records: readable_ids(&server, &auth, resolved.records)?,
     }))
 }
 
@@ -428,9 +477,18 @@ pub(crate) async fn mint_core_scope_summary(
     auth.require(CoreScope::Write)?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let req = json_payload(payload)?;
+    let scope = req.scope.parse(conversation)?;
+    // A summary is queued only over records this caller reads (FIX 2951).
+    let resolved = server
+        .vault
+        .resolve_dag_scope(&scope)
+        .map_err(|e| core_engine_error("scope read failed", e))?;
+    for record in &resolved.records {
+        require_readable_record(&server, &auth, *record)?;
+    }
     let request = ScopeSummaryRequest {
         target: ScopeSummaryTarget::Scope {
-            scope: req.scope.parse(conversation)?,
+            scope,
             land_on: parse_optional(req.land_on.as_deref(), "land_on")?,
             as_record: req.as_record,
         },
@@ -455,7 +513,7 @@ pub(crate) async fn get_core_summary_covers(
         .scope_summary_covers(&summary)
         .map_err(|e| core_engine_error("summary covers read failed", e))?;
     Ok(Json(DagCoversResponse {
-        covers: ids(covers),
+        covers: readable_ids(&server, &auth, covers)?,
     }))
 }
 
@@ -475,7 +533,7 @@ pub(crate) async fn drill_core_header(
         .drill(&claim)
         .map_err(|e| core_engine_error("header drill failed", e))?;
     Ok(Json(DagRecordsResponse {
-        records: ids(records),
+        records: readable_ids(&server, &auth, records)?,
     }))
 }
 
@@ -495,7 +553,9 @@ pub(crate) async fn reply_in_thread(
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
     let req = json_payload(payload)?;
-    if req.advance || req.parent.is_some() || req.reply_to.is_some() {
+    // The engine picks the thread parent and keeps HEAD; an explicit
+    // `reply_to` is the reply target, which may be a trunk message (OF-460).
+    if req.advance || req.parent.is_some() {
         return Err(ApiError::bad_request(
             "thread replies select their own parent and do not advance HEAD",
             None,
@@ -526,17 +586,17 @@ pub(crate) async fn get_thread(
     auth.require_unrestricted_record_scope()?;
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
-    let thread = server
+    // The raw ledger is read under the caller's own read: a private thread
+    // (FIX 2951) it is off is no thread, and a branch it is off no record.
+    require_readable_record(&server, &auth, record)?;
+    let read = crate::api::scoped_read_for_core_auth(&server.vault, &auth)?;
+    let (thread, roots) = server
         .vault
-        .thread(record)
+        .thread_under(&read, record)
         .map_err(|e| core_engine_error("thread read failed", e))?;
     if thread.conversation != conversation {
         return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
     }
-    let roots = server
-        .vault
-        .thread_roots(record)
-        .map_err(|e| core_engine_error("thread roots read failed", e))?;
     Ok(Json(DagThreadResponse {
         roots: ids(roots),
         root: thread.root.map(|id| id.to_hex()),
@@ -559,12 +619,18 @@ pub(crate) async fn summarize_thread(
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
     let req = json_payload(payload)?;
+    require_readable_record(&server, &auth, record)?;
     let thread = server
         .vault
         .thread(record)
         .map_err(|e| core_engine_error("thread read failed", e))?;
     if thread.conversation != conversation {
         return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
+    }
+    // The summary covers the thread the door selects: one this caller is
+    // off (FIX 2951) is no thread to summarize.
+    if let Some(root) = thread.root {
+        require_readable_record(&server, &auth, root)?;
     }
     let request = ScopeSummaryRequest {
         target: ScopeSummaryTarget::Thread { trunk: record },
@@ -594,7 +660,7 @@ pub(crate) async fn get_canonical(
         })
         .map_err(|e| core_engine_error("canonical read failed", e))?;
     Ok(Json(DagRecordsResponse {
-        records: ids(resolved.records),
+        records: readable_ids(&server, &auth, resolved.records)?,
     }))
 }
 

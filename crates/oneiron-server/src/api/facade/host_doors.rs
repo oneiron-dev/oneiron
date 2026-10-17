@@ -31,7 +31,9 @@ use oneiron::{
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::receipt::LensActivationReceipt;
 use oneiron::task_verb::sdk::{
-    PackSetupAnswerRequest, PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
+    ChannelSubscriptionRequest, ChannelSubscriptionRevokeRequest, ChannelSubscriptionRevoked,
+    ChannelSubscriptions, ChannelSubscriptionsRequest, PackRemoveRequest, PackSetupAnswerRequest,
+    PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
 use crate::api::ai::{VoiceRefusal, bind_voice};
@@ -45,6 +47,8 @@ pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
+// The owner's courtesy delete doors (OF-273) too.
+pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
 // The weave lens's human doors, likewise.
@@ -101,6 +105,75 @@ pub(crate) async fn vault_packs_put(
     })
     .await
     .map_err(|_| internal("vault.packs.put"))?
+}
+
+/// `vault.packs.remove`: the owner removes an installed pack, under the
+/// proof `/v1/owner/packs/remove` takes. Answers the removed receipt.
+pub(crate) async fn vault_packs_remove(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackRemoveRequest,
+) -> MemoryResult<oneiron::skill_hub::pack_catalog::PackInstallReceipt> {
+    let owner = owner_proof(auth, server, "vault.packs.remove")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::remove_pack_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.packs.remove"))?
+}
+
+/// `vault.connectors.subscriptions.put`: the owner subscribes an agent to
+/// the messages a built-in channel's pack routes to it (OF-519), as
+/// `POST /v1/owner/connectors/subscriptions` does.
+pub(crate) async fn vault_connectors_subscriptions_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<oneiron::connector_key::ChannelMessageSubscription> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.put")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::subscribe_channel_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.put"))?
+}
+
+/// `vault.connectors.subscriptions.list`: an agent's connector event
+/// subscriptions, standing and revoked, for the owner.
+pub(crate) async fn vault_connectors_subscriptions_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<ChannelSubscriptions> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.list")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::channel_subscriptions_as_owner(server.vault(), &owner, &input)
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.list"))?
+}
+
+/// `vault.connectors.subscriptions.revoke`: the owner stops a subscription;
+/// its key stays.
+pub(crate) async fn vault_connectors_subscriptions_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<ChannelSubscriptionRevoked> {
+    let owner = owner_proof(auth, server, "vault.connectors.subscriptions.revoke")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        oneiron::task_verb::sdk::revoke_channel_subscription_as_owner(
+            server.vault(),
+            &owner,
+            &input,
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.connectors.subscriptions.revoke"))?
 }
 
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
@@ -420,23 +493,25 @@ pub(crate) async fn ai_video_cancel(
 /// `self.memory.diary.query`: the caller reads an agent's diary, stating a
 /// reason the agent sees in its read log (`Memory::read_agent_diary`). The
 /// caller's `diary.read` Grants decide what it gets. A person reads with
-/// their authentication, so the vault owner's own credential carries the
-/// proof `/v1/owner` takes from the request; any other caller passes none
-/// and the gate decides: an agent or system reads as itself, and a person
-/// without the proof is refused.
+/// their authentication: the vault owner's own credential carries the proof
+/// `/v1/owner` takes from the request, and any other verified human carries
+/// their own person proof ([`super::shared_act_doors::person`], OF-490), so
+/// their own Grant decides. Any other caller passes none and the engine door
+/// decides: an agent or system reads as itself, and a person without a proof
+/// is refused.
 pub(crate) async fn self_memory_diary_query(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
 ) -> MemoryResult<oneiron::task_verb::sdk::DiaryQueryOutcome> {
-    let owner = crate::api::owner_routes::owner(auth, server).ok();
     let (actor, class) = diary_reader(auth)?;
     let server = Arc::clone(server);
     let auth = auth.clone();
     tokio::task::spawn_blocking(move || {
+        let proof = super::shared_act_doors::person(&server, &auth, "self.memory.diary.query").ok();
         let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
             .at(auth.locality());
-        oneiron::task_verb::sdk::diary_query_as(&memory, owner.as_ref(), input)
+        oneiron::task_verb::sdk::diary_query_as(&memory, proof.as_ref(), input)
     })
     .await
     .map_err(|_| internal("self.memory.diary.query"))?
@@ -597,6 +672,10 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
         "vault.packs.put"
+        | "vault.packs.remove"
+        | "vault.connectors.subscriptions.put"
+        | "vault.connectors.subscriptions.list"
+        | "vault.connectors.subscriptions.revoke"
         | "vault.authority.audit"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
@@ -613,6 +692,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.list"
         | "vault.legal_holds.log"
         | "vault.legal_holds.lift_and_erase"
+        | "vault.courtesy_delete.send"
+        | "vault.courtesy_delete.sent"
+        | "vault.courtesy_delete.incoming"
+        | "vault.courtesy_delete.answer"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"

@@ -965,9 +965,10 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
 /// same at `/v1/owner/settings/learning`.
 pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow::Result<()> {
     use crate::cli::{LearningSettingModeArg, LearningSettingsCommand};
+    use oneiron::learning_setting_choice::SpawnChoice;
     use oneiron::learning_setting_doors::{
-        self as doors, LearningSettingClear, LearningSettingMode, LearningSettingPut,
-        LearningSettingsRequest,
+        self as doors, LearningChoiceValue, LearningSettingClear, LearningSettingMode,
+        LearningSettingPut, LearningSettingsRequest,
     };
     let mode = |mode: LearningSettingModeArg| match mode {
         LearningSettingModeArg::Seed => LearningSettingMode::Seed,
@@ -987,25 +988,58 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
             &owner,
             &LearningSettingsRequest { key: args.key },
         )?,
-        LearningSettingsCommand::Put(args) => doors::put_learning_setting_as_owner(
-            &vault,
-            &owner,
-            LearningSettingPut {
-                key: args.key,
-                mode: mode(args.mode),
-                value: args.value,
-                weight_runs: args.weight_runs,
-                why: args.why,
-                project: args.project,
-                task_type: args.task_type,
-            },
-        )?,
+        LearningSettingsCommand::Put(args) => {
+            let raw = args.value.trim();
+            let (value, choice) = match SpawnChoice::from_key(&args.key) {
+                Some(SpawnChoice::Model) => {
+                    (None, Some(LearningChoiceValue::Model(raw.to_owned())))
+                }
+                Some(SpawnChoice::Pattern) => {
+                    (None, Some(LearningChoiceValue::Pattern(raw.to_owned())))
+                }
+                Some(SpawnChoice::Width) => (
+                    None,
+                    Some(LearningChoiceValue::Width(raw.parse().map_err(|_| {
+                        anyhow::anyhow!("a width is a whole count of agents")
+                    })?)),
+                ),
+                Some(SpawnChoice::Budget) => (
+                    None,
+                    Some(LearningChoiceValue::Budget(raw.parse().map_err(|_| {
+                        anyhow::anyhow!("a budget is a whole count of lease units")
+                    })?)),
+                ),
+                None => (
+                    Some(
+                        raw.parse::<f64>()
+                            .map_err(|_| anyhow::anyhow!("a catalog knob's value is a number"))?,
+                    ),
+                    None,
+                ),
+            };
+            doors::put_learning_setting_as_owner(
+                &vault,
+                &owner,
+                LearningSettingPut {
+                    key: args.key,
+                    mode: mode(args.mode),
+                    value,
+                    choice,
+                    weight_runs: args.weight_runs,
+                    why: args.why,
+                    goal: args.goal,
+                    project: args.project,
+                    task_type: args.task_type,
+                },
+            )?
+        }
         LearningSettingsCommand::Clear(args) => doors::clear_learning_setting_as_owner(
             &vault,
             &owner,
             LearningSettingClear {
                 key: args.key,
                 mode: mode(args.mode),
+                goal: args.goal,
                 project: args.project,
                 task_type: args.task_type,
             },

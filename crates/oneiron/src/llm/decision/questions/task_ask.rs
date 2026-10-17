@@ -111,6 +111,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 images: Vec::new(),
                 think_row: None,
                 person_row: None,
+                rule: None,
             },
             human_ask: None,
         },

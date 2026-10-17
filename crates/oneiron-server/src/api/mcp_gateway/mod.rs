@@ -1,3 +1,4 @@
+mod actions;
 mod actor_dispatch;
 mod admission;
 mod board_observations;

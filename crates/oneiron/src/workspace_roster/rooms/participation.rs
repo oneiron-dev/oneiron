@@ -26,8 +26,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::super::join_consent::{
-    JoinDecision, JoinRequest, JoinSubject, home_room_seats_in_txn, person_of_actor_in_txn,
-    require_join_for_branch_in_txn,
+    JoinDecision, JoinRequest, JoinSubject, RoomJoinHold, home_room_seats_in_txn,
+    person_of_actor_in_txn, require_join_for_branch_in_txn,
 };
 use super::super::join_door::rooms_join_in_txn;
 use super::super::join_receipt::JoinReceiptRef;
@@ -280,11 +280,12 @@ pub(super) fn participant_in_txn(
 }
 
 /// The one rule for which Ready receipt covers a thread (OF-529). A thread
-/// takes the receipt filed for it, or the one filed for its room: no thread
-/// is narrower than its room in existing code (no private thread is stored),
-/// so a room's receipt covers each of its threads. A thread's receipt never
-/// covers the room or another thread. Each receipt is re-proved live by
-/// OF-531's exact-key check.
+/// takes the receipt filed for it, or the one filed for its room: a room's
+/// receipt covers each thread that reads as its room does. A private thread
+/// (FIX 2951) is the exception: a subject off its audience stands on no
+/// receipt there, the room's or the thread's, and nothing else is checked.
+/// A thread's receipt never covers the room or another thread. Each receipt
+/// is re-proved live by OF-531's exact-key check.
 pub(crate) fn require_join_covering_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -293,14 +294,44 @@ pub(crate) fn require_join_covering_in_txn(
     subject: &JoinSubject,
     scope: Option<&SpendScopeId>,
 ) -> Result<JoinReceiptRef> {
-    if branch.is_some()
-        && let Some(receipt) = joined(require_join_for_branch_in_txn(
+    if let Some(thread) = branch {
+        // A root not stored yet is the one this write births, whose
+        // audience its own door checks; an erased one is refused there.
+        match super::audience::thread_audience_allows_in(vault, txn, room, thread, subject.id()) {
+            Ok(true) | Err(Error::EntityNotFound) => {}
+            Ok(false) => {
+                return Err(lacks(
+                    "the subject has no Ready join in this room or thread",
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+        if let Some(receipt) = joined(require_join_for_branch_in_txn(
             vault, txn, room, branch, subject, scope,
-        ))?
-    {
-        return Ok(receipt);
+        ))? {
+            return Ok(receipt);
+        }
     }
     require_join_for_branch_in_txn(vault, txn, room, None, subject, scope)
+}
+
+/// Refuses `actor` off the audience of `room`'s private thread `branch`
+/// (FIX 2951), before any seat, receipt or host standing is read: none of
+/// them stands in for it. A thread hidden from `actor` refuses as an
+/// unknown one does.
+pub(super) fn require_thread_audience_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    branch: Option<EntityId>,
+    actor: EntityId,
+) -> Result<()> {
+    match branch {
+        Some(thread) => {
+            super::audience::require_thread_audience_in(vault, txn, room, thread, actor)
+        }
+        None => Ok(()),
+    }
 }
 
 /// A receipt check's answer, with "not joined" as `None`.
@@ -486,6 +517,12 @@ pub(crate) fn admit_participation_in_txn(
     scope: Option<&SpendScopeId>,
     now: u64,
 ) -> Result<Admitted> {
+    // A private thread is written by its audience alone (FIX 2951), checked
+    // before any standing or join. The write that births its root is
+    // checked where its audience is stamped.
+    if !matches!(cause, JoinCause::Wrote { turn } if Some(turn) == branch) {
+        require_thread_audience_in(vault, txn, room, branch, actor.entity_ref())?;
+    }
     let mut admitted = Admitted {
         room,
         branch,
@@ -593,11 +630,14 @@ fn write_join_in_txn(
                 .as_deref()
                 .ok_or(Error::CorruptedIndex("a Ready join has no receipt"))?,
         ),
-        JoinDecision::Hold { needs } => Err(Error::InvalidConfig(format!(
-            "the write waits on its room join, which holds on {}; vault.rooms.join with intent_key {} files it for those parties",
-            json(needs)?,
-            request.intent_key
-        ))),
+        JoinDecision::Hold { needs } => Err(Error::Record(RecordError::RoomJoinHeld(Box::new(
+            RoomJoinHold {
+                room,
+                person,
+                intent_key: request.intent_key.clone(),
+                needs: needs.clone(),
+            },
+        )))),
         JoinDecision::Refuse(refusal) => Err(Error::InvalidConfig(format!(
             "the write's room join is refused: {}",
             json(refusal)?
@@ -688,7 +728,7 @@ pub(super) fn admit_speech_in(
             if super::hosting::eligible_room_speaker_in(vault, txn, actor)? {
                 Ok(())
             } else {
-                Err(Error::Record(RecordError::ConversationDenied))
+                Err(Error::Record(RecordError::RoomSpeakerIneligible { actor }))
             }
         }
         _ => super::hosting::admit_room_speech_in(vault, txn, room, actor),
@@ -814,8 +854,9 @@ pub(in crate::workspace_roster) fn require_reader(
 /// it as [`require_reader`] reads the room, and an agent from its seat or a
 /// Ready receipt for that thread or for the room. A thread's receipt opens
 /// that thread's read alone, never the room's or another thread's. The
-/// room's host reads each of its threads, as it reads the room. Returns the
-/// room as its project vouches for it.
+/// room's host reads each of its threads, as it reads the room, except a
+/// private one (FIX 2951), which only its audience reads. Returns the room
+/// as its project vouches for it.
 pub(super) fn require_thread_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -824,6 +865,7 @@ pub(super) fn require_thread_reader(
     actor: EntityId,
 ) -> Result<ProjectRoom> {
     let record = room_in(vault, txn, room)?;
+    require_thread_audience_in(vault, txn, room, Some(thread), actor)?;
     let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
     let reads = match subject {
         Some(JoinSubject::Agent(agent)) => {
@@ -915,6 +957,9 @@ impl Claimant {
         actor: EntityId,
     ) -> Result<Self> {
         let branch = turn_root_in_txn(vault, txn, turn)?;
+        // A private thread's turn is claimed from its audience alone (FIX
+        // 2951), whatever seat or receipt the claimant holds.
+        require_thread_audience_in(vault, txn, room, branch, actor)?;
         let now = vault.store.clock.now_recorded_at();
         let agent = match participant_in_txn(vault, txn, actor, now)? {
             Some(JoinSubject::Agent(agent)) => Some(

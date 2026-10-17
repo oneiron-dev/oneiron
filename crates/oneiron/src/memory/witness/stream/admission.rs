@@ -41,8 +41,37 @@ impl Memory<'_> {
         mode: Option<MessageWriteMode>,
         at: u64,
     ) -> MessageStreamResult<MessageStreamHandle> {
+        self.begin_message_stream_open(turn, mode, at, None)
+    }
+    /// Starts a Retry's new reply: a new companion MESSAGE that answers
+    /// `source`, an earlier companion reply by the same writer in the same
+    /// conversation, again. Its terminal transaction writes the
+    /// `regenerates` edge from the new MESSAGE to `source`; the old reply
+    /// stays as it is.
+    pub fn begin_message_regeneration(
+        &self,
+        turn: &WitnessTurn,
+        source: EntityId,
+        mode: Option<MessageWriteMode>,
+    ) -> MessageStreamResult<MessageStreamHandle> {
+        self.begin_message_stream_open(turn, mode, now_ms(), Some(source))
+    }
+    fn begin_message_stream_open(
+        &self,
+        turn: &WitnessTurn,
+        mode: Option<MessageWriteMode>,
+        at: u64,
+        regenerates: Option<EntityId>,
+    ) -> MessageStreamResult<MessageStreamHandle> {
         if turn.messages.len() != 1 {
             return Err(MessageStreamError::InvalidRequest("one message required"));
+        }
+        // A stream keeps no audience to stamp at its first checkpoint, so a
+        // private thread opens with a witnessed turn (FIX 2951).
+        if turn.thread_audience.is_some() {
+            return Err(MessageStreamError::InvalidRequest(
+                "a private thread opens with a witnessed turn, not a stream",
+            ));
         }
         let message = &turn.messages[0];
         if message.content.len() > MAX_MESSAGE_STREAM_BYTES {
@@ -86,6 +115,7 @@ impl Memory<'_> {
             mode,
             idle_timeout_ms: policy.idle_timeout_ms,
             continuation: false,
+            regenerates,
             saved: String::new(),
         };
         let handle = MessageStreamHandle {
@@ -181,6 +211,7 @@ impl Memory<'_> {
                             "system stream requires an existing turn",
                         ));
                     }
+                    validate_regeneration(self.vault, txn, &state.seed)?;
                     // Supplied initial content is the first checkpoint.
                     storage::ACTIVE.put(
                         &self.vault.store,
@@ -363,6 +394,7 @@ impl Memory<'_> {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 quote: None,
+                thread_audience: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author,
@@ -499,6 +531,11 @@ pub(super) fn authorize(
             }
         }
     }
+    // A private thread's TURN takes words from its audience alone (FIX
+    // 2951); a thread hidden from the writer reads as a missing turn.
+    if !crate::workspace_roster::record_thread_admits_in(vault, txn, seed.turn, seed.actor)? {
+        return Err(Error::EntityNotFound.into());
+    }
     let message = seed.message(text.to_owned());
     let envelope = witness_message_envelope(&message);
     let body = envelope.encode_body()?;
@@ -511,6 +548,46 @@ pub(super) fn authorize(
         &body,
         &policy,
     )?;
+    Ok(())
+}
+/// The reply a Retry's seed answers again, checked at its opening and again
+/// in its terminal transaction: a live companion MESSAGE by the same writer
+/// in the same conversation, other than the new one. A continuation answers
+/// nothing again.
+pub(super) fn validate_regeneration(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &Seed,
+) -> MessageStreamResult<()> {
+    let Some(source) = seed.regenerates else {
+        return Ok(());
+    };
+    let bad = || MessageStreamError::InvalidRequest("invalid regeneration source");
+    if seed.continuation
+        || source == seed.message_id
+        || seed.author != crate::memory::WitnessAuthor::Companion
+    {
+        return Err(bad());
+    }
+    let body = committed_body(vault, txn, &source)?.ok_or_else(bad)?;
+    if body.get("author").and_then(serde_json::Value::as_str)
+        != Some(crate::memory::WitnessAuthor::Companion.as_str())
+    {
+        return Err(bad());
+    }
+    for (kind, target) in [
+        (EdgeKind::AuthoredBy, seed.actor),
+        (EdgeKind::BelongsTo, seed.conversation),
+    ] {
+        if crate::memory::sole_edge_target(&vault.store, txn, &source, kind, "message")?
+            != Some(target)
+        {
+            return Err(bad());
+        }
+    }
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &source)?.is_live() {
+        return Err(bad());
+    }
     Ok(())
 }
 /// A MESSAGE's stored body as JSON, its text resolved from its document;
