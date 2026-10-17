@@ -61,6 +61,7 @@ mod protocol;
 mod retrieval;
 mod safeguard;
 mod session;
+mod speakable;
 mod stream;
 pub use stream::{VoiceStreamConfig, VoiceStreamFailure, drive_voice_stream};
 pub mod soniox;

@@ -20,7 +20,7 @@ use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures_util::stream::FuturesUnordered;
 use oneiron::llm::{BudgetGuard, LlmBackend, LlmStreamEvent, VoiceChunkPolicy, VoiceChunker};
@@ -36,10 +36,6 @@ use super::{HostError, SessionState, VoiceHost, VoiceOutputs};
 /// How often a quiet brain's buffered words are held against the
 /// cadence's longest wait.
 pub(super) const CHUNK_TICK: Duration = Duration::from_millis(50);
-
-/// How long held sentences wait for the media queue to take one before the
-/// generation stops: a queue that takes nothing for this long is stuck.
-const HOLD_LIMIT: Duration = Duration::from_secs(30);
 
 /// One thing the owner's brain hands back, in the order it made them.
 #[derive(Debug, Clone, PartialEq)]
@@ -112,8 +108,6 @@ pub(super) struct Speech {
     drained: bool,
     /// Sentences waiting, in order, for room in the media queue.
     held: VecDeque<String>,
-    /// Since when the held sentences have waited for the queue to take one.
-    held_since: Option<Instant>,
     /// The brain's Done, held behind those sentences, with its taint mark.
     done_held: Option<bool>,
 }
@@ -183,7 +177,6 @@ impl VoiceHost {
             end_sent: false,
             drained: false,
             held: VecDeque::new(),
-            held_since: None,
             done_held: None,
         });
         true
@@ -290,9 +283,10 @@ impl VoiceHost {
         Ok(())
     }
 
-    /// Sends held sentences while the media queue has room; a hold past
-    /// [`HOLD_LIMIT`] stops the generation. Once nothing is held, the Done
-    /// held behind them, for the caller to hand the session.
+    /// Sends held sentences while the media queue has room; they wait, in
+    /// order, as long as it has none (Rule 5: a full queue never stops the
+    /// reply). Once nothing is held, the Done held behind them, for the
+    /// caller to hand the session.
     fn release<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         bridge: &mut MediaBridge,
@@ -306,18 +300,10 @@ impl VoiceHost {
                 return speech.done_held.take().map(|tainted| (generation, tainted));
             };
             if !room {
-                if speech
-                    .held_since
-                    .is_some_and(|since| since.elapsed() >= HOLD_LIMIT)
-                {
-                    tracing::warn!("voice media: the media queue took no sentence in time");
-                    self.output_failed(generation, bridge, outputs);
-                }
                 return None;
             }
             let text = text.clone();
             speech.held.pop_front();
-            speech.held_since = (!speech.held.is_empty()).then(Instant::now);
             if !self.send_sentence(generation, text, bridge, outputs) {
                 return None;
             }
@@ -436,7 +422,6 @@ impl VoiceHost {
             if let Some(speech) = speech_mut(bridge, generation)
                 && (!room || !speech.held.is_empty())
             {
-                speech.held_since.get_or_insert_with(Instant::now);
                 speech.held.push_back(text);
                 continue;
             }

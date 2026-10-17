@@ -436,15 +436,10 @@ impl MediaBridge {
     }
 
     /// Hears the owner's audio. A buffered utterance at one call's limit
-    /// is cut, and the audio starts the next.
+    /// is cut there by the adapter, and the rest starts the next.
     fn hear(&mut self, pcm: &[u8]) -> oneiron::Result<()> {
         match &mut self.hearing {
-            Hearing::Buffered(asr) => {
-                if asr.accept_audio(pcm).is_err() {
-                    asr.cut()?;
-                    asr.accept_audio(pcm)?;
-                }
-            }
+            Hearing::Buffered(asr) => asr.accept_audio(pcm)?,
             Hearing::Live(live) => live.feed(|stream| stream.accept_audio(pcm)),
         }
         Ok(())
