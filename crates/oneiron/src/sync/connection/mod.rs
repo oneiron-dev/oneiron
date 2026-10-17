@@ -184,11 +184,7 @@ impl SyncConnection {
                 "the notice is not this member's leave of this shared vault",
             ));
         }
-        self.left.send_replace(true);
-        let mut running = self.running.subscribe();
-        // A loop that does not stop in time may queue its last buffer after
-        // the discard.
-        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+        self.stop_for_leave().await;
         crate::sync::shared_leave::confirm_shared_leave(
             self.manager.vault(),
             vault_id,
@@ -198,11 +194,23 @@ impl SyncConnection {
         .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
     }
 
+    /// Ends this lane for good before a leave discards its queue, once its
+    /// loop has stopped and queued what it buffered.
+    async fn stop_for_leave(&self) {
+        self.left.send_replace(true);
+        let mut running = self.running.subscribe();
+        // A loop that does not stop in time may queue its last buffer after
+        // the discard.
+        let _ = tokio::time::timeout(LEAVE_QUIESCE, running.wait_for(|running| !*running)).await;
+    }
+
     /// Asks the sync server for this member's own leave notices with the
     /// lane's slip, revoked or not (`POST /v1/shared/left-notices`), and
-    /// confirms the first that ends `member`'s membership in `vault_id`
-    /// ([`Self::confirm_shared_leave`]). `None` while no notice says so. A
-    /// refused or failed request is an error, never a leave.
+    /// confirms the first one this env verifies that ends `member`'s
+    /// membership in `vault_id`, the vault's deletion included
+    /// ([`crate::sync::shared_leave::VerifiedLeaveNotice`]). `None` while no
+    /// verified notice says so. A refused or failed request is an error,
+    /// never a leave.
     pub async fn check_shared_leave(
         &self,
         vault_id: u64,
@@ -211,9 +219,6 @@ impl SyncConnection {
     {
         use crate::sync::TransportError;
 
-        // The home signs every notice (FIX 2053). The signature is not
-        // checked here yet, so a notice weighs what an unsigned one did, and
-        // a VaultDeleted notice reaches no leave kind.
         #[derive(serde::Deserialize)]
         struct LeftNotices {
             notices: Vec<crate::federation::SignedSharedActOutcome>,
@@ -255,19 +260,30 @@ impl SyncConnection {
         let answer: LeftNotices = response.json().await.map_err(|_| {
             TransportError::InvalidPayload("the leave notice answer does not decode")
         })?;
-        let Some(notice) = answer
-            .notices
-            .iter()
-            .map(|signed| &signed.outcome)
-            .find(|notice| {
-                crate::sync::shared_leave::left_change(notice, vault_id, member).is_some()
-            })
-        else {
+        // The home signs every notice (FIX 2053). One this env does not
+        // verify against the home root it already trusts changes nothing.
+        let mut confirmed = None;
+        for signed in &answer.notices {
+            if let Some(notice) = crate::sync::shared_leave::VerifiedLeaveNotice::verify(
+                self.manager.vault(),
+                vault_id,
+                member,
+                signed,
+            )
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+                && notice.kind().is_some()
+            {
+                confirmed = Some(notice);
+                break;
+            }
+        }
+        let Some(notice) = confirmed else {
             return Ok(None);
         };
-        self.confirm_shared_leave(vault_id, member, notice)
-            .await
+        self.stop_for_leave().await;
+        crate::sync::shared_leave::confirm_verified_shared_leave(self.manager.vault(), &notice)
             .map(Some)
+            .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
     /// The residence mode this machine runs now.

@@ -2096,7 +2096,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/meeting_audio/types.rs` | src | m | 24 struct · 4 enum · 2 trait · 3 fn | AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest +22 | Typed host ports for file decoding, inference, routing and explicit import consent |
 | `src/ingest/mod.rs` | src | s | 4 mod · 15 re-export · 4 crate-vis | — | Ingest source registry and source-local normalization |
 | `src/ingest/parsed.rs` | src | s | 2 struct · 2 crate-vis | ParsedImport, ParsedMessage | Shared pre-semantic import shape |
-| `src/ingest/pdf.rs` | src | s | 1 enum · 1 fn · 1 const | PdfTextError | A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: "The first adapter reads a… |
+| `src/ingest/pdf.rs` | src | s | 1 struct · 1 enum · 1 fn | PdfText, PdfTextError | A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: "The first adapter reads a… |
 | `src/ingest/provider.rs` | src | s | 2 crate-vis | — | Provider conversation decoders |
 | `src/ingest/registry.rs` | src | m | 6 struct · 1 enum · 1 trait · 18 fn · 5 const · 2 static | IngestAdapterSkillRef, IngestHarnessConfig, IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry, IngestTrustCeiling | Ingest source registry: source ids, configs, harness, registry map, and the ingest source trait |
 | `src/ingest/resolution.rs` | src | s | 3 struct · 1 enum · 1 fn · 1 crate-vis | EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate | ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject |
@@ -2171,7 +2171,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
 | `src/lib.rs` | src | m | 196 mod · 75 re-export · 20 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
-| `src/limit_ask.rs` | src | s | 1 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
+| `src/limit_ask.rs` | src | s | 2 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/limits.rs` | src | s | 1 crate-vis | — | Traversal safety caps, defined in `oneiron-contracts` |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 2 crate-vis | — | Stable link keys, operation/event digests, field hashes |
 | `src/linear_sync/effect.rs` | src | m | 1 struct · 1 enum · 2 fn · 1 crate-vis | LinearEffectKind, LinearEffectRequest | External-effect admission for Linear mirror mutations |
@@ -3420,7 +3420,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/retention.rs` | src | m | 7 fn · 11 crate-vis | — | Opt-in gate-decision age sweep over the actual ORCB custody unit |
 | `src/store/gate_decision/retention_scope.rs` | src | s | 4 crate-vis | — | Append-time retention scope: a decision keeps its verified ancestry after its claim body or source is removed |
 | `src/store/gate_decision/sidecar.rs` | src | s | 5 crate-vis | — | Pending-deletion recovery sidecar Store methods and codec |
-| `src/store/gate_decision/types.rs` | src | s | 4 struct · 3 fn · 14 crate-vis | GateDecisionId, GateDecisionRecord, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
+| `src/store/gate_decision/types.rs` | src | s | 4 struct · 3 fn · 15 crate-vis | GateDecisionId, GateDecisionRecord, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
 | `src/store/gate_decision/vet.rs` | src | m | 5 crate-vis | — | Gate-decision record, notice, and receipt-reason validators |
 | `src/store/group_commit.rs` | src | m | 1 struct · 20 crate-vis | GroupCommitStats | Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536) |
 | `src/store/group_commit/tests.rs` | test | m | — | — | Group commit (OF-536), checked against outside truth: LMDB's own transaction id counts the durable commits… |
@@ -3635,7 +3635,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/tests.rs` | test | XL | — | — | — |
 | `src/sync/selector/text_egress.rs` | src | s | 3 crate-vis | — | The text fence at sync egress and peer document admission (facet rule C): an ASSET_TEXT written from source… |
 | `src/sync/server_state.rs` | src | m | 7 fn | — | Server-side `sync_state` persistence per the ARCH-0023b key layout |
-| `src/sync/shared_leave.rs` | src | s | 1 struct · 1 enum · 3 fn | SharedLeaveKind, SharedLeaveReceipt | Leaving a shared vault, the device side (OF-158) |
+| `src/sync/shared_leave.rs` | src | m | 2 struct · 1 enum · 7 fn | SharedLeaveKind, SharedLeaveReceipt, VerifiedLeaveNotice | Leaving a shared vault, the device side (OF-158) |
 | `src/sync/sweep_fence.rs` | src | s | 5 crate-vis | — | Windows a sweep holds closed while it rewrites their persisted state |
 | `src/sync/tests.rs` | test | m | — | — | Observer B and forward rematerialization admit through one entity-ingest entry and one tombstone… |
 | `src/sync/transport.rs` | src | m | 2 struct · 1 enum · 27 fn · 42 const · 1 mod · 2 re-export | EncodedFrame, EphemeralWireState, TransportError | Wire protocol encoding/decoding for WebSocket transport |
@@ -3664,7 +3664,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/tombstones.rs` | src | m | 3 fn · 12 crate-vis | — | Tombstone apply/export/replay plus window rebuild from updates |
 | `src/sync/window/withdrawn.rs` | src | s | 4 crate-vis | — | Withdrawn generations in a window's live map (OF-013) |
 | `src/sync/window_rows.rs` | src | s | 25 crate-vis | — | Typed `sync_state` tables for the window/root plane rows: one window's persisted CRDT snapshot, state… |
-| `src/sync/withdrawn_cutoffs.rs` | src | m | 8 crate-vis | — | OF-013: withdrawn-generation cutoffs on the window plane |
+| `src/sync/withdrawn_cutoffs.rs` | src | m | 9 crate-vis | — | OF-013: withdrawn-generation cutoffs on the window plane |
 | `src/tagging/body.rs` | src | s | 3 crate-vis | — | An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no… |
 | `src/tagging/held.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | HeldTagsOutcome, UnreadText | An importer completes a turn's marker with tags it already holds: no tagger call |
 | `src/tagging/history.rs` | src | s | 1 struct · 1 fn · 7 crate-vis | TaggingTraceRecord | The trace history: what stays of a turn's tagging once its settled marker has left the job ledger |
