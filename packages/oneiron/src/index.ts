@@ -55,11 +55,13 @@ export interface LensFrameEventRequest {
 /**
  * What a lens-card event answers. There is no discriminator: a local action
  * answers the card's new `$state`, a deterministic tool its outcome and the
- * scoped read of its entity arguments.
+ * scoped read of its entity arguments, and a model round trip the callback
+ * queued for the agent that emitted the card.
  */
 export type LensFrameEventReply =
   | { readonly $state: Facade.GeneratedUiStateSnapshot }
   | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
+  | { readonly queued: boolean; readonly callbackId: string }
 
 /** What a lens-card close answers: whether the server held its frame. */
 export interface CloseLensFrameReply {
