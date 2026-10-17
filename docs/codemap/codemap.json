@@ -16870,7 +16870,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "re-export": 9
      }
     },
@@ -43525,7 +43525,7 @@
      "path": "src/sweep/compact.rs",
      "purpose": "Window shallow-snapshot compaction and erased-id scrub",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -44292,9 +44292,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/ingest/peer_import.rs",
-     "purpose": "Whether the entity doors on this thread carry a federation peer's import (Docs Q04)",
+     "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -44872,7 +44872,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 1,
       "fn": 2
      }
@@ -45028,7 +45028,7 @@
      "path": "src/sync/server_state.rs",
      "purpose": "Server-side `sync_state` persistence per the ARCH-0023b key layout",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
