@@ -1,6 +1,7 @@
 use super::*;
 
 /// Keep first observation, signer maximum and replay advisory in the same put transaction.
+/// Returns whether this put stores the row's hash here for the first time.
 pub(super) fn observe_authority_put(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -9,7 +10,7 @@ pub(super) fn observe_authority_put(
     hash: Option<&crate::authority::AuthorityEntryHash>,
     replicated: bool,
     mutation_recorded_at: u64,
-) -> Result<()> {
+) -> Result<bool> {
     let observed_secs = authority_observation_secs_for_write(store, wtxn, mutation_recorded_at)?;
     let sidecar_key = key.to_owned();
     if !crate::authority::AUTHORITY_FIRST_SEEN.contains(store, wtxn, &sidecar_key)? {
@@ -29,6 +30,7 @@ pub(super) fn observe_authority_put(
                 observed_secs,
             )?;
         }
+        return Ok(first_observation);
     }
-    Ok(())
+    Ok(false)
 }

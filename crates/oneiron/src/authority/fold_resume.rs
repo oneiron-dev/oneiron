@@ -451,7 +451,7 @@ pub(super) fn add_writers(
     }
 }
 
-fn add_bound_keys(bound_keys: &mut BTreeSet<AuthorityKey>, state: &FoldState) {
+pub(super) fn add_bound_keys(bound_keys: &mut BTreeSet<AuthorityKey>, state: &FoldState) {
     bound_keys.extend(
         state
             .actor_bindings

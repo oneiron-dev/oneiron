@@ -11,7 +11,10 @@
 //! machine's rows still name and it lacks (`Vault::authority_history_request`)
 //! and fetching exactly that from the home (`residence.authority.range`), each
 //! missing entry with its ancestors, through the repair door: the rows wait in
-//! the stage until together they close the history, then land at once.
+//! the stage until together they close the history, then land at once. When
+//! the fold asks for the whole coverage of the image this machine adopted,
+//! that coverage pages by the image itself, with no hash list
+//! ([`Vault::authority_history_fetch`]); isolated gaps keep exact hashes.
 
 use base64::Engine;
 use serde::Deserialize;
@@ -23,7 +26,8 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
     AUTHORITY_HISTORY_PAGE_MAX, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityRepairOutcome, authority_entry_hash, decode_authority_log_entry_body,
+    AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
+    decode_authority_log_entry_body,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
@@ -48,10 +52,12 @@ struct AuthorityTailReply {
     wanted: String,
 }
 
-/// One page of an exact-hash fetch. The home's vault, checkpoint and unheld
-/// claims count for nothing here, so they are not read.
+/// One page of a range fetch, naming the selection it serves. The home's
+/// vault, checkpoint and unheld claims count for nothing here, so they are
+/// not read.
 #[derive(Deserialize)]
 struct AuthorityRangeReply {
+    selection: String,
     rows: Vec<String>,
     #[serde(default)]
     next: Option<String>,
@@ -199,8 +205,11 @@ async fn append_authority(
 /// asks again after each page, since a fetched entry may name further
 /// ancestors, and stops once nothing is missing, the home serves none of it,
 /// or the door refuses a page. `refused` are entries refused this round:
-/// named as held, so no page carries them again. Returns how many rows landed
-/// and what is still missing.
+/// named as held, so no page carries them again. Once a round, a request for
+/// the whole adopted coverage pages it by the image instead, under one fixed
+/// selection and held set, the cursor walking it; its end is no proof of
+/// completeness, so the round asks again after it and fetches what remains
+/// by exact hash. Returns how many rows landed and what is still missing.
 async fn repair_authority_history(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
@@ -212,21 +221,52 @@ async fn repair_authority_history(
     let mut request = vault
         .authority_history_request(&BTreeSet::new())
         .map_err(storage)?;
+    // The covered pass in flight, and whether this round has run one.
+    let mut pass: Option<AuthorityHistoryFetch> = None;
+    let mut passed = false;
     for _ in 0..MAX_PAGES {
         if request.is_complete() {
             break;
         }
-        let mut held = held_authority_entries(vault).map_err(storage)?;
-        held.extend(vault.authority_staged_history().map_err(storage)?);
-        held.extend(refused.iter().copied());
-        let fetch = AuthorityHistoryFetch {
-            cursor,
-            ..AuthorityHistoryFetch::closing(&request, held)
+        let fetch = match pass.take() {
+            Some(pass) => AuthorityHistoryFetch { cursor, ..pass },
+            None => {
+                let mut held = held_authority_entries(vault).map_err(storage)?;
+                held.extend(vault.authority_staged_history().map_err(storage)?);
+                held.extend(refused.iter().copied());
+                match vault
+                    .authority_history_fetch(&request, held.clone())
+                    .map_err(storage)?
+                {
+                    covered @ AuthorityHistoryFetch {
+                        selection: AuthorityHistorySelection::Covered { .. },
+                        ..
+                    } if !passed => {
+                        passed = true;
+                        covered
+                    }
+                    _ => AuthorityHistoryFetch {
+                        cursor,
+                        ..AuthorityHistoryFetch::closing(&request, held)
+                    },
+                }
+            }
         };
+        let covered = matches!(fetch.selection, AuthorityHistorySelection::Covered { .. });
         let Some((rows, next)) = fetch_authority_range(rpc, &fetch).await? else {
+            // A home that keeps no such image refuses the covered pass: the
+            // round goes on by exact hash.
+            if covered {
+                cursor = None;
+                continue;
+            }
             break;
         };
         if rows.is_empty() {
+            if covered {
+                cursor = None;
+                continue;
+            }
             break;
         }
         let outcome = match vault.import_signed_authority_repair_page(&rows) {
@@ -256,14 +296,23 @@ async fn repair_authority_history(
             }
         };
         // Rows this page carried are held or staged now, so a home that
-        // finds its cursor among them starts the selection again.
+        // finds its cursor among them starts the selection again. A covered
+        // pass keeps its selection and held set, so its cursor walks on.
         cursor = next;
+        if covered {
+            if next.is_some() {
+                pass = Some(fetch);
+            } else {
+                cursor = None;
+            }
+        }
     }
     Ok((written, request))
 }
 
 /// One page of `fetch` from the home: its signed rows, parents first, and the
-/// cursor of the next page. `None` when the home refuses the fetch.
+/// cursor of the next page. `None` when the home refuses the fetch; a page
+/// naming another selection than `fetch`'s is refused here.
 async fn fetch_authority_range(
     rpc: &mut ResidenceRpc,
     fetch: &AuthorityHistoryFetch,
@@ -272,12 +321,27 @@ async fn fetch_authority_range(
         base64::engine::general_purpose::STANDARD
             .encode(hashes.iter().flatten().copied().collect::<Vec<u8>>())
     };
+    let one = |hash: &[u8; 32]| base64::engine::general_purpose::STANDARD.encode(hash);
+    let selection = match &fetch.selection {
+        AuthorityHistorySelection::Hashes(hashes) => json!({ "hashes": packed(hashes) }),
+        AuthorityHistorySelection::Covered {
+            checkpoint,
+            archive,
+            lower_exclusive,
+            upper_inclusive,
+        } => json!({ "covered": {
+            "checkpoint": one(checkpoint),
+            "archive": archive.as_ref().map(one),
+            "lower_exclusive": lower_exclusive.as_ref().map(one),
+            "upper_inclusive": upper_inclusive.as_ref().map(one),
+        }}),
+    };
     let reply = match rpc
         .request(
             "residence.authority.range",
             json!({
                 "vault_id": fetch.vault_id.map(|id| base64::engine::general_purpose::STANDARD.encode(id)),
-                "hashes": packed(&fetch.hashes),
+                "selection": selection,
                 "parent_closure": fetch.parent_closure,
                 "held": packed(&fetch.held),
                 "cursor": fetch.cursor.map(|cursor| base64::engine::general_purpose::STANDARD.encode(cursor)),
@@ -291,7 +355,13 @@ async fn fetch_authority_range(
         Err(error) => return Err(error),
     };
     let reply: AuthorityRangeReply = serde_json::from_value(reply).map_err(|_| refused())?;
-    if reply.rows.len() > AUTHORITY_HISTORY_PAGE_MAX {
+    if reply.rows.len() > AUTHORITY_HISTORY_PAGE_MAX
+        || base64::engine::general_purpose::STANDARD
+            .decode(&reply.selection)
+            .ok()
+            .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
+            != Some(fetch.selection.id())
+    {
         return Err(refused());
     }
     let rows = reply

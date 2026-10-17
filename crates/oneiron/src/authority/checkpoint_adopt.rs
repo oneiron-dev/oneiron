@@ -163,11 +163,6 @@ fn expectation_in_txn(
     })
 }
 
-/// Whether this vault holds an adoption row, read without verifying it.
-pub(super) fn checkpoint_adopted_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(ADOPTED.get(store, txn, &())?.is_some())
-}
-
 /// The image this vault adopted, verified again from the stored pin,
 /// attestations and image bytes. None when nothing was adopted; a stored
 /// adoption that no longer verifies is corruption, never "not adopted".
@@ -256,6 +251,9 @@ impl Vault {
             return Err(Error::CorruptedIndex("verified authority checkpoint"));
         }
         super::checkpoint::keep_checkpoint_head_in_txn(store, wtxn, &id, bytes)?;
+        // OF-469 cutoffs: the adopted head's accounting, and the covered rows
+        // whose later arrival is hydration rather than growth.
+        super::checkpoint::note_adopted_checkpoint_in_txn(store, wtxn, &id, image)?;
         ADOPTED.put(
             store,
             wtxn,

@@ -495,6 +495,34 @@ impl Vault {
         Ok(verify_authority_checkpoint_attestations(&pin, &image, &attestations).is_ok())
     }
 
+    /// Whether `root` still owes kept image `image`, built under the root
+    /// policy whose digest is `built_under`, its attestation (OF-469 upkeep
+    /// retry): no attestation of it by `root` under that policy with `root`'s
+    /// stored binding is kept, that policy is still this vault's own, and
+    /// `root` is eligible under it. A policy the roster can no longer fix
+    /// owes nothing, and neither does an image built under an older policy:
+    /// the next image is built under the current one.
+    pub(super) fn checkpoint_attestation_owed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        root: &AuthorityKey,
+        image: [u8; 32],
+        built_under: &[u8; 32],
+    ) -> Result<bool> {
+        let key = root_row_key(root);
+        if let Some(stored) = ATTESTATIONS.get(&self.store, txn, &(image, key.clone()))?
+            && stored.policy == *built_under
+            && KEY_BINDINGS.get(&self.store, txn, &key)?.as_ref()
+                == Some(&stored.attestation.binding)
+        {
+            return Ok(false);
+        }
+        let Ok(context) = self.checkpoint_context_in_txn(txn) else {
+            return Ok(false);
+        };
+        Ok(context.eligible(root).is_ok() && context.policy.digest()? == *built_under)
+    }
+
     /// Certifies this install's checkpoint SLH-DSA key for `root`, which must
     /// be eligible under this vault's own root policy. `sign` makes the root's
     /// classical signature over the binding statement it is handed. Stores the

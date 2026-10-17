@@ -12,9 +12,7 @@ use oneiron::sync::{self, WindowKey};
 use tokio::task::JoinHandle;
 
 use super::core::{SyncServer, unix_seconds_now};
-use super::housekeeping::{
-    AUTHORITY_CHECKPOINT_EVERY, HousekeepingAdmission, SERVED_REPOSITORY_MAINTENANCE_EVERY,
-};
+use super::housekeeping::{HousekeepingAdmission, SERVED_REPOSITORY_MAINTENANCE_EVERY};
 use super::leases::SERVER_LEASE_VAULT_ID;
 use super::windows::SERVER_USER_ID;
 
@@ -123,8 +121,6 @@ impl SyncServer {
             // The served repositories' maintenance runs on the first tick and
             // then once an interval.
             let mut repositories_due = Instant::now();
-            // So does this vault's authority checkpoint upkeep (OF-469).
-            let mut checkpoint_due = Instant::now();
             loop {
                 interval.tick().await;
                 server.run_scheduled_lifecycle_tick().await;
@@ -141,11 +137,9 @@ impl SyncServer {
                 // Each mirror target keeps its own cadence; the pass pushes
                 // only the due ones.
                 server.start_mirror_pushes(&admit).await;
-                if Instant::now() >= checkpoint_due
-                    && server.start_authority_checkpoint(&admit).await
-                {
-                    checkpoint_due = Instant::now() + AUTHORITY_CHECKPOINT_EVERY;
-                }
+                // The authority checkpoint upkeep runs every tick; the engine
+                // decides whether a cutoff is due (OF-469).
+                server.start_authority_checkpoint(&admit).await;
             }
         });
         LifecycleScheduler {

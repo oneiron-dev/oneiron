@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
+use oneiron::authority::AuthorityCheckpointUpkeep;
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport, SweepOutcome};
 use oneiron::origin::smart_http::maintain_served_repositories;
 use tokio::task::JoinHandle;
@@ -33,11 +34,6 @@ const OWNER_PASS_BUDGET: Duration = Duration::from_secs(60);
 
 /// How often the served repositories get their git maintenance.
 pub(super) const SERVED_REPOSITORY_MAINTENANCE_EVERY: Duration = Duration::from_secs(60 * 60);
-
-/// How often the host checks whether this vault's authority log grew past
-/// its newest checkpoint image, and if so writes and attests a new one
-/// (OF-469). The canon's default checkpoint cutoff is 24 hours.
-pub(super) const AUTHORITY_CHECKPOINT_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// How often repository maintenance waiting for a git exchange permit asks
 /// again.
@@ -228,32 +224,39 @@ impl SyncServer {
 
     /// Starts this vault's authority checkpoint upkeep on a task of its own
     /// (OF-469), held for the host's stop, unless the last run is still
-    /// going, the host is stopping, or the host's gate refused it. When the
-    /// authority log grew past the newest image, the run writes a new one and
-    /// attests it with the host root. Returns whether a run started.
+    /// going, the host is stopping, or the host's gate refused it. The
+    /// lifecycle tick starts it every minute and the engine decides: when a
+    /// checkpoint cutoff is due the run writes a new image and attests it
+    /// with the host root, and otherwise it attests a head the host root
+    /// still owes ([`oneiron::Vault::upkeep_authority_checkpoint`]).
     pub(super) async fn start_authority_checkpoint(
         self: &Arc<Self>,
         admit: &HousekeepingAdmission,
-    ) -> bool {
+    ) {
         if self.housekeeping_passes.stopping()
             || !self
                 .begin_lifecycle_job(LifecycleJobKind::AuthorityCheckpoint)
                 .await
         {
-            return false;
+            return;
         }
         let Some(admission) = admit() else {
             self.end_lifecycle_job(LifecycleJobKind::AuthorityCheckpoint)
                 .await;
-            return false;
+            return;
         };
         let server = Arc::clone(self);
         let run = tokio::spawn(async move {
             let _admission = admission;
             let upkeep = Arc::clone(&server);
             match tokio::task::spawn_blocking(move || upkeep.upkeep_authority_checkpoint()).await {
-                Ok(Ok(Some(_))) => tracing::info!("authority checkpoint written and attested"),
-                Ok(Ok(None)) => {}
+                Ok(Ok(AuthorityCheckpointUpkeep::Written(_))) => {
+                    tracing::info!("authority checkpoint written and attested");
+                }
+                Ok(Ok(AuthorityCheckpointUpkeep::Attested(_))) => {
+                    tracing::info!("authority checkpoint head attested again");
+                }
+                Ok(Ok(AuthorityCheckpointUpkeep::Idle)) => {}
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "authority checkpoint upkeep failed");
                 }
@@ -269,17 +272,16 @@ impl SyncServer {
                 .await;
         });
         self.housekeeping_passes.hold(run);
-        true
     }
 
     /// The upkeep under this host's root: the managed issuer, or the one the
     /// configured host secret derives. A host with neither attests nothing.
-    fn upkeep_authority_checkpoint(&self) -> oneiron::Result<Option<[u8; 32]>> {
+    fn upkeep_authority_checkpoint(&self) -> oneiron::Result<AuthorityCheckpointUpkeep> {
         if let Some(issuer) = self.managed_issuer.as_ref() {
             return self.vault().upkeep_authority_checkpoint(issuer);
         }
         let Some(secret) = self.config.auth_secret.as_deref() else {
-            return Ok(None);
+            return Ok(AuthorityCheckpointUpkeep::Idle);
         };
         let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
         self.vault().upkeep_authority_checkpoint(&issuer)
