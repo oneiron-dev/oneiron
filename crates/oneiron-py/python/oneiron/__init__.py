@@ -190,6 +190,17 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
+    def last_receipt_ref(self) -> str | None:
+        """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
+
+        It is stated whether the call answered or refused, and
+        ``vault.receipts.get`` resolves it for the same actor or the vault's
+        owner. Typed returns keep their shape; the ref rides beside them here.
+        ``None`` for an embedded handle, before any call, after a call that
+        reached no server, and for an anonymous off-record call.
+        """
+        return self._client.last_receipt_ref()
+
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""

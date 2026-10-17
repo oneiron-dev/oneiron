@@ -1,8 +1,8 @@
 # Memory Wire — oneiron
 
-Memory Wire is the Oneiron developer profile. Start with `witness`, `recall`, and
-`receipts`. The same package also ships `claim_upsert` (`claimUpsert` in JS),
-the fourth quickstart verb. The same authoritative `FACADE_VERB_CATALOG` also
+Memory Wire is the Oneiron developer profile. Start with `vault.witness`,
+`vault.recall`, and `vault.receipts`. The same package also ships
+`vault.claims.upsert`, the fourth quickstart verb. The same authoritative `FACADE_VERB_CATALOG` also
 ships five exact keyed-memory verbs for actor-bound long-term stores.
 There is no separate lite SDK and no alternate mutation path.
 
@@ -29,7 +29,7 @@ import { Oneiron } from "oneiron"
 
 const memory = Oneiron.open()
 
-const witnessed = memory.witness({
+const witnessed = memory.vault.witness({
   conversationRef: "11111111111111111111111111111111",
   messages: [{
     author: "user",
@@ -39,7 +39,7 @@ const witnessed = memory.witness({
   }],
 })
 
-const claimed = memory.claimUpsert({
+const claimed = memory.vault.claims.upsert({
   id: "22222222222222222222222222222222",
   predicate: "preference.travel.seat",
   subjectRef: witnessed.turnShortId,
@@ -47,8 +47,8 @@ const claimed = memory.claimUpsert({
   confidence: 1,
   source: "user_stated",
 })
-const recalled = memory.recall("window seat")
-const receipts = memory.receipts()
+const recalled = memory.vault.recall("window seat")
+const receipts = memory.vault.receipts()
 
 console.log(JSON.stringify({ witnessed, claimed, recalled, receipts }, null, 2))
 ```
@@ -64,7 +64,7 @@ from oneiron import Oneiron
 
 memory = Oneiron.open()
 
-witnessed = memory.witness(
+witnessed = memory.vault.witness(
     {
         "conversation_ref": "11111111111111111111111111111111",
         "messages": [
@@ -78,7 +78,7 @@ witnessed = memory.witness(
     }
 )
 
-claimed = memory.claim_upsert(
+claimed = memory.vault.claims.upsert(
     {
         "id": "22222222222222222222222222222222",
         "predicate": "preference.travel.seat",
@@ -88,8 +88,8 @@ claimed = memory.claim_upsert(
         "source": "user_stated",
     }
 )
-recalled = memory.recall("window seat")
-receipts = memory.receipts()
+recalled = memory.vault.recall("window seat")
+receipts = memory.vault.receipts()
 
 print(
     json.dumps(
@@ -157,7 +157,7 @@ const key = process.env.ONEIRON_KEY
 if (!url || !key) throw new Error("Set ONEIRON_URL and ONEIRON_KEY to your server and paired credential")
 const memory = Oneiron.connect(url, key)
 
-const witnessed = memory.witness({
+const witnessed = memory.vault.witness({
   conversationRef: "11111111111111111111111111111111",
   messages: [{
     author: "user",
@@ -167,7 +167,7 @@ const witnessed = memory.witness({
   }],
 })
 
-const claimed = memory.claimUpsert({
+const claimed = memory.vault.claims.upsert({
   id: "22222222222222222222222222222222",
   predicate: "preference.travel.seat",
   subjectRef: witnessed.turnShortId,
@@ -175,8 +175,8 @@ const claimed = memory.claimUpsert({
   confidence: 1,
   source: "user_stated",
 })
-const recalled = memory.recall("window seat")
-const receipts = memory.receipts()
+const recalled = memory.vault.recall("window seat")
+const receipts = memory.vault.receipts()
 
 console.log(JSON.stringify({ witnessed, claimed, recalled, receipts }, null, 2))
 ```
@@ -191,7 +191,7 @@ from oneiron import Oneiron
 
 memory = Oneiron.connect(os.environ["ONEIRON_URL"], os.environ["ONEIRON_KEY"])
 
-witnessed = memory.witness(
+witnessed = memory.vault.witness(
     {
         "conversation_ref": "11111111111111111111111111111111",
         "messages": [
@@ -205,7 +205,7 @@ witnessed = memory.witness(
     }
 )
 
-claimed = memory.claim_upsert(
+claimed = memory.vault.claims.upsert(
     {
         "id": "22222222222222222222222222222222",
         "predicate": "preference.travel.seat",
@@ -215,8 +215,8 @@ claimed = memory.claim_upsert(
         "source": "user_stated",
     }
 )
-recalled = memory.recall("window seat")
-receipts = memory.receipts()
+recalled = memory.vault.recall("window seat")
+receipts = memory.vault.receipts()
 
 print(
     json.dumps(
@@ -243,12 +243,23 @@ you want to act as instead.
 | `Oneiron.pair(link)` | `{ memory, credential }`: a remote handle and the credential to store |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |
 | `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
-| `handle.witness(turn)` | `WitnessReceipt` |
-| `handle.claimUpsert(claim)` | `CommitReceipt` |
-| `handle.recall(query, opts?)` | `MemoryPack` |
-| `handle.receipts(limit?)` | `FacadeReceipt[]` |
+| `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |
+| `handle.vault.witness(turn)` | `WitnessReceipt` |
+| `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
+| `handle.vault.recall(query, opts?)` | `MemoryPack` |
+| `handle.vault.receipts(limit?)` | `FacadeReceipt[]` |
 
-`recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
+Every other verb in the SDK verb table sits at its SDK path on the handle
+(`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).
+Its input and result are typed by `Facade`, the wire declarations
+`scripts/sdk/generate.py` reads from the Rust types each row names, and its
+JSDoc is the row's own description. The keys are the engine's wire spelling
+(snake_case). Of the table's 153 facade rows, 131 inputs and 127 results are
+fully typed; the rest are typed down to a leaf that is opaque JSON by design (a
+claim's `value`, an entity `body`), and none is left untyped. The same
+declarations ship in `@oneiron/client` and, as TypedDicts, in the Python stubs.
+
+`vault.recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default
 `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `asOf` (Unix seconds
 the query's time words resolve against; default now) and `deadlineMs` (1 to
@@ -273,7 +284,7 @@ Every failure is an `OneironError` carrying the engine's own vocabulary:
 import { Oneiron, OneironError } from "oneiron"
 
 try {
-  memory.recall("window seat", { effort: "high" })
+  memory.vault.recall("window seat", { effort: "high" })
 } catch (error) {
   if (error instanceof OneironError) {
     console.error(error.code, error.message, error.suggestions)
@@ -299,7 +310,7 @@ silently handing back a differently configured vault.
 ## Versioning
 
 This package's semver **major** always equals the engine's
-`MEMORY_PACK_VERSION`, which is the schema `recall` returns. Both build scripts
+`MEMORY_PACK_VERSION`, which is the schema `vault.recall` returns. Both build scripts
 and the packaging dry-run assert it.
 
 ## License
@@ -308,10 +319,10 @@ Apache-2.0
 
 ## Exact keyed long-term memory
 
-`key_value_get`, `key_value_put`, `key_value_delete`, `key_value_search`, and
-`key_value_namespaces` are the same engine facade in embedded and remote mode.
-JS spells these `keyValueGet`, `keyValuePut`, `keyValueDelete`, `keyValueSearch`,
-and `keyValueNamespaces`. They do not emulate exact keys from ranked recall.
+`vault.kv.get`, `vault.kv.put`, `vault.kv.delete`, `vault.kv.search`, and
+`vault.kv.namespaces` are the same engine facade in embedded and remote mode,
+at the same path in JS and Python. They do not emulate exact keys from ranked
+recall.
 
 ```python
 from uuid import uuid4
@@ -322,13 +333,13 @@ address = {"namespace": ["preferences"], "key": "color"}
 # This example records a preference explicitly stated by its user.
 request = {**address, "value": {"name": "blue"},
            "request_id": uuid4().hex, "source": "user_stated"}
-receipt = memory.key_value_put(request)
-assert memory.key_value_get(address) == receipt["item"]
-assert memory.key_value_put(request)["replayed"]
-print(memory.key_value_search({"namespace_prefix": ["preferences"]}))
-print(memory.key_value_namespaces({"prefix": ["preferences"]}))
-memory.key_value_delete(address)
-assert memory.key_value_get(address) is None
+receipt = memory.vault.kv.put(request)
+assert memory.vault.kv.get(address) == receipt["item"]
+assert memory.vault.kv.put(request)["replayed"]
+print(memory.vault.kv.search({"namespace_prefix": ["preferences"]}))
+print(memory.vault.kv.namespaces({"prefix": ["preferences"]}))
+memory.vault.kv.delete(address)
+assert memory.vault.kv.get(address) is None
 ```
 
 ```js
@@ -337,12 +348,12 @@ import { Oneiron } from "oneiron"
 
 const memory = Oneiron.open()
 const address = { namespace: ["preferences"], key: "color" }
-const receipt = memory.keyValuePut({ ...address, value: { name: "blue" },
+const receipt = memory.vault.kv.put({ ...address, value: { name: "blue" },
   requestId: randomUUID(), source: "user_stated" })
-console.log(memory.keyValueGet(address), receipt.receiptRef)
-console.log(memory.keyValueSearch({ namespacePrefix: ["preferences"], limit: 10, offset: 0 }))
-console.log(memory.keyValueNamespaces({ prefix: ["preferences"], maxDepth: 1 }))
-memory.keyValueDelete(address)
+console.log(memory.vault.kv.get(address), receipt.receiptRef)
+console.log(memory.vault.kv.search({ namespacePrefix: ["preferences"], limit: 10, offset: 0 }))
+console.log(memory.vault.kv.namespaces({ prefix: ["preferences"], maxDepth: 1 }))
+memory.vault.kv.delete(address)
 ```
 
 The key space is actor-id **and actor-class** bound, and explicitly worldless.
@@ -385,10 +396,10 @@ request against an erased/malformed revision refuses instead of restoring it.
 
 Delete retracts the caller's current claim and returns `existed` plus receipt
 refs. It is idempotent while absent and retains history. It is not an owner
-`safe_delete` or compliance erase. Conflicting synced heads fail closed with
+`vault.delete` or compliance erase. Conflicting synced heads fail closed with
 `INVALID_STATE` rather than inventing a local winner.
 
-[The LangGraph satellite](../oneiron-langgraph/README.md) adapts these doors to
+[The LangGraph satellite](../../packages/oneiron-langgraph/README.md) adapts these doors to
 the real `BaseStore.batch/abatch` interface and includes a runnable graph.
 It is long-term memory, not a checkpoint saver. TTL and vector search are not
 supported.

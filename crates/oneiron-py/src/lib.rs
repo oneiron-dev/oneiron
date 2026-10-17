@@ -210,6 +210,14 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
+    /// The lasting call receipt the last verb's reply stated, as
+    /// `call:<32hex>`, whether it answered or refused. `None` for an embedded
+    /// handle, before any call, after a call that reached no server, and for
+    /// an anonymous off-record call.
+    fn last_receipt_ref(&self) -> Option<String> {
+        self.inner.last_receipt_ref()
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;
