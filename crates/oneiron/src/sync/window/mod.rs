@@ -27,6 +27,7 @@ mod egress;
 mod forward;
 mod history_free;
 mod project_history;
+mod rebootstrap;
 mod replacement;
 mod reverse;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -61,6 +62,7 @@ pub use self::history_free::{
     export_window_replacement_for, export_window_since, export_window_since_for,
     export_window_updates_since, promotion_baseline, update_reaches_below_root,
 };
+pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};
 pub(in crate::sync) use self::reverse::is_delegated_channel_identity_carrier;
 pub use self::reverse::reverse_rematerialize;

@@ -367,10 +367,11 @@ fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
         || kind == oneiron::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::connector_event::CONNECTOR_EVENT_QUEUE_KIND
         || kind == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
     {
         // Maintenance, the wake policy's recipe receipts, connector wakes
-        // (OF-218) and a Dreamer-lane TASK's realization are vault-local and
-        // do not need Macro home election.
+        // (OF-218), a Dreamer-lane TASK's realization and a weave lens
+        // render are vault-local and do not need Macro home election.
         Some(DreamerConsolidationScope::Micro)
     } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)
