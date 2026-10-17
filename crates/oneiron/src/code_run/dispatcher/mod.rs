@@ -9,6 +9,7 @@ mod memory_verbs;
 mod reader_spawn;
 mod summarize;
 mod team_submit;
+mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
