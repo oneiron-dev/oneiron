@@ -2533,7 +2533,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -22878,6 +22878,7 @@
      "notable": [
       "DeleteVaultPlan",
       "RemovalExportCopy",
+      "RemovalExportDelivery",
       "RemoveOwnerPlan",
       "SharedActExecution",
       "SharedActExecutionReceipt",
@@ -22893,11 +22894,11 @@
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 11,
       "re-export": 2,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -73907,6 +73908,7 @@
       "RefreshPolicy",
       "RelationshipChange",
       "ReleasedWait",
+      "RemovalExportDelivery",
       "RenderPair",
       "RenderSide",
       "ReplyStripsPage",
@@ -74218,7 +74220,7 @@
      "purpose": "—",
      "surface": {
       "enum": 258,
-      "struct": 663
+      "struct": 664
      }
     },
     {
