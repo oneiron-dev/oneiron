@@ -49,7 +49,7 @@ use oneiron::code_run::{
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
 use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
-use oneiron::memory::HostWriteOrigin;
+use oneiron::memory::{HostWriteOrigin, Memory};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
@@ -74,9 +74,15 @@ pub(crate) struct McpCodeModeVerbs {
     /// The rows this run's verb calls listed as served during this call
     /// (DEC-0005); each answer carries its own into the run's record too.
     served: std::sync::Mutex<Vec<oneiron::EntityId>>,
-    /// This run's browser, when the host has a `[browser]` guest to give it.
+    /// This run's browser and desktop.
+    guests: RunGuests,
+}
+
+/// One run's guests: its browser, when the host has a `[browser]` guest to
+/// give it, and its desktop, when it has a `[desktop]` one. Whichever door
+/// the run binds admits each call before its guest acts.
+pub(crate) struct RunGuests {
     browser: Option<RunBrowser>,
-    /// This run's desktop, when the host has a `[desktop]` guest to give it.
     desktop: Option<RunDesktop>,
 }
 
@@ -237,16 +243,29 @@ fn browser_send_policy(server: &SyncServer) -> SendPolicy {
 }
 
 /// A batch's routine steps through the host's ladder: each step is the
-/// run's own `ai.verdict` call through this door (its admission, verb gate
-/// and hooks), under the batch call's origin, with the step's screenshot
-/// handed in from the run's browser as an evidence ref on the run.
+/// run's own `ai.verdict` call through its door (a connector's admission,
+/// verb gate and hooks, or an agent run's hooks), under the batch call's
+/// origin, with the step's screenshot handed in from the run's browser as an
+/// evidence ref on the run.
 #[derive(Clone)]
 struct LadderDecider {
     server: Arc<SyncServer>,
-    actor: McpCallContext,
+    asker: VerdictAsker,
     runtime: tokio::runtime::Handle,
     origin: HostWriteOrigin,
     run_id: oneiron::EntityId,
+}
+
+/// Whom a run's routine decisions are asked for.
+#[derive(Clone)]
+pub(crate) enum VerdictAsker {
+    /// The `execute_code` connector: each decision is its own `ai.verdict`
+    /// tool call by that credential, under a fresh invocation.
+    Connector(McpCallContext),
+    /// A pumped run's own agent, which holds no credential: each decision is
+    /// the agent's `ai.verdict` through its run's host door, under a fresh
+    /// invocation.
+    Agent(oneiron::WriteActor),
 }
 
 impl RoutineDecider for LadderDecider {
@@ -275,12 +294,30 @@ impl RoutineDecider for LadderDecider {
             .map(|(image, png)| HeldImage::new(self.run_id, image, png.to_vec()));
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(&self.server);
-        let actor = self.actor.clone();
         let origin = self.origin.clone();
-        self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-            let _ = sender
-                .send(execute_code_mode_verb(&server, &actor, "ai.verdict", input, origin).await);
-        }));
+        match self.asker.clone() {
+            VerdictAsker::Connector(actor) => {
+                self.runtime.spawn(HELD_IMAGE.scope(held, async move {
+                    let _ = sender.send(
+                        execute_code_mode_verb(&server, &actor, "ai.verdict", input, origin).await,
+                    );
+                }));
+            }
+            VerdictAsker::Agent(actor) => {
+                self.runtime.spawn_blocking(move || {
+                    let answered = crate::server::answer_as_agent(
+                        &server,
+                        actor,
+                        &origin,
+                        InvocationId::mint(),
+                        AgentVerb::AiVerdict,
+                        input,
+                        held,
+                    );
+                    let _ = sender.send(answered.map_err(super::mcp_facade_error));
+                });
+            }
+        }
         let (output, _) = receiver
             .recv()
             .map_err(|_| BrowserError::Decider("the ladder did not answer".to_owned()))?
@@ -384,6 +421,19 @@ impl WorkflowLibrary for VaultLibrary {
 }
 
 impl RunBrowser {
+    /// The browser the host gives run `run_id`, under the press policy the
+    /// vault's standing grants set, when it has a `[browser]` guest.
+    fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
+        let mut guest = server.browser_guest()?.clone();
+        guest.policy = browser_send_policy(server);
+        Some(Self {
+            guest,
+            session: Mutex::new(None),
+            vault: Arc::clone(&server.vault),
+            run_id,
+        })
+    }
+
     fn call(
         &self,
         verb: AgentVerb,
@@ -413,6 +463,19 @@ impl RunBrowser {
 }
 
 impl RunDesktop {
+    /// The desktop the host gives run `run_id`, as [`RunBrowser::new`] gives
+    /// its browser, when it has a `[desktop]` guest.
+    fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
+        let mut guest = server.desktop_guest()?.clone();
+        guest.policy = browser_send_policy(server);
+        Some(Self {
+            guest,
+            session: Mutex::new(None),
+            vault: Arc::clone(&server.vault),
+            run_id,
+        })
+    }
+
     fn call(
         &self,
         verb: AgentVerb,
@@ -440,58 +503,36 @@ impl RunDesktop {
     }
 }
 
-impl McpCodeModeVerbs {
-    /// Binds the door to the server runtime the `execute_code` call arrived on.
-    pub(crate) fn new(
-        server: &Arc<SyncServer>,
-        actor: &McpCallContext,
-        run_id: oneiron::EntityId,
-    ) -> Self {
+impl RunGuests {
+    /// The guests the host gives run `run_id`.
+    pub(crate) fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Self {
         Self {
-            server: Arc::clone(server),
-            actor: actor.clone(),
-            runtime: tokio::runtime::Handle::current(),
-            served: std::sync::Mutex::new(Vec::new()),
-            browser: server.browser_guest().map(|guest| {
-                let mut guest = guest.clone();
-                guest.policy = browser_send_policy(server);
-                RunBrowser {
-                    guest,
-                    session: Mutex::new(None),
-                    vault: Arc::clone(&server.vault),
-                    run_id,
-                }
-            }),
-            desktop: server.desktop_guest().map(|guest| {
-                let mut guest = guest.clone();
-                guest.policy = browser_send_policy(server);
-                RunDesktop {
-                    guest,
-                    session: Mutex::new(None),
-                    vault: Arc::clone(&server.vault),
-                    run_id,
-                }
-            }),
+            browser: RunBrowser::new(server, run_id),
+            desktop: RunDesktop::new(server, run_id),
         }
     }
 
-    /// A browser row: this connector's binding and live credential at each
-    /// call, the row's verb hooks around the run's browser. Its answer
-    /// derives from no vault row.
-    fn call_browser(
+    /// A browser or desktop row its door admitted: the row's verb hooks on
+    /// `memory` around the run's guest, each routine decision asked for
+    /// `asker`, and what the browser files named for `by`. The browser runs
+    /// as its connector pack, once its setup connection is checked. Its
+    /// answer derives from no vault row.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one axis of the door the call came through"
+    )]
+    pub(crate) fn call(
         &self,
+        server: &Arc<SyncServer>,
+        runtime: &tokio::runtime::Handle,
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
-        invocation: InvocationId,
+        memory: &Memory<'_>,
+        asker: VerdictAsker,
+        by: oneiron::EntityId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
-            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
-        {
-            return refused(error);
-        }
         // The browser runs as its connector pack: no installed pack, no browser.
-        if self
-            .server
+        if server
             .vault
             .require_builtin_channel_pack("browser")
             .is_err()
@@ -510,8 +551,7 @@ impl McpCodeModeVerbs {
         let desktop = call.verb.as_str().starts_with("self.desktop.");
         // The browser guest runs only once its setup connection is checked.
         if !desktop
-            && self
-                .server
+            && server
                 .vault
                 .require_pack_connection_verified("oneiron.browser", "browser-guest")
                 .is_err()
@@ -528,31 +568,17 @@ impl McpCodeModeVerbs {
         let Some(run_id) = run_id else {
             return Ok(Err(browser_refused(BrowserError::Unbound)));
         };
-        let memory = crate::api::credential_memory(
-            &self.server.vault,
-            self.actor.auth.as_ref(),
-            self.actor.actor_ref,
-            self.actor.actor_class,
-        )
-        .with_invocation(invocation);
         let verb = call.verb.as_str();
-        let hooks = match oneiron::task_verb::verb_hook_boundary::row_pre(
-            &memory,
-            verb,
-            call.input.clone(),
-        ) {
-            Ok(hooks) => hooks,
-            Err(error) => return refused(super::mcp_facade_error(error)),
-        };
-        // Each routine decision is a verb call of its own, under a fresh
-        // invocation.
+        let hooks =
+            match oneiron::task_verb::verb_hook_boundary::row_pre(memory, verb, call.input.clone())
+            {
+                Ok(hooks) => hooks,
+                Err(error) => return refused(super::mcp_facade_error(error)),
+            };
         let decider = LadderDecider {
-            server: Arc::clone(&self.server),
-            actor: McpCallContext {
-                invocation: None,
-                ..self.actor.clone()
-            },
-            runtime: self.runtime.clone(),
+            server: Arc::clone(server),
+            asker,
+            runtime: runtime.clone(),
             origin: origin.clone(),
             run_id,
         };
@@ -560,8 +586,8 @@ impl McpCodeModeVerbs {
             (Some(run), _) if desktop => run.call(call.verb, hooks.args.clone(), decider),
             (_, Some(run)) if !desktop => {
                 let library = VaultLibrary {
-                    server: Arc::clone(&self.server),
-                    by: self.actor.actor_ref,
+                    server: Arc::clone(server),
+                    by,
                 };
                 run.call(call.verb, hooks.args.clone(), decider, library)
             }
@@ -578,7 +604,7 @@ impl McpCodeModeVerbs {
         if let Some(receipts) = output.get("receipts") {
             tracing::info!(verb, ?receipts, "browser batch receipts");
         }
-        match oneiron::task_verb::verb_hook_boundary::row_post(&self.server.vault, hooks, output) {
+        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, output) {
             Ok(output) => Ok(Ok(AgentVerbAnswer {
                 output,
                 rows: Some(Vec::new()),
@@ -589,7 +615,7 @@ impl McpCodeModeVerbs {
 
     /// The screenshot this run's browser or desktop holds under the
     /// `blake3:` ref an `ai.verdict` input names, when one holds it.
-    fn held_image(&self, input: &Value) -> Option<HeldImage> {
+    pub(crate) fn held_image(&self, input: &Value) -> Option<HeldImage> {
         let handle = input
             .get("image")
             .and_then(Value::as_str)
@@ -633,6 +659,64 @@ impl McpCodeModeVerbs {
             });
         browser.into_iter().chain(desktop).collect()
     }
+}
+
+impl McpCodeModeVerbs {
+    /// Binds the door to the server runtime the `execute_code` call arrived on.
+    pub(crate) fn new(
+        server: &Arc<SyncServer>,
+        actor: &McpCallContext,
+        run_id: oneiron::EntityId,
+    ) -> Self {
+        Self {
+            server: Arc::clone(server),
+            actor: actor.clone(),
+            runtime: tokio::runtime::Handle::current(),
+            served: std::sync::Mutex::new(Vec::new()),
+            guests: RunGuests::new(server, run_id),
+        }
+    }
+
+    /// A browser row: this connector's binding and live credential at each
+    /// call, then the run's guest.
+    fn call_browser(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
+            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
+        {
+            return refused(error);
+        }
+        let memory = crate::api::credential_memory(
+            &self.server.vault,
+            self.actor.auth.as_ref(),
+            self.actor.actor_ref,
+            self.actor.actor_class,
+        )
+        .with_invocation(invocation);
+        // Each routine decision is a verb call of its own, under a fresh
+        // invocation.
+        let asker = VerdictAsker::Connector(McpCallContext {
+            invocation: None,
+            ..self.actor.clone()
+        });
+        self.guests.call(
+            &self.server,
+            &self.runtime,
+            call,
+            origin,
+            &memory,
+            asker,
+            self.actor.actor_ref,
+        )
+    }
+
+    pub(crate) fn manifests(&self) -> Vec<Value> {
+        self.guests.manifests()
+    }
 
     /// The rows this run's verb calls listed as served.
     pub(crate) fn served(&self) -> Vec<oneiron::EntityId> {
@@ -655,7 +739,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             return self.call_browser(call, origin, invocation);
         }
         let held = matches!(call.verb, AgentVerb::AiVerdict)
-            .then(|| self.held_image(&call.input))
+            .then(|| self.guests.held_image(&call.input))
             .flatten();
         // The run's worker thread drives its own reactor; the verb runs on the
         // server runtime, as a tool call would, and the worker waits for it.
