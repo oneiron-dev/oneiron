@@ -405,8 +405,10 @@ async fn box_answer(
                 version: family.version.to_string(),
             },
             ask_to: None,
+            paired: None,
             person: None,
             presence: host.presence.as_ref(),
+            correlation: None,
         };
         ladder.run_located(
             &question,

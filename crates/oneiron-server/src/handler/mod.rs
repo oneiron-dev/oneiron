@@ -17,6 +17,7 @@ mod lag_resync;
 #[cfg(test)]
 mod lag_resync_tests;
 mod lfs_chunks;
+mod mcp_socket;
 pub(crate) mod mesh;
 #[cfg(test)]
 mod note_socket_tests;
@@ -28,6 +29,7 @@ pub(crate) mod window_row_tests;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;
+pub(crate) use self::mcp_socket::{MCP_RPC_METHOD, MCP_SUBPROTOCOL};
 pub(crate) use self::window_sync::selector_grant_scope;
 
 #[cfg(test)]
