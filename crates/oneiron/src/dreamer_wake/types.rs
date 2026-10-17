@@ -85,6 +85,9 @@ pub enum WakePassStop {
     /// The pass worked through the head of a backlog larger than one wake
     /// prepares and met the rest, which waits for the next pass.
     BacklogLeft,
+    /// A `host.wake` pre-hook skipped the wake, or asked first (ARCH-0080
+    /// §5): the pass did nothing, and the hook's receipt keeps why.
+    HookSkipped,
 }
 
 /// Wake-pass tally.

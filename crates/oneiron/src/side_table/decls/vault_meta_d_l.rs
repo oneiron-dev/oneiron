@@ -555,6 +555,9 @@ side_tables! {
     HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named;
     /// A hook run's Hook receipt. Key: hash32 (run key).
     HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named;
+    /// A hook's regen record: the contract its last good body passed under, its intent, and a
+    /// regen decision waiting to be enacted. Key: id16 (binding).
+    HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named;
     /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
