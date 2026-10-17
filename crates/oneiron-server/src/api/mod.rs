@@ -103,7 +103,9 @@ mod sessions;
 mod facade;
 // OF-489: the held socket runs every facade verb through the facade's one
 // generated dispatch, under the credential its connection bound.
-pub(crate) use self::facade::{FacadeApiError, FacadeCall, call_verb as facade_call_verb};
+pub(crate) use self::facade::{
+    FacadeApiError, FacadeCall, call_verb as facade_call_verb, connector_call_as,
+};
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —

@@ -55,6 +55,10 @@ for row in ROWS:
     # what an embedded handle answers instead.
     if row.get('host_door') and (row.get('server_door') or row.get('admission', {}).get('owner_grade') or row.get('context', 'memory') != 'memory'):
         raise ValueError(f'{row["name"]}: a host door is a memory row with no other server door')
+    # `host_door_invocation` hands the door the logical invocation the call
+    # resolved, after its pre chain: the one its verb hooks fired for.
+    if row.get('host_door_invocation') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes the call\'s invocation')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -558,7 +562,7 @@ def mcp_input_dispatch(row):
         # credential the REST facade passes it.
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
-                 f'let output = crate::api::facade::host_doors::{method}(server, auth, input).await.map_err(mcp_facade_error)?;\n')
+                 f'let output = crate::api::facade::host_doors::{method}(server, auth, {"memory.invocation(), " if row.get("host_door_invocation") else ""}input).await.map_err(mcp_facade_error)?;\n')
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
@@ -996,7 +1000,7 @@ def facade_dispatch(facade_rows):
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
-                let output = facade_output(super::host_doors::{method}(server, auth, facade_input(hooks.args.clone())?).await?)?;
+                let output = facade_output(super::host_doors::{method}(server, auth, {"Some(hooks.call().invocation), " if r.get("host_door_invocation") else ""}facade_input(hooks.args.clone())?).await?)?;
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))
             }}\n'''
             continue

@@ -60,6 +60,8 @@ pub(crate) use super::setting_doors::*;
 pub(crate) use super::widen_proposal_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::policy_doors::*;
+// The generic connector call's door (ONE-2510), likewise.
+pub(crate) use super::connector_call_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -497,6 +499,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
+        "connector.call" => super::connector_call_doors::connector_caller(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
         "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
             super::decision_ask_doors::holder(auth, verb).map(drop)

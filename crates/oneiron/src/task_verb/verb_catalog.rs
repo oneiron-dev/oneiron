@@ -185,6 +185,8 @@ pub enum AgentVerb {
     SelfDecisionsAsks,
     ConnectorList,
     ConnectorStatus,
+    ConnectorCall,
+    ConnectorSchema,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -435,6 +437,8 @@ impl AgentVerb {
         Self::SelfDecisionsAsks,
         Self::ConnectorList,
         Self::ConnectorStatus,
+        Self::ConnectorCall,
+        Self::ConnectorSchema,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -692,6 +696,8 @@ impl AgentVerb {
             Self::SelfDecisionsAsks => "self.decisions.asks",
             Self::ConnectorList => "connector.list",
             Self::ConnectorStatus => "connector.status",
+            Self::ConnectorCall => "connector.call",
+            Self::ConnectorSchema => "connector.schema",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -941,6 +947,8 @@ impl AgentVerb {
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
+                | Self::ConnectorCall
+                | Self::ConnectorSchema
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1198,6 +1206,8 @@ impl AgentVerb {
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
+                | Self::ConnectorCall
+                | Self::ConnectorSchema
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1480,6 +1490,8 @@ impl AgentVerb {
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
+                | Self::ConnectorCall
+                | Self::ConnectorSchema
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -1650,6 +1662,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::ConnectorCall
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -1885,6 +1898,8 @@ impl AgentVerb {
             Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
+            Self::ConnectorCall => &["spec"],
+            Self::ConnectorSchema => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -2136,6 +2151,8 @@ impl AgentVerb {
             Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
+            Self::ConnectorCall => &["spec"],
+            Self::ConnectorSchema => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -2680,6 +2697,12 @@ impl AgentVerb {
                 "Every live catalogued connector whose name or summary matches the query."
             }
             Self::ConnectorStatus => "One catalogued connector by name, removed ones included.",
+            Self::ConnectorCall => {
+                "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."
+            }
+            Self::ConnectorSchema => {
+                "One catalogued connector tool's approved input schema, as the caller's own grant resolves it."
+            }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the run's own browser session and observes the page."
             }
