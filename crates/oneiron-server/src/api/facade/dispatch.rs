@@ -3405,6 +3405,28 @@ async fn vault_projects_confirm(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_projects_roster_write(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.projects.roster.write",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_projects_goal_intake(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5190,6 +5212,7 @@ pub(crate) async fn call_verb(
         "vault.projects.proposals" => vault_projects_proposals(server, call, input).await,
         "vault.projects.dismiss_card" => vault_projects_dismiss_card(server, call, input).await,
         "vault.projects.confirm" => vault_projects_confirm(server, call, input).await,
+        "vault.projects.roster.write" => vault_projects_roster_write(server, call, input).await,
         "vault.projects.goal.intake" => vault_projects_goal_intake(server, call, input).await,
         "vault.rooms.join" => vault_rooms_join(server, call, input).await,
         "vault.rooms.consent" => vault_rooms_consent(server, call, input).await,

@@ -512,6 +512,9 @@ impl OneironClient {
                 "vault.projects.confirm" => remote_agent_verb_output::<
                     oneiron::workspace_roster::ProjectMintReceipt,
                 >(client, verb, &input),
+                "vault.projects.roster.write" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ProjectRosterWriteOutcome,
+                >(client, verb, &input),
                 "vault.projects.goal.intake" => remote_agent_verb_output::<
                     oneiron::workspace_roster::ProjectGoalInterviewContext,
                 >(client, verb, &input),
@@ -2676,6 +2679,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.projects.confirm", value)
+    }
+    pub fn vault_projects_roster_write(
+        &self,
+        input: &oneiron::workspace_roster::ProjectRosterWriteRequest,
+    ) -> Result<oneiron::workspace_roster::ProjectRosterWriteOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.projects.roster.write", value)
     }
     pub fn vault_projects_goal_intake(
         &self,

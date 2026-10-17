@@ -755,6 +755,11 @@ export_facade! {
     let output = client.vault_projects_confirm(&input)?;
     crate::codec::lift_record("vault.projects.confirm", &output)
 };
+"vault.projects.roster.write" => fn vault_projects_roster_write(&self, input: ProjectRosterWriteRequest) -> ProjectRosterWriteOutcome = |client| {
+    let input: oneiron::workspace_roster::ProjectRosterWriteRequest = crate::codec::lower_record("vault.projects.roster.write", input)?;
+    let output = client.vault_projects_roster_write(&input)?;
+    crate::codec::lift_record("vault.projects.roster.write", &output)
+};
 "vault.projects.goal.intake" => fn vault_projects_goal_intake(&self, input: ProjectRefRequest) -> ProjectGoalInterviewContext = |client| {
     let input: oneiron::task_verb::sdk::ProjectRefRequest = crate::codec::lower_record("vault.projects.goal.intake", input)?;
     let output = client.vault_projects_goal_intake(&input)?;
