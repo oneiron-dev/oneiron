@@ -175,3 +175,61 @@ pub(super) fn read_blob(
             })
         })
 }
+
+/// `vault.consolidation.enqueue`'s input (OF-237): one Dreamer consolidation
+/// attempt, as [`crate::memory::ConsolidationAttemptInput`] takes it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationEnqueueRequest {
+    /// `micro`, `meso` or `macro`.
+    pub scope: String,
+    /// The attempt's opaque input.
+    pub input: serde_json::Value,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    /// Advisory: coalesces onto an existing attempt, never a lock.
+    #[serde(default)]
+    pub dedupe_key: Option<String>,
+    /// Unix seconds; omitted, now.
+    #[serde(default)]
+    pub now: Option<u64>,
+}
+
+/// `vault.consolidation.status`'s input: the job ref an enqueue returned.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationStatusRequest {
+    pub job_ref: String,
+}
+
+pub(super) fn enqueue_consolidation(
+    memory: &Memory<'_>,
+    input: ConsolidationEnqueueRequest,
+) -> MemoryResult<crate::memory::DreamerAttemptRef> {
+    memory.enqueue_consolidation(&crate::memory::ConsolidationAttemptInput {
+        scope: input.scope,
+        input: input.input,
+        run_id: input.run_id,
+        dedupe_key: input.dedupe_key,
+        now: input.now,
+    })
+}
+
+/// A status read is the bound actor's: its binding is proved before the
+/// queue is read.
+pub(super) fn dreamer_attempt_status(
+    memory: &Memory<'_>,
+    input: ConsolidationStatusRequest,
+) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
+    crate::memory::verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
+    memory.dreamer_attempt_status(&input.job_ref)
+}
+
+/// Each claim through its own gate, forced proposed: one receipt per claim,
+/// never one all-or-nothing batch.
+pub(super) fn seed_claims(
+    memory: &Memory<'_>,
+    input: CommitRequest,
+) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+    memory.seed_claims(&input.claims)
+}

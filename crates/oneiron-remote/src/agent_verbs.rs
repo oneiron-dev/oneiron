@@ -53,6 +53,12 @@ impl OneironClient {
                 "self.identity.settle" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::maintenance::identity::IdentityActNow,
                 >(client, verb, &input),
+                "self.inbox.list" => remote_agent_verb_output::<oneiron::inbox::NotificationPage>(
+                    client, verb, &input,
+                ),
+                "self.inbox.mark" => remote_agent_verb_output::<oneiron::inbox::NotificationRow>(
+                    client, verb, &input,
+                ),
                 "self.inbox.concern" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCardView,
                 >(client, verb, &input),
@@ -541,6 +547,15 @@ impl OneironClient {
                 "vault.artifacts.read" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::BlobContent>,
                 >(client, verb, &input),
+                "vault.consolidation.enqueue" => remote_agent_verb_output::<
+                    oneiron::memory::DreamerAttemptRef,
+                >(client, verb, &input),
+                "vault.consolidation.status" => remote_agent_verb_output::<
+                    Option<oneiron::memory::DreamerAttemptView>,
+                >(client, verb, &input),
+                "vault.claims.seed" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::CommitReceipt>,
+                >(client, verb, &input),
                 "connector.outbound.schedule" => remote_agent_verb_output::<
                     oneiron::memory::OutboundIntentReceipt,
                 >(client, verb, &input),
@@ -653,6 +668,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.identity.settle", value)
+    }
+    pub fn self_inbox_list(
+        &self,
+        input: &oneiron::task_verb::sdk::InboxListRequest,
+    ) -> Result<oneiron::inbox::NotificationPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.list", value)
+    }
+    pub fn self_inbox_mark(
+        &self,
+        input: &oneiron::task_verb::sdk::InboxMarkRequest,
+    ) -> Result<oneiron::inbox::NotificationRow, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.mark", value)
     }
     pub fn self_inbox_concern(
         &self,
@@ -2652,6 +2691,46 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.read", value)
+    }
+    pub fn vault_consolidation_enqueue(
+        &self,
+        input: &oneiron::task_verb::sdk::ConsolidationEnqueueRequest,
+    ) -> Result<oneiron::memory::DreamerAttemptRef, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.enqueue", value)
+    }
+    pub fn vault_consolidation_status(
+        &self,
+        input: &oneiron::task_verb::sdk::ConsolidationStatusRequest,
+    ) -> Result<Option<oneiron::memory::DreamerAttemptView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.status", value)
+    }
+    pub fn vault_claims_seed(
+        &self,
+        input: &oneiron::task_verb::sdk::CommitRequest,
+    ) -> Result<Vec<oneiron::memory::CommitReceipt>, MemoryError> {
+        oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
+        for claim in &input.claims {
+            oneiron::memory::caps::check_claim_input(claim)?;
+        }
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.seed", value)
     }
     pub fn connector_outbound_schedule(
         &self,

@@ -423,6 +423,10 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    /// The conversation whose request this surface's work answers, when a
+    /// host bound one (`with_origin_conversation`, OF-221): context, not
+    /// authority.
+    pub(super) origin_conversation: Option<EntityId>,
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
@@ -499,6 +503,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            origin_conversation: None,
             task_host: None,
             off_record_session: None,
         }
@@ -534,6 +539,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            origin_conversation: None,
             task_host: None,
             off_record_session: None,
         }
@@ -578,6 +584,7 @@ impl<'v> Memory<'v> {
                 owner_authorship: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
+                origin_conversation: self.origin_conversation,
                 task_host: self.task_host.clone(),
                 off_record_session: self.off_record_session.clone(),
             },
@@ -633,6 +640,19 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds the conversation whose request started this surface's work
+    /// (OF-221). A host binds it only from the authenticated request that
+    /// actually started the work, never from caller text, a selected room or
+    /// a transcript. A root TASK this surface creates keeps it, through
+    /// approval and wave planning, and the agent that realizes it carries it
+    /// as its dispatch origin; a child always takes its parent's instead. It
+    /// grants nothing.
+    #[must_use]
+    pub fn with_origin_conversation(mut self, id: EntityId) -> Self {
+        self.origin_conversation = Some(id);
+        self
+    }
+
     /// Binds the off-record session the host's request names (its
     /// `x-oneiron-session`): context, not authority. Inside one the live
     /// registry holds anonymous, a reference refusal or an unlinked prose
@@ -657,6 +677,12 @@ impl Memory<'_> {
     #[must_use]
     pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
         self.invocation
+    }
+
+    /// The origin conversation a host bound, if any.
+    #[must_use]
+    pub fn origin_conversation(&self) -> Option<EntityId> {
+        self.origin_conversation
     }
 
     /// Binds the running agent attempt whose TASK creates this surface makes
