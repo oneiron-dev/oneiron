@@ -322,7 +322,7 @@ pub(crate) struct ReactionExternalPayload {
 pub(crate) struct ReactionResponse {
     pub id: String,
     /// `reaction.put`, `reaction.revoked` or `reaction.replayed`.
-    pub event: &'static str,
+    pub event: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -115,6 +115,20 @@ impl Vault {
             return Ok(());
         };
         let grant_ref = EntityId::from_hex(grant_ref).map_err(|_| invalid_authority())?;
+        self.require_live_guest_grant_in_txn(txn, grant_ref, &claims.holder_ref, now)
+    }
+
+    /// An ask guest's FEDERATION_GRANT `grant_ref` still stands for `member`
+    /// (PERSON hex): live, not withdrawn, an ask guest's grant whose member it
+    /// is, and conferring at `now`. A grant-bound slip and a guest's task-verb
+    /// proof (OF-220) both read it.
+    pub(super) fn require_live_guest_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: EntityId,
+        member: &str,
+        now: u64,
+    ) -> Result<()> {
         if WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some() {
             return Err(invalid_authority());
         }
@@ -128,7 +142,7 @@ impl Vault {
         let grant = decode_federation_grant_body(&body)?;
         if !grant.role.is_guest()
             || !matches!(grant.scope, FederationGrantScope::Ask { .. })
-            || grant.member_ref.to_hex() != claims.holder_ref
+            || grant.member_ref.to_hex() != member
             || !grant.confers_at(now)
         {
             return Err(invalid_authority());

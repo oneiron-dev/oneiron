@@ -1146,6 +1146,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_diff(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.diff")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.diff", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_blame(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.code.blame")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.blame", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_export(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.export")?;
         let output = py
@@ -1467,6 +1481,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.conversations.turn.retry", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_messages_react(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.messages.react")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.messages.react", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -1831,6 +1852,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.claims.admit")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.claims.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.create", input))
             .map_err(raise)?;
         encode(&output)
     }

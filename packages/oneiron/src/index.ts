@@ -462,12 +462,20 @@ export class Oneiron {
       discard: (request: Facade.ProposalSettleRequest): Facade.DiscardedProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsDiscard(keyedJson(request))) as Facade.DiscardedProposal; return result }),
       /** Undoes one Keep with a new version; the settle stays consumed. */
       undo: (request: Facade.ProposalSettleRequest): Facade.UndoneKeep => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsUndo(keyedJson(request))) as Facade.UndoneKeep; return result }),
+      /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */
+      create: (input: Facade.ArtifactCreateRequest): Facade.ArtifactView | null => this.#call(() => this.#client.vaultArtifactsCreate(input) as Facade.ArtifactView | null),
       /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
       put: (input: Facade.BlobArtifactInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultArtifactsPut(input) as Facade.EntityRefReceipt),
       /** Appends one version of bytes to a blob artifact's append-only chain. */
       append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
       /** Reads one version of a blob artifact's bytes. */
       read: (input: Facade.ReadBlobVersionRequest): Facade.BlobContent | null => this.#call(() => this.#client.vaultArtifactsRead(input) as Facade.BlobContent | null),
+    },
+    code: {
+      /** The semantic changes between two tested states of one code file, each with the operations that made it. */
+      diff: (request: Facade.CodeDiffRequest): Facade.CodeDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeDiff(keyedJson(request))) as Facade.CodeDiffView | null; return result === null ? null : result }),
+      /** Every unit of one tested code file state, blamed by the operations that wrote it. */
+      blame: (request: Facade.CodeStateRequest): Facade.CodeBlameView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeBlame(keyedJson(request))) as Facade.CodeBlameView | null; return result === null ? null : result }),
     },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */
@@ -538,6 +546,10 @@ export class Oneiron {
         /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
         retry: (input: Facade.TurnActionRequest): Facade.TurnActionReceipt => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as Facade.TurnActionReceipt),
       },
+    },
+    messages: {
+      /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
+      react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
     },
     companions: {
       sharing: {

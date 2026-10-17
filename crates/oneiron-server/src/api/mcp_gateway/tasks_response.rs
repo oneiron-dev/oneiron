@@ -747,6 +747,8 @@ fn mcp_agent_verb_input(
         "vault.shares.view" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.diff" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.blame" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
@@ -884,6 +886,7 @@ fn mcp_agent_verb_input(
         "vault.projects.route_tradeoff" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turn.continue" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turn.retry" => a.spec.clone().ok_or_else(invalid),
+        "vault.messages.react" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host.pin" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host.hand" => a.spec.clone().ok_or_else(invalid),
@@ -941,6 +944,7 @@ fn mcp_agent_verb_input(
         "vault.structural.put" => a.spec.clone().ok_or_else(invalid),
         "vault.habits.checkin" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.admit" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.create" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.put" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.append" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.read" => a.spec.clone().ok_or_else(invalid),
@@ -1320,6 +1324,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.artifacts.view" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.code.diff" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.blame" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.artifacts.export" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1486,6 +1496,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.conversations.turn.retry" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.messages.react" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.rooms.host" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1634,6 +1647,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.admit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.artifacts.create" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.put" => {
@@ -3152,6 +3168,22 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.code.diff" => {
+            let input: oneiron::code_document::CodeDiffRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_diff(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.blame" => {
+            let input: oneiron::code_document::CodeStateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_blame(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.artifacts.export" => {
             let input: oneiron::blob_artifact::ArtifactExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
@@ -3535,6 +3567,18 @@ async fn execute_agent_verb_row(
             let input: oneiron::conversation::TurnActionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_conversations_turn_retry(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.messages.react" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.messages.react", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::reaction::MessageReactionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_messages_react(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -4022,6 +4066,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::AdmitImportedClaimInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_claims_admit(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.artifacts.create" => {
+            let input: oneiron::blob_artifact::ArtifactCreateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_artifacts_create(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

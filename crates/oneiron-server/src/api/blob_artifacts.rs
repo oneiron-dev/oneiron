@@ -27,7 +27,7 @@ use base64::Engine as _;
 use oneiron::EntityId;
 use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
-    ArtifactVersionView, BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance,
+    ArtifactCreateRequest, ArtifactVersionView, BlobArtifactVersion, BlobVersionProvenance,
     BornFromSource,
 };
 use oneiron::edge::EdgeActorClass;
@@ -249,49 +249,42 @@ fn owner_actor(auth: &CoreAuth, server: &SyncServer) -> Result<WriteActor, ApiEr
     actor(auth, None)
 }
 
+/// `POST /v1/core/artifacts` through the `vault.artifacts.create` row's
+/// door (OF-181), as the credential's actor. Its bytes ride the request
+/// whole, past what one action argument carries, so the route runs the
+/// row's door itself rather than the action table.
 pub(super) async fn create(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CreateArtifact>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
+) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     auth.require(CoreScope::Write)?;
     let actor = actor(&auth, None)?;
     let request = json_payload(payload)?;
-    let bytes = decode_content(&request.content_base64)?;
-    let provenance = provenance(actor, request.run_ref)?;
-    let view = blocking("artifact create failed", move || {
-        let vault = server.vault();
-        let (occurred, now) = moment(&server);
-        let id = vault.new_entity_id()?;
-        vault.put_blob_artifact(
-            &id,
-            &BlobArtifactBody::new(request.name, request.media_type),
-            occurred,
-            now,
-        )?;
-        match &request.made_by {
-            Some(made_by) => vault.append_blob_artifact_version_made_by(
-                &id,
-                None,
-                &bytes,
-                &provenance,
-                made_by,
-                actor,
-                occurred,
-                now,
-            )?,
-            None => vault.append_blob_artifact_version(
-                &id,
-                &bytes,
-                &provenance,
-                actor,
-                occurred,
-                now,
-            )?,
-        };
-        vault.blob_artifact_view(&id)
+    let made_by = request
+        .made_by
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|_| ApiError::bad_request("made_by is not encodable", Some("made_by")))?;
+    let input = ArtifactCreateRequest {
+        name: request.name,
+        media_type: request.media_type,
+        content_base64: request.content_base64,
+        run_ref: request.run_ref,
+        made_by,
+    };
+    let view = tokio::task::spawn_blocking(move || {
+        crate::api::credential_memory(
+            &server.vault,
+            Some(&auth),
+            actor.entity_ref(),
+            actor.actor_class(),
+        )
+        .at(auth.locality())
+        .artifacts_create(&input)
     })
-    .await?;
+    .await
+    .map_err(|_| ApiError::internal_server_error("artifact task failed"))??;
     Ok((StatusCode::CREATED, Json(json!(view))))
 }
 

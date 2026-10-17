@@ -379,6 +379,12 @@ impl OneironClient {
                 "vault.artifacts.view" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
                 >(client, verb, &input),
+                "vault.code.diff" => remote_agent_verb_output::<
+                    Option<oneiron::code_document::CodeDiffView>,
+                >(client, verb, &input),
+                "vault.code.blame" => remote_agent_verb_output::<
+                    Option<oneiron::code_document::CodeBlameView>,
+                >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
@@ -506,6 +512,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.conversations.turn.retry" => remote_agent_verb_output::<
                     oneiron::conversation::TurnActionReceipt,
+                >(client, verb, &input),
+                "vault.messages.react" => remote_agent_verb_output::<
+                    oneiron::reaction::MessageReactionReceipt,
                 >(client, verb, &input),
                 "vault.rooms.host" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomStanding,
@@ -657,6 +666,9 @@ impl OneironClient {
                 "vault.claims.admit" => {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
+                "vault.artifacts.create" => remote_agent_verb_output::<
+                    Option<oneiron::blob_artifact::ArtifactView>,
+                >(client, verb, &input),
                 "vault.artifacts.put" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
                 >(client, verb, &input),
@@ -2100,6 +2112,32 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.view", value)
     }
+    /// The semantic changes between two tested states of one code file, each with the operations that made it.
+    pub fn vault_code_diff(
+        &self,
+        input: &oneiron::code_document::CodeDiffRequest,
+    ) -> Result<Option<oneiron::code_document::CodeDiffView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.diff", value)
+    }
+    /// Every unit of one tested code file state, blamed by the operations that wrote it.
+    pub fn vault_code_blame(
+        &self,
+        input: &oneiron::code_document::CodeStateRequest,
+    ) -> Result<Option<oneiron::code_document::CodeBlameView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.blame", value)
+    }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(
         &self,
@@ -2616,6 +2654,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.conversations.turn.retry", value)
+    }
+    pub fn vault_messages_react(
+        &self,
+        input: &oneiron::reaction::MessageReactionRequest,
+    ) -> Result<oneiron::reaction::MessageReactionReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.messages.react", value)
     }
     pub fn vault_rooms_host(
         &self,
@@ -3241,6 +3291,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.claims.admit", value)
+    }
+    pub fn vault_artifacts_create(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactCreateRequest,
+    ) -> Result<Option<oneiron::blob_artifact::ArtifactView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.create", value)
     }
     pub fn vault_artifacts_put(
         &self,
