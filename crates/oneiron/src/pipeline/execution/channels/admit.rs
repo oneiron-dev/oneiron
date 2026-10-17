@@ -12,7 +12,7 @@ use crate::store::{
     RetrievalScoreComponent, RetrievalSignal, RetrievalTraceChannelRecord, StoreRead,
 };
 use heed::RoTxn;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// What the channel fan-out accumulates per admitted ranked list: the lists
 /// themselves, the per-signal score components, and the trace faces when the
@@ -21,8 +21,8 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct ChannelAccumulator {
     pub(super) ranked_lists: Vec<Vec<ScoredEntity>>,
     pub(super) signal_components: HashMap<EntityId, Vec<RetrievalScoreComponent>>,
-    /// Media hits at or above their own space's RET-01 floor (OF-370).
-    pub(super) media_evidence: HashSet<EntityId>,
+    /// Media hits by their own space's RET-01 floor (OF-370).
+    pub(super) media_evidence: super::super::super::budget::MediaEvidence,
     pub(super) trace_channels: Vec<RetrievalTraceChannelRecord>,
     pub(super) trace_ranked_lists: Vec<Vec<ScoredEntity>>,
     pub(super) trace_claim_gate: ClaimStatusGateCache,
@@ -53,7 +53,7 @@ impl ChannelAccumulator {
         Self {
             ranked_lists: Vec::new(),
             signal_components: HashMap::new(),
-            media_evidence: HashSet::new(),
+            media_evidence: Default::default(),
             trace_channels: Vec::new(),
             trace_ranked_lists: Vec::new(),
             trace_claim_gate: ClaimStatusGateCache {
