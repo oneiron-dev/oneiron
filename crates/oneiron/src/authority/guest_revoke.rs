@@ -52,7 +52,7 @@ impl Vault {
     ) -> Result<GuestRevokeOutcome> {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            require_host(&self.authority_view_readonly_in_txn(txn)?, issuer)?;
+            require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
             if let Some(done) = WITHDRAWN.get(&self.store, txn, &grant_ref)? {
                 return Ok(GuestRevokeOutcome {
                     grant_ref,
@@ -61,7 +61,7 @@ impl Vault {
                     revoked_at: done.revoked_at,
                     revoked_slips: Vec::new(),
                     pact: federation_grant_activation(
-                        &self.authority_view_readonly_in_txn(txn)?,
+                        &*self.authority_view_readonly_in_txn(txn)?,
                         &grant_ref,
                     ),
                     deletion_request: GuestDeletionRequestStatus::NotRequested,
@@ -79,7 +79,7 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             let revoked_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            for action in live_pact_disconnects(&self.authority_view_readonly_in_txn(txn)?, grant_ref)? {
+            for action in live_pact_disconnects(&*self.authority_view_readonly_in_txn(txn)?, grant_ref)? {
                 self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
             }
             apply_ops(
@@ -105,7 +105,7 @@ impl Vault {
                 revoked_at,
                 revoked_slips: Vec::new(),
                 pact: federation_grant_activation(
-                    &self.authority_view_readonly_in_txn(txn)?,
+                    &*self.authority_view_readonly_in_txn(txn)?,
                     &grant_ref,
                 ),
                 deletion_request: GuestDeletionRequestStatus::NotRequested,
