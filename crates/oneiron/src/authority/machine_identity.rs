@@ -88,6 +88,38 @@ pub enum PeerMachine {
     Unknown,
 }
 
+/// The vault id this install's resident signed Genesis roots (its hash, as
+/// the fold derives it), read without folding the log (OF-469). Only a
+/// well-formed Genesis its own device key signed at seq 0 counts, as in the
+/// fold; none resident is `None`, and more than one refuses. Never the
+/// store's own id, a checkpoint's asserted id or another entry's `vault_id`.
+fn resident_genesis_vault_id_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<AuthorityVaultId>> {
+    let mut roots = std::collections::BTreeSet::new();
+    for (_, bytes) in authority_log_rows_in_txn(store, txn)? {
+        let entry = decode_authority_log_entry_body(&bytes)?;
+        let AuthorityOp::Genesis { device, .. } = &entry.op else {
+            continue;
+        };
+        if entry.validate_shape().is_err()
+            || verify_entry_signatures(&entry).is_err()
+            || *entry.signer_key() != device.key
+            || entry.seq != 0
+        {
+            continue;
+        }
+        if let Ok(root) = genesis_vault_id(&entry) {
+            roots.insert(root);
+        }
+    }
+    if roots.len() > 1 {
+        return Err(invalid_authority());
+    }
+    Ok(roots.pop_first())
+}
+
 /// The bytes a machine signs to name itself on one authenticated request. They
 /// bind the request's own slip proof (token, timestamp, nonce), so the
 /// machine proof is exactly as fresh, and as single-use, as that proof.
@@ -433,7 +465,11 @@ impl Vault {
 
     /// The client half: this install's proof for one request, or `None` when
     /// it is not a machine of this vault yet. Sending it is harmless before
-    /// the profile syncs; the receiver decides.
+    /// the profile syncs; the receiver decides. It signs for the vault this
+    /// install's fold names, or, while that fold cannot answer (its history
+    /// is incomplete, OF-469), for the vault its own resident Genesis roots
+    /// (`resident_genesis_vault_id_in_txn`): a machine missing history
+    /// still proves itself to its home for the tail, and claims nothing here.
     pub fn machine_connection_proof(
         &self,
         token: &str,
@@ -448,7 +484,11 @@ impl Vault {
         let Some(key) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
             return Ok(None);
         };
-        let Some(vault_id) = self.authority_view_readonly_in_txn(&txn)?.vault_id else {
+        let vault_id = match self.authority_view_readonly_in_txn(&txn) {
+            Ok(view) => view.vault_id,
+            Err(_) => resident_genesis_vault_id_in_txn(&self.store, &txn)?,
+        };
+        let Some(vault_id) = vault_id else {
             return Ok(None);
         };
         let transcript = machine_connection_transcript(&vault_id, machine, token, timestamp, nonce);
