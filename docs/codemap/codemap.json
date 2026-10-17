@@ -15261,13 +15261,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -15330,7 +15330,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -15348,19 +15348,24 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/policy.rs",
-     "purpose": "Actor-bound write-policy preflight for the append operation",
+     "purpose": "Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "QuoteAnchor",
+      "RoomQuote"
+     ],
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 27,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -15374,7 +15379,7 @@
       "ReplyStripsRequest"
      ],
      "path": "src/conversation_dag/quote_strips.rs",
-     "purpose": "Reply strips by quoted MESSAGE over one selected thread chain",
+     "purpose": "Reply strips by quoted MESSAGE over one selected thread chain, or, for a room turn, over the room's own…",
      "surface": {
       "enum": 1,
       "fn": 1,
@@ -47347,7 +47352,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 17
      }
     },
@@ -48089,7 +48094,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 6,
       "re-export": 7,
@@ -48187,6 +48192,16 @@
      "path": "src/workspace_roster/rooms/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/thread_projection.rs",
+     "purpose": "A trunk's or thread's reply selection from the room's own index (OF-460): every room thread anchored on a…",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -49858,7 +49873,7 @@
     "conversation_dag": {
      "files": 22,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution"
     },
@@ -50920,7 +50935,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50941,9 +50956,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 138,
+   "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3076,
+   "source_files": 3077,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62087,7 +62102,7 @@
      "path": "src/api/conversation_dag/mod.rs",
      "purpose": "HTTP adapters for transactional conversation DAG and summary doors",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
