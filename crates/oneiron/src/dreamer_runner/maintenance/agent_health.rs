@@ -44,6 +44,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 mod ask;
+mod check_repeat;
 mod run_loop;
 pub use ask::{
     AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
@@ -71,7 +72,8 @@ pub const HEALTH_LOOP_REPEATS: SettingSpec = SettingSpec {
     seed: 3.0,
 };
 
-/// `failed_check_repeat`: the canon failure-ladder N. No capture reads it yet.
+/// `failed_check_repeat`: the same tool run failing the same way, the canon
+/// failure-ladder N.
 pub const HEALTH_CHECK_FAILS: SettingSpec = SettingSpec {
     key: "health.check.fails",
     min: 2.0,
@@ -358,6 +360,7 @@ type Traps = BTreeMap<[u8; 16], Vec<OpenTrapWait>>;
 /// The dials in force for one review.
 struct Dials {
     loop_repeats: u64,
+    check_fails: u64,
     wait_share: f64,
     wait_secs: u64,
     silent_secs: u64,
@@ -376,6 +379,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         }
         Dials {
             loop_repeats: value(&HEALTH_LOOP_REPEATS)?.round() as u64,
+            check_fails: value(&HEALTH_CHECK_FAILS)?.round() as u64,
             wait_share: value(&HEALTH_WAIT_SHARE)?,
             wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
             silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
@@ -410,6 +414,14 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         &dispatched,
         &attempts,
         dials.loop_repeats,
+        since,
+    )?);
+    findings.extend(check_repeat::check_repeat_findings(
+        vault,
+        &calls,
+        &dispatched,
+        &attempts,
+        dials.check_fails,
         since,
     )?);
     findings.extend(silent_findings(

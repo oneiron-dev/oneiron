@@ -82,7 +82,7 @@ pub(super) fn run_loop_findings(
 }
 
 /// A denied or failed call, by its recorded outcome's `kind`.
-fn refused(outcome: &Value) -> bool {
+pub(super) fn refused(outcome: &Value) -> bool {
     let Value::Map(entries) = outcome else {
         return false;
     };
