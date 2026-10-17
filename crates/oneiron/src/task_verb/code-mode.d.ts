@@ -793,7 +793,7 @@ declare namespace Sdk {
   type DeckProposeRequest = { artifact_ref: string; transaction: unknown; run_ref: string; context?: unknown; made_by?: unknown | null };
   type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: unknown | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null };
-  type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal";
+  type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle";
   type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> };
   type KeptProposal = { version: ArtifactVersionView; stranded: boolean; remapped: number; drifted: number; receipt: ReceiptRecord };
   type DiscardedProposal = { receipt: ReceiptRecord };
@@ -1073,7 +1073,7 @@ declare namespace Sdk {
   type EntityRequest = { entity_ref: string };
   type ResolveRecordRefRequest = { reference: string };
   type RecordRefPreview = { record: RecordRef; revision?: string | null; snippet?: string | null };
-  type RecordLinksRequest = { text?: string | null; turn_ref?: string | null; after?: string | null; limit?: number | null };
+  type RecordLinksRequest = { text?: string | null; texts?: string[] | null; turn_ref?: string | null; after?: string | null; limit?: number | null };
   type ProseSpan = { kind: "plain"; start: number; end: number; start_utf16: number; end_utf16: number; text: string } | { kind: "link"; start: number; end: number; start_utf16: number; end_utf16: number; label: string; record: RecordRef; narrowing: ScopedReadReceipt };
   type LinkedText = { message_id?: string | null; spans: ProseSpan[] };
   type RecordLinks = { texts: LinkedText[]; narrowing?: ScopedReadReceipt | null; next_after?: string | null };
@@ -1965,7 +1965,7 @@ declare const vault: Sdk.VaultHost & {
     erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.RecordErasePreview | StoredResult>;
   };
   refs: {
-    /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
+    /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
     links(input: Sdk.RecordLinksRequest): Promise<Sdk.RecordLinks | StoredResult>;
     /** The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same. */
     resolve(input: Sdk.ResolveRecordRefRequest): Promise<Sdk.ScopedReadResult<Sdk.RecordRefPreview> | StoredResult>;

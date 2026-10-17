@@ -10616,6 +10616,8 @@ pub enum ReceiptKind {
     Hook,
     #[serde(rename = "reference_refusal")]
     ReferenceRefusal,
+    #[serde(rename = "task_lifecycle")]
+    TaskLifecycle,
 }
 
 /// `oneiron::receipt::kernel::ReceiptRecord`.
@@ -14154,6 +14156,8 @@ pub struct ScopedReadResultRecordRefPreview {
 pub struct RecordLinksRequest {
     #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(rename = "texts", default, skip_serializing_if = "Option::is_none")]
+    pub texts: Option<Vec<String>>,
     #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]
     pub turn_ref: Option<String>,
     #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]

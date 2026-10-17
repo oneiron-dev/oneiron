@@ -3989,7 +3989,7 @@ class NativeOutputRequest(TypedDict):
     content_base64: str
     report: NotRequired[Any]
     made_by: NotRequired[Any | None]
-ReceiptKind = Literal["outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle", "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook", "reference_refusal"]
+ReceiptKind = Literal["outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle", "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook", "reference_refusal", "task_lifecycle"]
 class ReceiptRecord(TypedDict):
     receipt_id: str
     receipt_kind: ReceiptKind
@@ -5167,6 +5167,7 @@ class RecordRefPreview(TypedDict):
     snippet: NotRequired[str | None]
 class RecordLinksRequest(TypedDict):
     text: NotRequired[str | None]
+    texts: NotRequired[list[str] | None]
     turn_ref: NotRequired[str | None]
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
