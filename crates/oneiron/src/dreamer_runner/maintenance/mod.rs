@@ -27,6 +27,7 @@ pub mod representation;
 mod retrieval_policy;
 pub mod seal_checks;
 pub mod stewardship;
+pub mod type_tree_upkeep;
 #[cfg(test)]
 mod tests;
 use super::{
