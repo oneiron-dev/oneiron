@@ -43,7 +43,8 @@ use oneiron::{
 };
 
 use crate::config::models::{
-    BigSettings, ImagePickSettings, ModelsConfig, SeatPickSettings, SystemOneSettings,
+    BigSettings, BookingParseSettings, ImagePickSettings, ModelsConfig, SeatPickSettings,
+    SystemOneSettings,
 };
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
@@ -78,6 +79,7 @@ pub struct DecisionHost {
     bands: DecisionBandPolicy,
     auto_checker: Option<BoundedAutoChecker>,
     image_pick: Option<ImagePickSettings>,
+    booking_parse: Option<BookingParseSettings>,
 }
 
 impl DecisionHost {
@@ -103,6 +105,7 @@ impl DecisionHost {
             bands: DecisionBandPolicy::default(),
             auto_checker: None,
             image_pick: None,
+            booking_parse: None,
         }
     }
 
@@ -239,6 +242,19 @@ impl DecisionHost {
     fn with_image_pick(mut self, settings: Option<&ImagePickSettings>) -> Self {
         self.image_pick = settings.cloned();
         self
+    }
+
+    /// The cheap seat a booking page's free text is parsed on.
+    fn with_booking_parse(mut self, settings: Option<BookingParseSettings>) -> Self {
+        self.booking_parse = settings;
+        self
+    }
+
+    /// The seat `[models.decisions.booking_parse]` names for a booking's
+    /// free text; `None` refuses free text.
+    #[must_use]
+    pub fn booking_parse(&self) -> Option<&BookingParseSettings> {
+        self.booking_parse.as_ref()
     }
 
     /// The ladder every typed decision on this host goes through.
@@ -546,7 +562,8 @@ impl SyncServer {
                 tokio::runtime::Handle::current(),
             )
             .with_auto_check(models.decisions.auto_check.as_deref(), principal)
-            .with_image_pick(models.decisions.image_pick.as_ref());
+            .with_image_pick(models.decisions.image_pick.as_ref())
+            .with_booking_parse(models.decisions.booking_parse.clone());
         self
     }
 
