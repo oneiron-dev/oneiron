@@ -98,7 +98,7 @@ pub(super) fn settle(
             lease_owner: lease_owner.to_owned(),
             attempt_count: step.lease_count,
             evidence,
-            blocked_reports: Vec::new(),
+            blocked_reports: vault.blocked_reports_of_run(as_entity(step.leaf)?)?,
             pre_fail_checkpoint_ref: root_ref,
             qa_thread_ref: root_ref,
             retry_at: now.saturating_add(backoff_secs.saturating_mul(u64::from(tries))),
