@@ -314,7 +314,9 @@ pub(crate) mod wiped {
     }
 }
 
-/// What the rotation changed: the generation moved, never the value.
+/// What the rotation or revoke changed: the generation moved, never the
+/// value. `kind` is the receipt's own (`rotated` or `revoked`, FIX 1753), so
+/// a revoke reads as one without its route.
 #[derive(Debug, Serialize)]
 pub(crate) struct Rotated {
     pub(crate) receipt_id: String,
@@ -322,6 +324,7 @@ pub(crate) struct Rotated {
     pub(crate) from_generation: u32,
     pub(crate) to_generation: u32,
     pub(crate) rotated_at: u64,
+    pub(crate) kind: &'static str,
 }
 
 /// What the registration stored: the record's metadata and its manifest
@@ -415,6 +418,7 @@ impl From<oneiron::secret_rotation::RotationReceipt> for Rotated {
             from_generation: receipt.from_generation,
             to_generation: receipt.to_generation,
             rotated_at: receipt.rotated_at,
+            kind: receipt.kind.as_str(),
         }
     }
 }
@@ -436,7 +440,8 @@ pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
 /// Revokes a secret on the owner's behalf (OF-422): the record goes terminal
 /// and every lease over it is revoked, stamped on the vault clock as a
 /// rotation is. The receipt reads as a rotation's does, with
-/// `from_generation` equal to `to_generation`: nothing replaced the value.
+/// `from_generation` equal to `to_generation` (nothing replaced the value)
+/// and `kind: "revoked"`.
 pub(crate) fn revoke(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,

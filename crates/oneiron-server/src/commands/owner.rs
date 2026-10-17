@@ -25,7 +25,9 @@ use crate::config::{
 use crate::owner::backup::{self, BackupPlan};
 use crate::owner::embedder::EmbedderReport;
 use crate::owner::stamp::rfc3339_secs;
-use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
+use crate::owner::{
+    hooked_row, imports, local_owner, location, memory_refusal, note_imports, runs, secrets,
+};
 
 mod recovery_kit;
 mod vault_key;
@@ -1108,6 +1110,7 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
 pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()> {
     use crate::cli::{LegalHoldPlaceArgs, LegalHoldWidenArgs, LegalHoldsCommand};
     use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
+    use oneiron::task_verb::sdk;
 
     let (serve, route) = match &command {
         LegalHoldsCommand::List(args) => (&args.serve, "GET /v1/owner/legal-holds"),
@@ -1131,23 +1134,61 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
     let config = resolve_serve_config(serve)?;
     let vault = open_vault(&config, route)?;
     let owner = local_owner(&vault)?;
-    match command {
-        LegalHoldsCommand::List(_) => emit(&vault.legal_holds(&owner)?),
-        LegalHoldsCommand::Log(_) => emit(&vault.legal_hold_log(&owner)?),
+    let actor = owner_actor(&vault)?;
+    // Each operation runs its `vault.legal_holds.*` row's verb hooks once
+    // around the engine door, as the route does (FIX 1466).
+    let answer = match command {
+        LegalHoldsCommand::List(_) => hooked_row(
+            &vault,
+            actor,
+            "vault.legal_holds.list",
+            sdk::EmptyRequest {},
+            |_| Ok(vault.legal_holds(&owner)?),
+        )?,
+        LegalHoldsCommand::Log(_) => hooked_row(
+            &vault,
+            actor,
+            "vault.legal_holds.log",
+            sdk::EmptyRequest {},
+            |_| Ok(vault.legal_hold_log(&owner)?),
+        )?,
         LegalHoldsCommand::Place(args) => {
             let LegalHoldPlaceArgs {
                 targets,
                 matter_ref,
                 ..
             } = *args;
-            emit(&vault.place_legal_hold(&owner, hold_targets(&targets)?, matter_ref)?)
+            let request = sdk::LegalHoldPlaceRequest {
+                targets: hold_targets(&targets)?,
+                matter_ref,
+            };
+            hooked_row(
+                &vault,
+                actor,
+                "vault.legal_holds.place",
+                request,
+                |request: sdk::LegalHoldPlaceRequest| {
+                    Ok(vault.place_legal_hold(&owner, request.targets, request.matter_ref)?)
+                },
+            )?
         }
         LegalHoldsCommand::Widen(args) => {
             let LegalHoldWidenArgs {
                 hold_id, targets, ..
             } = *args;
-            let hold = hold_id_arg(&hold_id)?;
-            emit(&vault.widen_legal_hold(&owner, hold, hold_targets(&targets)?)?)
+            let request = sdk::LegalHoldWidenRequest {
+                hold_id: hold_id_arg(&hold_id)?,
+                targets: hold_targets(&targets)?,
+            };
+            hooked_row(
+                &vault,
+                actor,
+                "vault.legal_holds.widen",
+                request,
+                |request: sdk::LegalHoldWidenRequest| {
+                    Ok(vault.widen_legal_hold(&owner, request.hold_id, request.targets)?)
+                },
+            )?
         }
         LegalHoldsCommand::LiftAndErase(args) => {
             let records = args
@@ -1155,12 +1196,20 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 .iter()
                 .map(|record| hold_id_arg(record))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let outcome = vault.confirm_lift_legal_hold_and_erase(&owner, &records)?;
-            emit(&oneiron::task_verb::sdk::LegalHoldLiftAndErased::from(
-                outcome,
-            ))
+            hooked_row(
+                &vault,
+                actor,
+                "vault.legal_holds.lift_and_erase",
+                sdk::LegalHoldLiftAndEraseRequest { records },
+                |request: sdk::LegalHoldLiftAndEraseRequest| {
+                    Ok(sdk::LegalHoldLiftAndErased::from(
+                        vault.confirm_lift_legal_hold_and_erase(&owner, &request.records)?,
+                    ))
+                },
+            )?
         }
-    }
+    };
+    emit(&answer)
 }
 
 /// The owner's embedding spaces (OF-370) on a stopped vault, through the SDK
@@ -1212,57 +1261,66 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
     let config = resolve_serve_config(serve)?;
     let vault = open_vault(&config, route)?;
     let owner = local_owner(&vault)?;
+    let actor = owner_actor(&vault)?;
     let candidate = |candidate: String| sdk::EmbeddingSpaceCandidateRequest { candidate };
-    match command {
-        Spaces::List(_) => emit(&sdk::read_embedding_spaces(&vault, &owner)?),
-        Spaces::Declare(args) => emit(&sdk::declare_embedding_space_as(
+    // Each operation runs its row's verb hooks once around the SDK fn the row
+    // runs, as the route does (FIX 1953).
+    let row = |verb: &'static str| SpaceRow {
+        vault: &vault,
+        owner: &owner,
+        actor,
+        verb,
+    };
+    let answer = match command {
+        Spaces::List(_) => hooked_row(
             &vault,
-            &owner,
-            declared_space(*args),
-        )?),
-        Spaces::Bind(args) => emit(&sdk::bind_embedding_slot_as(
-            &vault,
-            &owner,
+            actor,
+            "vault.embedding_spaces.list",
+            sdk::EmptyRequest {},
+            |_| sdk::read_embedding_spaces(&vault, &owner).map_err(memory_refusal),
+        )?,
+        Spaces::Declare(args) => row("vault.embedding_spaces.declare")
+            .run(declared_space(*args), sdk::declare_embedding_space_as)?,
+        Spaces::Bind(args) => row("vault.embedding_spaces.bind").run(
             sdk::EmbeddingSpaceBindRequest {
                 kind: input_kind(args.kind),
                 space: args.space,
             },
-        )?),
-        Spaces::OneSpace(args) => emit(&sdk::bind_one_embedding_space_as(
-            &vault,
-            &owner,
+            sdk::bind_embedding_slot_as,
+        )?,
+        Spaces::OneSpace(args) => row("vault.embedding_spaces.one_space").run(
             sdk::EmbeddingSpaceRequest { space: args.space },
-        )?),
-        Spaces::Retire(args) => emit(&sdk::retire_embedding_space_as(
-            &vault,
-            &owner,
+            sdk::bind_one_embedding_space_as,
+        )?,
+        Spaces::Retire(args) => row("vault.embedding_spaces.retire").run(
             sdk::EmbeddingSpaceRequest { space: args.space },
-        )?),
-        Spaces::Move(args) => emit(&sdk::begin_embedding_space_move_as(
-            &vault,
-            &owner,
+            sdk::retire_embedding_space_as,
+        )?,
+        Spaces::Move(args) => row("vault.embedding_spaces.move").run(
             sdk::EmbeddingSpaceMoveRequest {
                 candidate: args.candidate,
                 incumbent: args.incumbent,
                 margin: args.margin,
             },
-        )?),
-        Spaces::MoveApprove(args) => emit(&sdk::approve_embedding_space_move_as(
-            &vault,
-            &owner,
+            sdk::begin_embedding_space_move_as,
+        )?,
+        Spaces::MoveApprove(args) => row("vault.embedding_spaces.move_approve").run(
             candidate(args.candidate),
-        )?),
-        Spaces::MoveUndo(args) => emit(&sdk::undo_embedding_space_move_as(
-            &vault,
-            &owner,
+            sdk::approve_embedding_space_move_as,
+        )?,
+        Spaces::MoveUndo(args) => row("vault.embedding_spaces.move_undo")
+            .run(candidate(args.candidate), sdk::undo_embedding_space_move_as)?,
+        Spaces::MoveAbandon(args) => row("vault.embedding_spaces.move_abandon").run(
             candidate(args.candidate),
-        )?),
-        Spaces::MoveAbandon(args) => emit(&sdk::abandon_embedding_space_move_as(
+            sdk::abandon_embedding_space_move_as,
+        )?,
+        Spaces::Probes(Probes::List(_)) => hooked_row(
             &vault,
-            &owner,
-            candidate(args.candidate),
-        )?),
-        Spaces::Probes(Probes::List(_)) => emit(&sdk::read_embedding_space_probes(&vault, &owner)?),
+            actor,
+            "vault.embedding_spaces.probes.list",
+            sdk::EmptyRequest {},
+            |_| sdk::read_embedding_space_probes(&vault, &owner).map_err(memory_refusal),
+        )?,
         Spaces::Probes(Probes::Put(args)) => {
             let args = *args;
             let family = hold_id_arg(&args.family)?;
@@ -1271,9 +1329,7 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
                 .iter()
                 .map(|target| hold_id_arg(target))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            emit(&sdk::put_embedding_space_probe_as(
-                &vault,
-                &owner,
+            row("vault.embedding_spaces.probes.put").run(
                 sdk::EmbeddingSpaceProbePutRequest {
                     kind: input_kind(args.kind),
                     query: args.query,
@@ -1281,14 +1337,52 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
                     targets,
                     author: args.author,
                 },
-            )?)
+                sdk::put_embedding_space_probe_as,
+            )?
         }
-        Spaces::Probes(Probes::Delete(args)) => emit(&sdk::delete_embedding_space_probe_as(
-            &vault,
-            &owner,
+        Spaces::Probes(Probes::Delete(args)) => row("vault.embedding_spaces.probes.delete").run(
             sdk::EmbeddingSpaceProbeDeleteRequest { id: args.id },
-        )?),
+            sdk::delete_embedding_space_probe_as,
+        )?,
+    };
+    emit(&answer)
+}
+
+/// One owner row of `embedding-spaces`, run inside its verb hooks.
+struct SpaceRow<'a> {
+    vault: &'a oneiron::Vault,
+    owner: &'a oneiron::consent::AuthenticatedOwner,
+    actor: oneiron::EntityId,
+    verb: &'a str,
+}
+
+impl SpaceRow<'_> {
+    /// The row's SDK fn `sdk_fn` on `input`, between its pre and post
+    /// chains: the caller's view of its answer.
+    fn run<I, O>(
+        self,
+        input: I,
+        sdk_fn: impl FnOnce(
+            &oneiron::Vault,
+            &oneiron::consent::AuthenticatedOwner,
+            I,
+        ) -> oneiron::memory::MemoryResult<O>,
+    ) -> crate::owner::OwnerResult<serde_json::Value>
+    where
+        I: Serialize + serde::de::DeserializeOwned,
+        O: Serialize,
+    {
+        hooked_row(self.vault, self.actor, self.verb, input, |input| {
+            sdk_fn(self.vault, self.owner, input).map_err(memory_refusal)
+        })
     }
+}
+
+/// The vault owner's actor, which an owner row's verb hooks run as.
+fn owner_actor(vault: &oneiron::Vault) -> anyhow::Result<oneiron::EntityId> {
+    vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))
 }
 
 /// The engine's input kind for a command-line kind.
@@ -1365,8 +1459,19 @@ pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
                     )
                 })?;
             let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
-            let outcome = vault.revoke_guest_access(&owner, &issuer, grant)?;
-            emit(&oneiron::receipt::project_guest_revoke(outcome))
+            // The row's verb hooks run once around the engine door, as the
+            // route's do (FIX 1752).
+            let answer = hooked_row(
+                &vault,
+                owner_actor(&vault)?,
+                "vault.guests.revoke",
+                oneiron::task_verb::sdk::GuestRevokeRequest { grant_ref: grant },
+                |request: oneiron::task_verb::sdk::GuestRevokeRequest| {
+                    let outcome = vault.revoke_guest_access(&owner, &issuer, request.grant_ref)?;
+                    Ok(oneiron::receipt::project_guest_revoke(outcome))
+                },
+            )?;
+            emit(&answer)
         }
     }
 }
