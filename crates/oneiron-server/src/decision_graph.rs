@@ -4,12 +4,15 @@
 //! audio assets as clips heard at the first rung that reads audio, and the
 //! ladder's full decision comes back for the engine to land, keeping its
 //! receipt. The standing pump answers each due standing question here, as
-//! the question's own principal under the question's own dial.
+//! the question's own principal under the question's own dial, criteria
+//! and call clock, on the vault's home node only. It sleeps until the next
+//! question falls due and wakes early on a committed change.
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::questions::{
-    GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, refresh_due_questions_with,
+    GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionCriteria,
+    refresh_due_questions_with,
 };
 use oneiron::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
@@ -17,17 +20,19 @@ use oneiron::llm::decision::{
     TypedDecision,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
-use oneiron::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
-use oneiron::{EdgeActorClass, EntityId, Error, Result, WriteActor};
+use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 use crate::ai_host::LocalVisionModel;
 use crate::decision_verdict::vision_rung;
 use crate::server::SyncServer;
 
-/// How often the pump looks for due standing questions.
-const PUMP_EVERY: Duration = Duration::from_secs(60);
-/// One unit's clock on the ladder: an `ai.verdict` call's default.
-const UNIT_BUDGET: Duration = Duration::from_millis(AI_VERDICT_DEADLINE_MS);
+/// The longest the pump sleeps. An arrival on a unit that is not a claim
+/// queues its question without a change signal, so the pump re-reads its
+/// due work at least this often.
+const ARRIVAL_SWEEP: Duration = Duration::from_secs(60);
+/// The shortest the pump sleeps between passes, so work a pass leaves due
+/// never spins it.
+const PASS_FLOOR: Duration = Duration::from_secs(1);
 
 /// The host's ladder answering graph questions for one asker, each unit on
 /// a clock of its own.
@@ -37,6 +42,8 @@ pub(crate) struct LadderGraphAnswerer<'s> {
     class: EdgeActorClass,
     dial: DecisionDial,
     budget: Duration,
+    /// The question's criteria, beside the sources in each call's state.
+    criteria: QuestionCriteria,
     /// A Local-vision seat is bound and the dial spans its rung.
     vision: bool,
 }
@@ -66,7 +73,14 @@ impl<'s> LadderGraphAnswerer<'s> {
                 && DecisionRung::Local <= dial.ceiling,
             dial,
             budget,
+            criteria: QuestionCriteria::default(),
         })
+    }
+
+    /// The answerer, judging each unit by `criteria`.
+    pub(crate) fn with_criteria(mut self, criteria: QuestionCriteria) -> Self {
+        self.criteria = criteria;
+        self
     }
 }
 
@@ -138,7 +152,7 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         audio: &[DecisionAudio],
     ) -> Result<Option<GraphDecision>> {
         let host = self.server.decision_host();
-        let state = context.state(images, audio);
+        let state = context.state_under(images, audio, &self.criteria);
         let evidence: Vec<EntityId> = context.sources.iter().map(|source| source.id).collect();
         let deadline = RetrievalDeadline::hard(Instant::now(), self.budget);
         let mut dial = self.dial;
@@ -275,46 +289,89 @@ pub(crate) fn ladder_located(
     )
 }
 
-/// Starts the standing pump. Each pass runs on a blocking thread: the
-/// ladder's model rungs block on the server's runtime.
+/// Starts the standing pump. It sleeps until the next standing question
+/// falls due or a committed write changes the vault's due work, then runs
+/// one pass on a blocking thread: the ladder's model rungs block on the
+/// server's runtime.
 pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
+    // Subscribed before the first read, so no change between them is lost.
+    let mut changes = server.vault().subscribe_proactivity_changes();
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(PUMP_EVERY);
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            tick.tick().await;
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            match tokio::task::spawn_blocking(move || pump(&server)).await {
+            let next = tokio::task::spawn_blocking(move || {
+                pump_due(&server, oneiron_vault_contract::now_ts())?;
+                server.vault().next_question_refresh_at()
+            })
+            .await;
+            let next = match next {
+                Ok(Ok(next)) => next,
                 Ok(Err(error)) => {
-                    tracing::warn!(kind = ?error.kind(), "standing question pump failed; it runs again next tick");
+                    tracing::warn!(kind = ?error.kind(), "standing question pump failed; it runs again on the next change");
+                    None
                 }
-                Err(error) => tracing::warn!(%error, "standing question pump stopped"),
-                Ok(Ok(())) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "standing question pump stopped");
+                    None
+                }
+            };
+            let wait = next.map_or(ARRIVAL_SWEEP, |at| {
+                Duration::from_secs(at.saturating_sub(oneiron_vault_contract::now_ts()))
+                    .clamp(PASS_FLOOR, ARRIVAL_SWEEP)
+            });
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                }
             }
         }
     })
 }
 
-/// One pass: every due standing question, each asked as its principal on
-/// the ladder under its own dial. A failed question waits for its next due
-/// pass; its error logs by kind, as its text can quote the vault.
-fn pump(server: &SyncServer) -> Result<()> {
-    let batch = refresh_due_questions_with(
-        server.vault(),
-        oneiron_vault_contract::now_ts(),
-        |record, asker| {
-            LadderGraphAnswerer::new(server, asker, record.definition.dial, UNIT_BUDGET)
-        },
-    )?;
+/// One pass on the vault's home node: every due standing question, each
+/// asked as its principal on the ladder under its own dial, criteria and
+/// call clock. Off home it does nothing. The engine holds a failed question
+/// before it is due again; its error logs by kind, as its text can quote the
+/// vault.
+pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
+    if !at_home(server.vault(), now)? {
+        return Ok(());
+    }
+    let batch = refresh_due_questions_with(server.vault(), now, |record, asker| {
+        Ok(LadderGraphAnswerer::new(
+            server,
+            asker,
+            record.definition.dial,
+            record.definition.deadline(),
+        )?
+        .with_criteria(record.definition.criteria.clone()))
+    })?;
     for failure in &batch.failures {
         tracing::warn!(
             question = %failure.question.to_hex(),
             kind = ?failure.error.kind(),
-            "a standing question was not refreshed; it runs again when due"
+            "a standing question was not refreshed; it is held, then runs again"
         );
     }
     Ok(())
+}
+
+/// Whether this server is the vault's home: the elected home names this
+/// server's stable client identity, the gate the shared timer puts on macro
+/// work and digests. A vault no node has claimed is claimed here, as serve's
+/// Dreamer claims it, so standing questions run with the Dreamer off.
+fn at_home(vault: &Vault, now: u64) -> Result<bool> {
+    let store = DreamerRunnerStore::new(vault);
+    let local = store.local_home_node_candidate(true, true, false)?;
+    let home = match store.home_node_designation()? {
+        Some(home) => Some(home),
+        None => store.elect_home_node(&[local], now)?,
+    };
+    Ok(home.is_some_and(|home| home.node_id == local.node_id))
 }

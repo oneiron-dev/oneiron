@@ -1,7 +1,7 @@
 //! Host-driven answer work: observe under principal, invoke provider outside a write transaction,
 //! then atomically recheck source, authority, version and pause before settling claims.
 
-use super::graph_ask::{self, GraphAnswerer, GraphContextSource, GraphDecision, GraphUnitContext};
+use super::graph_ask::{self, GraphAnswerer, GraphDecision, GraphUnitContext};
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
@@ -22,7 +22,16 @@ struct Prepared {
     unit: EntityId,
     frontier: [u8; 32],
     proposal: Proposed,
+    /// The graph context the answerer was shown, rechecked before landing.
+    context: Option<GraphUnitContext>,
     arrival_marker: Option<Vec<u8>>,
+}
+
+/// One unit's answer, and the graph context it rests on when its answerer
+/// was shown one.
+struct Answered {
+    proposal: Proposed,
+    context: Option<GraphUnitContext>,
 }
 
 /// One unit's answer: a provider's proposal the engine wraps in its own
@@ -35,7 +44,11 @@ enum Proposed {
 /// A unit's answerer: the record, the unit, its entity type and its body.
 /// `None` leaves the unit unanswered this run.
 type UnitAnswer<'a> =
-    dyn FnMut(&QuestionRecord, EntityId, u8, &[u8]) -> Result<Option<Proposed>> + 'a;
+    dyn FnMut(&QuestionRecord, EntityId, u8, &[u8]) -> Result<Option<Answered>> + 'a;
+
+/// How long a question whose refresh failed waits before it is tried again,
+/// in seconds: a failure is not retried on every pass.
+const FAILED_REFRESH_HOLD_SECS: u64 = 300;
 
 /// The host supplies the answerer (and invokes this on arrival or on each timer tick).
 /// No model work runs under the vault write lock. A stale or paused run cannot land.
@@ -56,7 +69,12 @@ pub fn refresh_question(
         trigger,
         now,
         &mut |record, unit, _, body| {
-            answerer(record, unit, body).map(|p| Some(Proposed::Proposal(p)))
+            answerer(record, unit, body).map(|p| {
+                Some(Answered {
+                    proposal: Proposed::Proposal(p),
+                    context: None,
+                })
+            })
         },
     )
 }
@@ -133,7 +151,8 @@ fn refresh_with(
         else {
             continue;
         };
-        let Some(proposal) = answerer(&record, unit, kind, &raw[ENTITY_METADATA_HEADER_LEN..])?
+        let Some(Answered { proposal, context }) =
+            answerer(&record, unit, kind, &raw[ENTITY_METADATA_HEADER_LEN..])?
         else {
             continue;
         };
@@ -145,11 +164,17 @@ fn refresh_with(
             unit,
             frontier,
             proposal,
+            context,
             arrival_marker: {
                 let txn = vault.store.env.read_txn()?;
                 arrival::PENDING.get_bytes(&vault.store, &txn, &(question, unit))?
             },
         });
+    }
+    // Grant status is judged at the authorization clock, observed before the
+    // write snapshot opens.
+    if prepared.iter().any(|p| p.context.is_some()) {
+        vault.store.authorization_now()?;
     }
     vault.with_write_txn_grouped(|txn| {
         let current = owned_head(vault, txn, principal, question)?;
@@ -167,6 +192,13 @@ fn refresh_with(
             return Err(Error::ConcurrentWrite("standing question arrival consumed"));
         }
         // Every input is checked before the first write. A batch is all-or-nothing.
+        // A graph context's neighbours and every source it showed are read
+        // again through the principal's lane in this snapshot.
+        let lane = if prepared.iter().any(|p| p.context.is_some()) {
+            Some(vault.scoped_read(graph_ask::asker_reader_in_txn(vault, txn, principal)?))
+        } else {
+            None
+        };
         let mut inputs = Vec::new();
         for p in &prepared {
             let Some(row) = source(vault, txn, principal, actor, p.unit)? else {
@@ -175,23 +207,42 @@ fn refresh_with(
             if row.frontier != p.frontier {
                 return Err(Error::ConcurrentWrite("standing question source changed"));
             }
-            inputs.push(row);
+            let rows = match (&p.context, &lane) {
+                (Some(context), Some(lane)) => {
+                    if !graph_ask::neighbors_unchanged_in_txn(lane, txn, context)? {
+                        return Err(Error::ConcurrentWrite("standing question source changed"));
+                    }
+                    let Some(rows) = graph_ask::sources_unchanged_in_txn(lane, txn, context)?
+                    else {
+                        return Err(Error::ConcurrentWrite("standing question source changed"));
+                    };
+                    Some(rows)
+                }
+                _ => None,
+            };
+            inputs.push((row, rows));
         }
         let mut answers = Vec::new();
         for (
             p,
-            SourceRow {
-                kind,
-                raw,
-                frontier,
-            },
+            (
+                SourceRow {
+                    kind,
+                    raw,
+                    frontier,
+                },
+                rows,
+            ),
         ) in prepared.iter().zip(inputs)
         {
             let decision = match &p.proposal {
                 Proposed::Proposal(proposal) => TypedDecision {
                     answer: proposal.answer.clone(),
                     probability: proposal.probability,
-                    evidence: vec![p.unit],
+                    evidence: p.context.as_ref().map_or_else(
+                        || vec![p.unit],
+                        |context| context.sources.iter().map(|s| s.id).collect(),
+                    ),
                     in_band: proposal
                         .probability
                         .is_some_and(|v| record.definition.dial.band.contains(v)),
@@ -202,7 +253,11 @@ fn refresh_with(
                         providers: proposal.providers.clone(),
                         band: record.definition.dial.band,
                         band_version: 0,
-                        evidence_versions: Vec::new(),
+                        evidence_versions: p
+                            .context
+                            .as_ref()
+                            .map(graph_ask::source_versions)
+                            .unwrap_or_default(),
                         cost_per_thousand: None,
                         paired: proposal.paired.clone(),
                         person: Vec::new(),
@@ -221,7 +276,7 @@ fn refresh_with(
                 source_kind: kind,
                 answered_at: now,
             };
-            land(vault, txn, actor, principal, &answer, &raw)?;
+            land(vault, txn, actor, principal, &answer, &raw, rows.as_deref())?;
             QUESTION_ANSWER.put(
                 &vault.store,
                 txn,
@@ -236,6 +291,7 @@ fn refresh_with(
         if matches!(trigger, RefreshTrigger::Schedule) {
             let mut updated = current;
             updated.last_refresh = Some(now);
+            updated.retry_at = None;
             for p in &prepared {
                 let pending = (question, p.unit);
                 if p.arrival_marker.is_some()
@@ -297,11 +353,14 @@ pub fn refresh_due_questions(
             &mut answerer,
         ) {
             Ok(answers) => batch.answers.extend(answers),
-            Err(error) => batch.failures.push(RefreshFailure {
-                question,
-                trigger,
-                error,
-            }),
+            Err(error) => {
+                hold_failed(vault, question, now);
+                batch.failures.push(RefreshFailure {
+                    question,
+                    trigger,
+                    error,
+                });
+            }
         }
     }
     Ok(batch)
@@ -309,10 +368,12 @@ pub fn refresh_due_questions(
 
 /// [`refresh_due_questions`] through graph answerers, one per question:
 /// `answerer_for` makes it from the question's record and its principal,
-/// who also writes the answers as itself. Each unit is shown as a
-/// one-source graph context, with the image it holds when it is an ASSET
-/// and the answerer reads images, and a full decision keeps its own
-/// receipt. A question whose answerer cannot be made fails alone.
+/// who also writes the answers as itself. Each unit is shown with its
+/// eligible neighbours, as a one-off graph ask shows it, and with the images
+/// those sources hold when the record's media take images and the answerer
+/// reads them; a full decision keeps its own receipt. A question whose
+/// answerer cannot be made fails alone. A failed question is held for
+/// [`FAILED_REFRESH_HOLD_SECS`] before it is due again.
 pub fn refresh_due_questions_with<A: GraphAnswerer>(
     vault: &Vault,
     now: u64,
@@ -340,17 +401,120 @@ pub fn refresh_due_questions_with<A: GraphAnswerer>(
         });
         match answered {
             Ok(answers) => batch.answers.extend(answers),
-            Err(error) => batch.failures.push(RefreshFailure {
-                question,
-                trigger,
-                error,
-            }),
+            Err(error) => {
+                hold_failed(vault, question, now);
+                batch.failures.push(RefreshFailure {
+                    question,
+                    trigger,
+                    error,
+                });
+            }
         }
     }
     Ok(batch)
 }
 
-/// One unit's answer from a graph answerer, read under `record`'s principal.
+/// Holds a failed question's work until [`FAILED_REFRESH_HOLD_SECS`] after
+/// `now`. A hold that cannot be written leaves the question due: the failure
+/// is already the caller's to report.
+fn hold_failed(vault: &Vault, question: EntityId, now: u64) {
+    let held = vault.with_write_txn_grouped(|txn| {
+        let Some(mut head) = QUESTION_HEAD.get(&vault.store, txn, &HeadKey(question))? else {
+            return Ok(());
+        };
+        head.retry_at = Some(now.saturating_add(FAILED_REFRESH_HOLD_SECS));
+        QUESTION_HEAD.put(&vault.store, txn, &HeadKey(question), &head)
+    });
+    if let Err(error) = held {
+        tracing::warn!(kind = ?error.kind(), "a failed standing question was not held");
+    }
+}
+
+impl Vault {
+    /// When the next standing question falls due, in unix seconds; `None`
+    /// when none has work. A past instant is due now. Paused questions,
+    /// arrivals on a unit awaiting its owner's answer and questions inside a
+    /// failure's hold arm nothing until their hold ends or a write changes
+    /// them, so a deadline timer armed from this never spins on them.
+    pub fn next_question_refresh_at(&self) -> Result<Option<u64>> {
+        let txn = self.store.env.read_txn()?;
+        let mut next: Option<u64> = None;
+        let mut arm = |at: u64| {
+            if next.is_none_or(|current| at < current) {
+                next = Some(at);
+            }
+        };
+        for row in QUESTION_HEAD.iter_raw_from(&self.store, &txn, &[])? {
+            let (key, _) = row?;
+            let Some(HeadKey(id)) = HeadKey::decode_key(&key) else {
+                continue;
+            };
+            let Some(head) = QUESTION_HEAD.get(&self.store, &txn, &HeadKey(id))? else {
+                continue;
+            };
+            if head.paused {
+                continue;
+            }
+            let record = QUESTION_VERSION
+                .get(
+                    &self.store,
+                    &txn,
+                    &VersionKey {
+                        id,
+                        version: head.version,
+                    },
+                )?
+                .ok_or(Error::CorruptedIndex("question version"))?;
+            if let Some(interval) = record.definition.refresh.every_seconds {
+                let due = head
+                    .last_refresh
+                    .unwrap_or(record.created_at)
+                    .saturating_add(interval);
+                arm(due.max(head.retry_at.unwrap_or(0)));
+            }
+        }
+        for row in arrival::PENDING.iter_from(&self.store, &txn, &[])? {
+            let ((question, unit), _) = row?;
+            let Some(head) = QUESTION_HEAD.get(&self.store, &txn, &HeadKey(question))? else {
+                continue;
+            };
+            if head.paused {
+                continue;
+            }
+            let Some(record) = QUESTION_VERSION.get(
+                &self.store,
+                &txn,
+                &VersionKey {
+                    id: question,
+                    version: head.version,
+                },
+            )?
+            else {
+                continue;
+            };
+            // A held unit keeps its marker; its owner's answer is a claim
+            // write, which wakes the timer again.
+            if !record.definition.refresh.on_arrival
+                || !record.definition.units.contains(&unit)
+                || !crate::gate::claim_consolidation_eligible_in_txn(
+                    &self.store,
+                    &txn,
+                    &unit,
+                    crate::gate::ConsolidationReader::QuestionRefreshSource,
+                )?
+            {
+                continue;
+            }
+            arm(head.retry_at.unwrap_or(0));
+        }
+        Ok(next)
+    }
+}
+
+/// One unit's answer from a graph answerer, read under `record`'s principal:
+/// the unit and its eligible neighbours, as a one-off graph ask reads them.
+/// A neighbourhood no one answer can stay inside abstains before any model
+/// runs, as the answer would read wider than a source it rests on.
 fn graph_proposal(
     vault: &Vault,
     record: &QuestionRecord,
@@ -358,54 +522,64 @@ fn graph_proposal(
     unit: EntityId,
     kind: u8,
     body: &[u8],
-) -> Result<Option<Proposed>> {
-    let context = GraphUnitContext {
-        unit,
-        sources: vec![GraphContextSource {
-            id: unit,
-            entity_type: kind,
-            hash: *blake3::hash(body).as_bytes(),
-            body: body.to_vec(),
-        }],
+) -> Result<Option<Answered>> {
+    let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+    let Some(context) = graph_ask::unit_context(&lane, unit, kind, body.to_vec())? else {
+        return Ok(None);
     };
-    let images = if answerer.reads_images() && kind == crate::registry::ENTITY_TYPE_ASSET {
-        let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+    {
+        let txn = vault.store.env.read_txn()?;
+        let Some(rows) = graph_ask::sources_unchanged_in_txn(&lane, &txn, &context)? else {
+            return Ok(None);
+        };
+        let mut probe = ClaimCandidate::new(
+            "judgment.answer",
+            ClaimSubject::Entity(unit),
+            rmpv::Value::Nil,
+            1.0,
+        );
+        if super::standing::constrain_sources(&mut probe, &rows, record.principal).is_err() {
+            return Ok(None);
+        }
+    }
+    let images = if answerer.reads_images() && record.definition.media.images {
         graph_ask::unit_images(&lane, &context)?
     } else {
         Vec::new()
     };
-    let audio = if answerer.reads_audio() && kind == crate::registry::ENTITY_TYPE_ASSET {
-        let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+    let audio = if answerer.reads_audio() {
         graph_ask::unit_audio(&lane, &context)?
     } else {
         Vec::new()
     };
     let question = &record.definition.question;
-    Ok(
-        match answerer.decide(question, &context, &images, &audio)? {
-            None => None,
-            Some(GraphDecision::Prediction(prediction)) => {
-                graph_ask::validate_prediction(question, &prediction)?;
-                let paired = prediction
-                    .paired
-                    .map(|reading| reading.bind(prediction.provider.clone()))
-                    .into_iter()
-                    .collect();
-                Some(Proposed::Proposal(AnswerProposal {
-                    answer: prediction.answer,
-                    probability: Some(prediction.probability),
-                    providers: vec![prediction.provider],
-                    paired,
-                }))
-            }
-            Some(GraphDecision::Decision(decision)) => {
-                graph_ask::validate_decision(question, record.principal, &decision)?;
-                Some(Proposed::Decision(Box::new(graph_ask::decided(
-                    &context, &images, &audio, *decision,
-                ))))
-            }
-        },
-    )
+    let proposal = match answerer.decide(question, &context, &images, &audio)? {
+        None => None,
+        Some(GraphDecision::Prediction(prediction)) => {
+            graph_ask::validate_prediction(question, &prediction)?;
+            let paired = prediction
+                .paired
+                .map(|reading| reading.bind(prediction.provider.clone()))
+                .into_iter()
+                .collect();
+            Some(Proposed::Proposal(AnswerProposal {
+                answer: prediction.answer,
+                probability: Some(prediction.probability),
+                providers: vec![prediction.provider],
+                paired,
+            }))
+        }
+        Some(GraphDecision::Decision(decision)) => {
+            graph_ask::validate_decision(question, record.principal, &decision)?;
+            Some(Proposed::Decision(Box::new(graph_ask::decided(
+                &context, &images, &audio, *decision,
+            ))))
+        }
+    };
+    Ok(proposal.map(|proposal| Answered {
+        proposal,
+        context: Some(context),
+    }))
 }
 
 /// The principal as the writer of its own question's answers.
@@ -439,7 +613,7 @@ fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshT
             let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(id))? else {
                 continue;
             };
-            if head.paused {
+            if head.paused || head.retry_at.is_some_and(|at| at > now) {
                 continue;
             }
             let record = QUESTION_VERSION
@@ -467,7 +641,7 @@ fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshT
             let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
                 continue;
             };
-            if head.paused {
+            if head.paused || head.retry_at.is_some_and(|at| at > now) {
                 continue;
             }
             let Some(record) = QUESTION_VERSION.get(
@@ -654,6 +828,9 @@ fn source_actor_key(
         .ok_or(Error::InvariantViolation("question actor key"))
 }
 
+/// Lands one answer as a proposed claim private to `principal`. An answer
+/// resting on a graph context's `rows` reads no wider than any of them, as a
+/// one-off graph ask's does; a lone unit bounds it by its own claim terms.
 fn land(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -661,6 +838,7 @@ fn land(
     principal: EntityId,
     answer: &AnswerRecord,
     raw: &[u8],
+    rows: Option<&[super::standing::Source]>,
 ) -> Result<()> {
     let value = rmpv::decode::read_value(&mut encode(answer)?.as_slice())
         .map_err(|_| Error::CorruptedIndex("question answer encoding"))?;
@@ -671,7 +849,9 @@ fn land(
         1.0,
     );
     let mut taint = ClaimSource::Imported;
-    if answer.source_kind == crate::registry::ENTITY_TYPE_CLAIM {
+    if let Some(rows) = rows {
+        taint = super::standing::constrain_sources(&mut candidate, rows, principal)?;
+    } else if answer.source_kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         taint = body.source.unwrap_or(ClaimSource::Imported);
         if let Some(inherited) = crate::claim::claim_evidence_taint(&body) {
@@ -687,9 +867,14 @@ fn land(
     candidate = candidate
         .with_evidence_taint(taint)?
         .with_private_reader(principal)?
-        .with_evidence(rmpv::Value::Array(vec![rmpv::Value::from(
-            answer.unit.to_hex(),
-        )]));
+        .with_evidence(rmpv::Value::Array(
+            answer
+                .decision
+                .evidence
+                .iter()
+                .map(|id| rmpv::Value::from(id.to_hex()))
+                .collect(),
+        ));
     let envelope = WriteEnvelope::new(
         actor,
         crate::dreamer_consolidation::source_meet(ClaimSource::Generated, taint),

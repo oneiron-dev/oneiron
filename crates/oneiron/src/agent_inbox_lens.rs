@@ -365,6 +365,9 @@ fn receipt_order(receipt: &ReceiptRecord) -> (u64, bool, &str) {
 }
 
 mod inbound;
+mod text;
+
+pub use self::text::{InboxTextSource, ResolvedInboxText};
 
 #[cfg(test)]
 mod tests;
