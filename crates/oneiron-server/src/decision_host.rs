@@ -470,9 +470,11 @@ impl DecisionProvider for SystemOneRung {
         }
     }
 
-    /// The seat sends a call's images as named wire assets.
+    /// The seat sends a call's images as named wire assets, when the posture
+    /// lets a call leave the host at all.
     fn reads_images(&self) -> bool {
-        true
+        (self.posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
+            && self.posture != HostingPrivacyPosture::Relay
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
