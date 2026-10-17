@@ -14813,7 +14813,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/deletion.rs",
@@ -26217,7 +26217,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 10,
+      "fn": 13,
       "struct": 9,
       "trait": 3
      }
@@ -26245,14 +26245,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DecisionAudio",
       "DecisionImage"
      ],
      "path": "src/llm/decision/media.rs",
-     "purpose": "Images a typed decision reads",
+     "purpose": "Images and audio clips a typed decision reads",
      "surface": {
-      "const": 4,
-      "fn": 5,
-      "struct": 1
+      "const": 7,
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -26298,7 +26299,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "GraphAnswerer",
@@ -26314,7 +26315,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 5,
       "struct": 7,
@@ -27518,7 +27519,7 @@
      "purpose": "Generated images and the form each consumer reads (OF-328, OF-329)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 12,
       "struct": 8
@@ -46300,7 +46301,7 @@
      "path": "src/workspace_roster/join_receipt.rs",
      "purpose": "The join receipt (OF-531): one typed record per join intent",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -46313,7 +46314,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 17
      }
     },
@@ -46984,7 +46985,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 10
      }
     },
@@ -47045,7 +47046,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 6,
       "re-export": 7,
@@ -47082,7 +47083,7 @@
      "path": "src/workspace_roster/rooms/offers.rs",
      "purpose": "Offer cards (OF-530): an agent asks to join a room or one of its threads by a card, never by a turn…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 2,
       "struct": 4
@@ -48758,7 +48759,7 @@
     "conversation": {
      "files": 14,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
@@ -49841,7 +49842,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 112,
+   "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3009,
    "test_files": 903
@@ -56529,7 +56530,7 @@
      "path": "src/lib/wire.rs",
      "purpose": "Chat-completions protocol mapping: request build, response parse, message/tool codecs, usage, status…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     }
@@ -62591,7 +62592,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/big_rung.rs",
@@ -66857,7 +66858,7 @@
     "big_rung": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)"
     },
