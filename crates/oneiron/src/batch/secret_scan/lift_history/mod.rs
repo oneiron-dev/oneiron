@@ -610,7 +610,7 @@ fn proposal_key(family: LiftFamily, cause: LiftCause, key: &[u8]) -> Vec<u8> {
         LiftCause::History => b'h',
         _ => b'r',
     };
-    [family.code().as_bytes(), &[0, cause], key].concat()
+    [family.code().as_bytes(), &[0, cause][..], key].concat()
 }
 
 /// The tail of a path a suggested name keeps: its last segment's first
