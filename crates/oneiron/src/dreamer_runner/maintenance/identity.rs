@@ -571,6 +571,49 @@ fn hinted_in_txn(
     Ok(best.filter(|_| !tied).map(|(entity, _)| entity))
 }
 
+/// The one of `candidates` a saved hint picks for a mention of `name` at
+/// `start..end` of `text`, as the nightly re-check settles an ask: the
+/// candidate whose hint shares the most words with the mention's context;
+/// none on no shared word or a tie. The Linker reads it when it saves a
+/// turn, so a saved hint settles a mention live.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hinted_mention_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+    name: &str,
+    text: &str,
+    start: usize,
+    end: usize,
+    candidates: &[EntityId],
+) -> Result<Option<EntityId>> {
+    let context = context_terms(text, start, end, name);
+    let mut best: Option<(EntityId, usize)> = None;
+    let mut tied = false;
+    for (entity, hint) in hints_in_txn(vault, txn, kind, name)? {
+        if !candidates.contains(&entity) {
+            continue;
+        }
+        let shared = hint
+            .context
+            .iter()
+            .filter(|term| context.contains(term))
+            .count();
+        if shared == 0 {
+            continue;
+        }
+        match best {
+            Some((_, top)) if shared < top => {}
+            Some((_, top)) if shared == top => tied = true,
+            _ => {
+                best = Some((entity, shared));
+                tied = false;
+            }
+        }
+    }
+    Ok(best.filter(|_| !tied).map(|(entity, _)| entity))
+}
+
 /// Saves the words an answer was given in for its name and entity.
 fn put_hint_in_txn(
     vault: &Vault,
