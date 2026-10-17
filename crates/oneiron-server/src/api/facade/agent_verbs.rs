@@ -15,6 +15,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.inbox.concern.move", post(facade_route))
         .route("/vault.people.list", post(facade_route))
         .route("/vault.people.get", post(facade_route))
+        .route("/vault.shape.read", post(facade_route))
+        .route("/vault.shape.plan", post(facade_route))
+        .route("/vault.shape.apply", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
         .route("/self.memory.diary.query", post(facade_route))
@@ -71,6 +74,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.close_erase_ask", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
+        .route("/vault.records.erase_preview", post(facade_route))
+        .route("/vault.records.erase_confirm", post(facade_route))
         .route("/vault.authority.handoff_alarms", post(facade_route))
         .route(
             "/vault.authority.handoff_alarms.acknowledge",
@@ -157,6 +162,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.consent", post(facade_route))
         .route("/vault.rooms.offer", post(facade_route))
         .route("/vault.rooms.offer.answer", post(facade_route))
+        .route("/vault.rooms.offer.vote", post(facade_route))
+        .route("/vault.rooms.offer.reopen", post(facade_route))
         .route("/vault.rooms.offers", post(facade_route))
         .route("/vault.projects.goal.revisions", post(facade_route))
         .route("/vault.projects.goal.dismiss", post(facade_route))

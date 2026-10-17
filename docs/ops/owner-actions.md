@@ -816,6 +816,25 @@ to trust a backup on, and a backup's own head is never trusted. Where no vault i
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
 install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
 
+### Maximum tier
+
+`oneiron init --maximum-tier` creates a vault whose every LMDB page is sealed under a key derived
+from its data key (OF-570), and writes `maximum_tier = true` to the config. It is slower: point
+reads about 20x, scans about 12x. The tier is chosen when the vault is created; a plain vault is
+never converted. The new key is wrapped to this device's keystore, and with `--secret-file FILE` to
+a vault password too, which a host with no keystore needs. The wraps are mirrored beside the vault
+in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlock before the vault
+opens. With no keystore, serve unlocks them with the password the service manager's credential store
+holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
+another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
+--unlock password`; `oneiron vault-key prf-input NAME` gives a passkey's input before the vault
+opens. A credential whose wrap was removed or replaced opens nothing, even if an interrupted change
+left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
+the vault's data is not, init, serve and restore refuse: move the mirror away to create a new vault,
+since it may be the only copy of that vault's wraps. A restore makes a plain vault, so it is refused
+over a sealed one; restore to another `--vault-path`. Body files, `.lines`, LFS staging and lock
+files stay outside the tier.
+
 ## The world recovery kit
 
 The world kit carries your recovery root: the key every private world's key is also wrapped to.

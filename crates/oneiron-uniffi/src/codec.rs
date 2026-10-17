@@ -947,6 +947,12 @@ impl Lift<engine::MemoryItem> for MemoryItem {
                 .map(|cited| CitedMessage {
                     short_id: cited.short_id,
                     value_text: cited.value_text,
+                    record: cited.record.map(|record| crate::RecordRef {
+                        kind: record.kind,
+                        id: record.id,
+                        short_id: record.short_id,
+                        label: record.label,
+                    }),
                 })
                 .collect(),
             conversation_id: item.conversation_id,

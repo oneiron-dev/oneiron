@@ -160,7 +160,7 @@ pub(super) fn step_state_put_in_txn(
     step_hash: &[u8; 32],
     row: &StepStateRow,
 ) -> Result<()> {
-    STEP_STATE.put(&vault.store, wtxn, &(attempt_id, *step_hash), row)
+    STEP_STATE.put(vault, wtxn, &(attempt_id, *step_hash), row)
 }
 
 pub(super) fn step_state_read(
