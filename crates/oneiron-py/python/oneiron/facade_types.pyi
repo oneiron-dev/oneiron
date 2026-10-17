@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 309 facade rows, 1205 declarations.
+Census: 309 facade rows, 1208 declarations.
 Inputs: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -5658,12 +5658,26 @@ class XlsxNumberFormatCode(TypedDict):
     kind: Literal["code"]
     code: str
 XlsxNumberFormat = XlsxNumberFormatBuiltin | XlsxNumberFormatCode
+class XlsxAlignment(TypedDict):
+    horizontal: NotRequired[str | None]
+    vertical: NotRequired[str | None]
+    wrap_text: NotRequired[bool | None]
+    shrink_to_fit: NotRequired[bool | None]
+    indent: NotRequired[int | None]
+    rotation: NotRequired[int | None]
+    reading_order: NotRequired[int | None]
+class XlsxProtection(TypedDict):
+    locked: NotRequired[bool | None]
+    hidden: NotRequired[bool | None]
 class XlsxFormat(TypedDict):
     base: int
+    cell_style: NotRequired[str | None]
     font: NotRequired[XlsxFont | None]
     fill: NotRequired[XlsxFill | None]
     border: NotRequired[XlsxBorder | None]
     number_format: NotRequired[XlsxNumberFormat | None]
+    alignment: NotRequired[XlsxAlignment | None]
+    protection: NotRequired[XlsxProtection | None]
 class BodyFormat(TypedDict):
     id: str
     format: XlsxFormat
@@ -6051,11 +6065,16 @@ class ProposalAsk(TypedDict):
     ask: EntityId
     forks: list[EntityId]
     at: int
+class ProposalAskRefusal(TypedDict):
+    forks: list[EntityId]
+    reason: str
+    at: int
 class OfficeBodyProposal(TypedDict):
     header: ProposalHeader
     members: list[ProposalMember]
     settlement: NotRequired[ProposalSettlement | None]
     asks: NotRequired[list[ProposalAsk]]
+    ask_refused: NotRequired[ProposalAskRefusal | None]
 SettleVerdict = Literal["accept", "reject"]
 class ApproveScopeThisActor(TypedDict):
     this_actor: str
