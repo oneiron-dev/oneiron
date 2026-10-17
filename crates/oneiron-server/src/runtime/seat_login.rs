@@ -8,9 +8,11 @@
 //! carries an argv or a browser URL the PERSON runs, and the control plane
 //! holds nothing.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::checkout::{CheckoutId, CheckoutLeaseAct};
@@ -20,12 +22,13 @@ use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
     BYOA_MAX_EXHAUST_STREAM_BYTES, ByoEndpointBackendFactory, ByoaCliExecutor, ByoaConnectorSpec,
     ByoaDispatcher, ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult,
-    CaptureByoaExhaust, CliSandboxSpec, DispatchOfficialSeat, DrySeatDecision, DrySeatFallback,
-    OfficialSeatDispatchOutcome, OfficialSeatRoute, OfficialSeatSpec, OnSeatSpent,
-    ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy, RunnerWork, SeatAuth,
-    SeatPlacementApproval, SeatPlanWindow, SeatRoute, SeatSpent, SiwcAuthorizeRequest,
-    check_seat_placement, decide_dry_seat, pkce_s256_challenge, seat_login_plan,
-    validate_official_seat,
+    CaptureByoaExhaust, ClaudeCodeRunner, CliSandboxSpec, CodexRunner, DispatchOfficialSeat,
+    DreamerProviderAdapter, DrySeatDecision, DrySeatFallback, OfficialDreamerSeat,
+    OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatRegistry, OfficialSeatRoute,
+    OfficialSeatSpec, OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry, RunnerSeat,
+    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatPlacementApproval, SeatPlanWindow, SeatRoute,
+    SeatSpent, SiwcAuthorizeRequest, check_seat_placement, decide_dry_seat, pkce_s256_challenge,
+    register_official_dreamer_providers, seat_login_plan, validate_official_seat,
 };
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
@@ -266,8 +269,8 @@ const SEAT_ENV_REMOVED: [&str; 5] = [
     "CODEX_API_KEY",
 ];
 
-/// Runs an official signed-in CLI (`claude`, `codex`) as a local argv-only
-/// process in a checkout directory the host resolved.
+/// Runs an official signed-in CLI (`claude`, `codex`, `opencode`) as a
+/// local argv-only process in a checkout directory the host resolved.
 ///
 /// This is the own-runtime executor: the person's machine, the person's
 /// network, the person's login inside the unmodified binary. It enforces the
@@ -314,9 +317,10 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
                 "official seat checkout does not match the connector".to_owned(),
             ));
         }
-        if !matches!(spec.program.as_str(), "claude" | "codex") {
+        if !matches!(spec.program.as_str(), "claude" | "codex" | "opencode") {
             return Err(ByoaError::Backend(
-                "official seat executor runs only the official claude/codex binaries".to_owned(),
+                "official seat executor runs only the official claude/codex/opencode binaries"
+                    .to_owned(),
             ));
         }
         if !spec.credential_handles.is_empty() {
@@ -487,6 +491,39 @@ fn default_seat_auth() -> String {
     "vendor_login".to_owned()
 }
 
+/// One official seat the owner holds, registered as a named Dreamer
+/// provider under its adapter's name (OF-137): the seat settings, plus the
+/// endpoint bindings a CLI seat ignores. Labels and custody handles only,
+/// like [`SeatSettings`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct OfficialRunnerSeatSettings {
+    #[serde(flatten)]
+    pub seat: SeatSettings,
+    /// Slug-to-model bindings for endpoint-shaped seats (Agent SDK, Sign
+    /// in with ChatGPT, API keys).
+    #[serde(default)]
+    pub models: BTreeMap<String, String>,
+    /// Overrides the adapter's default endpoint base URL.
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+impl OfficialRunnerSeatSettings {
+    fn dreamer_seat(&self) -> Result<OfficialDreamerSeat, String> {
+        let mut model_slug_map = BTreeMap::new();
+        for (slug, model) in &self.models {
+            let model = oneiron::ModelId::new(model.clone())
+                .map_err(|error| format!("runner seat model for slug {slug:?}: {error}"))?;
+            model_slug_map.insert(slug.clone(), model);
+        }
+        Ok(OfficialDreamerSeat {
+            spec: self.seat.spec()?,
+            model_slug_map,
+            base_url: self.base_url.clone(),
+        })
+    }
+}
+
 /// The owner's ordered runner seats and what a spent one does, as settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RunnerSeatPolicySettings {
@@ -494,6 +531,10 @@ pub struct RunnerSeatPolicySettings {
     /// `stop` (default), `next_seat`, or `internal_models`.
     #[serde(default = "default_on_spent")]
     pub on_spent: String,
+    /// Official seats registered as named Dreamer providers the seats
+    /// above may name beside the plain CLI runners.
+    #[serde(default)]
+    pub official: Vec<OfficialRunnerSeatSettings>,
 }
 
 fn default_on_spent() -> String {
@@ -501,14 +542,50 @@ fn default_on_spent() -> String {
 }
 
 impl RunnerSeatPolicySettings {
+    /// The Dreamer provider registry these settings name runners against:
+    /// the owner's official seats registered under their adapter names,
+    /// then the plain CLI runners for every name no official seat took
+    /// (an official "claude-code" seat IS that runner, login attached).
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the seat that does not fold, the route with
+    /// no adapter, or the malformed model binding.
+    pub fn registry(&self) -> Result<ProviderAdapterRegistry, String> {
+        let official = OfficialSeatRegistry::standard();
+        let mut seats = Vec::with_capacity(self.official.len());
+        for seat in &self.official {
+            seats.push(seat.dreamer_seat()?);
+        }
+        let mut registry = ProviderAdapterRegistry::default();
+        register_official_dreamer_providers(&mut registry, &official, seats)
+            .map_err(|error| error.to_string())?;
+        for runner in [
+            Arc::new(ClaudeCodeRunner) as Arc<dyn DreamerProviderAdapter>,
+            Arc::new(CodexRunner),
+            Arc::new(OpenCodeRunner),
+        ] {
+            if !registry.contains(runner.name()) {
+                registry
+                    .register(runner)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(registry)
+    }
+
     /// Folds the settings into the engine policy dispatch judges, validated
-    /// against the standard runner registry.
+    /// against the registry the same settings build.
     ///
     /// # Errors
     ///
     /// Returns a message naming the unknown auth/fallback label, the
     /// malformed custody handle, or the first seat the policy refuses.
     pub fn policy(&self) -> Result<RunnerSeatPolicy, String> {
+        self.policy_in(&self.registry()?)
+    }
+
+    fn policy_in(&self, registry: &ProviderAdapterRegistry) -> Result<RunnerSeatPolicy, String> {
         let mut seats = Vec::with_capacity(self.seats.len());
         for seat in &self.seats {
             let auth = match seat.auth.trim().to_ascii_lowercase().as_str() {
@@ -538,10 +615,195 @@ impl RunnerSeatPolicySettings {
         };
         let policy = RunnerSeatPolicy { seats, on_spent };
         policy
-            .validate(&ProviderAdapterRegistry::standard())
+            .validate(registry)
             .map_err(|error| error.to_string())?;
         Ok(policy)
     }
+
+    /// The Dreamer executor over this policy: registry and policy built
+    /// from the same settings, so the seats the owner ordered are the
+    /// providers dispatch resolves. `inner` is the internal role ladder an
+    /// `internal_models` route (and a settled capture's host) falls back to.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first message [`Self::registry`] or [`Self::policy`]
+    /// refuses with.
+    pub fn executor<B, E, I>(
+        &self,
+        endpoint_factory: B,
+        egress: E,
+        seat: usize,
+        task: String,
+        checkout_id: CheckoutId,
+        inner: I,
+    ) -> Result<RunnerSeatDreamerExecutor<B, E, I>, String> {
+        let registry = self.registry()?;
+        let policy = self.policy_in(&registry)?;
+        Ok(RunnerSeatDreamerExecutor {
+            endpoint_factory,
+            egress,
+            registry,
+            policy,
+            seat,
+            task,
+            checkout_id,
+            inner,
+        })
+    }
+}
+
+/// One row of the runner catalog: every named Dreamer provider this build
+/// registers, and where a vendor-login seat on it may run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RunnerProviderRow {
+    /// The name a runner seat names ("claude-code", "chatgpt-signin", …).
+    pub name: String,
+    /// The CLI program, for CLI runners. Endpoint providers have none.
+    pub program: Option<String>,
+    /// The official seat route behind the name, when one serves it.
+    pub official_route: Option<String>,
+    /// Argv the person runs themselves to sign in.
+    pub login_argv: Vec<String>,
+    /// A login seat's placement on the person's own runtime, unmodified
+    /// binary, no vendor approvals: `allowed`, or the refusal.
+    pub own_runtime: String,
+    /// The same on an Oneiron-hosted runtime.
+    pub hosted: String,
+}
+
+fn login_placement_label(route: Option<OfficialSeatRoute>, hosted: bool) -> String {
+    let posture = if hosted {
+        HostingPrivacyPosture::Hosted
+    } else {
+        HostingPrivacyPosture::SelfHostLocal
+    };
+    match route {
+        Some(route) => {
+            match check_seat_placement(route, posture, SeatPlacementApproval::default(), true) {
+                Ok(()) => "allowed".to_owned(),
+                Err(error) => format!("refused: {error}"),
+            }
+        }
+        // No official route (OpenCode): the generic login rule. A login
+        // runs on the person's own runtime; only the unmodified Claude
+        // Code binary runs hosted.
+        None if hosted => {
+            "refused: this vendor login runs only on the person's own runtime, not a hosted node"
+                .to_owned()
+        }
+        None => "allowed".to_owned(),
+    }
+}
+
+fn runner_provider_row(
+    name: &str,
+    program: Option<&str>,
+    route: Option<OfficialSeatRoute>,
+) -> RunnerProviderRow {
+    RunnerProviderRow {
+        name: name.to_owned(),
+        program: program.map(str::to_owned),
+        official_route: route.map(|route| route.as_str().to_owned()),
+        login_argv: route.map_or_else(Vec::new, OfficialSeatRoute::login_argv),
+        own_runtime: login_placement_label(route, false),
+        hosted: login_placement_label(route, true),
+    }
+}
+
+/// Every named Dreamer provider: the plain CLI runners and the official
+/// seat adapters, one row per name, judged with no vendor approvals
+/// granted. An API-key seat runs anywhere; the placement columns judge a
+/// vendor-login seat.
+#[must_use]
+pub fn runner_provider_catalog() -> Vec<RunnerProviderRow> {
+    let official = OfficialSeatRegistry::standard();
+    let mut rows = vec![
+        runner_provider_row(
+            "claude-code",
+            Some(oneiron::dispatch_byoa::CLAUDE_CODE_PROGRAM),
+            Some(OfficialSeatRoute::ClaudeCodeBinary),
+        ),
+        runner_provider_row(
+            "codex",
+            Some(oneiron::dispatch_byoa::CODEX_PROGRAM),
+            Some(OfficialSeatRoute::CodexAppServerChatGptPlan),
+        ),
+        runner_provider_row(
+            "opencode",
+            Some(oneiron::dispatch_byoa::OPENCODE_PROGRAM),
+            None,
+        ),
+    ];
+    for name in official.names() {
+        if rows.iter().any(|row| row.name == name) {
+            continue;
+        }
+        if let Ok(adapter) = official.resolve(name) {
+            rows.push(runner_provider_row(name, None, Some(adapter.route())));
+        }
+    }
+    rows
+}
+
+/// The owner's effective runner-seat policy as a surface prints it: the
+/// ordered seats, what a spent one does, and every provider the same
+/// settings register. Handle names stay counts; no credential exists here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPolicySurface {
+    /// `stop`, `next_seat`, or `internal_models`.
+    pub on_spent: String,
+    pub seats: Vec<RunnerPolicySeatRow>,
+    pub registered_providers: Vec<String>,
+}
+
+/// One ordered seat of the effective policy.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RunnerPolicySeatRow {
+    pub seat: usize,
+    pub runner: String,
+    /// `vendor_login` or `api_key`.
+    pub auth: String,
+    pub egress_profile_ref: String,
+    /// Custody handles named. Zero for a login seat, by rule.
+    pub credential_handles: usize,
+}
+
+/// Builds the effective-policy surface from owner settings.
+///
+/// # Errors
+///
+/// Returns the first message the registry or policy fold refuses with.
+pub fn runner_policy_surface(
+    settings: &RunnerSeatPolicySettings,
+) -> Result<RunnerPolicySurface, String> {
+    let registry = settings.registry()?;
+    let policy = settings.policy_in(&registry)?;
+    let on_spent = match policy.on_spent {
+        OnSeatSpent::Stop => "stop",
+        OnSeatSpent::NextSeat => "next_seat",
+        OnSeatSpent::InternalModels => "internal_models",
+    };
+    Ok(RunnerPolicySurface {
+        on_spent: on_spent.to_owned(),
+        seats: policy
+            .seats
+            .iter()
+            .enumerate()
+            .map(|(seat, chosen)| RunnerPolicySeatRow {
+                seat,
+                runner: chosen.runner.clone(),
+                auth: match chosen.auth {
+                    SeatAuth::VendorLogin => "vendor_login",
+                    SeatAuth::ApiKey => "api_key",
+                }
+                .to_owned(),
+                egress_profile_ref: chosen.egress_profile_ref.clone(),
+                credential_handles: chosen.credential_handles.len(),
+            })
+            .collect(),
+        registered_providers: registry.names().into_iter().map(str::to_owned).collect(),
+    })
 }
 
 /// The Dreamer executor over the owner's runner-seat policy (OF-137 +

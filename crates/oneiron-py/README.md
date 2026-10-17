@@ -96,6 +96,7 @@ created for the actor you want to act as instead.
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
 | `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |
+| `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, ...)` | `MemoryPack` |

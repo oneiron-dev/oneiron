@@ -245,6 +245,10 @@ pub(crate) struct ContextPackReaderControls {
 pub(crate) struct ContextPackTypeRef {
     node_id: String,
     tree_version: u32,
+    /// The project whose tree it is placed in, as an entity id; omitted, the
+    /// vault's tree.
+    #[serde(default)]
+    project: Option<String>,
 }
 
 /// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
@@ -259,7 +263,7 @@ pub(crate) struct ContextPackQueryAffect {
 
 impl ContextPackQueryAffect {
     /// The affect as the engine takes it, refused out of range.
-    pub(super) fn vad(self) -> Result<oneiron::Vad, crate::error::ApiError> {
+    pub(crate) fn vad(self) -> Result<oneiron::Vad, crate::error::ApiError> {
         let vad = oneiron::Vad {
             valence: self.valence,
             arousal: self.arousal,
@@ -307,9 +311,10 @@ pub(crate) struct CoreContextPackRequest {
     /// Executor model@revision for pair-specific skill reliability ranking.
     #[serde(default)]
     pub(super) executor_model: Option<String>,
-    /// The task type this pack's work is placed in, a node of the vault's
-    /// type tree at that tree's version: skills rank on their measured
-    /// reliability for that placement and `axis` (OF-184).
+    /// The task type this pack's work is placed in, a node of the type tree
+    /// (the vault's, or its `project`'s) at the version it was placed at:
+    /// skills rank on their measured reliability for that placement and
+    /// `axis` (OF-184).
     #[serde(default)]
     pub(super) type_ref: Option<ContextPackTypeRef>,
     /// The scored axis for `type_ref`; omitted, the skill-outcome axis.
@@ -392,8 +397,9 @@ pub(crate) struct CoreContextPackRequest {
 
 impl CoreContextPackRequest {
     /// The typed skill-reliability query `type_ref` and `axis` name, its
-    /// parents read off the vault's type tree. A placement that tree does
-    /// not hold at that version, or an axis with no placement, is refused.
+    /// parents read off the tree it was placed in: its project's, else the
+    /// vault's, at the version it names. A placement no kept tree holds at
+    /// that version, or an axis with no placement, is refused.
     /// Only free reads: the caller runs it before any paid call.
     pub(super) fn skill_reliability_query(
         &self,
@@ -409,8 +415,16 @@ impl CoreContextPackRequest {
                 None => Ok(None),
             };
         };
-        let tree = oneiron::task_type::type_tree(vault, None)
-            .map_err(|error| super::super::core_engine_error("type tree read failed", error))?;
+        let project = match &placed.project {
+            Some(hex) => Some(
+                oneiron::EntityId::from_hex(hex)
+                    .map_err(|_| refused("type_ref.project is not an entity id", "type_ref"))?,
+            ),
+            None => None,
+        };
+        let tree = oneiron::task_type::type_tree_at(vault, project, placed.tree_version)
+            .map_err(|error| super::super::core_engine_error("type tree read failed", error))?
+            .ok_or_else(|| refused("no kept type tree is at that tree_version", "type_ref"))?;
         let type_ref = oneiron::learning::TypeRef {
             node_id: placed.node_id.clone(),
             tree_version: placed.tree_version,
@@ -422,7 +436,7 @@ impl CoreContextPackRequest {
         ) {
             Ok(Some(query)) => Ok(Some(query)),
             Ok(None) => Err(refused(
-                "type_ref is not a node of the vault's type tree at that version",
+                "type_ref is not a node of its type tree at that version",
                 "type_ref",
             )),
             Err(error) => Err(refused(&error.to_string(), "axis")),

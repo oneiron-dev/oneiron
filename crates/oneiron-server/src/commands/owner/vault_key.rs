@@ -19,6 +19,12 @@
 //! - `PROGRAM release <vault id hex> <label>`: the seed as 64 hex digits on
 //!   stdout and exit 0, after its own sign-in on the terminal.
 //!
+//! A registry keeps each managed vault's escrow capsules (CROSS-ARCH-0022
+//! #ov-custody). `oneiron restore --unlock escrow --capsule REPORT` opens a
+//! backup with one, whether or not the backup carries its wrap, and its
+//! recipient's released secret. A released recipient is never reused: the
+//! restore says to retire it.
+//!
 //! A sealed vault (OF-570 maximum tier) opens only once its pages unlock from
 //! the mirror beside it ([`prepare_page_seal`]): with this device's keystore,
 //! or on a new device with `oneiron vault-key add-device --unlock`.
@@ -50,6 +56,10 @@ use crate::owner::vault_key::{self as view, SignerPin, hex, secret32};
 
 /// The most a secret read is: a password is at most 1024 bytes.
 const SECRET_LIMIT: usize = 4096;
+
+/// The most an escrow capsule report read is: a hybrid capsule is under 2
+/// KiB, twice that in hex.
+const CAPSULE_REPORT_LIMIT: u64 = 64 << 10;
 
 /// What a command that runs on a stopped vault does instead while a server
 /// holds it.
@@ -112,8 +122,10 @@ fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
 /// opens with the unlock the flags name: a sealed vault's pages unlock with
 /// it before the open, a plain vault's key after it. A recovery box files an
 /// escrow seed under the vault's id: a sealed vault's mirror names it, and a
-/// plain vault opens first to read its own.
+/// plain vault opens first to read its own. The world kit opens the
+/// `world-kit` escrow wrap, bound to the vault id `--vault-id` names.
 fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
+    refuse_unused_unlock_args(&args)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = if args.unlock == UnlockMethod::Device {
         open_held(&args.serve)?
@@ -139,6 +151,28 @@ fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
     };
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(&owner, NewVaultKeyWrap::Device)?)
+}
+
+/// Refuses an add-device flag its `--unlock` does not read: the kit's pieces
+/// and vault id with any other unlock, and a credential, a label or a
+/// recovery box with the kit.
+fn refuse_unused_unlock_args(args: &VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
+    let kit = args.unlock == UnlockMethod::Kit;
+    let unused = [
+        ("--piece", !kit && !args.pieces.is_empty()),
+        ("--vault-id", !kit && args.vault_id.is_some()),
+        ("--credential", kit && args.credential.is_some()),
+        ("--label", kit && args.label.is_some()),
+        ("--box-dir", kit && args.secret.box_dir.is_some()),
+        ("--box-command", kit && args.secret.box_command.is_some()),
+    ];
+    match unused.iter().find(|(_, given)| *given) {
+        Some((flag, _)) if kit => anyhow::bail!(
+            "--unlock kit reads its pieces and the kit passphrase; {flag} is not one of them"
+        ),
+        Some((flag, _)) => anyhow::bail!("{flag} is read only with --unlock kit"),
+        None => Ok(()),
+    }
 }
 
 /// The page seal the configured vault opens with (OF-570 maximum tier):
@@ -483,13 +517,28 @@ pub(crate) enum HostUnlock {
         label: String,
         secret: HybridSecretKey,
     },
+    /// A registry's escrow capsule, presented in place of a wrap, and its
+    /// recipient's released secret.
+    EscrowCapsule {
+        role: String,
+        label: String,
+        capsule: Vec<u8>,
+        secret: HybridSecretKey,
+    },
 }
 
 impl HostUnlock {
     /// The unlock `args` name for `backup`, its secret read now. An escrow
-    /// secret comes from the named recovery box when there is one, and the
-    /// world kit's from its pieces.
+    /// secret comes from the named recovery box when there is one, the world
+    /// kit's from its pieces, and a registry capsule's with its report.
     pub(super) fn read(args: &RestoreArgs, backup: &Path) -> anyhow::Result<Self> {
+        if let Some(report) = &args.capsule {
+            anyhow::ensure!(
+                args.unlock == UnlockMethod::Escrow,
+                "--capsule opens the backup with --unlock escrow"
+            );
+            return Self::read_capsule(report, &args.secret, backup);
+        }
         if args.unlock == UnlockMethod::Kit {
             return super::recovery_kit::kit_unlock(args);
         }
@@ -506,12 +555,92 @@ impl HostUnlock {
         )
     }
 
+    /// The registry's escrow capsule report at `path` for `backup`, and its
+    /// recipient's secret, read now from the named recovery box or else as a
+    /// secret ([`view::escrow_secret`]). A report of another vault or key is
+    /// refused before the secret is read.
+    fn read_capsule(path: &Path, source: &SecretSourceArgs, backup: &Path) -> anyhow::Result<Self> {
+        let mut text = String::new();
+        std::fs::File::open(path)
+            .and_then(|file| {
+                file.take(CAPSULE_REPORT_LIMIT + 1)
+                    .read_to_string(&mut text)
+            })
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+        anyhow::ensure!(
+            text.len() as u64 <= CAPSULE_REPORT_LIMIT,
+            "an escrow capsule report is at most 64 KiB"
+        );
+        let report = view::parse_capsule_report(&text)
+            .map_err(|error| anyhow::anyhow!("capsule report {}: {error}", path.display()))?;
+        check_name(&report.label)?;
+        let unlocks = CheckpointKey::unlocks(backup)
+            .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
+        anyhow::ensure!(
+            report.vault_id == unlocks.vault_id,
+            "capsule report {} is for vault {}, and backup {} is vault {}",
+            path.display(),
+            hex(&report.vault_id),
+            backup.display(),
+            hex(&unlocks.vault_id)
+        );
+        anyhow::ensure!(
+            report.commitment == unlocks.commitment,
+            "capsule report {} seals another data key of vault {} than backup {} (key commitment \
+             {}, the backup's {})",
+            path.display(),
+            hex(&report.vault_id),
+            backup.display(),
+            hex(&report.commitment),
+            hex(&unlocks.commitment)
+        );
+        let secret = match recovery_box(source) {
+            Some((recovery_box, _)) => {
+                let seed = recovery_box.release(&report.vault_id, &report.label)?;
+                oneiron::world_keys::escrow_recipient(&seed)?
+            }
+            None => view::escrow_secret(&read_secret(source, "the escrow recipient's secret")?)?,
+        };
+        Ok(Self::EscrowCapsule {
+            role: report.role,
+            label: report.label,
+            capsule: report.capsule,
+            secret,
+        })
+    }
+
+    /// What the owner is told once a registry capsule's recipient secret was
+    /// read: a released recipient is never reused (CROSS-ARCH-0022
+    /// #ov-custody-backend), and the restore retires nothing itself. `None`
+    /// for every other unlock.
+    pub(super) fn released_note(&self) -> Option<String> {
+        let Self::EscrowCapsule { role, label, .. } = self else {
+            return None;
+        };
+        Some(format!(
+            "escrow recipient {label} ({role}) was released for this restore and is never \
+             reused. Retire it: seal the vault key to a new recipient (`oneiron vault-key \
+             add-escrow NAME --box-dir DIR`, or a managed node's fresh recipient at its next \
+             start), remove `escrow:{label}` if the vault still carries it (`oneiron vault-key \
+             remove escrow:{label}`), and have the registry delete its capsules."
+        ))
+    }
+
     /// The unlock `args` name for `vault-key add-device`, its secret read now.
     /// A recovery box files an escrow seed under the vault `vault_id` reads.
     fn read_for_device(
         args: &VaultKeyAddDeviceArgs,
         vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
     ) -> anyhow::Result<Self> {
+        // The kit is bound to the vault id the owner names, never the one a
+        // mirror or the store carries.
+        if args.unlock == UnlockMethod::Kit {
+            return super::recovery_kit::kit_unlock_with(
+                args.vault_id.as_deref(),
+                &args.pieces,
+                args.secret.secret_file.as_deref(),
+            );
+        }
         Self::read_with(
             args.unlock,
             args.credential.as_deref(),
@@ -558,8 +687,8 @@ impl HostUnlock {
                 Self::Escrow { label, secret }
             }
             UnlockMethod::Kit => anyhow::bail!(
-                "--unlock kit opens a backup (`oneiron restore --unlock kit`); a vault on this \
-                 host unlocks with device, password, passkey or escrow"
+                "--unlock kit opens with the kit's pieces (--piece) and the vault id it is bound \
+                 to (--vault-id)"
             ),
         })
     }
@@ -570,6 +699,7 @@ impl HostUnlock {
             Self::Password(_) => "password".to_owned(),
             Self::Passkey { credential, .. } => format!("passkey:{credential}"),
             Self::Escrow { label, .. } => format!("escrow:{label}"),
+            Self::EscrowCapsule { label, .. } => format!("escrow-capsule:{label}"),
         }
     }
 
@@ -584,6 +714,16 @@ impl HostUnlock {
                 prf: **prf,
             }),
             Self::Escrow { label, secret } => Some(VaultKeyUnlock::Escrow { label, secret }),
+            Self::EscrowCapsule {
+                label,
+                capsule,
+                secret,
+                ..
+            } => Some(VaultKeyUnlock::EscrowCapsule {
+                label,
+                capsule,
+                secret,
+            }),
         }
     }
 
@@ -596,6 +736,13 @@ impl HostUnlock {
                 vault.unlock_vault_key_with_passkey(credential, **prf)
             }
             Self::Escrow { label, secret } => vault.unlock_vault_key_with_escrow(label, secret),
+            // The restored vault need not carry the capsule's wrap.
+            Self::EscrowCapsule {
+                label,
+                capsule,
+                secret,
+                ..
+            } => vault.unlock_vault_key_with_escrow_capsule(label, capsule, secret),
         }
     }
 }

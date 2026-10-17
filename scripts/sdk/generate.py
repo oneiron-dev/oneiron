@@ -22,8 +22,22 @@ if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): ra
 # is the type its reply carries, which only the catalog fragment reads.
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
 for row in RUN_ROWS:
-    if set(row) - {'output'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect and output, and nothing else')
+    if set(row) - {'output', 'outputs_by_input'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output and per-input outputs, and nothing else')
+# `outputs_by_input` maps an input field, by its wire name, to the reply code
+# mode answers when that field is present and not null (`describe({fold})`
+# answers the fold, `tasks.update({resultRef})` the reader's report). Each type
+# is a Rust path read through the same type inventory as `output`, which stays
+# the reply to every other input. Only the catalog fragment reads it: the run
+# answers these inputs itself (wire.rs `self_call`) and every host door refuses
+# them, so the facade, MCP and binding projections keep the row's `output`.
+for row in MANIFEST['verbs']:
+    if 'outputs_by_input' not in row: continue
+    by_input = row['outputs_by_input']
+    if 'output' not in row or not isinstance(by_input, dict) or not by_input or not all(
+            isinstance(field, str) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', field) and isinstance(output, str) and output.strip()
+            for field, output in by_input.items()):
+        raise ValueError(f'{row["name"]}: outputs_by_input maps input field names to non-empty output types, beside the row\'s own output')
 # ARCH-0028: the MCP tool list and the code-mode method table ARE the verb table,
 # so a row carries no opt-out. A row's tool takes its whole typed input as `spec`
 # unless it names a projection, and refuses a world/facet-narrowed connector
@@ -56,6 +70,11 @@ for row in ROWS:
     # what an embedded handle answers instead.
     if row.get('host_door') and (row.get('server_door') or row.get('admission', {}).get('owner_grade') or row.get('context', 'memory') != 'memory'):
         raise ValueError(f'{row["name"]}: a host door is a memory row with no other server door')
+    # `host_door_caller` hands the door the caller's own principal (the
+    # facade credential's, or the MCP connector's actor) and the logical
+    # invocation the call resolved: the one its verb hooks fired for.
+    if row.get('host_door_caller') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes its caller')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
     # server's dispatch and its MCP dispatch take one turn for it
     # (`SyncServer::admit_task_work`, never refused) before the engine call and
@@ -543,7 +562,7 @@ def mcp_input_dispatch(row):
     name, method = row['name'], row['name'].replace('.', '_')
     decode = f'let input: {rust_type(row["input"])} = serde_json::from_value(input).map_err(|_| invalid())?;\n'
     if row.get('context') == 'board':
-        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
+        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
     body = ''
     if name == 'describe':
         # describe(self) renders the authenticated run brief, the same door REST takes.
@@ -567,7 +586,7 @@ def mcp_input_dispatch(row):
         # credential the REST facade passes it.
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
-                 f'let output = crate::api::facade::host_doors::{method}(server, auth, input).await.map_err(mcp_facade_error)?;\n')
+                 f'let output = crate::api::facade::host_doors::{method}(server, auth, {"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await.map_err(mcp_facade_error)?;\n')
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
@@ -583,7 +602,7 @@ def mcp_input_dispatch(row):
             # scope and frame-epoch checks.
             body += ('if let Some(key) = input.key.clone() {\n'
                      '    let frame_epoch = input.frame_epoch;\n'
-                     '    return execute_mcp_board_verb(server, actor, served, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
+                     '    return execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
                      '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
             body += ('if input.task_ref.is_none() && !input.self_target {\n'
@@ -631,9 +650,10 @@ async fn execute_mcp_agent_verb(
         args: &McpVerbToolArgs,
         actor: &McpCallContext,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-        execute_agent_verb_input(server, args.tool.name, input, actor, None, served).await
+        execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
     }
 
 fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
@@ -650,7 +670,9 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
 /// Every row the result was derived from is listed in `served`: those its
-/// input names, and those the verb's reads picked themselves.
+/// input names, and those the verb's reads picked themselves. A board read
+/// leaves the hook blocks its answer shows in `board_hooks`; the caller spends
+/// them once the answer is out (OF-579).
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
@@ -658,9 +680,10 @@ pub(crate) async fn execute_agent_verb_input(
         actor: &McpCallContext,
         origin: Option<oneiron::memory::HostWriteOrigin>,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
-        let produced = execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served).await;
+        let produced = execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served, board_hooks).await;
         served.extend(producers.take());
         produced
     }
@@ -677,6 +700,7 @@ async fn execute_agent_verb_listing(
         origin: Option<oneiron::memory::HostWriteOrigin>,
         producers: &oneiron::memory::ProducerRows,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
@@ -705,7 +729,7 @@ async fn execute_agent_verb_listing(
         None
     };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
-    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
+    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served, board_hooks).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     Ok((output, source, carrier, epoch))
     }
@@ -718,6 +742,7 @@ async fn execute_agent_verb_row(
         actor: &McpCallContext,
         memory: oneiron::Memory<'_>,
         served: &mut Vec<oneiron::EntityId>,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
     result += invalid + 'match tool {\n'
@@ -819,14 +844,15 @@ export interface FacadePending<V extends FacadeVerb = FacadeVerb> {
 
 /**
  * What one call answers, by the kind of transport behind the tree: the HTTP
- * adapter's original `Response`, unread, or a `FacadePending` for a call a verb
- * hook stopped on an ask; an adapter that decodes, the typed result; an
- * in-process synchronous one, the typed result itself.
+ * adapter's original `Response`, unread; an adapter that decodes, the typed
+ * result; an in-process synchronous one, the typed result itself. Every kind
+ * answers a `FacadePending` instead for a call a verb hook stopped on an ask,
+ * which `facadeRetry` resends.
  */
 export interface FacadeReturns<V extends FacadeVerb> {
   response: Promise<Response | FacadePending<V>>;
-  result: Promise<FacadeResult<V>>;
-  sync: FacadeResult<V>;
+  result: Promise<FacadeResult<V> | FacadePending<V>>;
+  sync: FacadeResult<V> | FacadePending<V>;
 }
 export type FacadeReturn = keyof FacadeReturns<FacadeVerb>;
 /**
@@ -1017,11 +1043,11 @@ def facade_dispatch(facade_rows):
             # own handles, so no list here names the rows it read.
             dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
                 {record_scope_guard(r)}
-                facade_outside_room_turn(call, {json.dumps(name)})?;
+                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
-                let output = facade_output(super::host_doors::{method}(server, auth, facade_input(hooks.args.clone())?).await?)?;
+                let output = facade_output(super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await?)?;
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))
             }}\n'''
             continue

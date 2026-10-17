@@ -3,9 +3,10 @@
 //! animation and connector dependency rules, a legal `reparent` within one
 //! slide, and the slide-level `duplicate_slide` and `reorder_slides`
 //! (`slides/`). The live-deck projector's verbs ride the same door
-//! (`arrange.rs`, `slides/lifecycle.rs`): a blank `add_slide` over a layout,
-//! `delete_slide`, a sibling `reorder_shape`, an empty `add_group` and a
-//! cross-slide `copy_to_slide`.
+//! (`arrange.rs`, `born.rs`, `slides/lifecycle.rs`): a blank `add_slide`
+//! over a layout, `delete_slide`, a sibling `reorder_shape`, an empty
+//! `add_group`, a cross-slide `copy_to_slide`, an `add_picture` over a new
+//! media part and a glued `add_connector`.
 //!
 //! Like a value edit, one structural edit is one checked operation on a copy
 //! of the package (`check.rs`, `slides/check.rs`): surviving shapes keep
@@ -14,6 +15,7 @@
 //! caller's high-water mark (managed history), never from the surviving
 //! shapes or slides alone.
 mod arrange;
+mod born;
 mod check;
 mod slides;
 #[cfg(test)]
@@ -22,13 +24,14 @@ mod timing;
 
 use super::xfrm::{self as transform, TURN};
 use super::xml::{self, A, P, R};
-use super::{EditRefusal, Effect, Target, Xfrm, locate};
+use super::{EditRefusal, Effect, Picture, Target, Xfrm, locate};
 use crate::deck::{
     Affine, DeckView, Geometry, Refusal, ShapeKind, ShapeView, SlideView, State, Value,
     group_matrix,
 };
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
+use serde::{Deserialize, Serialize};
 
 const A16: &str = "http://schemas.microsoft.com/office/drawing/2014/main";
 /// The `a:ext` that holds a shape's `a16:creationId`.
@@ -101,6 +104,49 @@ pub enum StructureEdit<'a> {
         high_water: u32,
         seed: &'a [u8],
     },
+    /// A picture appended to the slide's shape tree (topmost) over a new
+    /// media part holding the admitted raster and a new slide relationship.
+    AddPicture {
+        slide: &'a str,
+        picture: NewPicture<'a>,
+    },
+    /// A connector appended to the slide's shape tree (topmost), each end
+    /// glued to a shape on the slide at a connection site, or free.
+    AddConnector {
+        slide: &'a str,
+        connector: NewConnector<'a>,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NewPicture<'a> {
+    pub name: &'a str,
+    pub picture: Picture<'a>,
+    /// The frame, in slide EMU.
+    pub offset: (i64, i64),
+    pub extent: (i64, i64),
+    /// Place the image inside the frame at its own aspect ratio rather than
+    /// filling the frame.
+    pub fit: bool,
+    pub high_water: u32,
+    pub seed: &'a [u8],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NewConnector<'a> {
+    pub preset: ConnectorPreset,
+    pub name: &'a str,
+    /// Slide EMU.
+    pub offset: (i64, i64),
+    pub extent: (i64, i64),
+    pub flip_h: bool,
+    pub flip_v: bool,
+    /// The native id of the shape the start is glued to, and its connection
+    /// site index.
+    pub start: Option<(u32, u32)>,
+    pub end: Option<(u32, u32)>,
+    pub high_water: u32,
+    pub seed: &'a [u8],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -128,7 +174,8 @@ pub struct NewShape<'a> {
 }
 
 /// The closed preset set `add_shape` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Preset {
     Rect,
     RoundRect,
@@ -145,6 +192,25 @@ impl Preset {
             Self::Ellipse => "ellipse",
             Self::Triangle => "triangle",
             Self::RightArrow => "rightArrow",
+        }
+    }
+}
+
+/// The closed connector geometry set `add_connector` writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorPreset {
+    Straight,
+    Elbow,
+    Curved,
+}
+
+impl ConnectorPreset {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Straight => "straightConnector1",
+            Self::Elbow => "bentConnector3",
+            Self::Curved => "curvedConnector3",
         }
     }
 }
@@ -175,7 +241,9 @@ impl StructureEdit<'_> {
         match self {
             Self::AddShape { slide, .. } => Some(slide),
             Self::DeleteShape { target, .. } | Self::Reparent { target, .. } => Some(target.slide),
-            Self::AddGroup { slide, .. } => Some(slide),
+            Self::AddGroup { slide, .. }
+            | Self::AddPicture { slide, .. }
+            | Self::AddConnector { slide, .. } => Some(slide),
             Self::ReorderShape { target, .. } => Some(target.slide),
             Self::DuplicateSlide { .. }
             | Self::ReorderSlides { .. }
@@ -248,6 +316,22 @@ pub fn structure_patch(
         } => {
             let (at, shape) = locate(&before, &target)?;
             arrange::copy_to_slide(&mut next, &before, at, shape, to, high_water, seed)?
+        }
+        StructureEdit::AddPicture { slide, picture } => {
+            let view = before
+                .slides
+                .iter()
+                .find(|view| view.part == slide)
+                .ok_or(EditRefusal::Missing("slide"))?;
+            born::add_picture(&mut next, view, &picture)?
+        }
+        StructureEdit::AddConnector { slide, connector } => {
+            let view = before
+                .slides
+                .iter()
+                .find(|view| view.part == slide)
+                .ok_or(EditRefusal::Missing("slide"))?;
+            born::add_connector(&mut next, view, &connector)?
         }
     };
     let changed = match (&plan, *op) {

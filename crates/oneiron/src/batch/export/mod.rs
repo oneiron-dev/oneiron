@@ -48,6 +48,8 @@ mod document_import;
 mod document_snapshot;
 mod document_types;
 mod document_validation;
+mod embedding_setup;
+pub use embedding_setup::*;
 mod expression_import;
 #[cfg(test)]
 mod expression_import_tests;

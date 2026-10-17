@@ -7,7 +7,7 @@ use super::super::json_payload;
 use super::super::scoped_read_for_core_auth;
 use super::super::search_fetch_limit;
 use super::super::search_meta;
-use super::super::{ContextPackMediaQuery, MediaSeed, embed_media_seeds};
+use super::super::{ContextPackMediaQuery, ContextPackQueryAffect, MediaSeed, embed_media_seeds};
 use super::write_shape::CORE_MAX_LIST_LIMIT;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -52,6 +52,11 @@ pub(crate) struct CoreQueryRequest {
     /// and `query_vector`, as on the context pack.
     #[serde(default)]
     media: Option<ContextPackMediaQuery>,
+    /// Optional affect the query is asked in (OF-423), as on the context
+    /// pack: emotion congruence ranks a candidate by how near its own
+    /// valence, arousal and dominance sit.
+    #[serde(default, alias = "queryAffect")]
+    query_affect: Option<ContextPackQueryAffect>,
     /// Maximum result count. A limit past 1,000 is served at 1,000 and
     /// `meta.limitClamped` says so.
     #[serde(default = "default_limit")]
@@ -107,6 +112,10 @@ pub(crate) async fn core_query(
 ) -> Result<Json<CoreScopedQueryResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     let req = json_payload(payload)?;
+    let query_affect = req
+        .query_affect
+        .map(ContextPackQueryAffect::vad)
+        .transpose()?;
     if let Some(query) = req.query.as_deref() {
         server
             .check_retrieval_query(query_caller(&auth), QueryDoor::CoreQuery, "query", query)
@@ -140,6 +149,7 @@ pub(crate) async fn core_query(
         req.query_vector.as_deref(),
         &media,
         fetch_limit,
+        query_affect,
     )
     .map_err(|error| {
         tracing::error!(kind = ?error.kind(), "core query failed");
@@ -264,8 +274,11 @@ pub(crate) fn run_core_query(
     vector: Option<&[f32]>,
     media: &[MediaSeed],
     limit: usize,
+    query_affect: Option<oneiron::Vad>,
 ) -> oneiron::Result<oneiron::claim::ScopedReadResult<Vec<oneiron::ScoredEntity>>> {
-    if !media.is_empty() {
+    // A query asked in an affect rides the seeded search, the one that
+    // takes it.
+    if !media.is_empty() || query_affect.is_some() {
         let media: Vec<_> = media
             .iter()
             .map(|seed| {
@@ -277,7 +290,7 @@ pub(crate) fn run_core_query(
                 )
             })
             .collect();
-        return scoped_read.search_seeded(query, vector, &media, limit, None);
+        return scoped_read.search_seeded(query, vector, &media, limit, None, query_affect);
     }
     match (query, vector) {
         (Some(query), Some(vector)) => scoped_read.search(query, vector, limit, None),
