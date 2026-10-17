@@ -21,8 +21,9 @@
 //! [`EmbeddedEngine`] is the whole of it for a binding: from a path and the
 //! app's host it opens the vault the way `oneiron serve` does
 //! ([`open_served_vault`]), serves it, answers one buffered request at a
-//! time over a fresh duplex stream, and stops and restarts serving over the
-//! same open vault. [`BlockingEngine`] runs one on a runtime of its own for
+//! time over a fresh duplex stream, hands the app a connection of its own
+//! for `/ws` and streamed replies ([`EmbeddedConnection`]), and stops and
+//! restarts serving over the same open vault. [`BlockingEngine`] runs one on a runtime of its own for
 //! a binding whose callers are app threads.
 
 mod engine;
@@ -44,8 +45,9 @@ use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, watch};
 
 pub use self::engine::{
-    BlockingEngine, EmbeddedEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config,
-    ensure_app_thread, host_limits, unix_millis,
+    BlockingConnection, BlockingEngine, ENGINE_RECEIVE_CHUNK_BYTES, EmbeddedConnection,
+    EmbeddedEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config, ensure_app_thread,
+    host_limits, unix_millis,
 };
 pub use crate::commands::{OpenedServedVault, open_served_vault};
 use crate::config::ServeConfig;
@@ -156,13 +158,10 @@ async fn serve_prepared<A: AppHost>(
         config.limits.connections(),
     )
     .await?;
-    // A machine that is not the elected home dials its home on that mesh.
-    let device_sync = crate::device_sync::DeviceSyncHost::start(
-        &mesh_server,
-        config.device_sync.as_ref(),
-        mesh.as_ref(),
-    )
-    .await;
+    // A machine that is not the elected home dials its home, on that mesh
+    // when the home has a paired address there.
+    let device_sync =
+        crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
     host.ready()?;
     let (stopping, mut stopped) = (started.stopping, started.stopped);
     let api = serve_channel(connections, app, header_read_timeout, stopped.clone());

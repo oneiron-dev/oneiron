@@ -654,6 +654,8 @@ fn land(
         }
     }
     for source in reviewed {
+        // One inbox row for the batch, never one per conversation.
+        vault.record_history_import_finished(source, imported_at)?;
         tracing::info!(
             source = source.source_id(),
             review = %oneiron::ingest::history::history_import_review_id(source, imported_at),

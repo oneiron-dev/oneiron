@@ -97,6 +97,26 @@ impl BudgetGuard {
         }
     }
 
+    /// A Read line (Rule 5): one caller's own meter, which admits every call
+    /// and charges it, so nothing on it is refused for spend. Its limit is the
+    /// type's maximum, which no spend reaches, so its 50/80/95 ladder never
+    /// fires; what watches a large spend reads [`Self::read`] instead. `actor`
+    /// is the engine-stamped caller it is bound to, as
+    /// [`Self::with_policy_table`] binds one, and no policy row narrows it.
+    #[must_use]
+    pub fn uncapped(attempt_id: impl Into<String>, reserve_units: u64, actor: WriteActor) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(BudgetState::new(
+                attempt_id.into(),
+                u64::MAX,
+                reserve_units,
+                BudgetExhaustionPolicy::Suspend,
+                Some(actor.entity_ref()),
+                BudgetPolicyTable::default(),
+            ))),
+        }
+    }
+
     pub fn admit(&self) -> Result<BudgetAdmission, BudgetDenied> {
         let mut state = self.lock_state();
         let reserve_units = state.reserve_units;

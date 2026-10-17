@@ -143,6 +143,23 @@ impl Memory<'_> {
         ))
     }
 
+    /// Whether the bound actor is the vault owner now: the local embedded
+    /// owner, or a human whose owner binding verifies. A row the owner may
+    /// read beside its caller asks it (FIX 2279).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn is_vault_owner(&self) -> MemoryResult<bool> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| MemoryError::from(Error::from(error)))?;
+        self.is_vault_owner_in_txn(&txn)
+    }
+
     /// Whether the bound actor is the vault owner: the local embedded owner,
     /// or a human whose owner binding verifies.
     pub(super) fn is_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
