@@ -31325,7 +31325,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 10,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -31337,6 +31337,21 @@
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeckPreview",
+      "DeckPreviewRequest",
+      "DeckPreviewSlide"
+     ],
+     "path": "src/office_body/pptx/preview.rs",
+     "purpose": "`vault.artifacts.body.deck.preview`: the asked slides of a deck's head, drawn by the host's review renderer…",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -46513,7 +46528,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 307
+      "fn": 308
      }
     },
     {
@@ -52219,7 +52234,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52858,7 +52873,7 @@
    },
    "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3199,
+   "source_files": 3200,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60813,7 +60828,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 261
+      "fn": 262
      }
     },
     {
@@ -61830,7 +61845,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 262
+      "fn": 263
      }
     },
     {
@@ -64571,13 +64586,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 43
      }
     },
     {
@@ -71720,7 +71735,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 43,
+   "over_bar": 44,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 581,
    "test_files": 182
@@ -72075,6 +72090,9 @@
       "DeckNodeView",
       "DeckOp",
       "DeckOracleRequest",
+      "DeckPreview",
+      "DeckPreviewRequest",
+      "DeckPreviewSlide",
       "DeckProposeOutcome",
       "DeckProposeRequest",
       "DeckReviewView",
@@ -72731,7 +72749,7 @@
      "purpose": "—",
      "surface": {
       "enum": 242,
-      "struct": 592
+      "struct": 595
      }
     },
     {
