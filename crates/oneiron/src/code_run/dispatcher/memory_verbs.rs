@@ -78,6 +78,8 @@ impl HostSelfDispatcher<'_> {
             // Leader advice and a pattern load read the canonical vault on
             // the leader's lease and stamp her attempt's manifest there.
             | SelfEffect::Leader
+            // A team spawns canonical children and writes a canonical receipt.
+            | SelfEffect::Team
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),

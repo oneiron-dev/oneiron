@@ -604,6 +604,10 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 bound: None,
             }))
         }
+        RunVerb::SelfTeamStart => SelfCall::Team(crate::team::SelfTeamCall::Start(decode(input)?)),
+        RunVerb::SelfTeamRecord => {
+            SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
+        }
         RunVerb::TasksWait => {
             let args: crate::code_run::TaskWaitSetRequest = decode(input)?;
             SelfCall::TasksWaitSet(crate::code_run::TaskWaitSetCall {
@@ -733,6 +737,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 serde_json::from_str(json).map_err(|_| failure("leader answer is not JSON"))?;
             json!({ "output": output })
         }
+        SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }

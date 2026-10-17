@@ -379,6 +379,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
         SelfDispatchOutcome::TaskWaitSet(result) => json!({"output": result}),
         SelfDispatchOutcome::Leader(text) => json!({"output": serde_json::from_str::<Value>(text)
             .unwrap_or_else(|_| Value::String(text.clone()))}),
+        SelfDispatchOutcome::Team(answer) => json!({"output": answer}),
     }
 }
 
@@ -472,6 +473,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::TasksWaitSet(wait) => to_json(wait)?,
         SelfCall::Leader(SelfLeaderCall::Advice { top }) => json!({"top": top}),
         SelfCall::Leader(SelfLeaderCall::Pattern { skill }) => json!({"skill": skill.to_hex()}),
+        SelfCall::Team(team) => to_json(team)?,
     })
 }
 
@@ -812,7 +814,8 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         | SelfCall::AgentVerb(_)
         | SelfCall::ReaderSpawn(_)
         | SelfCall::ReaderReport(_)
-        | SelfCall::Leader(_) => {
+        | SelfCall::Leader(_)
+        | SelfCall::Team(_) => {
             return Err(format!("{} takes no rewrite", call.effect().as_str()));
         }
     })

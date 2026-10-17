@@ -306,6 +306,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // The leader's advice and pattern are her vault's own skills, read
         // on her lease.
         SelfEffect::Leader => false,
+        // A team's members are the run's own children and its receipt a
+        // vault row: nothing of it leaves the vault.
+        SelfEffect::Team => false,
     }
 }
 

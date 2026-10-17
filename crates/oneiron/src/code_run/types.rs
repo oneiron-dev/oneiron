@@ -81,6 +81,9 @@ pub enum SelfCall {
     /// `tasks.update({task_ref, resultRef})` from a reader child: its
     /// finding, one of its own stored results.
     ReaderReport(super::reader::SelfReaderReportCall),
+    /// `self.team.start` and `self.team.record` (OF-540): a pattern-skill
+    /// run's own team. The leader is the bound attempt.
+    Team(crate::team::SelfTeamCall),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
     /// `self.leader.advice` and `self.leader.pattern` (OF-389): the bound
@@ -122,6 +125,7 @@ impl SelfCall {
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
             Self::Leader(_) => SelfEffect::Leader,
+            Self::Team(_) => SelfEffect::Team,
         }
     }
 
@@ -198,6 +202,8 @@ pub enum SelfEffect {
     TasksWaitSet,
     /// The bound leader's advice or pattern load (OF-389).
     Leader,
+    /// A team run the bound agent leads: its start or its receipt.
+    Team,
 }
 
 impl SelfEffect {
@@ -234,6 +240,7 @@ impl SelfEffect {
             Self::ReaderReport => "tasks.update",
             Self::TasksWaitSet => "tasks.wait_set",
             Self::Leader => "self.leader",
+            Self::Team => "self.team",
         }
     }
 
@@ -270,6 +277,7 @@ impl SelfEffect {
             | Self::InferenceDefaultsReplace => None,
             Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
             Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Leader => None,
+            Self::Team => None,
         }
     }
 
@@ -621,6 +629,8 @@ pub enum SelfDispatchOutcome {
     TaskWaitSet(super::reader::TaskWaitSetResult),
     /// The leader's advice or loaded pattern, as JSON.
     Leader(String),
+    /// A team run's start or receipt (OF-540).
+    Team(crate::team::TeamRunAnswer),
 }
 
 /// `self.skills.call(...)`: the skill and the arguments its call contract

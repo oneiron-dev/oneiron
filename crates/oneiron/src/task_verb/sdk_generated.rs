@@ -272,6 +272,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.members.invitations",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.members.accept",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationRequest,
+                >(),
+            ),
+            (
+                "vault.members.decline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationRequest,
+                >(),
+            ),
+            (
+                "vault.members.withdraw_invitation",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedInvitationWithdrawRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -997,6 +1021,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
             (
+                "self.team.start",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamStartInput>(),
+            ),
+            (
+                "self.team.record",
+                crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
+            ),
+            (
                 "self.spawn",
                 crate::code_run::vault_read::request_schema::<crate::code_run::ReaderSpawnInput>(),
             ),
@@ -1419,6 +1451,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.members.leave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.invitations" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.decline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.withdraw_invitation" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2424,6 +2484,19 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.leave" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
         }
+        "vault.members.invitations" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.members.accept" => {
+            let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
+        }
+        "vault.members.decline" => {
+            let _input: crate::task_verb::sdk::SharedInvitationRequest = decode(value.clone())?;
+        }
+        "vault.members.withdraw_invitation" => {
+            let _input: crate::task_verb::sdk::SharedInvitationWithdrawRequest =
+                decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -2974,6 +3047,12 @@ pub fn invoke(
         "vault.members.change" => encode(vault_members_change(memory, decode(value)?)?),
         "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
+        "vault.members.invitations" => encode(vault_members_invitations(memory, decode(value)?)?),
+        "vault.members.accept" => encode(vault_members_accept(memory, decode(value)?)?),
+        "vault.members.decline" => encode(vault_members_decline(memory, decode(value)?)?),
+        "vault.members.withdraw_invitation" => {
+            encode(vault_members_withdraw_invitation(memory, decode(value)?)?)
+        }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
@@ -3752,6 +3831,46 @@ pub fn vault_members_leave(
         memory.vault(),
         &memory.embedded_owner("vault.members.leave")?,
         None,
+        input,
+    )
+}
+pub fn vault_members_invitations(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<Vec<crate::federation::SharedInvitation>> {
+    crate::task_verb::sdk::read_shared_invitations(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.invitations")?,
+        input,
+    )
+}
+pub fn vault_members_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::accept_shared_invitation_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.accept")?,
+        input,
+    )
+}
+pub fn vault_members_decline(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::decline_shared_invitation_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.decline")?,
+        input,
+    )
+}
+pub fn vault_members_withdraw_invitation(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedInvitationWithdrawRequest,
+) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+    crate::task_verb::sdk::withdraw_shared_invitation_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.withdraw_invitation")?,
         input,
     )
 }
