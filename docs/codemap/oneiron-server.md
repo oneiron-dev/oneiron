@@ -58,6 +58,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/artifacts.rs` | src | m | 16 crate-vis | — | — |
 | `src/api/artifacts/host.rs` | src | s | 5 crate-vis | — | Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`, and one app on an origin of… |
 | `src/api/artifacts/route.rs` | src | m | 7 crate-vis | — | One typed codec for artifact bundle entry and canonical file URLs |
+| `src/api/authority_checkpoint.rs` | src | s | 1 crate-vis | — | OF-469: a kept authority checkpoint image and its attestations, for a paired device to adopt |
 | `src/api/blob_artifacts.rs` | src | L | 25 crate-vis | — | The artifact family's public HTTP surface (ARCH-0078, OF-511): one contract over every blob kind |
 | `src/api/body_codec.rs` | src | s | 1 crate-vis | — | Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604) |
 | `src/api/booking.rs` | src | m | 14 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
@@ -691,7 +692,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/cooperative_deletion.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
 | `src/server/core.rs` | src | L | 2 struct · 18 fn · 17 crate-vis | SyncServer, TaskWorkTurn | Core server state: the `SyncServer` struct, construction, and shared helpers |
 | `src/server/embedding.rs` | src | m | 6 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
-| `src/server/housekeeping.rs` | src | m | 10 crate-vis | — | The host's half of the engine's housekeeping |
+| `src/server/housekeeping.rs` | src | m | 12 crate-vis | — | The host's half of the engine's housekeeping |
 | `src/server/housekeeping_tests.rs` | test | m | — | — | Done-means for host housekeeping: a running server, its lifecycle loop on a short tick over a vault on a… |
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
