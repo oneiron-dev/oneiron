@@ -653,18 +653,59 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
 };
 
 /**
+ * A fresh invocation id for one new verb call (ARCH-0080 §3): 32 lowercase hex
+ * digits from `crypto.getRandomValues`. The server fires a verb's hooks once
+ * per id, and a retry that names the same id is the same call.
+ */
+export function newInvocation(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+/** A verb hook's stop, as the server's refusal names it in `error.hook`. */
+export type FacadeHookStop =
+  | { status: "skipped"; hook: string; reason: string }
+  | { status: "pending"; invocation: string; ask: string }
+  | { status: "hidden"; hook: string };
+/** The server's refusal envelope, `{error, narrowing?}`, as `api/facade.rs` writes it. */
+export interface FacadeErrorEnvelope {
+  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; [field: string]: unknown };
+  narrowing?: unknown;
+}
+/**
+ * A call a verb hook stopped on an ask: the server answered `202 PENDING_ASK`
+ * and the verb did not run. `invocation` is the id the call ran under and `ask`
+ * the ask's handle. `facadeRetry` resends `verb` and `input` under that id: it
+ * answers this same pending while the ask is open, and runs the saved call once
+ * the ask is answered proceed.
+ */
+export interface FacadePending<V extends FacadeVerb = FacadeVerb> {
+  readonly kind: "pending";
+  readonly verb: V;
+  readonly input: FacadeInput<V>;
+  readonly invocation: string;
+  readonly ask: string;
+  readonly envelope: FacadeErrorEnvelope;
+}
+
+/**
  * What one call answers, by the kind of transport behind the tree: the HTTP
- * adapter's original `Response`, unread; an adapter that decodes, the typed
- * result; an in-process synchronous one, the typed result itself.
+ * adapter's original `Response`, unread, or a `FacadePending` for a call a verb
+ * hook stopped on an ask; an adapter that decodes, the typed result; an
+ * in-process synchronous one, the typed result itself.
  */
 export interface FacadeReturns<V extends FacadeVerb> {
-  response: Promise<Response>;
+  response: Promise<Response | FacadePending<V>>;
   result: Promise<FacadeResult<V>>;
   sync: FacadeResult<V>;
 }
 export type FacadeReturn = keyof FacadeReturns<FacadeVerb>;
-/** The one injected invocation: a verb, its typed input and the transport's own options. */
-export type FacadeTransport<K extends FacadeReturn, O = RequestInit> = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>, options?: O) => FacadeReturns<V>[K];
+/**
+ * The one injected invocation: a verb, its typed input, the transport's own
+ * options and the call's invocation id, fresh for each call the tree makes and
+ * the stopped call's own on a retry. The transport sends the id with the call
+ * (HTTP: `x-oneiron-invocation`).
+ */
+export type FacadeTransport<K extends FacadeReturn, O = RequestInit> = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>, options: O | undefined, invocation: string) => FacadeReturns<V>[K];
 
 /**
  * The facade as its path tree (`vault.claims.upsert`, `self.memory.diary`),
@@ -674,524 +715,529 @@ export type FacadeTransport<K extends FacadeReturn, O = RequestInit> = <V extend
 export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: FacadeTransport<K, O>) {
   return {
     /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
-    report: (input: Facade.ReportRequest, options?: O): FacadeReturns<"report">[K] => invoke("report", input, options),
+    report: (input: Facade.ReportRequest, options?: O): FacadeReturns<"report">[K] => invoke("report", input, options, newInvocation()),
     self: {
       memory: {
         /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
-        diary: Object.assign((input: Facade.DiaryEntryRequest, options?: O): FacadeReturns<"self.memory.diary">[K] => invoke("self.memory.diary", input, options), {
+        diary: Object.assign((input: Facade.DiaryEntryRequest, options?: O): FacadeReturns<"self.memory.diary">[K] => invoke("self.memory.diary", input, options, newInvocation()), {
           /** This agent's diary read log: who read its diary and why, newest first, and the reasons its review holds. */
-          reads: (input: Facade.DiaryReadsRequest, options?: O): FacadeReturns<"self.memory.diary.reads">[K] => invoke("self.memory.diary.reads", input, options),
+          reads: (input: Facade.DiaryReadsRequest, options?: O): FacadeReturns<"self.memory.diary.reads">[K] => invoke("self.memory.diary.reads", input, options, newInvocation()),
           /** This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers. */
-          review: (input: Facade.DiaryReviewAnswer, options?: O): FacadeReturns<"self.memory.diary.review">[K] => invoke("self.memory.diary.review", input, options),
+          review: (input: Facade.DiaryReviewAnswer, options?: O): FacadeReturns<"self.memory.diary.review">[K] => invoke("self.memory.diary.review", input, options, newInvocation()),
           /** Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log. */
-          query: (input: Facade.DiaryQueryRequest, options?: O): FacadeReturns<"self.memory.diary.query">[K] => invoke("self.memory.diary.query", input, options),
+          query: (input: Facade.DiaryQueryRequest, options?: O): FacadeReturns<"self.memory.diary.query">[K] => invoke("self.memory.diary.query", input, options, newInvocation()),
         }),
       },
       identity: {
         /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
-        answer: (input: Facade.IdentityAnswerRequest, options?: O): FacadeReturns<"self.identity.answer">[K] => invoke("self.identity.answer", input, options),
+        answer: (input: Facade.IdentityAnswerRequest, options?: O): FacadeReturns<"self.identity.answer">[K] => invoke("self.identity.answer", input, options, newInvocation()),
         /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
-        settle: (input: Facade.IdentityActNowRequest, options?: O): FacadeReturns<"self.identity.settle">[K] => invoke("self.identity.settle", input, options),
+        settle: (input: Facade.IdentityActNowRequest, options?: O): FacadeReturns<"self.identity.settle">[K] => invoke("self.identity.settle", input, options, newInvocation()),
       },
       inbox: {
         /** Lists one page of notifications delivered to the bound actor, without marking them. */
-        list: (input: Facade.InboxListRequest, options?: O): FacadeReturns<"self.inbox.list">[K] => invoke("self.inbox.list", input, options),
+        list: (input: Facade.InboxListRequest, options?: O): FacadeReturns<"self.inbox.list">[K] => invoke("self.inbox.list", input, options, newInvocation()),
         /** Marks one delivered notification seen or acknowledged for the bound actor. */
-        mark: (input: Facade.InboxMarkRequest, options?: O): FacadeReturns<"self.inbox.mark">[K] => invoke("self.inbox.mark", input, options),
-        concern: Object.assign((input: Facade.ConcernCardRequest, options?: O): FacadeReturns<"self.inbox.concern">[K] => invoke("self.inbox.concern", input, options), {
-          outcome: (input: Facade.ConcernOutcomeRequest, options?: O): FacadeReturns<"self.inbox.concern.outcome">[K] => invoke("self.inbox.concern.outcome", input, options),
-          move: (input: Facade.ConcernMoveRequest, options?: O): FacadeReturns<"self.inbox.concern.move">[K] => invoke("self.inbox.concern.move", input, options),
+        mark: (input: Facade.InboxMarkRequest, options?: O): FacadeReturns<"self.inbox.mark">[K] => invoke("self.inbox.mark", input, options, newInvocation()),
+        concern: Object.assign((input: Facade.ConcernCardRequest, options?: O): FacadeReturns<"self.inbox.concern">[K] => invoke("self.inbox.concern", input, options, newInvocation()), {
+          outcome: (input: Facade.ConcernOutcomeRequest, options?: O): FacadeReturns<"self.inbox.concern.outcome">[K] => invoke("self.inbox.concern.outcome", input, options, newInvocation()),
+          move: (input: Facade.ConcernMoveRequest, options?: O): FacadeReturns<"self.inbox.concern.move">[K] => invoke("self.inbox.concern.move", input, options, newInvocation()),
         }),
       },
       /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
-      message: (input: Facade.MessagePersonRequest, options?: O): FacadeReturns<"self.message">[K] => invoke("self.message", input, options),
+      message: (input: Facade.MessagePersonRequest, options?: O): FacadeReturns<"self.message">[K] => invoke("self.message", input, options, newInvocation()),
       grants: {
         /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
-        ask: (input: Facade.GrantAskRequest, options?: O): FacadeReturns<"self.grants.ask">[K] => invoke("self.grants.ask", input, options),
+        ask: (input: Facade.GrantAskRequest, options?: O): FacadeReturns<"self.grants.ask">[K] => invoke("self.grants.ask", input, options, newInvocation()),
       },
       skills: {
         /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
-        save: (input: Facade.SkillSaveRequest, options?: O): FacadeReturns<"self.skills.save">[K] => invoke("self.skills.save", input, options),
+        save: (input: Facade.SkillSaveRequest, options?: O): FacadeReturns<"self.skills.save">[K] => invoke("self.skills.save", input, options, newInvocation()),
         /** An agent forks a stored skill under its own identity, keeping its import ancestry. */
-        fork: (input: Facade.SkillForkRequest, options?: O): FacadeReturns<"self.skills.fork">[K] => invoke("self.skills.fork", input, options),
+        fork: (input: Facade.SkillForkRequest, options?: O): FacadeReturns<"self.skills.fork">[K] => invoke("self.skills.fork", input, options, newInvocation()),
         /** Every loadable callable helper skill and its call contract: what it takes and returns. */
-        callables: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"self.skills.callables">[K] => invoke("self.skills.callables", input, options),
+        callables: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"self.skills.callables">[K] => invoke("self.skills.callables", input, options, newInvocation()),
       },
       decisions: {
-        asks: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"self.decisions.asks">[K] => invoke("self.decisions.asks", input, options),
+        asks: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"self.decisions.asks">[K] => invoke("self.decisions.asks", input, options, newInvocation()),
       },
     },
     vault: {
       people: {
         /** One page of the people the caller reads, in handle order. */
-        list: (input: Facade.PeopleListRequest, options?: O): FacadeReturns<"vault.people.list">[K] => invoke("vault.people.list", input, options),
+        list: (input: Facade.PeopleListRequest, options?: O): FacadeReturns<"vault.people.list">[K] => invoke("vault.people.list", input, options, newInvocation()),
         /** One person the vault knows, by their pr handle. */
-        get: (input: Facade.PersonRequest, options?: O): FacadeReturns<"vault.people.get">[K] => invoke("vault.people.get", input, options),
+        get: (input: Facade.PersonRequest, options?: O): FacadeReturns<"vault.people.get">[K] => invoke("vault.people.get", input, options, newInvocation()),
       },
       /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
-      witness: (input: Facade.WitnessTurn, options?: O): FacadeReturns<"vault.witness">[K] => invoke("vault.witness", input, options),
+      witness: (input: Facade.WitnessTurn, options?: O): FacadeReturns<"vault.witness">[K] => invoke("vault.witness", input, options, newInvocation()),
       claims: {
         /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
-        upsert: (input: Facade.ClaimInput, options?: O): FacadeReturns<"vault.claims.upsert">[K] => invoke("vault.claims.upsert", input, options),
+        upsert: (input: Facade.ClaimInput, options?: O): FacadeReturns<"vault.claims.upsert">[K] => invoke("vault.claims.upsert", input, options, newInvocation()),
         /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
-        retract: (input: Facade.ClaimRefRequest, options?: O): FacadeReturns<"vault.claims.retract">[K] => invoke("vault.claims.retract", input, options),
+        retract: (input: Facade.ClaimRefRequest, options?: O): FacadeReturns<"vault.claims.retract">[K] => invoke("vault.claims.retract", input, options, newInvocation()),
         /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
-        list: (input: Facade.ClaimListFilter, options?: O): FacadeReturns<"vault.claims.list">[K] => invoke("vault.claims.list", input, options),
+        list: (input: Facade.ClaimListFilter, options?: O): FacadeReturns<"vault.claims.list">[K] => invoke("vault.claims.list", input, options, newInvocation()),
         /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
-        history: (input: Facade.ClaimRefRequest, options?: O): FacadeReturns<"vault.claims.history">[K] => invoke("vault.claims.history", input, options),
+        history: (input: Facade.ClaimRefRequest, options?: O): FacadeReturns<"vault.claims.history">[K] => invoke("vault.claims.history", input, options, newInvocation()),
         /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
-        admit: (input: Facade.AdmitImportedClaimInput, options?: O): FacadeReturns<"vault.claims.admit">[K] => invoke("vault.claims.admit", input, options),
+        admit: (input: Facade.AdmitImportedClaimInput, options?: O): FacadeReturns<"vault.claims.admit">[K] => invoke("vault.claims.admit", input, options, newInvocation()),
         /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
-        seed: (input: Facade.CommitRequest, options?: O): FacadeReturns<"vault.claims.seed">[K] => invoke("vault.claims.seed", input, options),
+        seed: (input: Facade.CommitRequest, options?: O): FacadeReturns<"vault.claims.seed">[K] => invoke("vault.claims.seed", input, options, newInvocation()),
       },
       /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
-      recall: (input: Facade.RecallRequest, options?: O): FacadeReturns<"vault.recall">[K] => invoke("vault.recall", input, options),
+      recall: (input: Facade.RecallRequest, options?: O): FacadeReturns<"vault.recall">[K] => invoke("vault.recall", input, options, newInvocation()),
       /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. */
-      export: (input: Facade.ExportOptions, options?: O): FacadeReturns<"vault.export">[K] => invoke("vault.export", input, options),
+      export: (input: Facade.ExportOptions, options?: O): FacadeReturns<"vault.export">[K] => invoke("vault.export", input, options, newInvocation()),
       /** Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds. */
-      receipts: Object.assign((input: Facade.VaultReceiptsRequest, options?: O): FacadeReturns<"vault.receipts">[K] => invoke("vault.receipts", input, options), {
+      receipts: Object.assign((input: Facade.VaultReceiptsRequest, options?: O): FacadeReturns<"vault.receipts">[K] => invoke("vault.receipts", input, options, newInvocation()), {
         /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
-        get: (input: Facade.CallReceiptRequest, options?: O): FacadeReturns<"vault.receipts.get">[K] => invoke("vault.receipts.get", input, options),
+        get: (input: Facade.CallReceiptRequest, options?: O): FacadeReturns<"vault.receipts.get">[K] => invoke("vault.receipts.get", input, options, newInvocation()),
       }),
       images: {
         /** The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull. */
-        view: (input: Facade.ImageViewRequest, options?: O): FacadeReturns<"vault.images.view">[K] => invoke("vault.images.view", input, options),
+        view: (input: Facade.ImageViewRequest, options?: O): FacadeReturns<"vault.images.view">[K] => invoke("vault.images.view", input, options, newInvocation()),
       },
       kv: {
         /** Exact key lookup in the bound actor's worldless key-value namespace; never recall. */
-        get: (input: Facade.KeyValueAddress, options?: O): FacadeReturns<"vault.kv.get">[K] => invoke("vault.kv.get", input, options),
+        get: (input: Facade.KeyValueAddress, options?: O): FacadeReturns<"vault.kv.get">[K] => invoke("vault.kv.get", input, options, newInvocation()),
         /** Synchronous gated write of one key; a write that needs review fails without changing the key. */
-        put: (input: Facade.KeyValuePut, options?: O): FacadeReturns<"vault.kv.put">[K] => invoke("vault.kv.put", input, options),
+        put: (input: Facade.KeyValuePut, options?: O): FacadeReturns<"vault.kv.put">[K] => invoke("vault.kv.put", input, options, newInvocation()),
         /** Withdraws only the caller's current key; absent is a no-op and claim history stays. */
-        delete: (input: Facade.KeyValueAddress, options?: O): FacadeReturns<"vault.kv.delete">[K] => invoke("vault.kv.delete", input, options),
+        delete: (input: Facade.KeyValueAddress, options?: O): FacadeReturns<"vault.kv.delete">[K] => invoke("vault.kv.delete", input, options, newInvocation()),
         /** Exact prefix and equality search over the caller's keys, ordered by namespace then key. */
-        search: (input: Facade.KeyValueSearch, options?: O): FacadeReturns<"vault.kv.search">[K] => invoke("vault.kv.search", input, options),
+        search: (input: Facade.KeyValueSearch, options?: O): FacadeReturns<"vault.kv.search">[K] => invoke("vault.kv.search", input, options, newInvocation()),
         /** The caller's distinct live namespaces, with exact segment prefix and suffix matching. */
-        namespaces: (input: Facade.KeyValueNamespaces, options?: O): FacadeReturns<"vault.kv.namespaces">[K] => invoke("vault.kv.namespaces", input, options),
+        namespaces: (input: Facade.KeyValueNamespaces, options?: O): FacadeReturns<"vault.kv.namespaces">[K] => invoke("vault.kv.namespaces", input, options, newInvocation()),
       },
       weave: {
         /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
-        report: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.report">[K] => invoke("vault.weave.report", input, options),
+        report: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.report">[K] => invoke("vault.weave.report", input, options, newInvocation()),
         /** One of the bound actor's saved weave digests, or the newest, under the current read policy. */
-        digest: (input: Facade.WeaveDigestRequest, options?: O): FacadeReturns<"vault.weave.digest">[K] => invoke("vault.weave.digest", input, options),
-        lens: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.lens">[K] => invoke("vault.weave.lens", input, options),
+        digest: (input: Facade.WeaveDigestRequest, options?: O): FacadeReturns<"vault.weave.digest">[K] => invoke("vault.weave.digest", input, options, newInvocation()),
+        lens: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.lens">[K] => invoke("vault.weave.lens", input, options, newInvocation()),
         link: {
           /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
-          wrong: (input: Facade.WeaveWrongLinkRequest, options?: O): FacadeReturns<"vault.weave.link.wrong">[K] => invoke("vault.weave.link.wrong", input, options),
+          wrong: (input: Facade.WeaveWrongLinkRequest, options?: O): FacadeReturns<"vault.weave.link.wrong">[K] => invoke("vault.weave.link.wrong", input, options, newInvocation()),
         },
       },
       packs: {
         /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
-        put: (input: Facade.PackPutRequest, options?: O): FacadeReturns<"vault.packs.put">[K] => invoke("vault.packs.put", input, options),
+        put: (input: Facade.PackPutRequest, options?: O): FacadeReturns<"vault.packs.put">[K] => invoke("vault.packs.put", input, options, newInvocation()),
         setup: {
           /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
-          prepare: (input: Facade.PackSetupRequest, options?: O): FacadeReturns<"vault.packs.setup.prepare">[K] => invoke("vault.packs.setup.prepare", input, options),
+          prepare: (input: Facade.PackSetupRequest, options?: O): FacadeReturns<"vault.packs.setup.prepare">[K] => invoke("vault.packs.setup.prepare", input, options, newInvocation()),
           /** A pack's guided setup as it stands, for the owner. */
-          get: (input: Facade.PackSetupRequest, options?: O): FacadeReturns<"vault.packs.setup.get">[K] => invoke("vault.packs.setup.get", input, options),
+          get: (input: Facade.PackSetupRequest, options?: O): FacadeReturns<"vault.packs.setup.get">[K] => invoke("vault.packs.setup.get", input, options, newInvocation()),
           /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
-          answer: (input: Facade.PackSetupAnswerRequest, options?: O): FacadeReturns<"vault.packs.setup.answer">[K] => invoke("vault.packs.setup.answer", input, options),
+          answer: (input: Facade.PackSetupAnswerRequest, options?: O): FacadeReturns<"vault.packs.setup.answer">[K] => invoke("vault.packs.setup.answer", input, options, newInvocation()),
           /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
-          verify: (input: Facade.PackSetupVerifyRequest, options?: O): FacadeReturns<"vault.packs.setup.verify">[K] => invoke("vault.packs.setup.verify", input, options),
+          verify: (input: Facade.PackSetupVerifyRequest, options?: O): FacadeReturns<"vault.packs.setup.verify">[K] => invoke("vault.packs.setup.verify", input, options, newInvocation()),
         },
       },
       authority: {
         /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
-        audit: (input: Facade.AuthorityAuditQuery, options?: O): FacadeReturns<"vault.authority.audit">[K] => invoke("vault.authority.audit", input, options),
+        audit: (input: Facade.AuthorityAuditQuery, options?: O): FacadeReturns<"vault.authority.audit">[K] => invoke("vault.authority.audit", input, options, newInvocation()),
         /** Every saved authority handoff fork alarm, for the owner. */
-        handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.authority.handoff_alarms">[K] => invoke("vault.authority.handoff_alarms", input, options), {
+        handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.authority.handoff_alarms">[K] => invoke("vault.authority.handoff_alarms", input, options, newInvocation()), {
           /** The owner acknowledges one saved handoff fork alarm. */
-          acknowledge: (input: Facade.HandoffAlarmRequest, options?: O): FacadeReturns<"vault.authority.handoff_alarms.acknowledge">[K] => invoke("vault.authority.handoff_alarms.acknowledge", input, options),
+          acknowledge: (input: Facade.HandoffAlarmRequest, options?: O): FacadeReturns<"vault.authority.handoff_alarms.acknowledge">[K] => invoke("vault.authority.handoff_alarms.acknowledge", input, options, newInvocation()),
         }),
       },
       inspection: {
         /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */
-        resolve: (input: Facade.InspectionResolveRequest, options?: O): FacadeReturns<"vault.inspection.resolve">[K] => invoke("vault.inspection.resolve", input, options),
+        resolve: (input: Facade.InspectionResolveRequest, options?: O): FacadeReturns<"vault.inspection.resolve">[K] => invoke("vault.inspection.resolve", input, options, newInvocation()),
       },
       shared: {
         /** Starts a shared vault's delete_vault act, returned as a typed pending act. */
-        propose_delete: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.propose_delete">[K] => invoke("vault.shared.propose_delete", input, options),
+        propose_delete: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.propose_delete">[K] => invoke("vault.shared.propose_delete", input, options, newInvocation()),
         /** Starts a shared vault's transfer_ownership act: a live Owner hands the vault to another person. */
-        propose_transfer: (input: Facade.SharedTransferRequest, options?: O): FacadeReturns<"vault.shared.propose_transfer">[K] => invoke("vault.shared.propose_transfer", input, options),
+        propose_transfer: (input: Facade.SharedTransferRequest, options?: O): FacadeReturns<"vault.shared.propose_transfer">[K] => invoke("vault.shared.propose_transfer", input, options, newInvocation()),
         /** Starts a shared vault's remove_owner act, with its export-first answer. */
-        propose_remove_owner: (input: Facade.SharedRemoveOwnerRequest, options?: O): FacadeReturns<"vault.shared.propose_remove_owner">[K] => invoke("vault.shared.propose_remove_owner", input, options),
+        propose_remove_owner: (input: Facade.SharedRemoveOwnerRequest, options?: O): FacadeReturns<"vault.shared.propose_remove_owner">[K] => invoke("vault.shared.propose_remove_owner", input, options, newInvocation()),
         /** A live Owner runs a matured shared-vault act and gets its receipt. */
-        execute: (input: Facade.SharedActRequest, options?: O): FacadeReturns<"vault.shared.execute">[K] => invoke("vault.shared.execute", input, options),
+        execute: (input: Facade.SharedActRequest, options?: O): FacadeReturns<"vault.shared.execute">[K] => invoke("vault.shared.execute", input, options, newInvocation()),
         /** One shared-act or membership receipt its reader was told about, by id. */
-        receipt: (input: Facade.SharedReceiptRequest, options?: O): FacadeReturns<"vault.shared.receipt">[K] => invoke("vault.shared.receipt", input, options),
+        receipt: (input: Facade.SharedReceiptRequest, options?: O): FacadeReturns<"vault.shared.receipt">[K] => invoke("vault.shared.receipt", input, options, newInvocation()),
         /** The reader's own outcome notices for a shared vault. */
-        outcomes: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.outcomes">[K] => invoke("vault.shared.outcomes", input, options),
+        outcomes: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.outcomes">[K] => invoke("vault.shared.outcomes", input, options, newInvocation()),
         /** The executed delete-the-vault act, if any. */
-        deletion: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.shared.deletion">[K] => invoke("vault.shared.deletion", input, options),
+        deletion: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.shared.deletion">[K] => invoke("vault.shared.deletion", input, options, newInvocation()),
         /** A holder of a pending shared act's objector role objects inside its veto window. */
-        object: (input: Facade.SharedActRequest, options?: O): FacadeReturns<"vault.shared.object">[K] => invoke("vault.shared.object", input, options),
+        object: (input: Facade.SharedActRequest, options?: O): FacadeReturns<"vault.shared.object">[K] => invoke("vault.shared.object", input, options, newInvocation()),
         /** The holder withdraws their objection; past the deadline the last withdrawal releases the act. */
-        withdraw_objection: (input: Facade.SharedActRequest, options?: O): FacadeReturns<"vault.shared.withdraw_objection">[K] => invoke("vault.shared.withdraw_objection", input, options),
+        withdraw_objection: (input: Facade.SharedActRequest, options?: O): FacadeReturns<"vault.shared.withdraw_objection">[K] => invoke("vault.shared.withdraw_objection", input, options, newInvocation()),
         /** The caller's own notices of shared acts started in the vault. */
-        started: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.started">[K] => invoke("vault.shared.started", input, options),
+        started: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.started">[K] => invoke("vault.shared.started", input, options, newInvocation()),
         /** The caller's own notices of shared acts whose veto window has passed. */
-        matured: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.matured">[K] => invoke("vault.shared.matured", input, options),
+        matured: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.matured">[K] => invoke("vault.shared.matured", input, options, newInvocation()),
         /** A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing. */
-        erase_ask: (input: Facade.SharedEraseAskRequest, options?: O): FacadeReturns<"vault.shared.erase_ask">[K] => invoke("vault.shared.erase_ask", input, options),
+        erase_ask: (input: Facade.SharedEraseAskRequest, options?: O): FacadeReturns<"vault.shared.erase_ask">[K] => invoke("vault.shared.erase_ask", input, options, newInvocation()),
         /** The erase asks the caller may see: every ask for an Owner, their own for anyone else. */
-        erase_asks: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.erase_asks">[K] => invoke("vault.shared.erase_asks", input, options),
+        erase_asks: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.shared.erase_asks">[K] => invoke("vault.shared.erase_asks", input, options, newInvocation()),
         /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */
-        close_erase_ask: (input: Facade.SharedEraseAskCloseRequest, options?: O): FacadeReturns<"vault.shared.close_erase_ask">[K] => invoke("vault.shared.close_erase_ask", input, options),
+        close_erase_ask: (input: Facade.SharedEraseAskCloseRequest, options?: O): FacadeReturns<"vault.shared.close_erase_ask">[K] => invoke("vault.shared.close_erase_ask", input, options, newInvocation()),
       },
       members: {
         /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
-        add: (input: Facade.SharedMemberAddRequest, options?: O): FacadeReturns<"vault.members.add">[K] => invoke("vault.members.add", input, options),
+        add: (input: Facade.SharedMemberAddRequest, options?: O): FacadeReturns<"vault.members.add">[K] => invoke("vault.members.add", input, options, newInvocation()),
         /** An Admin assigns another non-root role to a member who is not an Owner. */
-        change: (input: Facade.SharedMemberRoleRequest, options?: O): FacadeReturns<"vault.members.change">[K] => invoke("vault.members.change", input, options),
+        change: (input: Facade.SharedMemberRoleRequest, options?: O): FacadeReturns<"vault.members.change">[K] => invoke("vault.members.change", input, options, newInvocation()),
         /** An Admin removes one member from a shared vault. */
-        remove: (input: Facade.SharedMemberRequest, options?: O): FacadeReturns<"vault.members.remove">[K] => invoke("vault.members.remove", input, options),
+        remove: (input: Facade.SharedMemberRequest, options?: O): FacadeReturns<"vault.members.remove">[K] => invoke("vault.members.remove", input, options, newInvocation()),
         /** A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead. */
-        leave: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.members.leave">[K] => invoke("vault.members.leave", input, options),
+        leave: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.members.leave">[K] => invoke("vault.members.leave", input, options, newInvocation()),
         /** The caller's own pending invitations into a shared vault. */
-        invitations: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.members.invitations">[K] => invoke("vault.members.invitations", input, options),
+        invitations: (input: Facade.SharedVaultRequest, options?: O): FacadeReturns<"vault.members.invitations">[K] => invoke("vault.members.invitations", input, options, newInvocation()),
         /** The invitee accepts their own invitation and joins the shared vault at its role. */
-        accept: (input: Facade.SharedInvitationRequest, options?: O): FacadeReturns<"vault.members.accept">[K] => invoke("vault.members.accept", input, options),
+        accept: (input: Facade.SharedInvitationRequest, options?: O): FacadeReturns<"vault.members.accept">[K] => invoke("vault.members.accept", input, options, newInvocation()),
         /** The invitee declines their own invitation; nothing is granted. */
-        decline: (input: Facade.SharedInvitationRequest, options?: O): FacadeReturns<"vault.members.decline">[K] => invoke("vault.members.decline", input, options),
+        decline: (input: Facade.SharedInvitationRequest, options?: O): FacadeReturns<"vault.members.decline">[K] => invoke("vault.members.decline", input, options, newInvocation()),
         /** An Admin with the add_member power takes back a pending invitation. */
-        withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest, options?: O): FacadeReturns<"vault.members.withdraw_invitation">[K] => invoke("vault.members.withdraw_invitation", input, options),
+        withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest, options?: O): FacadeReturns<"vault.members.withdraw_invitation">[K] => invoke("vault.members.withdraw_invitation", input, options, newInvocation()),
       },
       guests: {
-        revoke: (input: Facade.GuestRevokeRequest, options?: O): FacadeReturns<"vault.guests.revoke">[K] => invoke("vault.guests.revoke", input, options),
+        revoke: (input: Facade.GuestRevokeRequest, options?: O): FacadeReturns<"vault.guests.revoke">[K] => invoke("vault.guests.revoke", input, options, newInvocation()),
         /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
-        mint_slip: (input: Facade.GuestSlipMintRequest, options?: O): FacadeReturns<"vault.guests.mint_slip">[K] => invoke("vault.guests.mint_slip", input, options),
+        mint_slip: (input: Facade.GuestSlipMintRequest, options?: O): FacadeReturns<"vault.guests.mint_slip">[K] => invoke("vault.guests.mint_slip", input, options, newInvocation()),
       },
       legal_holds: {
         /** The owner places a customer legal hold on the named records or gate partitions. */
-        place: (input: Facade.LegalHoldPlaceRequest, options?: O): FacadeReturns<"vault.legal_holds.place">[K] => invoke("vault.legal_holds.place", input, options),
+        place: (input: Facade.LegalHoldPlaceRequest, options?: O): FacadeReturns<"vault.legal_holds.place">[K] => invoke("vault.legal_holds.place", input, options, newInvocation()),
         /** Adds targets to one of the owner's standing customer legal holds. */
-        widen: (input: Facade.LegalHoldWidenRequest, options?: O): FacadeReturns<"vault.legal_holds.widen">[K] => invoke("vault.legal_holds.widen", input, options),
+        widen: (input: Facade.LegalHoldWidenRequest, options?: O): FacadeReturns<"vault.legal_holds.widen">[K] => invoke("vault.legal_holds.widen", input, options, newInvocation()),
         /** Every legal hold the owner may see. */
-        list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.legal_holds.list">[K] => invoke("vault.legal_holds.list", input, options),
+        list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.legal_holds.list">[K] => invoke("vault.legal_holds.list", input, options, newInvocation()),
         /** The owner-visible legal hold log, oldest first. */
-        log: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.legal_holds.log">[K] => invoke("vault.legal_holds.log", input, options),
+        log: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.legal_holds.log">[K] => invoke("vault.legal_holds.log", input, options, newInvocation()),
         /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
-        lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest, options?: O): FacadeReturns<"vault.legal_holds.lift_and_erase">[K] => invoke("vault.legal_holds.lift_and_erase", input, options),
+        lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest, options?: O): FacadeReturns<"vault.legal_holds.lift_and_erase">[K] => invoke("vault.legal_holds.lift_and_erase", input, options, newInvocation()),
       },
       embedding_spaces: {
         /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
-        list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.list">[K] => invoke("vault.embedding_spaces.list", input, options),
+        list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.list">[K] => invoke("vault.embedding_spaces.list", input, options, newInvocation()),
         /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
-        declare: (input: Facade.EmbeddingSpaceDeclareRequest, options?: O): FacadeReturns<"vault.embedding_spaces.declare">[K] => invoke("vault.embedding_spaces.declare", input, options),
+        declare: (input: Facade.EmbeddingSpaceDeclareRequest, options?: O): FacadeReturns<"vault.embedding_spaces.declare">[K] => invoke("vault.embedding_spaces.declare", input, options, newInvocation()),
         /** Binds one kind slot to a declared space, or returns it to its default when no space is named. */
-        bind: (input: Facade.EmbeddingSpaceBindRequest, options?: O): FacadeReturns<"vault.embedding_spaces.bind">[K] => invoke("vault.embedding_spaces.bind", input, options),
+        bind: (input: Facade.EmbeddingSpaceBindRequest, options?: O): FacadeReturns<"vault.embedding_spaces.bind">[K] => invoke("vault.embedding_spaces.bind", input, options, newInvocation()),
         /** Binds every kind slot the space accepts, text included, to that one space. */
-        one_space: (input: Facade.EmbeddingSpaceRequest, options?: O): FacadeReturns<"vault.embedding_spaces.one_space">[K] => invoke("vault.embedding_spaces.one_space", input, options),
+        one_space: (input: Facade.EmbeddingSpaceRequest, options?: O): FacadeReturns<"vault.embedding_spaces.one_space">[K] => invoke("vault.embedding_spaces.one_space", input, options, newInvocation()),
         /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
-        retire: (input: Facade.EmbeddingSpaceRequest, options?: O): FacadeReturns<"vault.embedding_spaces.retire">[K] => invoke("vault.embedding_spaces.retire", input, options),
+        retire: (input: Facade.EmbeddingSpaceRequest, options?: O): FacadeReturns<"vault.embedding_spaces.retire">[K] => invoke("vault.embedding_spaces.retire", input, options, newInvocation()),
         /** Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space. */
-        move: (input: Facade.EmbeddingSpaceMoveRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move">[K] => invoke("vault.embedding_spaces.move", input, options),
+        move: (input: Facade.EmbeddingSpaceMoveRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move">[K] => invoke("vault.embedding_spaces.move", input, options, newInvocation()),
         /** Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes. */
-        move_check: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_check">[K] => invoke("vault.embedding_spaces.move_check", input, options),
+        move_check: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_check">[K] => invoke("vault.embedding_spaces.move_check", input, options, newInvocation()),
         /** The owner says yes to a full candidate over a check that did not read not worse; it swaps in. */
-        move_approve: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_approve">[K] => invoke("vault.embedding_spaces.move_approve", input, options),
+        move_approve: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_approve">[K] => invoke("vault.embedding_spaces.move_approve", input, options, newInvocation()),
         /** Binds a swapped-in move incumbent again. */
-        move_undo: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_undo">[K] => invoke("vault.embedding_spaces.move_undo", input, options),
+        move_undo: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_undo">[K] => invoke("vault.embedding_spaces.move_undo", input, options, newInvocation()),
         /** Ends an open embedding space move with no swap. */
-        move_abandon: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_abandon">[K] => invoke("vault.embedding_spaces.move_abandon", input, options),
+        move_abandon: (input: Facade.EmbeddingSpaceCandidateRequest, options?: O): FacadeReturns<"vault.embedding_spaces.move_abandon">[K] => invoke("vault.embedding_spaces.move_abandon", input, options, newInvocation()),
         probes: {
           /** Every stored embedding space probe with its id. */
-          list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.probes.list">[K] => invoke("vault.embedding_spaces.probes.list", input, options),
+          list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.probes.list">[K] => invoke("vault.embedding_spaces.probes.list", input, options, newInvocation()),
           /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
-          put: (input: Facade.EmbeddingSpaceProbePutRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.put">[K] => invoke("vault.embedding_spaces.probes.put", input, options),
+          put: (input: Facade.EmbeddingSpaceProbePutRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.put">[K] => invoke("vault.embedding_spaces.probes.put", input, options, newInvocation()),
           /** Removes one stored embedding space probe by its id. */
-          delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.delete">[K] => invoke("vault.embedding_spaces.probes.delete", input, options),
+          delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.delete">[K] => invoke("vault.embedding_spaces.probes.delete", input, options, newInvocation()),
         },
       },
       settings: {
         /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
-        learning: Object.assign((input: Facade.LearningSettingsRequest, options?: O): FacadeReturns<"vault.settings.learning">[K] => invoke("vault.settings.learning", input, options), {
+        learning: Object.assign((input: Facade.LearningSettingsRequest, options?: O): FacadeReturns<"vault.settings.learning">[K] => invoke("vault.settings.learning", input, options, newInvocation()), {
           /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
-          put: (input: Facade.LearningSettingPut, options?: O): FacadeReturns<"vault.settings.learning.put">[K] => invoke("vault.settings.learning.put", input, options),
+          put: (input: Facade.LearningSettingPut, options?: O): FacadeReturns<"vault.settings.learning.put">[K] => invoke("vault.settings.learning.put", input, options, newInvocation()),
           /** The owner clears one learned-setting row of a key, mode and scope. */
-          clear: (input: Facade.LearningSettingClear, options?: O): FacadeReturns<"vault.settings.learning.clear">[K] => invoke("vault.settings.learning.clear", input, options),
+          clear: (input: Facade.LearningSettingClear, options?: O): FacadeReturns<"vault.settings.learning.clear">[K] => invoke("vault.settings.learning.clear", input, options, newInvocation()),
         }),
         wake_policy: {
           /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
-          set: (input: Facade.WakePolicySetRequest, options?: O): FacadeReturns<"vault.settings.wake_policy.set">[K] => invoke("vault.settings.wake_policy.set", input, options),
+          set: (input: Facade.WakePolicySetRequest, options?: O): FacadeReturns<"vault.settings.wake_policy.set">[K] => invoke("vault.settings.wake_policy.set", input, options, newInvocation()),
         },
         /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */
-        inference_defaults: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.settings.inference_defaults">[K] => invoke("vault.settings.inference_defaults", input, options), {
+        inference_defaults: Object.assign((input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.settings.inference_defaults">[K] => invoke("vault.settings.inference_defaults", input, options, newInvocation()), {
           /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
-          replace: (input: Facade.InferenceDefaultsReplaceRequest, options?: O): FacadeReturns<"vault.settings.inference_defaults.replace">[K] => invoke("vault.settings.inference_defaults.replace", input, options),
+          replace: (input: Facade.InferenceDefaultsReplaceRequest, options?: O): FacadeReturns<"vault.settings.inference_defaults.replace">[K] => invoke("vault.settings.inference_defaults.replace", input, options, newInvocation()),
         }),
       },
       lenses: {
         /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
-        propose: (input: Facade.LensProposeRequest, options?: O): FacadeReturns<"vault.lenses.propose">[K] => invoke("vault.lenses.propose", input, options),
+        propose: (input: Facade.LensProposeRequest, options?: O): FacadeReturns<"vault.lenses.propose">[K] => invoke("vault.lenses.propose", input, options, newInvocation()),
         /** The owner selects a proposed lens revision for its pack slot. */
-        activate: (input: Facade.LensActivateRequest, options?: O): FacadeReturns<"vault.lenses.activate">[K] => invoke("vault.lenses.activate", input, options),
+        activate: (input: Facade.LensActivateRequest, options?: O): FacadeReturns<"vault.lenses.activate">[K] => invoke("vault.lenses.activate", input, options, newInvocation()),
         /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
-        deactivate: (input: Facade.LensDeactivateRequest, options?: O): FacadeReturns<"vault.lenses.deactivate">[K] => invoke("vault.lenses.deactivate", input, options),
+        deactivate: (input: Facade.LensDeactivateRequest, options?: O): FacadeReturns<"vault.lenses.deactivate">[K] => invoke("vault.lenses.deactivate", input, options, newInvocation()),
         /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. */
-        list: (input: Facade.LensListRequest, options?: O): FacadeReturns<"vault.lenses.list">[K] => invoke("vault.lenses.list", input, options),
+        list: (input: Facade.LensListRequest, options?: O): FacadeReturns<"vault.lenses.list">[K] => invoke("vault.lenses.list", input, options, newInvocation()),
         /** Composes the default vault lens from the named sources, read under the caller's own scope. */
-        default: (input: Facade.LensDefaultRequest, options?: O): FacadeReturns<"vault.lenses.default">[K] => invoke("vault.lenses.default", input, options),
+        default: (input: Facade.LensDefaultRequest, options?: O): FacadeReturns<"vault.lenses.default">[K] => invoke("vault.lenses.default", input, options, newInvocation()),
       },
       disclosure: {
         /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
-        offer: (input: Facade.DisclosureOfferRequest, options?: O): FacadeReturns<"vault.disclosure.offer">[K] => invoke("vault.disclosure.offer", input, options),
+        offer: (input: Facade.DisclosureOfferRequest, options?: O): FacadeReturns<"vault.disclosure.offer">[K] => invoke("vault.disclosure.offer", input, options, newInvocation()),
       },
       shares: {
         /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
-        create: (input: Facade.ShareCreateRequest, options?: O): FacadeReturns<"vault.shares.create">[K] => invoke("vault.shares.create", input, options),
-        revoke: (input: Facade.ShareRevokeRequest, options?: O): FacadeReturns<"vault.shares.revoke">[K] => invoke("vault.shares.revoke", input, options),
-        view: (input: Facade.ShareViewRequest, options?: O): FacadeReturns<"vault.shares.view">[K] => invoke("vault.shares.view", input, options),
+        create: (input: Facade.ShareCreateRequest, options?: O): FacadeReturns<"vault.shares.create">[K] => invoke("vault.shares.create", input, options, newInvocation()),
+        revoke: (input: Facade.ShareRevokeRequest, options?: O): FacadeReturns<"vault.shares.revoke">[K] => invoke("vault.shares.revoke", input, options, newInvocation()),
+        view: (input: Facade.ShareViewRequest, options?: O): FacadeReturns<"vault.shares.view">[K] => invoke("vault.shares.view", input, options, newInvocation()),
       },
       hooks: {
         /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
-        replay: (input: Facade.HooksReplayRequest, options?: O): FacadeReturns<"vault.hooks.replay">[K] => invoke("vault.hooks.replay", input, options),
+        replay: (input: Facade.HooksReplayRequest, options?: O): FacadeReturns<"vault.hooks.replay">[K] => invoke("vault.hooks.replay", input, options, newInvocation()),
       },
       artifacts: {
         /** One artifact: its kind, name, type, head and every version with its made_by and born-from. */
-        view: (input: Facade.ArtifactRefRequest, options?: O): FacadeReturns<"vault.artifacts.view">[K] => invoke("vault.artifacts.view", input, options),
+        view: (input: Facade.ArtifactRefRequest, options?: O): FacadeReturns<"vault.artifacts.view">[K] => invoke("vault.artifacts.view", input, options, newInvocation()),
         /** One artifact version's export file, with the born-with text the caller chose and a share receipt listing it. */
-        export: (input: Facade.ArtifactExportRequest, options?: O): FacadeReturns<"vault.artifacts.export">[K] => invoke("vault.artifacts.export", input, options),
+        export: (input: Facade.ArtifactExportRequest, options?: O): FacadeReturns<"vault.artifacts.export">[K] => invoke("vault.artifacts.export", input, options, newInvocation()),
         /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
-        born_from: (input: Facade.BornFromRequest, options?: O): FacadeReturns<"vault.artifacts.born_from">[K] => invoke("vault.artifacts.born_from", input, options),
+        born_from: (input: Facade.BornFromRequest, options?: O): FacadeReturns<"vault.artifacts.born_from">[K] => invoke("vault.artifacts.born_from", input, options, newInvocation()),
         /** The proposals waiting beside one artifact. */
-        proposals: (input: Facade.ArtifactRefRequest, options?: O): FacadeReturns<"vault.artifacts.proposals">[K] => invoke("vault.artifacts.proposals", input, options),
+        proposals: (input: Facade.ArtifactRefRequest, options?: O): FacadeReturns<"vault.artifacts.proposals">[K] => invoke("vault.artifacts.proposals", input, options, newInvocation()),
         /** The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits. */
-        waits: (input: Facade.ArtifactRefRequest, options?: O): FacadeReturns<"vault.artifacts.waits">[K] => invoke("vault.artifacts.waits", input, options),
+        waits: (input: Facade.ArtifactRefRequest, options?: O): FacadeReturns<"vault.artifacts.waits">[K] => invoke("vault.artifacts.waits", input, options, newInvocation()),
         /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
-        release_wait: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.release_wait">[K] => invoke("vault.artifacts.release_wait", input, options),
+        release_wait: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.release_wait">[K] => invoke("vault.artifacts.release_wait", input, options, newInvocation()),
         /** Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard. */
-        review_slides: (input: Facade.SlideReviewSubmit, options?: O): FacadeReturns<"vault.artifacts.review_slides">[K] => invoke("vault.artifacts.review_slides", input, options),
+        review_slides: (input: Facade.SlideReviewSubmit, options?: O): FacadeReturns<"vault.artifacts.review_slides">[K] => invoke("vault.artifacts.review_slides", input, options, newInvocation()),
         /** Runs one native deck transaction over an artifact's head and holds the proposal for Keep. */
-        propose_deck: (input: Facade.DeckProposeRequest, options?: O): FacadeReturns<"vault.artifacts.propose_deck">[K] => invoke("vault.artifacts.propose_deck", input, options),
+        propose_deck: (input: Facade.DeckProposeRequest, options?: O): FacadeReturns<"vault.artifacts.propose_deck">[K] => invoke("vault.artifacts.propose_deck", input, options, newInvocation()),
         /** Offers one native organ result to an artifact as its next version, held for Keep. */
-        propose_output: (input: Facade.NativeOutputRequest, options?: O): FacadeReturns<"vault.artifacts.propose_output">[K] => invoke("vault.artifacts.propose_output", input, options),
+        propose_output: (input: Facade.NativeOutputRequest, options?: O): FacadeReturns<"vault.artifacts.propose_output">[K] => invoke("vault.artifacts.propose_output", input, options, newInvocation()),
         /** Settles one waiting artifact proposal into a version. */
-        keep: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.keep">[K] => invoke("vault.artifacts.keep", input, options),
+        keep: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.keep">[K] => invoke("vault.artifacts.keep", input, options, newInvocation()),
         /** Drops one waiting artifact proposal, once. */
-        discard: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.discard">[K] => invoke("vault.artifacts.discard", input, options),
+        discard: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.discard">[K] => invoke("vault.artifacts.discard", input, options, newInvocation()),
         /** Undoes one Keep by appending a new version. */
-        undo: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.undo">[K] => invoke("vault.artifacts.undo", input, options),
+        undo: (input: Facade.ProposalSettleRequest, options?: O): FacadeReturns<"vault.artifacts.undo">[K] => invoke("vault.artifacts.undo", input, options, newInvocation()),
         /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
-        put: (input: Facade.BlobArtifactInput, options?: O): FacadeReturns<"vault.artifacts.put">[K] => invoke("vault.artifacts.put", input, options),
+        put: (input: Facade.BlobArtifactInput, options?: O): FacadeReturns<"vault.artifacts.put">[K] => invoke("vault.artifacts.put", input, options, newInvocation()),
         /** Appends one version of bytes to a blob artifact's append-only chain. */
-        append: (input: Facade.AppendBlobVersionRequest, options?: O): FacadeReturns<"vault.artifacts.append">[K] => invoke("vault.artifacts.append", input, options),
+        append: (input: Facade.AppendBlobVersionRequest, options?: O): FacadeReturns<"vault.artifacts.append">[K] => invoke("vault.artifacts.append", input, options, newInvocation()),
         /** Reads one version of a blob artifact's bytes. */
-        read: (input: Facade.ReadBlobVersionRequest, options?: O): FacadeReturns<"vault.artifacts.read">[K] => invoke("vault.artifacts.read", input, options),
+        read: (input: Facade.ReadBlobVersionRequest, options?: O): FacadeReturns<"vault.artifacts.read">[K] => invoke("vault.artifacts.read", input, options, newInvocation()),
       },
       code: {
         /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
-        diff: (input: Facade.CodeDiffRequest, options?: O): FacadeReturns<"vault.code.diff">[K] => invoke("vault.code.diff", input, options),
+        diff: (input: Facade.CodeDiffRequest, options?: O): FacadeReturns<"vault.code.diff">[K] => invoke("vault.code.diff", input, options, newInvocation()),
         /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
-        blame: (input: Facade.CodeStateRequest, options?: O): FacadeReturns<"vault.code.blame">[K] => invoke("vault.code.blame", input, options),
+        blame: (input: Facade.CodeStateRequest, options?: O): FacadeReturns<"vault.code.blame">[K] => invoke("vault.code.blame", input, options, newInvocation()),
       },
       rooms: {
         /** The caller's rooms its own grants admit; inside a room turn, only that room. */
-        list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.rooms.list">[K] => invoke("vault.rooms.list", input, options),
+        list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.rooms.list">[K] => invoke("vault.rooms.list", input, options, newInvocation()),
         /** One page of the turns in a room this reader may read. */
-        messages: (input: Facade.RoomRequest, options?: O): FacadeReturns<"vault.rooms.messages">[K] => invoke("vault.rooms.messages", input, options),
+        messages: (input: Facade.RoomRequest, options?: O): FacadeReturns<"vault.rooms.messages">[K] => invoke("vault.rooms.messages", input, options, newInvocation()),
         /** One page of who took part in a room or one of its threads, each with its causes and whether it may take part now. */
-        participants: (input: Facade.ParticipantsRequest, options?: O): FacadeReturns<"vault.rooms.participants">[K] => invoke("vault.rooms.participants", input, options),
+        participants: (input: Facade.ParticipantsRequest, options?: O): FacadeReturns<"vault.rooms.participants">[K] => invoke("vault.rooms.participants", input, options, newInvocation()),
         /** The standalone rendered view of a room's threads. */
-        render: (input: Facade.RoomRefRequest, options?: O): FacadeReturns<"vault.rooms.render">[K] => invoke("vault.rooms.render", input, options),
+        render: (input: Facade.RoomRefRequest, options?: O): FacadeReturns<"vault.rooms.render">[K] => invoke("vault.rooms.render", input, options, newInvocation()),
         /** One page of a room's threads. */
-        find: (input: Facade.RoomRequest, options?: O): FacadeReturns<"vault.rooms.find">[K] => invoke("vault.rooms.find", input, options),
+        find: (input: Facade.RoomRequest, options?: O): FacadeReturns<"vault.rooms.find">[K] => invoke("vault.rooms.find", input, options, newInvocation()),
         /** One thread of a room by its turn, even when every list omits it. */
-        get: (input: Facade.RoomTurnRequest, options?: O): FacadeReturns<"vault.rooms.get">[K] => invoke("vault.rooms.get", input, options),
+        get: (input: Facade.RoomTurnRequest, options?: O): FacadeReturns<"vault.rooms.get">[K] => invoke("vault.rooms.get", input, options, newInvocation()),
         /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
-        trunk: (input: Facade.RoomTurnRequest, options?: O): FacadeReturns<"vault.rooms.trunk">[K] => invoke("vault.rooms.trunk", input, options),
+        trunk: (input: Facade.RoomTurnRequest, options?: O): FacadeReturns<"vault.rooms.trunk">[K] => invoke("vault.rooms.trunk", input, options, newInvocation()),
         /** One page of a thread's quote replies, grouped by the message they quote, in reply order. */
-        reply_strips: (input: Facade.ReplyStripsRequest, options?: O): FacadeReturns<"vault.rooms.reply_strips">[K] => invoke("vault.rooms.reply_strips", input, options),
+        reply_strips: (input: Facade.ReplyStripsRequest, options?: O): FacadeReturns<"vault.rooms.reply_strips">[K] => invoke("vault.rooms.reply_strips", input, options, newInvocation()),
         /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
-        claim: (input: Facade.RoomClaimRequest, options?: O): FacadeReturns<"vault.rooms.claim">[K] => invoke("vault.rooms.claim", input, options),
+        claim: (input: Facade.RoomClaimRequest, options?: O): FacadeReturns<"vault.rooms.claim">[K] => invoke("vault.rooms.claim", input, options, newInvocation()),
         /** Speaks one turn into the current room turn's room, through the normal witness gate. */
-        speak: (input: Facade.WitnessTurn, options?: O): FacadeReturns<"vault.rooms.speak">[K] => invoke("vault.rooms.speak", input, options),
+        speak: (input: Facade.WitnessTurn, options?: O): FacadeReturns<"vault.rooms.speak">[K] => invoke("vault.rooms.speak", input, options, newInvocation()),
         /** Files and decides a request to take part in a room or one of its threads. */
-        join: (input: Facade.JoinRequest, options?: O): FacadeReturns<"vault.rooms.join">[K] => invoke("vault.rooms.join", input, options),
+        join: (input: Facade.JoinRequest, options?: O): FacadeReturns<"vault.rooms.join">[K] => invoke("vault.rooms.join", input, options, newInvocation()),
         /** One party's answer to a join that waits on it, after which the join is decided again. */
-        consent: (input: Facade.ConsentAnswer, options?: O): FacadeReturns<"vault.rooms.consent">[K] => invoke("vault.rooms.consent", input, options),
+        consent: (input: Facade.ConsentAnswer, options?: O): FacadeReturns<"vault.rooms.consent">[K] => invoke("vault.rooms.consent", input, options, newInvocation()),
         /** Publishes an agent's offer card to join a room or one of its threads. */
-        offer: Object.assign((input: Facade.OfferDraft, options?: O): FacadeReturns<"vault.rooms.offer">[K] => invoke("vault.rooms.offer", input, options), {
+        offer: Object.assign((input: Facade.OfferDraft, options?: O): FacadeReturns<"vault.rooms.offer">[K] => invoke("vault.rooms.offer", input, options, newInvocation()), {
           /** The room's host answers an offer card: join, or not now. */
-          answer: (input: Facade.OfferAnswerRequest, options?: O): FacadeReturns<"vault.rooms.offer.answer">[K] => invoke("vault.rooms.offer.answer", input, options),
+          answer: (input: Facade.OfferAnswerRequest, options?: O): FacadeReturns<"vault.rooms.offer.answer">[K] => invoke("vault.rooms.offer.answer", input, options, newInvocation()),
         }),
         /** One page of the current offer cards in a room or one of its threads. */
-        offers: (input: Facade.OffersRequest, options?: O): FacadeReturns<"vault.rooms.offers">[K] => invoke("vault.rooms.offers", input, options),
+        offers: (input: Facade.OffersRequest, options?: O): FacadeReturns<"vault.rooms.offers">[K] => invoke("vault.rooms.offers", input, options, newInvocation()),
         /** Who hosts a room now, and the caller's own speaking role there. */
-        host: Object.assign((input: Facade.RoomHostRequest, options?: O): FacadeReturns<"vault.rooms.host">[K] => invoke("vault.rooms.host", input, options), {
+        host: Object.assign((input: Facade.RoomHostRequest, options?: O): FacadeReturns<"vault.rooms.host">[K] => invoke("vault.rooms.host", input, options, newInvocation()), {
           /** Pins an agent as a room's host, or clears the stored host, pin or handoff. */
-          pin: (input: Facade.RoomHostPin, options?: O): FacadeReturns<"vault.rooms.host.pin">[K] => invoke("vault.rooms.host.pin", input, options),
+          pin: (input: Facade.RoomHostPin, options?: O): FacadeReturns<"vault.rooms.host.pin">[K] => invoke("vault.rooms.host.pin", input, options, newInvocation()),
           /** The room's current host hands the hosting duty to another agent that may host. */
-          hand: (input: Facade.RoomHostHand, options?: O): FacadeReturns<"vault.rooms.host.hand">[K] => invoke("vault.rooms.host.hand", input, options),
+          hand: (input: Facade.RoomHostHand, options?: O): FacadeReturns<"vault.rooms.host.hand">[K] => invoke("vault.rooms.host.hand", input, options, newInvocation()),
         }),
         /** A room's effective sharing scope and why it is clamped, for a member of the room. */
-        sharing: (input: Facade.RoomRefRequest, options?: O): FacadeReturns<"vault.rooms.sharing">[K] => invoke("vault.rooms.sharing", input, options),
+        sharing: (input: Facade.RoomRefRequest, options?: O): FacadeReturns<"vault.rooms.sharing">[K] => invoke("vault.rooms.sharing", input, options, newInvocation()),
       },
       projects: {
         /** The drafting agent proposes a project card on a source message; the card writes no project and confers no authority. */
-        propose: (input: Facade.ProjectProposalRequest, options?: O): FacadeReturns<"vault.projects.propose">[K] => invoke("vault.projects.propose", input, options),
+        propose: (input: Facade.ProjectProposalRequest, options?: O): FacadeReturns<"vault.projects.propose">[K] => invoke("vault.projects.propose", input, options, newInvocation()),
         /** The project cards shown in a conversation, each with its state. */
-        proposals: (input: Facade.ProjectConversationRequest, options?: O): FacadeReturns<"vault.projects.proposals">[K] => invoke("vault.projects.proposals", input, options),
+        proposals: (input: Facade.ProjectConversationRequest, options?: O): FacadeReturns<"vault.projects.proposals">[K] => invoke("vault.projects.proposals", input, options, newInvocation()),
         /** The card's person dismisses a project card so it never mints; false when it was dismissed already. */
-        dismiss_card: (input: Facade.ProjectCardRequest, options?: O): FacadeReturns<"vault.projects.dismiss_card">[K] => invoke("vault.projects.dismiss_card", input, options),
+        dismiss_card: (input: Facade.ProjectCardRequest, options?: O): FacadeReturns<"vault.projects.dismiss_card">[K] => invoke("vault.projects.dismiss_card", input, options, newInvocation()),
         /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */
-        confirm: (input: Facade.ProjectCardConfirmRequest, options?: O): FacadeReturns<"vault.projects.confirm">[K] => invoke("vault.projects.confirm", input, options),
+        confirm: (input: Facade.ProjectCardConfirmRequest, options?: O): FacadeReturns<"vault.projects.confirm">[K] => invoke("vault.projects.confirm", input, options, newInvocation()),
         goal: {
           /** What a project's goal-intake interview starts from, for a member of its home room. */
-          intake: (input: Facade.ProjectRefRequest, options?: O): FacadeReturns<"vault.projects.goal.intake">[K] => invoke("vault.projects.goal.intake", input, options),
+          intake: (input: Facade.ProjectRefRequest, options?: O): FacadeReturns<"vault.projects.goal.intake">[K] => invoke("vault.projects.goal.intake", input, options, newInvocation()),
           /** The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first. */
-          revisions: (input: Facade.ProjectRefRequest, options?: O): FacadeReturns<"vault.projects.goal.revisions">[K] => invoke("vault.projects.goal.revisions", input, options),
+          revisions: (input: Facade.ProjectRefRequest, options?: O): FacadeReturns<"vault.projects.goal.revisions">[K] => invoke("vault.projects.goal.revisions", input, options, newInvocation()),
           /** The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry. */
-          dismiss: (input: Facade.ProjectGoalDismissRequest, options?: O): FacadeReturns<"vault.projects.goal.dismiss">[K] => invoke("vault.projects.goal.dismiss", input, options),
+          dismiss: (input: Facade.ProjectGoalDismissRequest, options?: O): FacadeReturns<"vault.projects.goal.dismiss">[K] => invoke("vault.projects.goal.dismiss", input, options, newInvocation()),
         },
         /** Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room. */
-        route_tradeoff: (input: Facade.ProjectTradeoffRouteRequest, options?: O): FacadeReturns<"vault.projects.route_tradeoff">[K] => invoke("vault.projects.route_tradeoff", input, options),
+        route_tradeoff: (input: Facade.ProjectTradeoffRouteRequest, options?: O): FacadeReturns<"vault.projects.route_tradeoff">[K] => invoke("vault.projects.route_tradeoff", input, options, newInvocation()),
       },
       conversations: {
         turn: {
           /** Queues generation that resumes an incomplete assistant reply from exactly its saved text. */
-          continue: (input: Facade.TurnActionRequest, options?: O): FacadeReturns<"vault.conversations.turn.continue">[K] => invoke("vault.conversations.turn.continue", input, options),
+          continue: (input: Facade.TurnActionRequest, options?: O): FacadeReturns<"vault.conversations.turn.continue">[K] => invoke("vault.conversations.turn.continue", input, options, newInvocation()),
           /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
-          retry: (input: Facade.TurnActionRequest, options?: O): FacadeReturns<"vault.conversations.turn.retry">[K] => invoke("vault.conversations.turn.retry", input, options),
+          retry: (input: Facade.TurnActionRequest, options?: O): FacadeReturns<"vault.conversations.turn.retry">[K] => invoke("vault.conversations.turn.retry", input, options, newInvocation()),
         },
       },
       companions: {
         sharing: {
           /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */
-          get: (input: Facade.CompanionSharingRequest, options?: O): FacadeReturns<"vault.companions.sharing.get">[K] => invoke("vault.companions.sharing.get", input, options),
+          get: (input: Facade.CompanionSharingRequest, options?: O): FacadeReturns<"vault.companions.sharing.get">[K] => invoke("vault.companions.sharing.get", input, options, newInvocation()),
           /** The owner's standing yes to one frozen clearance offer for a companion's contact. */
-          set: (input: Facade.CompanionSharingSetRequest, options?: O): FacadeReturns<"vault.companions.sharing.set">[K] => invoke("vault.companions.sharing.set", input, options),
+          set: (input: Facade.CompanionSharingSetRequest, options?: O): FacadeReturns<"vault.companions.sharing.set">[K] => invoke("vault.companions.sharing.set", input, options, newInvocation()),
         },
       },
       workspace: {
         work_companion: {
           /** A workspace's work_companion policy, readable by every member it governs. */
-          get: (input: Facade.WorkspaceRefRequest, options?: O): FacadeReturns<"vault.workspace.work_companion.get">[K] => invoke("vault.workspace.work_companion.get", input, options),
+          get: (input: Facade.WorkspaceRefRequest, options?: O): FacadeReturns<"vault.workspace.work_companion.get">[K] => invoke("vault.workspace.work_companion.get", input, options, newInvocation()),
           /** The owner sets a workspace's work_companion policy in person. */
-          set: (input: Facade.WorkCompanionSetRequest, options?: O): FacadeReturns<"vault.workspace.work_companion.set">[K] => invoke("vault.workspace.work_companion.set", input, options),
+          set: (input: Facade.WorkCompanionSetRequest, options?: O): FacadeReturns<"vault.workspace.work_companion.set">[K] => invoke("vault.workspace.work_companion.set", input, options, newInvocation()),
         },
       },
       graph: {
-        ask: (input: Facade.GraphAskRequest, options?: O): FacadeReturns<"vault.graph.ask">[K] => invoke("vault.graph.ask", input, options),
+        ask: (input: Facade.GraphAskRequest, options?: O): FacadeReturns<"vault.graph.ask">[K] => invoke("vault.graph.ask", input, options, newInvocation()),
       },
       questions: {
-        create: (input: Facade.QuestionCreateRequest, options?: O): FacadeReturns<"vault.questions.create">[K] => invoke("vault.questions.create", input, options),
-        edit: (input: Facade.QuestionEditRequest, options?: O): FacadeReturns<"vault.questions.edit">[K] => invoke("vault.questions.edit", input, options),
-        pause: (input: Facade.QuestionPauseRequest, options?: O): FacadeReturns<"vault.questions.pause">[K] => invoke("vault.questions.pause", input, options),
-        read: (input: Facade.QuestionReadRequest, options?: O): FacadeReturns<"vault.questions.read">[K] => invoke("vault.questions.read", input, options),
-        answers: (input: Facade.QuestionAnswersRequest, options?: O): FacadeReturns<"vault.questions.answers">[K] => invoke("vault.questions.answers", input, options),
+        create: (input: Facade.QuestionCreateRequest, options?: O): FacadeReturns<"vault.questions.create">[K] => invoke("vault.questions.create", input, options, newInvocation()),
+        edit: (input: Facade.QuestionEditRequest, options?: O): FacadeReturns<"vault.questions.edit">[K] => invoke("vault.questions.edit", input, options, newInvocation()),
+        pause: (input: Facade.QuestionPauseRequest, options?: O): FacadeReturns<"vault.questions.pause">[K] => invoke("vault.questions.pause", input, options, newInvocation()),
+        read: (input: Facade.QuestionReadRequest, options?: O): FacadeReturns<"vault.questions.read">[K] => invoke("vault.questions.read", input, options, newInvocation()),
+        answers: (input: Facade.QuestionAnswersRequest, options?: O): FacadeReturns<"vault.questions.answers">[K] => invoke("vault.questions.answers", input, options, newInvocation()),
       },
       decisions: {
         asks: {
-          answer: (input: Facade.DecisionAskAnswerRequest, options?: O): FacadeReturns<"vault.decisions.asks.answer">[K] => invoke("vault.decisions.asks.answer", input, options),
-          climb: (input: Facade.DecisionAskClimbRequest, options?: O): FacadeReturns<"vault.decisions.asks.climb">[K] => invoke("vault.decisions.asks.climb", input, options),
+          answer: (input: Facade.DecisionAskAnswerRequest, options?: O): FacadeReturns<"vault.decisions.asks.answer">[K] => invoke("vault.decisions.asks.answer", input, options, newInvocation()),
+          climb: (input: Facade.DecisionAskClimbRequest, options?: O): FacadeReturns<"vault.decisions.asks.climb">[K] => invoke("vault.decisions.asks.climb", input, options, newInvocation()),
         },
       },
       /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
-      commit: (input: Facade.CommitRequest, options?: O): FacadeReturns<"vault.commit">[K] => invoke("vault.commit", input, options),
+      commit: (input: Facade.CommitRequest, options?: O): FacadeReturns<"vault.commit">[K] => invoke("vault.commit", input, options, newInvocation()),
       /** Commits one claim through the gate, the same as vault.claims.upsert. */
-      remember: (input: Facade.ClaimInput, options?: O): FacadeReturns<"vault.remember">[K] => invoke("vault.remember", input, options),
+      remember: (input: Facade.ClaimInput, options?: O): FacadeReturns<"vault.remember">[K] => invoke("vault.remember", input, options, newInvocation()),
       /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
-      forget: (input: Facade.ForgetRequest, options?: O): FacadeReturns<"vault.forget">[K] => invoke("vault.forget", input, options),
+      forget: (input: Facade.ForgetRequest, options?: O): FacadeReturns<"vault.forget">[K] => invoke("vault.forget", input, options, newInvocation()),
       /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
-      delete: (input: Facade.SafeDeleteRequest, options?: O): FacadeReturns<"vault.delete">[K] => invoke("vault.delete", input, options),
+      delete: (input: Facade.SafeDeleteRequest, options?: O): FacadeReturns<"vault.delete">[K] => invoke("vault.delete", input, options, newInvocation()),
       writes: {
         /** Gated writes parked for consent, newest first. */
-        pending: (input: Facade.ReceiptsRequest, options?: O): FacadeReturns<"vault.writes.pending">[K] => invoke("vault.writes.pending", input, options),
+        pending: (input: Facade.ReceiptsRequest, options?: O): FacadeReturns<"vault.writes.pending">[K] => invoke("vault.writes.pending", input, options, newInvocation()),
       },
       /** Hydrates short refs or hex ids to full entity views, with the read's receipt. */
-      hydrate: (input: Facade.HydrateRequest, options?: O): FacadeReturns<"vault.hydrate">[K] => invoke("vault.hydrate", input, options),
+      hydrate: (input: Facade.HydrateRequest, options?: O): FacadeReturns<"vault.hydrate">[K] => invoke("vault.hydrate", input, options, newInvocation()),
       /** Reads one entity as a typed view, or none when absent or withheld; the receipt says which. */
-      get: (input: Facade.EntityRequest, options?: O): FacadeReturns<"vault.get">[K] => invoke("vault.get", input, options),
+      get: (input: Facade.EntityRequest, options?: O): FacadeReturns<"vault.get">[K] => invoke("vault.get", input, options, newInvocation()),
       refs: {
         /** The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same. */
-        resolve: (input: Facade.ResolveRecordRefRequest, options?: O): FacadeReturns<"vault.refs.resolve">[K] => invoke("vault.refs.resolve", input, options),
+        resolve: (input: Facade.ResolveRecordRefRequest, options?: O): FacadeReturns<"vault.refs.resolve">[K] => invoke("vault.refs.resolve", input, options, newInvocation()),
         /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
-        links: (input: Facade.RecordLinksRequest, options?: O): FacadeReturns<"vault.refs.links">[K] => invoke("vault.refs.links", input, options),
+        links: (input: Facade.RecordLinksRequest, options?: O): FacadeReturns<"vault.refs.links">[K] => invoke("vault.refs.links", input, options, newInvocation()),
       },
       search: {
         /** BM25 text search over the engine index; surfaceable claims only. */
-        bm25: (input: Facade.QueryBm25Request, options?: O): FacadeReturns<"vault.search.bm25">[K] => invoke("vault.search.bm25", input, options),
+        bm25: (input: Facade.QueryBm25Request, options?: O): FacadeReturns<"vault.search.bm25">[K] => invoke("vault.search.bm25", input, options, newInvocation()),
       },
       /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
-      neighbors: (input: Facade.NeighborsRequest, options?: O): FacadeReturns<"vault.neighbors">[K] => invoke("vault.neighbors", input, options),
+      neighbors: (input: Facade.NeighborsRequest, options?: O): FacadeReturns<"vault.neighbors">[K] => invoke("vault.neighbors", input, options, newInvocation()),
       structural: {
         /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
-        put: (input: Facade.StructuralPutInput, options?: O): FacadeReturns<"vault.structural.put">[K] => invoke("vault.structural.put", input, options),
+        put: (input: Facade.StructuralPutInput, options?: O): FacadeReturns<"vault.structural.put">[K] => invoke("vault.structural.put", input, options, newInvocation()),
       },
       habits: {
         /** Appends one immutable check-in under a Habit TASK. */
-        checkin: (input: Facade.HabitCheckinInput, options?: O): FacadeReturns<"vault.habits.checkin">[K] => invoke("vault.habits.checkin", input, options),
+        checkin: (input: Facade.HabitCheckinInput, options?: O): FacadeReturns<"vault.habits.checkin">[K] => invoke("vault.habits.checkin", input, options, newInvocation()),
       },
       consolidation: {
         /** Enqueues one consolidation attempt and returns its durable job reference. */
-        enqueue: (input: Facade.ConsolidationEnqueueRequest, options?: O): FacadeReturns<"vault.consolidation.enqueue">[K] => invoke("vault.consolidation.enqueue", input, options),
+        enqueue: (input: Facade.ConsolidationEnqueueRequest, options?: O): FacadeReturns<"vault.consolidation.enqueue">[K] => invoke("vault.consolidation.enqueue", input, options, newInvocation()),
         /** Reads the status of one consolidation attempt by its durable job reference. */
-        status: (input: Facade.ConsolidationStatusRequest, options?: O): FacadeReturns<"vault.consolidation.status">[K] => invoke("vault.consolidation.status", input, options),
+        status: (input: Facade.ConsolidationStatusRequest, options?: O): FacadeReturns<"vault.consolidation.status">[K] => invoke("vault.consolidation.status", input, options, newInvocation()),
       },
       notes: {
         /** Creates a NOTE of a registered kind, its first authored text as its birth. */
-        create: (input: Facade.CreateNoteRequest, options?: O): FacadeReturns<"vault.notes.create">[K] => invoke("vault.notes.create", input, options),
+        create: (input: Facade.CreateNoteRequest, options?: O): FacadeReturns<"vault.notes.create">[K] => invoke("vault.notes.create", input, options, newInvocation()),
         /** Creates a NOTE of a registered kind from an existing entity. */
-        from_entity: (input: Facade.CreateNoteFromEntityRequest, options?: O): FacadeReturns<"vault.notes.from_entity">[K] => invoke("vault.notes.from_entity", input, options),
+        from_entity: (input: Facade.CreateNoteFromEntityRequest, options?: O): FacadeReturns<"vault.notes.from_entity">[K] => invoke("vault.notes.from_entity", input, options, newInvocation()),
         /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
-        edit: (input: Facade.EditNoteRequest, options?: O): FacadeReturns<"vault.notes.edit">[K] => invoke("vault.notes.edit", input, options),
+        edit: (input: Facade.EditNoteRequest, options?: O): FacadeReturns<"vault.notes.edit">[K] => invoke("vault.notes.edit", input, options, newInvocation()),
       },
     },
     /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
-    cancel: (input: Facade.TaskRequest, options?: O): FacadeReturns<"cancel">[K] => invoke("cancel", input, options),
+    cancel: (input: Facade.TaskRequest, options?: O): FacadeReturns<"cancel">[K] => invoke("cancel", input, options, newInvocation()),
     /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
-    steer: (input: Facade.SteerRequest, options?: O): FacadeReturns<"steer">[K] => invoke("steer", input, options),
+    steer: (input: Facade.SteerRequest, options?: O): FacadeReturns<"steer">[K] => invoke("steer", input, options, newInvocation()),
     /** Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named. */
-    describe: (input: Facade.DescribeRequest, options?: O): FacadeReturns<"describe">[K] => invoke("describe", input, options),
+    describe: (input: Facade.DescribeRequest, options?: O): FacadeReturns<"describe">[K] => invoke("describe", input, options, newInvocation()),
     tasks: {
       /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */
-      create: (input: Facade.TaskCreateRequest, options?: O): FacadeReturns<"tasks.create">[K] => invoke("tasks.create", input, options),
+      create: (input: Facade.TaskCreateRequest, options?: O): FacadeReturns<"tasks.create">[K] => invoke("tasks.create", input, options, newInvocation()),
       /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
-      update: (input: Facade.TaskUpdateRequest, options?: O): FacadeReturns<"tasks.update">[K] => invoke("tasks.update", input, options),
+      update: (input: Facade.TaskUpdateRequest, options?: O): FacadeReturns<"tasks.update">[K] => invoke("tasks.update", input, options, newInvocation()),
       /** Admits one person's word on an ask; the word is evidence, never approval. */
-      answer: (input: Facade.TaskAnswerRequest, options?: O): FacadeReturns<"tasks.answer">[K] => invoke("tasks.answer", input, options),
+      answer: (input: Facade.TaskAnswerRequest, options?: O): FacadeReturns<"tasks.answer">[K] => invoke("tasks.answer", input, options, newInvocation()),
       /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
-      outcomes: (input: Facade.TaskAskHandle, options?: O): FacadeReturns<"tasks.outcomes">[K] => invoke("tasks.outcomes", input, options),
+      outcomes: (input: Facade.TaskAskHandle, options?: O): FacadeReturns<"tasks.outcomes">[K] => invoke("tasks.outcomes", input, options, newInvocation()),
     },
     /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
-    can: (input: Facade.TaskCanAskRequest, options?: O): FacadeReturns<"can">[K] => invoke("can", input, options),
+    can: (input: Facade.TaskCanAskRequest, options?: O): FacadeReturns<"can">[K] => invoke("can", input, options, newInvocation()),
     /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
-    peek: (input: Facade.TaskAskHandle, options?: O): FacadeReturns<"peek">[K] => invoke("peek", input, options),
+    peek: (input: Facade.TaskAskHandle, options?: O): FacadeReturns<"peek">[K] => invoke("peek", input, options, newInvocation()),
     /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
-    ask: (input: Facade.TaskAskRequest, options?: O): FacadeReturns<"ask">[K] => invoke("ask", input, options),
+    ask: (input: Facade.TaskAskRequest, options?: O): FacadeReturns<"ask">[K] => invoke("ask", input, options, newInvocation()),
     /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
-    wait: (input: Facade.TaskWaitRequest, options?: O): FacadeReturns<"wait">[K] => invoke("wait", input, options),
+    wait: (input: Facade.TaskWaitRequest, options?: O): FacadeReturns<"wait">[K] => invoke("wait", input, options, newInvocation()),
     ai: {
       /** The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left. */
-      options: (input: Facade.AiOptionsRequest, options?: O): FacadeReturns<"ai.options">[K] => invoke("ai.options", input, options),
+      options: (input: Facade.AiOptionsRequest, options?: O): FacadeReturns<"ai.options">[K] => invoke("ai.options", input, options, newInvocation()),
       /** One image out of the host's image model; reference images make it an edit. */
-      image: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.image">[K] => invoke("ai.image", input, options),
+      image: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.image">[K] => invoke("ai.image", input, options, newInvocation()),
       /** Speech audio out of text, from the host's speech model. */
-      speech: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.speech">[K] => invoke("ai.speech", input, options),
+      speech: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.speech">[K] => invoke("ai.speech", input, options, newInvocation()),
       /** Text out of speech audio, from the host's transcription model. */
-      transcribe: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.transcribe">[K] => invoke("ai.transcribe", input, options),
+      transcribe: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.transcribe">[K] => invoke("ai.transcribe", input, options, newInvocation()),
       /** One embedding vector per input text, from the host's embedding model. */
-      embed: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.embed">[K] => invoke("ai.embed", input, options),
+      embed: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.embed">[K] => invoke("ai.embed", input, options, newInvocation()),
       /** Starts a video render as a provider job and answers with its ticket. */
-      video: Object.assign((input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.video">[K] => invoke("ai.video", input, options), {
+      video: Object.assign((input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.video">[K] => invoke("ai.video", input, options, newInvocation()), {
         /** Where a video job stands; a finished one answers with its clip, once. */
-        poll: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.poll">[K] => invoke("ai.video.poll", input, options),
+        poll: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.poll">[K] => invoke("ai.video.poll", input, options, newInvocation()),
         /** Stops a video job at its provider. */
-        cancel: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.cancel">[K] => invoke("ai.video.cancel", input, options),
+        cancel: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.cancel">[K] => invoke("ai.video.cancel", input, options, newInvocation()),
       }),
       /** The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt. */
-      verdict: (input: Facade.AiVerdictRequest, options?: O): FacadeReturns<"ai.verdict">[K] => invoke("ai.verdict", input, options),
+      verdict: (input: Facade.AiVerdictRequest, options?: O): FacadeReturns<"ai.verdict">[K] => invoke("ai.verdict", input, options, newInvocation()),
     },
     connector: {
       /** Every live catalogued connector whose name or summary matches the query. */
-      list: (input: Facade.ConnectorListRequest, options?: O): FacadeReturns<"connector.list">[K] => invoke("connector.list", input, options),
+      list: (input: Facade.ConnectorListRequest, options?: O): FacadeReturns<"connector.list">[K] => invoke("connector.list", input, options, newInvocation()),
       /** One catalogued connector by name, removed ones included. */
-      status: (input: Facade.ConnectorNameRequest, options?: O): FacadeReturns<"connector.status">[K] => invoke("connector.status", input, options),
+      status: (input: Facade.ConnectorNameRequest, options?: O): FacadeReturns<"connector.status">[K] => invoke("connector.status", input, options, newInvocation()),
       outbound: {
         /** Schedules one send through a granted outbound connector, gated and held for delivery. */
-        schedule: (input: Facade.OutboundScheduleRequest, options?: O): FacadeReturns<"connector.outbound.schedule">[K] => invoke("connector.outbound.schedule", input, options),
+        schedule: (input: Facade.OutboundScheduleRequest, options?: O): FacadeReturns<"connector.outbound.schedule">[K] => invoke("connector.outbound.schedule", input, options, newInvocation()),
       },
     },
   };
 }
 export type FacadeTree<K extends FacadeReturn, O = RequestInit> = ReturnType<typeof facadeTree<K, O>>;
+
+/** Retries the call `pending` names through `invoke`: its verb and input, under its own invocation id. */
+export function facadeRetry<K extends FacadeReturn, O, V extends FacadeVerb>(invoke: FacadeTransport<K, O>, pending: FacadePending<V>, options?: O): FacadeReturns<V>[K] {
+  return invoke(pending.verb, pending.input, options, pending.invocation);
+}
