@@ -115,6 +115,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<TaskCreateRequest>(),
             ),
             (
+                "tasks.wave",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::TaskWaveRequest>(
+                ),
+            ),
+            (
                 "tasks.update",
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
@@ -574,6 +579,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactRefRequest,
                 >(),
+            ),
+            (
+                "vault.code.diff",
+                crate::code_run::vault_read::request_schema::<crate::code_document::CodeDiffRequest>(
+                ),
+            ),
+            (
+                "vault.code.blame",
+                crate::code_run::vault_read::request_schema::<crate::code_document::CodeStateRequest>(
+                ),
             ),
             (
                 "vault.artifacts.export",
@@ -1458,6 +1473,13 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec"]
         }
+        "tasks.wave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "tasks.update" => {
             properties.insert(
                 "task_ref".to_owned(),
@@ -2026,6 +2048,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.diff" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.blame" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2858,6 +2894,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.create" => {
             let _input: TaskCreateRequest = decode(value.clone())?;
         }
+        "tasks.wave" => {
+            let _input: crate::task_verb::sdk::TaskWaveRequest = decode(value.clone())?;
+        }
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
         }
@@ -3152,6 +3191,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.code.diff" => {
+            let _input: crate::code_document::CodeDiffRequest = decode(value.clone())?;
+        }
+        "vault.code.blame" => {
+            let _input: crate::code_document::CodeStateRequest = decode(value.clone())?;
         }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
@@ -3633,6 +3678,7 @@ pub fn invoke(
         "steer" => encode(steer(memory, decode(value)?)?),
         "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
+        "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
@@ -3780,6 +3826,8 @@ pub fn invoke(
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
+        "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
+        "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
@@ -4272,6 +4320,12 @@ pub fn tasks_create(
     )?;
     memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)
 }
+pub fn tasks_wave(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskWaveRequest,
+) -> MemoryResult<crate::task_verb::sdk::TaskWaveReceipt> {
+    crate::task_verb::sdk::host_only(memory, "tasks.wave", &input)
+}
 pub fn tasks_update(
     memory: &Memory<'_>,
     input: TaskUpdateRequest,
@@ -4523,10 +4577,11 @@ pub fn vault_shared_deletion(
 pub fn vault_members_add(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::SharedMemberAddRequest,
-) -> MemoryResult<crate::federation::SharedActExecutionReceipt> {
+) -> MemoryResult<crate::task_verb::sdk::SharedMemberInvited> {
     crate::task_verb::sdk::add_shared_member_as(
         memory.vault(),
         &memory.embedded_owner("vault.members.add")?,
+        None,
         input,
     )
 }
@@ -5026,6 +5081,18 @@ pub fn vault_artifacts_view(
     input: crate::blob_artifact::ArtifactRefRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
     memory.artifacts_view(&input)
+}
+pub fn vault_code_diff(
+    memory: &Memory<'_>,
+    input: crate::code_document::CodeDiffRequest,
+) -> MemoryResult<Option<crate::code_document::CodeDiffView>> {
+    memory.code_diff(&input)
+}
+pub fn vault_code_blame(
+    memory: &Memory<'_>,
+    input: crate::code_document::CodeStateRequest,
+) -> MemoryResult<Option<crate::code_document::CodeBlameView>> {
+    memory.code_blame(&input)
 }
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,

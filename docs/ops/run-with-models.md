@@ -117,7 +117,11 @@ default, or `none`; OpenAI-compatible providers only), `capabilities` (`streamin
 `reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
-`reasoning` unless the list is written out),
+`reasoning` unless the list is written out), `model_capabilities` (one wire
+model's own list in place of `capabilities`, keyed by the model's name, so
+two models on one provider can differ: `model_capabilities = { "gpt-audio" =
+["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
+whose list has `audio_input`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
@@ -518,6 +522,30 @@ tsc-rs cannot finish, a busy one included. A step's report names the checker
 whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
+
+### Planned spawns (`[models.planner]`)
+
+An agent run the server leases can ask for help with
+`self.agents.spawn({need, ...})` and have the vault's planner pick the shape:
+the model, the pattern and the width. Its leader calls
+(`self.leader.advice`, `self.leader.pattern`) read the same planner. Each
+seat joins a model this host serves to the AGENT_DEF that runs on it:
+
+```toml
+[models.planner]
+top = 3                      # optional; shapes the leader's advice returns by default
+
+[[models.planner.seats]]
+model = "anthropic/claude-sonnet-5-5@1"  # an engine model ID, one seat per model
+agent = "sys.team_lead"                  # a seeded definition's logical ID, or an AGENT_DEF hex ID
+```
+
+The planned child runs the chosen seat's definition, its type placed on the
+need's text. The pick and the placement go through the host's decision
+ladder (section 13), each on its own 10-second clock. A seat whose
+definition this vault does not hold is skipped, with a log line. With no
+seat, the server lends no planner: a spawn that names an `agent` runs it
+directly, and a planned spawn or a leader call answers `planner_unbound`.
 
 ## 7. Raw calls
 

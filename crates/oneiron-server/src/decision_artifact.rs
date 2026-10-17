@@ -4,14 +4,18 @@
 //! decider asks the host's ladder as the asker, its images read at the
 //! Local-vision rung, and returns the full decision for the engine to land
 //! as a proposal held for Keep.
+use std::borrow::Cow;
+
 use oneiron::edit_roundtrip::{UnitCall, UnitDecider};
+use oneiron::llm::decision::questions::{QuestionCriteria, QuestionDefinition};
 use oneiron::llm::decision::{
     DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, LocatedDecision, TypedDecision,
 };
-use oneiron::{EdgeActorClass, Result};
+use oneiron::{EdgeActorClass, HostingPrivacyPosture, Result};
+use serde_json::Value;
 
 use crate::ai_host::LocalVisionModel;
-use crate::decision_graph::{LadderCall, ladder_decide, ladder_located};
+use crate::decision_graph::{LadderCall, ladder_decide, ladder_located, question_posture};
 use crate::server::SyncServer;
 
 /// The host's ladder answering artifact units for one asker class; each
@@ -21,6 +25,10 @@ pub(crate) struct HostUnitDecider<'s> {
     class: EdgeActorClass,
     /// The run label a vision seat's read is recorded under.
     label: &'static str,
+    /// A standing question's criteria, beside each unit's state.
+    criteria: QuestionCriteria,
+    /// A standing question's posture where it is stricter than the vault's.
+    posture: Option<HostingPrivacyPosture>,
 }
 
 impl<'s> HostUnitDecider<'s> {
@@ -29,7 +37,29 @@ impl<'s> HostUnitDecider<'s> {
             server,
             class,
             label,
+            criteria: QuestionCriteria::default(),
+            posture: None,
         }
+    }
+
+    /// The decider for a standing question: its criteria ride each unit's
+    /// state, and its posture bounds the ladder.
+    pub(crate) fn with_question(mut self, definition: &QuestionDefinition) -> Self {
+        self.criteria = definition.criteria.clone();
+        self.posture = question_posture(self.server, definition.posture);
+        self
+    }
+
+    /// `state` with the criteria beside it, when there are any.
+    fn state<'c>(&self, state: &'c Value) -> Cow<'c, Value> {
+        if self.criteria.is_empty() {
+            return Cow::Borrowed(state);
+        }
+        let mut state = state.clone();
+        if let Some(fields) = state.as_object_mut() {
+            fields.insert("criteria".into(), serde_json::json!(self.criteria));
+        }
+        Cow::Owned(state)
     }
 }
 
@@ -53,32 +83,35 @@ impl UnitDecider for HostUnitDecider<'_> {
     }
 
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
-        ladder_decide(self.server, self.ladder_call(call))
+        let state = self.state(call.state);
+        ladder_decide(self.server, self.ladder_call(call, &state))
     }
 
     /// Presence first on the host's ladder, its images seated as
     /// [`Self::decide_unit`] seats them.
     fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
-        ladder_located(self.server, self.ladder_call(call))
+        let state = self.state(call.state);
+        ladder_located(self.server, self.ladder_call(call, &state))
     }
 }
 
 impl HostUnitDecider<'_> {
     /// `call` as the host's ladder takes it, asked as this decider's class.
-    fn ladder_call<'c>(&self, call: &'c UnitCall<'c>) -> LadderCall<'c> {
+    fn ladder_call<'c>(&self, call: &'c UnitCall<'c>, state: &'c Value) -> LadderCall<'c> {
         LadderCall {
             principal: call.principal,
             class: self.class,
             question: call.question,
             evidence: call.evidence,
             images: call.images,
-            state: call.state,
+            state,
             dial: call.dial,
             policy: call.policy,
             reversibility: call.reversibility,
             deadline: call.deadline,
             label: self.label,
             ask_to: None,
+            posture: self.posture,
         }
     }
 }
