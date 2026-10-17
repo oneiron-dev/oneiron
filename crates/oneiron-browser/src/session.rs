@@ -215,27 +215,8 @@ impl BrowserSession {
         }
     }
 
-    /// Whether an effect of `class` on `row` may run now, and under what
-    /// press. A spent batch falls back to a press per send.
     fn press_for(&mut self, class: &str, row: &Row) -> Result<PressMode, BrowserError> {
-        let refused =
-            || BrowserError::NeedsPress(format!("{} \"{}\" ({class})", row.role, row.name));
-        if SendPolicy::person_only(class) {
-            return Err(refused());
-        }
-        match self.policy.mode_for(class) {
-            PressMode::PerSend => Err(refused()),
-            PressMode::None => Ok(PressMode::None),
-            PressMode::PerBatch => {
-                let left = self.policy.batch.entry(class.to_owned()).or_default();
-                if *left == 0 {
-                    Err(refused())
-                } else {
-                    *left -= 1;
-                    Ok(PressMode::PerBatch)
-                }
-            }
-        }
+        press_for(&mut self.policy, class, row)
     }
 
     /// Stamps `observation` with the receipt of the effect that made it.
@@ -277,8 +258,34 @@ fn no_library() -> BrowserError {
     BrowserError::Library("this browser host keeps no library".to_owned())
 }
 
+/// Whether an effect of `class` on `row` may run now under `policy`, and
+/// under what press. A spent batch falls back to a press per send.
+pub(crate) fn press_for(
+    policy: &mut SendPolicy,
+    class: &str,
+    row: &Row,
+) -> Result<PressMode, BrowserError> {
+    let refused = || BrowserError::NeedsPress(format!("{} \"{}\" ({class})", row.role, row.name));
+    if SendPolicy::person_only(class) {
+        return Err(refused());
+    }
+    match policy.mode_for(class) {
+        PressMode::PerSend => Err(refused()),
+        PressMode::None => Ok(PressMode::None),
+        PressMode::PerBatch => {
+            let left = policy.batch.entry(class.to_owned()).or_default();
+            if *left == 0 {
+                Err(refused())
+            } else {
+                *left -= 1;
+                Ok(PressMode::PerBatch)
+            }
+        }
+    }
+}
+
 /// The effect class a control's name marks, when it marks one.
-fn effect_class(name: &str) -> Option<&'static str> {
+pub(crate) fn effect_class(name: &str) -> Option<&'static str> {
     let words: Vec<String> = name
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())

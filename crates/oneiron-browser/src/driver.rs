@@ -235,6 +235,7 @@ impl CdpDriver {
             removed,
             receipt: None,
             library: Vec::new(),
+            no_tree: false,
         })
     }
 
@@ -286,7 +287,7 @@ impl CdpDriver {
     }
 
     /// The page's scroll offset as it is now, in CSS pixels.
-    fn scroll(&self) -> Result<(f64, f64), BrowserError> {
+    fn scroll_offset(&self) -> Result<(f64, f64), BrowserError> {
         let scroll = self.page(
             "Runtime.evaluate",
             json!({"expression": "[scrollX, scrollY]", "returnByValue": true}),
@@ -311,7 +312,7 @@ impl CdpDriver {
                 "a point is two fractions of its image, each from 0 to 1".to_owned(),
             ));
         }
-        let scroll = self.scroll()?;
+        let scroll = self.scroll_offset()?;
         let (url, _) = self.page_info()?;
         if url != frame.url
             || (scroll.0 - frame.scroll.0).abs() >= 1.0
@@ -611,7 +612,7 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
-        let scroll = self.scroll()?;
+        let scroll = self.scroll_offset()?;
         self.mask_secrets(true)?;
         let captured = self.page("Page.captureScreenshot", json!({"format": "png"}));
         let restored = self.mask_secrets(false);
@@ -718,13 +719,13 @@ impl BrowserDriver for CdpDriver {
 }
 
 /// A PNG's width and height from its IHDR, when the bytes are a PNG.
-fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
     let dimension = |at: usize| png.get(at..at + 4)?.try_into().ok().map(u32::from_be_bytes);
     Some((dimension(16)?, dimension(20)?))
 }
 
 /// The (`x`, `y`, `width`, `height`) region of a held PNG.
-fn crop_region(
+pub(crate) fn crop_region(
     png: &[u8],
     x: u32,
     y: u32,
@@ -746,7 +747,7 @@ fn crop_region(
     Ok(image.crop_imm(x, y, width, height))
 }
 
-fn encode_png(image: &image::DynamicImage) -> Result<Vec<u8>, BrowserError> {
+pub(crate) fn encode_png(image: &image::DynamicImage) -> Result<Vec<u8>, BrowserError> {
     let mut out = Cursor::new(Vec::new());
     image
         .write_to(&mut out, image::ImageFormat::Png)

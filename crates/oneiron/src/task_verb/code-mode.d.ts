@@ -25,7 +25,7 @@ declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
-    batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
+    batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
     click_at(input: { image: string; x: number; y: number }): Promise<unknown>;
     crop(input: { height: number; image: string; width: number; x: number; y: number }): Promise<unknown>;
@@ -33,7 +33,7 @@ declare namespace self {
     find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
     library: {
       find(input: { site?: string | null; subgoal?: string | null }): Promise<unknown>;
-      propose(input: { args?: object; params?: string[]; postcondition: object[]; steps: (object | object | object | object | object | object | object | object)[]; subgoal: string }): Promise<unknown>;
+      propose(input: { args?: object; params?: string[]; postcondition: object[]; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal: string }): Promise<unknown>;
       run(input: { args?: object; workflow: string }): Promise<unknown>;
     };
     observe(input: { since?: number | null }): Promise<unknown>;
@@ -46,6 +46,27 @@ declare namespace self {
     zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
   };
   const compact: (input: { note?: string | null }) => Promise<unknown>;
+  const desktop: {
+    batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
+    click(input: { ref: string }): Promise<unknown>;
+    click_at(input: { image: string; x: number; y: number }): Promise<unknown>;
+    crop(input: { height: number; image: string; width: number; x: number; y: number }): Promise<unknown>;
+    expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
+    find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
+    hotkey(input: { keys: string[] }): Promise<unknown>;
+    key(input: { key: string; modifiers?: string[]; ref?: string | null }): Promise<unknown>;
+    observe(input: { since?: number | null }): Promise<unknown>;
+    open(input: { url: string }): Promise<unknown>;
+    screenshot(input: { trigger: "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt" }): Promise<unknown>;
+    scroll(input: { amount?: number | null; direction: "up" | "down" | "left" | "right"; ref?: string | null }): Promise<unknown>;
+    select(input: { option: string; ref: string }): Promise<unknown>;
+    type(input: { clear?: boolean; ref: string; text: string }): Promise<unknown>;
+    view(input: { image: string }): Promise<unknown>;
+    wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
+    window(input: { window: string }): Promise<unknown>;
+    windows(input: { app?: string | null }): Promise<unknown>;
+    zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
+  };
   const focus: {
     refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
