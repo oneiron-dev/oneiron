@@ -1,5 +1,6 @@
 //! `oneiron recovery-kit`: the world kit's ceremony on a stopped vault
-//! (OF-173), and the kit unlock `oneiron restore --unlock kit` takes.
+//! (OF-173), and the kit unlock `oneiron restore --unlock kit` and
+//! `oneiron vault-key add-device --unlock kit` take.
 //!
 //! Issue writes each stored piece's recovery code to an owner-only file, and
 //! nothing goes live until confirm reads two of them back, or one and the
@@ -415,15 +416,32 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
 /// root's recovery secret opens the backup's `world-kit` escrow wrap. A kit
 /// that does not open the wrap opens nothing.
 pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
-    let vault_id = args.vault_id.as_deref().ok_or_else(|| {
+    kit_unlock_with(
+        args.vault_id.as_deref(),
+        &args.pieces,
+        args.secret.secret_file.as_deref(),
+    )
+}
+
+/// The world kit's unlock from its pieces, the passphrase read from
+/// `secret_file` or stdin, for the vault `vault_id` names: the id the kit is
+/// bound to, which the caller is given and never reads from a mirror.
+/// `oneiron restore --unlock kit` and `oneiron vault-key add-device --unlock
+/// kit` both open the `world-kit` escrow wrap with it.
+pub(super) fn kit_unlock_with(
+    vault_id: Option<&str>,
+    files: &[PathBuf],
+    secret_file: Option<&Path>,
+) -> anyhow::Result<HostUnlock> {
+    let vault_id = vault_id.ok_or_else(|| {
         anyhow::anyhow!("--unlock kit names the vault the kit is bound to: --vault-id")
     })?;
     let vault_id = secret32(vault_id.as_bytes(), "a vault id")?;
     anyhow::ensure!(
-        !args.pieces.is_empty(),
+        !files.is_empty(),
         "--unlock kit reads the kit's pieces: --piece"
     );
-    let (pieces, passphrase) = read_kit(&args.pieces, args.secret.secret_file.as_deref())?;
+    let (pieces, passphrase) = read_kit(files, secret_file)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let secret = restore_kit(
         *vault_id,

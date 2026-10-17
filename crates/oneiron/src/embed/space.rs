@@ -561,6 +561,55 @@ pub(crate) fn embedding_space_in_txn(
     EMBEDDING_SPACE.get(store, txn, &id.to_owned())
 }
 
+/// Every declared space, in id order.
+pub(crate) fn embedding_spaces_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<Vec<EmbeddingSpace>> {
+    Ok(EMBEDDING_SPACE
+        .scan(store, txn)?
+        .into_iter()
+        .map(|(_, space)| space)
+        .collect())
+}
+
+/// [`Vault::declare_embedding_space`] in the caller's write: a valid space, at its declared
+/// width when its id is declared already.
+pub(crate) fn declare_embedding_space_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space: &EmbeddingSpace,
+) -> Result<()> {
+    space.validate()?;
+    if let Some(existing) = embedding_space_in_txn(store, txn, &space.id)?
+        && existing.dimensions != space.dimensions
+    {
+        return Err(Error::InvalidConfig(format!(
+            "embedding space {} is declared at width {}; a new width is a new space",
+            space.id, existing.dimensions
+        )));
+    }
+    EMBEDDING_SPACE.put(store, txn, &space.id, space)
+}
+
+/// [`Vault::bind_kind_slot`] in the caller's write: a declared space that admits the binding,
+/// and a slot no open move carries.
+pub(crate) fn bind_kind_slot_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    kind: InputKind,
+    space_id: &str,
+) -> Result<()> {
+    let Some(space) = embedding_space_in_txn(store, txn, space_id)? else {
+        return Err(Error::InvalidConfig(format!(
+            "embedding space {space_id} is not declared"
+        )));
+    };
+    space.admit_binding(kind)?;
+    refuse_moving_slot_in_txn(store, txn, kind)?;
+    EMBEDDING_SLOT.put(store, txn, &[kind.byte()], &space.id)
+}
+
 /// Refuses a hand binding of a slot an open move carries: the move swaps it in, or is
 /// abandoned first.
 fn refuse_moving_slot_in_txn(
@@ -849,7 +898,7 @@ impl Vault {
     /// and one per kind slot that is bound or has a row. Every writer of a declaration or a
     /// binding calls it last, and hands what it returns to
     /// [`Self::embedding_setup_committed`] once `wtxn` commits.
-    pub(super) fn publish_embedding_setup_in_txn(
+    pub(crate) fn publish_embedding_setup_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
     ) -> Result<BTreeSet<EntityId>> {
@@ -933,7 +982,7 @@ impl Vault {
     /// Hands the EMBEDDING_SETUP rows a committed write published to the live mirror, so they
     /// reach this vault's other devices, and wakes the media backfill: a space or a binding
     /// may have changed.
-    pub(super) fn embedding_setup_committed(&self, rows: BTreeSet<EntityId>) {
+    pub(crate) fn embedding_setup_committed(&self, rows: BTreeSet<EntityId>) {
         if rows.is_empty() {
             return;
         }
@@ -949,15 +998,7 @@ impl Vault {
     pub fn declare_embedding_space(&self, space: EmbeddingSpace) -> Result<()> {
         space.validate()?;
         let mut wtxn = self.store.env.write_txn()?;
-        if let Some(existing) = embedding_space_in_txn(&self.store, &wtxn, &space.id)?
-            && existing.dimensions != space.dimensions
-        {
-            return Err(Error::InvalidConfig(format!(
-                "embedding space {} is declared at width {}; a new width is a new space",
-                space.id, existing.dimensions
-            )));
-        }
-        EMBEDDING_SPACE.put(&self.store, &mut wtxn, &space.id.clone(), &space)?;
+        declare_embedding_space_in_txn(&self.store, &mut wtxn, &space)?;
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
@@ -967,11 +1008,7 @@ impl Vault {
     /// Every declared space, in id order.
     pub fn embedding_spaces(&self) -> Result<Vec<EmbeddingSpace>> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(EMBEDDING_SPACE
-            .scan(&self.store, &rtxn)?
-            .into_iter()
-            .map(|(_, space)| space)
-            .collect())
+        embedding_spaces_in_txn(&self.store, &rtxn)
     }
 
     /// The vault's text vector index as a space row: the configured model and width, text in
@@ -999,14 +1036,7 @@ impl Vault {
     /// A slot an open move carries is refused until the move ends.
     pub fn bind_kind_slot(&self, kind: InputKind, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
-            return Err(Error::InvalidConfig(format!(
-                "embedding space {space_id} is not declared"
-            )));
-        };
-        space.admit_binding(kind)?;
-        refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
-        EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
+        bind_kind_slot_in_txn(&self.store, &mut wtxn, kind, space_id)?;
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
