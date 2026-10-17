@@ -39,12 +39,13 @@ mod validate;
 mod tests;
 
 pub use self::context_pack::{
-    ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls,
-    CoreContextPackAccounting, CoreContextPackAccountingReason, CoreContextPackEdgeProvenance,
+    ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery,
+    ContextPackRetrievalBudgetControls, CoreContextPackAccounting, CoreContextPackAccountingReason, CoreContextPackEdgeProvenance,
     CoreContextPackEdgeRecord, CoreContextPackEmpty, CoreContextPackEmptyReason,
     CoreContextPackEntityRecord, CoreContextPackItemTokenStats, CoreContextPackProjection,
     CoreContextPackRequest, CoreContextPackResponse, CoreContextPackSectionTokenStats,
     CoreContextPackSignal, CoreContextPackStats, CoreContextPackTokenStats, CoreContextPackVad,
+    MediaQueryKind,
 };
 pub use self::contract::{
     MEMORY_VERBS, VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability,
@@ -52,7 +53,9 @@ pub use self::contract::{
     VaultReadWireOp,
 };
 pub use self::error::{VaultReadError, VaultReadResult};
-pub use self::in_process::InProcessVaultReadAdapter;
+pub use self::in_process::{
+    EmbeddedMediaSeed, InProcessVaultReadAdapter, MEDIA_UNAVAILABLE_ENGINE_CODE,
+};
 pub use self::remote::{CloudVaultReadAdapter, WireTransport, WireTransportVaultReadAdapter};
 pub use self::types::{
     AskRequest, AskResponse, CodeExecuteRequest, CodeExecuteResponse, CodeSearchRequest,

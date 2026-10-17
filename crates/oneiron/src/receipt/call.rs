@@ -80,6 +80,9 @@ pub struct CallReceipt {
     /// BLAKE3 of the canonical input JSON, lowercase hex.
     pub request_digest: String,
     /// BLAKE3 of the answered result, lowercase hex, when the call answered.
+    /// On a refusal, its content digest ([`call_refusal_digest`]), so the
+    /// same failure again reads as the same failure (OF-568); `None` when the
+    /// transport had no refusal message.
     pub result_digest: Option<String>,
     /// The row ids the reply was derived from, when the transport knows
     /// them; at most [`MAX_CALL_RECEIPT_SERVED`].
@@ -132,6 +135,15 @@ pub fn call_json_digest(value: &serde_json::Value) -> String {
 #[must_use]
 pub fn call_bytes_digest(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
+}
+
+/// A refusal's content digest: BLAKE3 of its code and message, canonically,
+/// lowercase hex. A request id, a receipt ref and other per-reply fields are
+/// left out, so two refusals that say the same thing digest the same. The
+/// Coach's `failed_check_repeat` compares it (OF-568).
+#[must_use]
+pub fn call_refusal_digest(code: &str, message: &str) -> String {
+    call_json_digest(&serde_json::json!({ "code": code, "message": message }))
 }
 
 fn write_canonical(hasher: &mut blake3::Hasher, value: &serde_json::Value) {

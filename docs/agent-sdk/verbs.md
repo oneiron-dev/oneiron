@@ -97,6 +97,12 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning`
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
+- `vault.widen_proposals`
+- `vault.widen_proposals.approve`
+- `vault.widen_proposals.decline`
+- `vault.settings.wake_policy.set`
+- `vault.settings.inference_defaults`
+- `vault.settings.inference_defaults.replace`
 - `vault.lenses.propose`
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
@@ -108,6 +114,8 @@ both bindings and their export-census tests in one change.
 - `vault.shares.view`
 - `vault.hooks.replay`
 - `vault.artifacts.view`
+- `vault.code.diff`
+- `vault.code.blame`
 - `vault.artifacts.export`
 - `vault.artifacts.born_from`
 - `vault.artifacts.proposals`
@@ -150,6 +158,7 @@ both bindings and their export-census tests in one change.
 - `vault.projects.route_tradeoff`
 - `vault.conversations.turn.continue`
 - `vault.conversations.turn.retry`
+- `vault.messages.react`
 - `vault.rooms.host`
 - `vault.rooms.host.pin`
 - `vault.rooms.host.hand`
@@ -198,6 +207,7 @@ both bindings and their export-census tests in one change.
 - `vault.structural.put`
 - `vault.habits.checkin`
 - `vault.claims.admit`
+- `vault.artifacts.create`
 - `vault.artifacts.put`
 - `vault.artifacts.append`
 - `vault.artifacts.read`

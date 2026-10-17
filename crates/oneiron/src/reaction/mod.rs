@@ -28,6 +28,7 @@ mod outcomes;
 mod read;
 mod signal;
 mod value;
+mod verbs;
 mod write;
 
 pub use channel_adapters::{
@@ -58,6 +59,7 @@ pub use value::{
     ReactionValue,
 };
 pub(crate) use value::{is_reaction_claim_predicate, validate_reaction_claim_structure};
+pub use verbs::{MessageReactionExternal, MessageReactionReceipt, MessageReactionRequest};
 pub(crate) use write::REACTION_STANDALONE_WEIGHT;
 pub use write::{ReactionChange, ReactionInput, ReactionState};
 

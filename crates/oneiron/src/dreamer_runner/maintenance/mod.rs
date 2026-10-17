@@ -14,7 +14,10 @@ pub mod honesty;
 pub mod identity;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
+mod person_threshold;
 mod proposals;
+mod strength;
+pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
 pub mod stewardship;
@@ -132,6 +135,9 @@ pub(crate) fn execute(
 ) -> Result<DreamerAttemptExecution> {
     let facet = attempt.status.payload.attempt_type.as_str();
     match facet {
+        CONSOLIDATION_STRENGTH_FACET => {
+            strength::run(ctx.vault, attempt, ctx.now_ms)?;
+        }
         CURATOR_FACET => {
             curator::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }

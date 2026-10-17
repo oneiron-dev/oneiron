@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionCall, DecisionModel, DecisionRung, ProviderCapability,
     ProviderDecision, ProviderPin,
@@ -17,8 +18,8 @@ use oneiron::llm::decision::{
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
-    EntityId, Error, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef,
-    ResponseFormat, TierPrecedence, Vault,
+    EntityId, Error, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, ModelLocality,
+    ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
 use serde_json::{Value, json};
 
@@ -138,9 +139,13 @@ impl BigModel {
             });
         }
         let state = serde_json::to_string(&state).map_err(failed)?;
+        // A yes/no question's criteria triple, as the rubric it is judged by.
+        let rubric = QuestionCriteria::for_call(call)
+            .map(|criteria| format!("{}\n", criteria.rubric()))
+            .unwrap_or_default();
         content.push(ContentPart::Text {
             text: format!(
-                "Question: {}\n{}\nState (JSON): {state}\n{}",
+                "Question: {}\n{}\n{rubric}State (JSON): {state}\n{}",
                 call.question.text,
                 contract_line(&call.question.contract),
                 self.reply.instructions(),
@@ -291,6 +296,13 @@ impl DecisionModel for BigModel {
 
     fn reads_audio(&self) -> bool {
         self.hears_audio()
+    }
+
+    /// The seat routes to a third party's model.
+    fn leaves_host(&self) -> bool {
+        self.models
+            .seat(self.role)
+            .is_some_and(|seat| seat.locality == ModelLocality::ThirdParty)
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
