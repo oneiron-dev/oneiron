@@ -3,17 +3,19 @@
 use super::{backend::backend_error, *};
 use crate::Result;
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxMountTable, SandboxProposalWrite};
+use crate::engine_executor::{CANCEL_POLL_SLICE, StepCancellation};
 use oneiron_container::{
-    ContainerRuntime, EgressRelay, GuestLimits, GuestSeccomp, GuestSpec, ImageRef, SessionManifest,
-    SessionTransport,
+    ContainerRuntime, EgressRelay, GuestLimits, GuestSeccomp, GuestSession, GuestSpec, ImageRef,
+    SessionManifest, SessionTransport,
 };
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
     ffi::OsString,
     io::{Read, Write},
+    os::unix::net::UnixStream,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -149,6 +151,23 @@ impl MicroVmBackend for ContainerBackend {
         budget: ExecutionBudget,
         proxy: &CredentialEgressProxy,
     ) -> Result<MicroVmExit> {
+        self.run_with_proxy_cancellable(vm, image, budget, proxy, &StepCancellation::never())
+    }
+    /// Runs one guest under its step's token (FIX 600). A watcher holds this
+    /// run's own session: once `cancel` fires it cuts the protocol stream
+    /// and drops that session, which removes its container by name. The
+    /// manifest stays recorded and abandonment is still reported; the
+    /// cancel wins over both, and the run's result and proposals are
+    /// dropped.
+    fn run_with_proxy_cancellable(
+        &self,
+        vm: &MicroVmHandle,
+        image: &GuestImage,
+        budget: ExecutionBudget,
+        proxy: &CredentialEgressProxy,
+        cancel: &StepCancellation,
+    ) -> Result<MicroVmExit> {
+        cancel.check()?;
         if !budget.is_bounded() || !proxy.is_armed() {
             return Err(failed("unbounded or unarmed container"));
         }
@@ -192,6 +211,8 @@ impl MicroVmBackend for ContainerBackend {
             .as_ref()
             .cloned()
             .ok_or_else(|| failed("engine egress proxy unbound"))?;
+        // A step cancelled while its component loaded starts no guest.
+        cancel.check()?;
         let mut guest = self
             .runtime
             .start_fenced(
@@ -219,24 +240,44 @@ impl MicroVmBackend for ContainerBackend {
             let _ = std::io::copy(&mut reader, &mut input);
         });
         let deadline = Instant::now() + Duration::from_secs(budget.wall_clock_secs);
-        let result = super::protocol::exchange(
-            stream,
-            vm,
-            super::protocol::GuestProgram {
-                component: &component,
-                source: &image.source,
-            },
-            budget,
-            deadline,
-            proxy,
-            self.transport.as_deref(),
-        );
-        let abandoned = guest.abandoned();
+        let watched = stream.try_clone().map_err(|e| failed(e.to_string()))?;
+        // The session sits in a slot the watcher may empty; nothing holds
+        // the slot's lock across the exchange, a removal or a wait.
+        let session = Mutex::new(Some(guest));
+        let (finish, finished) = mpsc::channel();
+        let (result, killed_abandoned) = std::thread::scope(|scope| {
+            let session = &session;
+            let watcher = scope.spawn(move || watch_guest(session, &watched, &finished, cancel));
+            let result = super::protocol::exchange_cancellable(
+                stream,
+                vm,
+                super::protocol::GuestProgram {
+                    component: &component,
+                    source: &image.source,
+                },
+                budget,
+                deadline,
+                proxy,
+                self.transport.as_deref(),
+                cancel,
+            );
+            let _ = finish.send(());
+            (result, watcher.join().unwrap_or(false))
+        });
+        // Whatever the watcher left is this run's to end.
+        let guest = session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let abandoned = killed_abandoned || guest.as_ref().is_some_and(GuestSession::abandoned);
         drop(guest);
         if abandoned {
             relay
                 .record_abandoned(&manifest)
                 .map_err(|e| failed(e.to_string()))?;
+        }
+        cancel.check()?;
+        if abandoned {
             return Err(crate::Error::Code(
                 crate::error::CodeError::SandboxAbandoned {
                     backend: CONTAINER_BACKEND_NAME,
@@ -264,4 +305,33 @@ impl MicroVmBackend for ContainerBackend {
 }
 fn failed(detail: impl Into<String>) -> crate::Error {
     backend_error(CONTAINER_BACKEND_NAME, detail)
+}
+
+/// Watches one run's guest until its exchange finishes, in slices of
+/// [`CANCEL_POLL_SLICE`]. Once `cancel` fires it cuts the protocol stream,
+/// which wakes the exchange, and takes and drops the run's own session,
+/// which removes its container by name and reaps its client: never another
+/// guest. Answers whether that session had been abandoned before it ended.
+fn watch_guest(
+    session: &Mutex<Option<GuestSession>>,
+    stream: &UnixStream,
+    finished: &mpsc::Receiver<()>,
+    cancel: &StepCancellation,
+) -> bool {
+    loop {
+        if cancel.is_cancelled() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            let guest = session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            let abandoned = guest.as_ref().is_some_and(GuestSession::abandoned);
+            drop(guest);
+            return abandoned;
+        }
+        match finished.recv_timeout(CANCEL_POLL_SLICE) {
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+        }
+    }
 }
