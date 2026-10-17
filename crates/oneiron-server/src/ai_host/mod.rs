@@ -252,6 +252,16 @@ impl AiHandle {
             .and_then(|router| router.locality(model))
     }
 
+    /// The catalog entry of every configured chat model served by its own
+    /// id.
+    #[must_use]
+    pub fn chat_catalog(&self) -> Vec<oneiron::LlmCatalogEntry> {
+        self.runtime
+            .router()
+            .map(|router| router.chat_catalog().cloned().collect())
+            .unwrap_or_default()
+    }
+
     #[must_use]
     pub fn status(&self) -> AiStatus {
         self.status.snapshot()

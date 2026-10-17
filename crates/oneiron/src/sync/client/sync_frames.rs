@@ -215,6 +215,15 @@ impl SyncClient {
                     keys.push(key);
                 }
             }
+            // This vault's embedding setup rows (OF-370) reach an opened-item device whatever
+            // it opened: it asks the home to grant their window (`setup_catch_up`).
+            let setup = WindowKey::from_timestamp(crate::embed::EMBEDDING_SETUP_LEARNED_AT);
+            if self.config.residence_selector.is_some()
+                && self.setup_catch_up(setup.as_str())
+                && !keys.contains(&setup)
+            {
+                keys.push(setup);
+            }
         }
         for key in extra_windows {
             let Some(window_key) = WindowKey::try_new(key.as_str()) else {
@@ -251,6 +260,10 @@ impl SyncClient {
                     )
                     .into_result()?,
                 );
+                // The setup window's vector waits for the home's grant.
+                if self.setup_catch_up(key.as_str()) {
+                    continue;
+                }
             }
             if key.world().is_some() {
                 // The server sends root first, but initial frames are already

@@ -327,18 +327,19 @@
     },
     {
       "name": "describe",
-      "description": "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named.",
+      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named.",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
       "outputs_by_input": {
         "fold": "crate::compaction::FoldReply<crate::compaction::FoldDescription>"
       },
       "mcp_served": "input.task_ref.as_deref().and_then(|id| oneiron::EntityId::from_hex(id).ok())",
-      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else if input.key.is_some() { Err(MemoryError::bad_request(\"describe(card key) expands a board card, which only a live board session holds\"))? } else if input.fold.is_some() { Err(MemoryError::bad_request(\"describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
+      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else if input.vault { memory.describe_vault(&input)? } else if input.key.is_some() { Err(MemoryError::bad_request(\"describe(card key) expands a board card, which only a live board session holds\"))? } else if input.fold.is_some() { Err(MemoryError::bad_request(\"describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp_fields": {
         "task_ref": "task_ref",
         "self": "self",
+        "vault": "vault",
         "session_id": "session_id",
         "key": "key",
         "frame_epoch": "frame_epoch"
@@ -1630,7 +1631,7 @@
     },
     {
       "name": "vault.secrets.lift_history",
-      "description": "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start.",
+      "description": "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued.",
       "input": "crate::policy_model::SecretLiftRequest",
       "output": "crate::policy_model::SecretLiftStatus",
       "call": "crate::policy_model::secret_lift_as_owner(memory.vault(), &memory.embedded_owner(\"vault.secrets.lift_history\")?, &input).map_err(crate::memory::MemoryError::from)?",

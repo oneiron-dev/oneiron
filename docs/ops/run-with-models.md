@@ -236,6 +236,18 @@ level 1 on `/v1/messages` at `https://api.anthropic.com`, under the same
 16 KiB and smaller rules, with no plain resend. A `key_secret` entry takes no
 `request_compression`.
 
+Our own model servers decode compressed bodies once built or started for it
+(OF-604): the house model's `exl3_server.py`, a `llama-server` built by
+`deploy/house-model/build-llama.sh` (cpp-httplib's zstd and zlib support on),
+a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
+(deploy/house-model/README.md, "Compressed requests"), and the VoxCPM2 worker.
+Each opts in on its own entry with `request_compression = "zstd"`; an entry
+whose server does not decode stays plain. A `voxcpm2` entry compresses its
+`/render` uploads, and an opted-in provider's media JSON bodies compress by
+the same rules. A tagger endpoint opts in on its section, `[oneironer]
+request_compression = "zstd"`, for its `/v1/extract` posts, with the same
+plain resend; a `kind = "oneironer"` provider entry takes none.
+
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
 `usage.raw_provider` (`requested_model`, `reported_model`, `rung`,

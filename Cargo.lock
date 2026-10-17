@@ -7920,9 +7920,13 @@ dependencies = [
 name = "oneiron-android"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "jni 0.21.1",
  "oneiron",
+ "oneiron-server",
+ "oneiron-vault-contract",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -8116,10 +8120,14 @@ dependencies = [
 name = "oneiron-ffi"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cbindgen",
  "oneiron",
+ "oneiron-server",
+ "oneiron-vault-contract",
  "serde_json",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -8564,13 +8572,17 @@ dependencies = [
 name = "oneiron-uniffi"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "oneiron",
  "oneiron-remote",
+ "oneiron-server",
+ "oneiron-vault-contract",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "uniffi",
+ "zeroize",
 ]
 
 [[package]]
