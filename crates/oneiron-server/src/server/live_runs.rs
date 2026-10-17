@@ -122,7 +122,7 @@ impl LiveRunRefusal {
                 "Attach at POST /v1/core/live-runs/{run}/attach and send its liveRun."
             }
             Self::Stale => "Attach again once the run holds its next lease.",
-            Self::Busy => "Retry once the run's current entry or action ends.",
+            Self::Busy => "Retry once the current entry or action of the run ends.",
             Self::Attached => "Act with the credential attached to this lease.",
         }
     }

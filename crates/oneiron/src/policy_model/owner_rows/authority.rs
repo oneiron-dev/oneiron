@@ -169,6 +169,13 @@ impl Vault {
         is_live_vault_owner_in_txn(self, &txn, &actor)
     }
 
+    /// Whether the PERSON `person` is a live owner of this vault right now,
+    /// read the way [`Self::is_live_vault_owner`] reads an authenticated one.
+    pub fn is_live_owner_person(&self, person: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        is_live_vault_owner_in_txn(self, &txn, person)
+    }
+
     /// Authenticates `actor` only if this vault records it as an owner: its
     /// embedded owner, or an Owner-role member a conferring grant names in a
     /// shared vault, whether or not that member's PERSON is still live. `None`

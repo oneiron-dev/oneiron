@@ -402,12 +402,14 @@ impl DecisionProvider for HeuristicRung<'_> {
                 probability: Some(probability),
                 paired: None,
                 person: None,
+                served: None,
             },
             None => ProviderDecision {
                 answer: DecisionAnswer::Abstain,
                 probability: None,
                 paired: None,
                 person: None,
+                served: None,
             },
         })
     }

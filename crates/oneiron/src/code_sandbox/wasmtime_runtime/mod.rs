@@ -18,8 +18,8 @@ pub mod bindings {
 
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    JsCodeModeStream,
+    CANCEL_POLL_SLICE, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
+    JsCodeModeStepOutcome, JsCodeModeStream, StepCancellation,
 };
 use crate::{Error, Result};
 use std::sync::mpsc;
@@ -140,10 +140,25 @@ impl WasmtimeComponentRuntime {
         self
     }
 
+    #[cfg(test)]
     fn execute(
         &mut self,
         step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
+    ) -> Result<JsCodeModeStepOutcome> {
+        self.execute_cancellable(step, host, &StepCancellation::never())
+    }
+
+    /// Runs one first-party step in process, until it finishes, fails, meets
+    /// its deadline or is cancelled (FIX 600). A cancel stops the guest
+    /// between host operations: the host loop returns at its next slice, and
+    /// the store's epoch callback traps the guest on its own token. The
+    /// worker is joined before this returns.
+    fn execute_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
     ) -> Result<JsCodeModeStepOutcome> {
         if step.script.len() > self.budget.message_bytes {
             return Err(failure("script exceeds component message limit"));
@@ -174,10 +189,12 @@ impl WasmtimeComponentRuntime {
             held: HeldOutput::default(),
             held_limit: budget.memory_bytes,
             output_failure: None,
+            cancel,
         };
         let outcome = std::thread::scope(|scope| {
             let worker_engine = engine.clone();
-            scope.spawn(move || {
+            let worker_cancel = cancel.clone();
+            let worker = scope.spawn(move || {
                 let result = execute_component(
                     &worker_engine,
                     &component,
@@ -186,6 +203,7 @@ impl WasmtimeComponentRuntime {
                     step.boundary,
                     events.clone(),
                     deadline,
+                    worker_cancel,
                 );
                 let _ = events.send(HostEvent::Finished(result));
             });
@@ -193,12 +211,27 @@ impl WasmtimeComponentRuntime {
             // Also interrupts a worker after a host-side refusal/timeout.
             // drive_host drops its receiver first, so blocked sends wake.
             engine.increment_epoch();
+            // A store that armed its epoch deadline after that bump would
+            // sleep through it, so a cancelled step bumps again each slice
+            // until its worker has ended. Other stores on the engine only
+            // read their own deadline and token again.
+            while cancel.is_cancelled() && !worker.is_finished() {
+                std::thread::sleep(CANCEL_POLL_SLICE);
+                engine.increment_epoch();
+            }
             result
-        })?;
-        bridge.held.into_outcome(outcome)
+        });
+        // A cancel seen by the end wins over whatever else the step ended
+        // with: a cancelled step never counts as run.
+        cancel.check()?;
+        bridge.held.into_outcome(outcome?)
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the worker takes the pinned component, its budget, the step and its stop conditions"
+)]
 fn execute_component(
     engine: &Engine,
     component: &Component,
@@ -207,6 +240,7 @@ fn execute_component(
     boundary: SandboxBoundaryContract,
     events: mpsc::SyncSender<HostEvent>,
     deadline: Instant,
+    cancel: StepCancellation,
 ) -> Result<JsCodeModeStepOutcome> {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
@@ -232,13 +266,20 @@ fn execute_component(
     store.set_epoch_deadline(1);
     // Epochs belong to the Engine, not a Store. A sibling's cleanup can wake
     // this store, but must not cancel it before its own host-owned deadline.
+    // Its own step's cancel, read from its own token first, traps it.
+    let stop = cancel.clone();
     store.epoch_deadline_callback(move |_| {
-        if Instant::now() >= deadline {
+        if stop.is_cancelled() {
+            Err(wasmtime::Error::msg("component step cancelled"))
+        } else if Instant::now() >= deadline {
             Err(wasmtime::Error::msg("component deadline exceeded"))
         } else {
             Ok(wasmtime::UpdateDeadline::Continue(1))
         }
     });
+    // Read after the deadline is armed: a cancel that lands later is
+    // followed by an epoch bump this store sees.
+    cancel.check()?;
     if Instant::now() >= deadline {
         return Err(failure("component deadline exceeded before execution"));
     }
@@ -265,19 +306,28 @@ fn execute_component(
     wire::decode_output(&output.result_json, budget.message_bytes)
 }
 
+/// Answers the worker's host events until its step ends. It waits in
+/// slices of [`CANCEL_POLL_SLICE`] and reads the step's token before and
+/// after each host operation it admits and before it accepts the step's
+/// end: a cancel it sees wins over the deadline, an output failure or a
+/// worker failure that lands with it. An operation already admitted
+/// settles first.
 fn drive_host(
     requests: mpsc::Receiver<HostEvent>,
     bridge: &mut Bridge<'_>,
     deadline: Instant,
 ) -> Result<JsCodeModeStepOutcome> {
     loop {
+        bridge.cancel.check()?;
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
             .ok_or(failure("component deadline exceeded"))?;
-        match requests.recv_timeout(remaining) {
+        match requests.recv_timeout(remaining.min(CANCEL_POLL_SLICE)) {
             Ok(HostEvent::Call { name, input, reply }) => {
+                bridge.cancel.check()?;
                 let response = wire::dispatch(bridge, name, &input);
+                bridge.cancel.check()?;
                 let _ = reply.send(response);
             }
             Ok(HostEvent::Output {
@@ -285,21 +335,30 @@ fn drive_host(
                 frame,
                 reply,
             }) => {
+                bridge.cancel.check()?;
                 // A refused frame traps the guest, so no step goes on with
                 // part of its result missing; the host's reason is the step's.
                 let response = wire::output(bridge, target, frame).map_err(|error| {
                     bridge.output_failure = Some(error);
                     failure("streamed output refused")
                 });
+                bridge.cancel.check()?;
                 let _ = reply.send(response);
             }
             Ok(HostEvent::Finished(result)) => {
+                bridge.cancel.check()?;
                 return match bridge.output_failure.take() {
                     Some(error) => Err(error),
                     None => result,
                 };
             }
-            Err(_) => return Err(failure("component deadline or worker failure")),
+            // A slice ended with no event: read the token and the deadline
+            // again.
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bridge.cancel.check()?;
+                return Err(failure("component deadline or worker failure"));
+            }
         }
     }
 }
@@ -318,10 +377,23 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
         step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
     ) -> Result<JsCodeModeStepOutcome> {
-        match super::microvm::select_backend_for_tier(step.boundary.tier())? {
-            Some(backend) => isolated::run(self, step, backend),
-            None => self.execute(step, host),
-        }
+        self.run_step_cancellable(step, host, &StepCancellation::never())
+    }
+
+    fn run_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> Result<JsCodeModeStepOutcome> {
+        // A step cancelled before it starts stages no guest at all.
+        cancel.check()?;
+        let outcome = match super::microvm::select_backend_for_tier(step.boundary.tier())? {
+            Some(backend) => isolated::run(self, step, backend, cancel),
+            None => self.execute_cancellable(step, host, cancel),
+        };
+        cancel.check()?;
+        outcome
     }
 }
 
@@ -339,6 +411,10 @@ struct Bridge<'a> {
     held: HeldOutput,
     held_limit: usize,
     output_failure: Option<Error>,
+    /// This step's token. Every host operation the bridge admits reads it
+    /// before and after, and a call that runs a step of its own runs that
+    /// step under a child of it.
+    cancel: &'a StepCancellation,
 }
 
 /// One streamed frame's target, owned for the trip to the host thread.
