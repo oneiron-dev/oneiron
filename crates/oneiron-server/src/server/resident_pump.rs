@@ -16,9 +16,11 @@
 //! The pump wakes on the vault's attempt signal, and on a slow timer for a
 //! run whose backoff or schedule ends with no signal of its own.
 //!
-//! A run binds no agent verb door: a run holds no MCP credential, so a
-//! host-row verb answers `agent_verb_door_unbound` and its run verbs are its
-//! own.
+//! A run holds no MCP credential, so its door serves one host row:
+//! `tasks.create`, under the run's own agent, with the run's lease as the
+//! TASK's creator (OF-532). Every other host row answers
+//! `agent_verb_door_unbound`, and its run verbs are its own. Its model calls
+//! spend under its attempt's spend scope (OF-533).
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -29,7 +31,11 @@ use oneiron::agent_dispatch::{
     agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
-use oneiron::code_run::{HostSelfDispatcher, bind_wait_trap};
+use oneiron::claim::ScopedReadActorKey;
+use oneiron::code_run::{
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher,
+    RunCall, SelfAgentVerbCall, bind_wait_trap,
+};
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, ParkDreamerAttempt};
 use oneiron::engine_executor::{
@@ -42,7 +48,10 @@ use oneiron::failure_ladder::{
 use oneiron::llm::{
     DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
 };
+use oneiron::memory::{HostWriteOrigin, ProducerRows};
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use tokio::sync::broadcast;
 
@@ -313,7 +322,7 @@ fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Clai
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
 fn run_bound(
-    vault: &Vault,
+    vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
     claimed: &Claimed,
     key: &str,
@@ -357,9 +366,10 @@ fn run_bound(
 
 /// One entry of the run, as `execute_code` enters its runs, but bound to the
 /// leased attempt: its dispatcher carries the attempt, so `tasks.refuse`
-/// reaches the TASK it realizes.
+/// reaches the TASK it realizes, a TASK it creates runs under it, and its
+/// model calls spend under its spend scope.
 fn enter_run(
-    vault: &Vault,
+    vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
     status: &AgentDispatchStatus,
     actor: WriteActor,
@@ -368,6 +378,13 @@ fn enter_run(
     reactor: &tokio::runtime::Runtime,
 ) -> Result<EngineExecutorOutcome, String> {
     let bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
+        .map_err(text)?
+        .with_agent_verb_door(Arc::new(TaskDoor {
+            vault: Arc::clone(vault),
+            actor,
+        }));
+    let spend = AgentDispatcher::new(vault)
+        .spend_scope_for_attempt(status.attempt.id)
         .map_err(text)?;
     enter_engine_native_run(
         vault,
@@ -377,8 +394,60 @@ fn enter_run(
         format!("agent-run:{}", config.run_id.to_hex()),
         compaction,
         reactor,
+        spend.as_ref(),
     )
     .map_err(text)
+}
+
+/// A pumped run's door onto the SDK verb table: `tasks.create` only, on a
+/// fresh surface under the run's own agent. The origin its dispatcher binds
+/// carries the run's live lease as the TASK's creator (OF-532), so the TASK
+/// runs inside the run's lease tree, project and spend scope; no owner or MCP
+/// credential is borrowed. Every other host row stays unbound.
+struct TaskDoor {
+    vault: Arc<Vault>,
+    actor: WriteActor,
+}
+
+impl AgentVerbDoor for TaskDoor {
+    fn call(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if call.verb != AgentVerb::TasksCreate {
+            return Ok(Err(AgentVerbRefusal {
+                code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            }));
+        }
+        let producers = ProducerRows::default();
+        let memory = self
+            .vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .with_host_origin(origin.clone())
+            .with_invocation(invocation)
+            .listing_producers(&producers);
+        match oneiron::task_verb::sdk::invoke(&memory, call.verb.as_str(), call.input.clone()) {
+            Ok(output) => Ok(Ok(AgentVerbAnswer {
+                output,
+                rows: Some(producers.take()),
+            })),
+            // A verb hook's stop goes back to the run as the typed stop.
+            Err(error) => match error.hook {
+                Some(stop) => Err(oneiron::Error::from(*stop)),
+                None => Ok(Err(AgentVerbRefusal { code: error.code })),
+            },
+        }
+    }
+
+    /// The run's own calls keep the run's own admission.
+    fn admit_run_call(
+        &self,
+        _call: RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(None)
+    }
 }
 
 /// A resident run's task: its frozen definition's instructions, then what

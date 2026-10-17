@@ -57,6 +57,10 @@ fn carrier_lease() -> Result<BudgetLease, oneiron::llm::BudgetDenied> {
     Ok(lease)
 }
 
+/// Builds the provider's backend over another meter: the same model path, its
+/// calls admitted and settled on the guard it is given.
+pub(crate) type MeteredBackend = Arc<dyn Fn(BudgetGuard) -> Arc<dyn LlmBackend> + Send + Sync>;
+
 /// Host configuration, never caller-chosen runtime bytes or native JS source.
 /// Construction requires the factory's successful artifact readiness probe.
 pub struct McpQuickJsProvider {
@@ -70,9 +74,17 @@ pub struct McpQuickJsProvider {
     /// Each run's clock is frozen at its first start, and a resumed run keeps
     /// it; otherwise every run shares the configured frozen clock.
     clock_from_first_start: bool,
-    /// The host's own model and meter, when the host injected them: rebound
-    /// to the server's run receipts when the server takes this provider.
-    injected: Option<(Arc<dyn SingleRouteBackend>, BudgetGuard)>,
+    /// The host's own model and meter, when the host injected them, and the
+    /// run receipts its calls write: rebound to the server's receipts when
+    /// the server takes this provider.
+    injected: Option<(
+        Arc<dyn SingleRouteBackend>,
+        BudgetGuard,
+        Arc<dyn RunReceiptSink>,
+    )>,
+    /// The configured backend over another meter, for a run that spends
+    /// under a scope of its own (OF-533).
+    metered: Option<MeteredBackend>,
     code_check: Option<Arc<ShadowCheck>>,
 }
 
@@ -88,13 +100,10 @@ impl McpQuickJsProvider {
         config: EngineExecutorConfig,
     ) -> Result<Self, oneiron::engine_executor::EngineExecutorError> {
         let lease = carrier_lease().map_err(LlmError::from)?;
-        let models = InjectedRuns::new(
-            Arc::clone(&backend),
-            meter.clone(),
-            Arc::new(LoggedReceipts),
-        );
+        let receipts: Arc<dyn RunReceiptSink> = Arc::new(LoggedReceipts);
+        let models = InjectedRuns::new(Arc::clone(&backend), meter.clone(), Arc::clone(&receipts));
         let mut provider = Self::gated(runtime, Arc::new(models), lease, config)?;
-        provider.injected = Some((backend, meter));
+        provider.injected = Some((backend, meter, receipts));
         Ok(provider)
     }
 
@@ -117,19 +126,29 @@ impl McpQuickJsProvider {
             seat_router: None,
             clock_from_first_start: false,
             injected: None,
+            metered: None,
             code_check: None,
         })
     }
 
     /// Writes the host-injected model's run receipts to `receipts`.
     pub(crate) fn with_run_receipts(mut self, receipts: Arc<dyn RunReceiptSink>) -> Self {
-        if let Some((backend, meter)) = &self.injected {
+        if let Some((backend, meter, sink)) = &mut self.injected {
             self.backend = Arc::new(InjectedRuns::new(
                 Arc::clone(backend),
                 meter.clone(),
-                receipts,
+                Arc::clone(&receipts),
             ));
+            *sink = receipts;
         }
+        self
+    }
+
+    /// Builds the configured backend over another meter for a run that
+    /// spends under a scope of its own (OF-533).
+    #[must_use]
+    pub(crate) fn with_metered_backend(mut self, metered: MeteredBackend) -> Self {
+        self.metered = Some(metered);
         self
     }
 
@@ -193,6 +212,16 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn lease(&self) -> &BudgetLease {
         &self.lease
+    }
+    fn backend_for_guard(&self, guard: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
+        if let Some((backend, _, receipts)) = &self.injected {
+            return Some(Arc::new(InjectedRuns::new(
+                Arc::clone(backend),
+                guard,
+                Arc::clone(receipts),
+            )));
+        }
+        self.metered.as_ref().map(|metered| metered(guard))
     }
     fn runtime(&self) -> Box<dyn JsCodeModeRuntime + Send> {
         match self.runtime.runtime() {

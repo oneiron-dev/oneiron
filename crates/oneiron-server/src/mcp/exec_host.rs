@@ -4,13 +4,14 @@ use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
+use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::code_run::GatedActorWrite;
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::seat::{SeatDecisions, SeatKind, SeatTask};
-use oneiron::{BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
+use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
@@ -193,6 +194,13 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn backend(&self) -> &dyn LlmBackend;
     /// The admission lease every generated step is charged to.
     fn lease(&self) -> &BudgetLease;
+    /// [`Self::backend`] with its model calls admitted and settled on
+    /// `guard`, for a run that spends under a scope of its own (OF-533).
+    /// `None`: this provider cannot meter a run apart, and such a run is
+    /// refused rather than spent on the provider's own meter.
+    fn backend_for_guard(&self, _guard: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
     /// A FRESH sandbox/REPL runtime for one run.
     fn runtime(&self) -> Box<dyn JsCodeModeRuntime + Send>;
     /// The executor configuration for this run, in the vault it lives in.
@@ -448,6 +456,7 @@ fn run_engine_native_code_mode(
         format!("mcp-execute-code:{}", config.run_id.to_hex()),
         compaction,
         &reactor,
+        None,
     )
     .map_err(|error| match error {
         EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
@@ -475,9 +484,61 @@ impl fmt::Display for EngineRunError {
 /// host bound: `execute_code`'s credential-gated door, or a leased attempt's
 /// own dispatcher. A manifest-backed run is born on its model seat first,
 /// warm under `warm_scope`.
+///
+/// A run that spends under a scope (`spend`: a pumped agent run's, OF-533)
+/// makes its model calls on a meter that scope bounds, and what they used is
+/// booked on the scope once the entry ends, whatever it answered. With none,
+/// the calls run on the provider's own meter.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
+    bound: &GatedActorWrite<'_>,
+    config: &EngineExecutorConfig,
+    warm_scope: String,
+    compaction: Option<&mut RunCompaction>,
+    reactor: &tokio::runtime::Runtime,
+    spend: Option<&SpendScopeId>,
+) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
+    let Some(scope) = spend else {
+        return enter_on(
+            vault,
+            provider,
+            provider.backend(),
+            bound,
+            config,
+            warm_scope,
+            compaction,
+            reactor,
+        );
+    };
+    let dispatcher = AgentDispatcher::new(vault);
+    let guard = dispatcher.guard_for_scope(scope).map_err(binding)?;
+    let backend = provider.backend_for_guard(guard.clone()).ok_or_else(|| {
+        EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
+    })?;
+    let entered = enter_on(
+        vault,
+        provider,
+        backend.as_ref(),
+        bound,
+        config,
+        warm_scope,
+        compaction,
+        reactor,
+    );
+    dispatcher
+        .record_guard_spend(scope, guard.read().used_units)
+        .map_err(binding)?;
+    entered
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enter_on(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    backend: &dyn LlmBackend,
     bound: &GatedActorWrite<'_>,
     config: &EngineExecutorConfig,
     warm_scope: String,
@@ -522,8 +583,7 @@ pub(crate) fn enter_engine_native_run(
         None
     };
     let mut routed_config = config.clone();
-    let mut executor =
-        EngineNativeExecutor::new(vault, provider.backend(), provider.lease(), runtime, bound);
+    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound);
     if let Some(seat) = &seat {
         routed_config.model = seat.model().clone();
         routed_config.model_locality = seat.locality();

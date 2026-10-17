@@ -102,6 +102,19 @@ pub(super) async fn bind(
         models: Arc::clone(runtime),
         guard,
     });
+    // A pumped agent run's calls take the same path on its spend scope's
+    // meter (OF-533).
+    let metered: crate::mcp::MeteredBackend = {
+        let vault = Arc::clone(server.vault());
+        let models = Arc::clone(runtime);
+        Arc::new(move |guard: BudgetGuard| -> Arc<dyn LlmBackend> {
+            Arc::new(CodeModeBackend {
+                vault: Arc::clone(&vault),
+                models: Arc::clone(&models),
+                guard,
+            })
+        })
+    };
     let config = EngineExecutorConfig {
         // Each run's id and task replace these.
         run_id: EntityId::now(),
@@ -115,7 +128,9 @@ pub(super) async fn bind(
         limits: EngineExecutorLimits::default(),
     };
     let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
-        Ok(provider) => provider.with_clock_from_first_start(),
+        Ok(provider) => provider
+            .with_clock_from_first_start()
+            .with_metered_backend(metered),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
             return server;
