@@ -87,6 +87,10 @@ declare namespace self {
       outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
     };
   };
+  const leader: {
+    advice(input: { top?: number | null }): Promise<unknown>;
+    pattern(input: { skill: string }): Promise<unknown>;
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;

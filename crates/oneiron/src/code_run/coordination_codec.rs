@@ -45,6 +45,25 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
             "depth_remaining",
             call.context.depth_remaining.map_or(Value::Nil, Value::from),
         ),
+        // OF-541: the type asked for and the planner ask; a changed need or
+        // pin is a new request, never an old plan's result.
+        (
+            "type_ref",
+            call.context
+                .type_ref
+                .as_ref()
+                .map_or(Value::Nil, |type_ref| Value::from(type_ref.to_string())),
+        ),
+        (
+            "ask",
+            match &call.ask {
+                Some(ask) => Value::from(
+                    serde_json::to_string(ask)
+                        .map_err(|_| invalid_code_run_replay("spawn ask encode"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
     ]))
 }
 

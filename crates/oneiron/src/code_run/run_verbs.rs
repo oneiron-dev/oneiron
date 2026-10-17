@@ -114,6 +114,24 @@ pub struct SkillCallInput {
     pub args: serde_json::Value,
 }
 
+/// `self.leader.advice`: the bound leader's top team shapes for her TASK,
+/// on the host's planner (OF-389). Advice only: no work starts.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LeaderAdviceInput {
+    /// How many shapes to return; the host's count when absent.
+    pub top: Option<u32>,
+}
+
+/// `self.leader.pattern`: load the pattern workflow the leader picked from
+/// her advice, by the skill id its `pattern_skill` names (OF-389).
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LeaderPatternInput {
+    /// The pattern skill's entity id, hex.
+    pub skill: String,
+}
+
 /// `self.spawn`: one reader child over a result of the run (ARCH-0079
 /// #reader-forks). The child is queued and answers through its task; it
 /// never runs inline.
