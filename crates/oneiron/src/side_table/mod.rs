@@ -52,6 +52,30 @@ impl<T: ManifestDbs> SideTableDbs for T {
     }
 }
 
+/// One routed transaction's side databases: the vault's own, or an off-record session's view
+/// composed over them, which stages its writes into the session's overlay.
+#[derive(Clone, Copy)]
+pub(crate) enum RoutedDbs<'v> {
+    Base(&'v crate::store::Store),
+    Session(&'v crate::store::SessionStoreView<'v>),
+}
+
+impl SideTableDbs for RoutedDbs<'_> {
+    fn side_vault_meta(&self) -> &OverlayDb {
+        match self {
+            Self::Base(store) => store.side_vault_meta(),
+            Self::Session(view) => view.side_vault_meta(),
+        }
+    }
+
+    fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
+        match self {
+            Self::Base(store) => store.side_sync_state_opt(),
+            Self::Session(view) => view.side_sync_state_opt(),
+        }
+    }
+}
+
 /// The bare `vault_meta` handle, for the open gates that read declared rows before a store exists.
 impl SideTableDbs for OverlayDb {
     fn side_vault_meta(&self) -> &OverlayDb {
