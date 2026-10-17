@@ -9,8 +9,27 @@ use super::error::{VaultReadResult, invalid_request};
 use super::sealed;
 use super::types::{
     CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest,
-    VAULT_READ_MAX_BATCH_REFS,
+    CoreQueryRequest, VAULT_READ_MAX_BATCH_REFS,
 };
+
+/// The affect a query is asked in (OF-423), as the engine takes it; one out
+/// of range is refused.
+pub(super) fn query_affect(
+    request: &CoreQueryRequest,
+) -> VaultReadResult<Option<crate::affect::Vad>> {
+    let Some(affect) = request.query_affect else {
+        return Ok(None);
+    };
+    let vad = crate::affect::Vad {
+        valence: affect.valence,
+        arousal: affect.arousal,
+        dominance: affect.dominance,
+    };
+    vad.validate().map_err(|error| {
+        invalid_request(VaultReadMethod::Query, "query_affect", &error.to_string())
+    })?;
+    Ok(Some(vad))
+}
 
 pub(super) fn non_empty_query(query: Option<&str>) -> Option<&str> {
     query.map(str::trim).filter(|query| !query.is_empty())
@@ -212,11 +231,14 @@ pub(super) fn validate_request(
     match &request {
         // A media query seeds a query on its own, as on the accepted route
         // and the context pack; a vector beside it is still checked.
-        VaultReadRequest::Query(query) => validate_query_seeds(
-            VaultReadMethod::Query,
-            non_empty_query(query.query.as_deref()).or(query.media.as_ref().map(|_| "media")),
-            query.query_vector.as_deref(),
-        )?,
+        VaultReadRequest::Query(query) => {
+            validate_query_seeds(
+                VaultReadMethod::Query,
+                non_empty_query(query.query.as_deref()).or(query.media.as_ref().map(|_| "media")),
+                query.query_vector.as_deref(),
+            )?;
+            query_affect(query)?;
+        }
         VaultReadRequest::ContextPack(pack) => validate_context_pack_request(pack)?,
         VaultReadRequest::Hydrate(hydrate) => {
             parse_short_ref_request(hydrate)?;

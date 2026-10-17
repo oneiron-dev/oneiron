@@ -330,6 +330,8 @@ fn query_request() -> CoreQueryRequest {
     CoreQueryRequest {
         query: None,
         query_vector: Some(SEED_VECTOR.to_vec()),
+        media: None,
+        query_affect: None,
         limit: 10,
         view: Some(View::Full),
         count_mode: CountMode::Exact,

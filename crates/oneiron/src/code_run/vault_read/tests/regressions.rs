@@ -76,6 +76,8 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
         let query = CoreQueryRequest {
             query: None,
             query_vector: Some(vec![1.0, 0.0, 0.0, 0.0]),
+            media: None,
+            query_affect: None,
             limit: 10,
             view: None,
             count_mode: CountMode::Estimate,

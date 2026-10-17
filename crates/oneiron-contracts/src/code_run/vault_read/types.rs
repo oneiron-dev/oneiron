@@ -70,6 +70,15 @@ pub struct CoreQueryRequest {
     /// list beside `query` and `query_vector`. It seeds a query on its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<ContextPackMediaQuery>,
+    /// Optional affect the query is asked in (OF-423): emotion congruence
+    /// scales each candidate's final score by it, as on the context pack.
+    #[serde(
+        default,
+        rename = "query_affect",
+        alias = "queryAffect",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_affect: Option<CoreQueryAffect>,
     /// Maximum result count.
     #[serde(default = "default_limit")]
     pub limit: usize,
@@ -83,6 +92,15 @@ pub struct CoreQueryRequest {
         alias = "count_mode"
     )]
     pub count_mode: CountMode,
+}
+
+/// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CoreQueryAffect {
+    pub valence: f32,
+    pub arousal: f32,
+    pub dominance: f32,
 }
 
 /// Accepted `POST /v1/core/hydrate` request body.

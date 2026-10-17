@@ -17,6 +17,6 @@ pub use self::contract::{
 pub use self::error::{VaultReadError, VaultReadResult};
 pub use self::types::{
     AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest,
-    CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest, CountMode, View,
-    default_limit,
+    CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryAffect, CoreQueryRequest, CountMode,
+    View, default_limit,
 };
