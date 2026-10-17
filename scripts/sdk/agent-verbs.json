@@ -3216,7 +3216,7 @@
     },
     {
       "name": "ai.options",
-      "description": "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left.",
+      "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",
       "output": "crate::task_verb::sdk::AiOptions",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.options\", &input)?",
@@ -3899,6 +3899,17 @@
       "output": "oneiron_browser::Observation",
       "call": "driver.window(input)?",
       "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.desktop.handover",
+      "description": "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record.",
+      "input": "oneiron_browser::HandoverInput",
+      "output": "oneiron_browser::HandoverOutput",
+      "call": "driver.handover(input)?",
+      "scope": "Write",
       "context": "browser",
       "mcp": "none",
       "section": false
