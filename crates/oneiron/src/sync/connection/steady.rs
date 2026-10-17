@@ -265,12 +265,17 @@ impl SyncConnection {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
                             // (OF-469). Any machine whose rows name history it
-                            // lacks takes it too.
+                            // lacks takes it too, and so does one whose pairing
+                            // pinned a checkpoint it has yet to adopt.
                             if (config.residence_mode == crate::sync::SyncResidenceMode::Opened
                                 || !manager
                                     .vault()
                                     .authority_missing_history()
-                                    .is_ok_and(|missing| missing.is_complete()))
+                                    .is_ok_and(|missing| missing.is_complete())
+                                || crate::sync::client::pinned_checkpoint_pending(
+                                    manager.vault(),
+                                    &config,
+                                ))
                                 && let Err(error) =
                                     crate::sync::client::catch_up_authority(manager.vault(), &config)
                                         .await
@@ -301,6 +306,16 @@ impl SyncConnection {
                                 Err(error) => {
                                     let _ = events.send(SyncEvent::Error(format!(
                                         "Sealed window relay failed: {error}"
+                                    )));
+                                }
+                            }
+                            // The vault's sealed bundle: erase's rewrite of every
+                            // kept pad, then the slot's take and upload (FIX 922).
+                            match crate::sync::client::relay_sealed_bundle(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Sealed bundle relay failed: {error}"
                                     )));
                                 }
                             }

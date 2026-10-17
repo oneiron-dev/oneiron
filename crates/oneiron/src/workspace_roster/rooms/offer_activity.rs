@@ -413,7 +413,7 @@ impl Memory<'_> {
         };
         self.require_offer_audience(room, None)?;
         let caller = WriteActor::new(self.actor(), self.actor_class());
-        vault.try_with_write_txn_grouped(|txn| {
+        let card = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut stored = OFFERS
@@ -430,18 +430,22 @@ impl Memory<'_> {
             if !matches!(stored.card.state, OfferState::Open { .. })
                 || !is_current_in_txn(vault, txn, &stored.card)?
             {
-                return Ok(stored.card);
+                return Ok(stored.into_card());
             }
             if room_offer_expired(&stored.card, now) {
                 stored.card.state = OfferState::AgedOut;
             } else if stored.votes.get(&caller.entity_ref()) == Some(&request.action) {
-                return Ok(stored.card);
+                return Ok(stored.into_card());
             } else {
                 stored.votes.insert(caller.entity_ref(), request.action);
                 stored.card.last_engaged_at = stored.card.last_engaged_at.max(now);
             }
             OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
-            Ok(stored.card)
-        })
+            Ok(stored.into_card())
+        })?;
+        // FIX 1794: the ballot reaches its room's live window.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(&[], &[request.offer_id.as_str()]);
+        Ok(card)
     }
 }

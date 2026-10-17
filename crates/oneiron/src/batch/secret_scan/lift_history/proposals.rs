@@ -319,7 +319,8 @@ fn close_in_txn(
 }
 
 /// Appends the owner's close to the Gate receipt family: the proposal, its
-/// row's path, its cause and the reason. No value, no digest.
+/// row's path, its cause and the reason, as audit notices. No value; the
+/// row key travels as its BLAKE3 hash, inside the diff handle's bound.
 fn receipt_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -335,20 +336,23 @@ fn receipt_in_txn(
         created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
         outcome: "approved".into(),
         reason_codes: vec![REASON_CLOSED.into()],
-        receipt_reasons: vec![
-            format!("proposal:{}", hex(row_key)),
-            format!("path:{}", held.proposal.path),
-            format!("cause:{}", held.cause.code()),
-            format!("close:{}", reason.code()),
-        ],
-        system_notices: Vec::new(),
+        receipt_reasons: Vec::new(),
+        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+            CLOSE_CONTENT_KIND,
+            vec![
+                format!("proposal:{}", hex(row_key)),
+                format!("path:{}", held.proposal.path),
+                format!("cause:{}", held.cause.code()),
+                format!("close:{}", reason.code()),
+            ],
+        ),
         actor_class: "human".into(),
         actor_ref: Some(actor.to_hex()),
         content_kind: CLOSE_CONTENT_KIND.into(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
         claim_id: None,
         grant_ref: None,
-        diff_handle: row_key.to_vec(),
+        diff_handle: blake3::hash(row_key).as_bytes().to_vec(),
         read_frontier_hash: [0; 32],
         redacted_at: None,
     };

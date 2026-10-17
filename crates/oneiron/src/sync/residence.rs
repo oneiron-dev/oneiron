@@ -6,15 +6,26 @@ mod tests;
 
 mod admission;
 mod authority_tail;
+mod bundle;
+mod bundle_payload;
 mod discover;
 mod policy;
 mod prune;
 mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
-    AUTHORITY_TAIL_PAGE_MAX, AuthorityPageImport, authority_append_for, authority_range_for,
+    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
+    AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
 };
+pub use bundle::{
+    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleObject,
+    SealedBundleStage, commit_sealed_bundle, replace_sealed_bundle_pads, sealed_bundle_generations,
+    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex, stage_sealed_bundle_part,
+};
+pub use bundle_payload::SealedBundleTake;
+pub use bundle_payload::SealedKitRestore;
 pub use discover::discover_local_window_keys;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
