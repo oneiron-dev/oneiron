@@ -384,6 +384,27 @@ impl SyncClient {
         }
     }
 
+    /// Whether a full-window exchange of `key` may run on this lane: an
+    /// opened-item owner lane exchanges only the windows this device promoted
+    /// (ARCH-0023b); no other lane is held to it. An import judges it again
+    /// once it holds the window's handle: a demotion may end between the
+    /// frame's gate and the open, and a held handle defers any later one.
+    pub(crate) fn full_window_exchange_allowed(
+        &self,
+        key: &str,
+    ) -> std::result::Result<bool, TransportError> {
+        if self.config.residence_mode != super::SyncResidenceMode::Opened
+            || self.config.federation_peer.is_some()
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .vault
+            .sync_state_get(&format!("rp:w:{key}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some())
+    }
+
     /// Whether this opened-item device promoted `key` to a canonical copy.
     pub(crate) fn opened_window_promoted(
         &self,

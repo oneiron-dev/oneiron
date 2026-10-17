@@ -45,6 +45,12 @@ impl SyncClient {
             });
         }
         let window = self.ensure_window(window_key)?;
+        // The frame passed the promotion gate before this handle was held.
+        if !self.full_window_exchange_allowed(window_key)? {
+            return Err(TransportError::InvalidPayload(
+                "full-window exchange requires causal promotion",
+            ));
+        }
         if window.key.world().is_some() {
             self.staged_world_updates
                 .push((window.key.clone(), update.to_vec()));
