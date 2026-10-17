@@ -33,7 +33,9 @@ pub(super) fn admit_claim_put(
         input.data,
     )?;
     let body = if input.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-        Some(crate::claim::validate_claim_body_and_decode(
+        Some(crate::claim::validate_claim_body_and_decode_in_txn(
+            store,
+            txn,
             input.data,
             input.allow_reserved_predicate,
         )?)

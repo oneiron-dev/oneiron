@@ -128,32 +128,33 @@ pub(super) fn preflight_gate_decisions_in_txn(
                 && !*allow_reserved_predicate =>
             {
                 let result =
-                    crate::claim::validate_claim_body_and_decode(data, false).and_then(|body| {
-                        crate::gate::check_claim_policy_for_write_with_record(
-                            store,
-                            wtxn,
-                            id,
-                            crate::gate::ClaimGateWrite {
-                                body: &body,
-                                envelope: None,
-                                // Envelope-less local claim put: no Dreamer
-                                // authorship to consult about.
-                                auto_checker: None,
-                                defer_metrics_until_commit: true,
-                                transition: None,
-                                owner_authored: None,
-                            },
-                            &policy,
-                            crate::gate::GateWriteMode {
-                                record_decision: true,
-                                persist_pending_consent: false,
-                                resolve_pending: false,
-                                can_resolve_pending_consent: true,
-                                include_source_in_gate_input: false,
-                            },
-                            &mut recorded_decision,
-                        )
-                    });
+                    crate::claim::validate_claim_body_and_decode_in_txn(store, wtxn, data, false)
+                        .and_then(|body| {
+                            crate::gate::check_claim_policy_for_write_with_record(
+                                store,
+                                wtxn,
+                                id,
+                                crate::gate::ClaimGateWrite {
+                                    body: &body,
+                                    envelope: None,
+                                    // Envelope-less local claim put: no Dreamer
+                                    // authorship to consult about.
+                                    auto_checker: None,
+                                    defer_metrics_until_commit: true,
+                                    transition: None,
+                                    owner_authored: None,
+                                },
+                                &policy,
+                                crate::gate::GateWriteMode {
+                                    record_decision: true,
+                                    persist_pending_consent: false,
+                                    resolve_pending: false,
+                                    can_resolve_pending_consent: true,
+                                    include_source_in_gate_input: false,
+                                },
+                                &mut recorded_decision,
+                            )
+                        });
                 Some((id, result))
             }
             BatchOp::ClaimCandidate {

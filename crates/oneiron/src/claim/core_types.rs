@@ -691,6 +691,21 @@ pub(crate) fn validate_claim_body_and_decode(
     Ok(body)
 }
 
+/// [`validate_claim_body_and_decode`], then the claim's class descriptor
+/// where it declares a subject kind or a schema (ARCH-0057: descriptor
+/// validation on local writes and sync replay). Every family check above runs
+/// as it did.
+pub(crate) fn validate_claim_body_and_decode_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    data: &[u8],
+    allow_reserved_predicate: bool,
+) -> Result<ClaimBody> {
+    let body = validate_claim_body_and_decode(data, allow_reserved_predicate)?;
+    crate::comm::check_claim_against_descriptor_in_txn(store, txn, &body)?;
+    Ok(body)
+}
+
 pub(crate) fn validate_claim_body_bytes(data: &[u8], allow_reserved_predicate: bool) -> Result<()> {
     validate_claim_body_and_decode(data, allow_reserved_predicate).map(|_| ())
 }
