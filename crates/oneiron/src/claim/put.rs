@@ -215,6 +215,64 @@ impl Vault {
         Ok(())
     }
 
+    /// [`Self::put_claim_candidate_with_landing`] with one more step in the
+    /// same writer: `after_apply` runs once the candidate has applied, before
+    /// the commit, and reads or writes beside the stored claim. Its refusal
+    /// writes nothing: not the claim, not its gate receipt, not its pending
+    /// owner review.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the candidate door's arguments plus the one after-apply step it commits with"
+    )]
+    pub(crate) fn put_claim_candidate_with_landing_and_after_apply(
+        &self,
+        id: &EntityId,
+        candidate: ClaimCandidate,
+        envelope: &WriteEnvelope,
+        occurred: TimeRange,
+        learned_at: u64,
+        landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        after_apply: impl FnOnce(&Vault, &mut heed::RwTxn<'_>, &EntityId) -> Result<()>,
+    ) -> Result<()> {
+        // The same family rule and guards as the candidate door above.
+        crate::batch::reject_family_owned_candidate(&candidate)?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
+        landing(&wtxn)?;
+        self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
+        crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
+        apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            &mut wtxn,
+            // The batch door's pairing: an overwrite drops the prospective
+            // query hints the prior claim carried (H83).
+            vec![
+                BatchOp::ClaimCandidate {
+                    id: *id,
+                    candidate: Box::new(candidate),
+                    envelope: envelope.clone(),
+                    occurred,
+                    learned_at,
+                    internal_lexical_query_hint: false,
+                },
+                BatchOp::ReconcileLexicalQueryHints {
+                    source: *id,
+                    keep: Vec::new(),
+                },
+            ],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
+        )?;
+        after_apply(self, &mut wtxn, id)?;
+        rekeys.finish(&self.store, &mut wtxn)?;
+        wtxn.commit()?;
+        self.store.notify_proactivity_changes();
+        Ok(())
+    }
+
     /// `landing` runs first in the write transaction; its refusal writes
     /// nothing, not even a gate receipt.
     #[expect(
