@@ -19,6 +19,7 @@ use super::context_pack::{
 use super::contract::{VaultReadMethod, VaultReadRequest, VaultReadResponse};
 use super::error::{
     VaultReadError, VaultReadErrorExt, VaultReadResult, engine_absent, engine_failure,
+    invalid_request,
 };
 use super::projection::{
     batch_item_from_result, entity_record_from_parts, project_context_pack,
@@ -76,9 +77,10 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     }
 
     /// Searches `seeds`, which the host embedded from a context pack's
-    /// `media`, beside its text and vector seeds. Without them a pack that
-    /// names `media` is refused with [`MEDIA_UNAVAILABLE_ENGINE_CODE`]: this
-    /// adapter embeds nothing, and never reads such a pack without its media.
+    /// `media` (and, on the one-space preset, from its text query), beside
+    /// its text and vector seeds. Without them a pack that names `media` is
+    /// refused with [`MEDIA_UNAVAILABLE_ENGINE_CODE`]: this adapter embeds
+    /// nothing, and never reads such a pack without its media.
     #[must_use]
     pub fn with_media_seeds(mut self, seeds: &'v [EmbeddedMediaSeed]) -> Self {
         self.media = Some(seeds);
@@ -90,6 +92,38 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     /// costs no embedding.
     pub fn check_context_pack(request: &CoreContextPackRequest) -> VaultReadResult<()> {
         super::validate::validate_request(VaultReadRequest::ContextPack(request.clone())).map(drop)
+    }
+
+    /// The typed skill-reliability query a pack's `type_ref` and `axis` name,
+    /// on the vault's type tree (OF-184). A placement that tree does not hold
+    /// at that version is refused. Free: a host runs it before a paid embed.
+    pub fn context_pack_skill_query(
+        vault: &Vault,
+        request: &CoreContextPackRequest,
+    ) -> VaultReadResult<Option<crate::skill_reliability::SkillReliabilityQuery>> {
+        const METHOD: VaultReadMethod = VaultReadMethod::ContextPack;
+        let Some(placed) = &request.type_ref else {
+            return Ok(None);
+        };
+        let tree = crate::task_type::type_tree(vault, None)
+            .map_err(|error| engine_failure(METHOD, &error))?;
+        let type_ref = crate::learning::TypeRef {
+            node_id: placed.node_id.clone(),
+            tree_version: placed.tree_version,
+        };
+        match crate::skill_reliability::SkillReliabilityQuery::on_tree(
+            &tree,
+            type_ref,
+            request.axis.clone(),
+        ) {
+            Ok(Some(query)) => Ok(Some(query)),
+            Ok(None) => Err(invalid_request(
+                METHOD,
+                "type_ref",
+                "type_ref is not a node of the vault's type tree at that version",
+            )),
+            Err(error) => Err(invalid_request(METHOD, "axis", &error.to_string())),
+        }
     }
 
     /// Lists in `producers` every row a query reads, the ones its count
@@ -222,14 +256,30 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 .skill_executor(model)
                 .map_err(|error| engine_failure(METHOD, &error))?;
         }
+        if let Some(query) = Self::context_pack_skill_query(self.scoped_read.vault(), request)? {
+            builder = builder
+                .skill_reliability_context(query)
+                .map_err(|error| engine_failure(METHOD, &error))?;
+        }
         if let Some(query) = query {
             builder = builder.search_text(query, candidate_limit);
         }
         if let Some(vector) = vector {
             builder = builder.search_vector(vector, candidate_limit);
         }
-        if request.media.is_some() {
-            let Some(seeds) = self.media else {
+        match self.media {
+            Some(seeds) => {
+                for seed in seeds {
+                    builder = builder.search_media(
+                        &seed.space,
+                        seed.kind,
+                        &seed.vector,
+                        &seed.kinds,
+                        candidate_limit,
+                    );
+                }
+            }
+            None if request.media.is_some() => {
                 return Err(VaultReadError::Engine {
                     narrowing: None,
                     method: METHOD,
@@ -237,16 +287,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     message: "this host serves no ai.embed rung for media; retry without media"
                         .to_owned(),
                 });
-            };
-            for seed in seeds {
-                builder = builder.search_media(
-                    &seed.space,
-                    seed.kind,
-                    &seed.vector,
-                    &seed.kinds,
-                    candidate_limit,
-                );
             }
+            None => {}
         }
         let (builder, response_budget) = apply_budget_controls(
             builder,

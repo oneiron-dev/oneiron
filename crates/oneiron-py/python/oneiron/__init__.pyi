@@ -96,6 +96,13 @@ class MemoryItem(TypedDict):
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
+    record: NotRequired[RecordRef]
+
+class RecordRef(TypedDict):
+    kind: str
+    id: str
+    short_id: NotRequired[str]
+    label: str
 
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
@@ -272,6 +279,8 @@ class Oneiron:
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
     class _SelfVerbs:
         @property
+        def focus(self) -> "Oneiron._SelfFocusVerbs": ...
+        @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
         def identity(self) -> "Oneiron._SelfIdentityVerbs": ...
@@ -285,6 +294,12 @@ class Oneiron:
         def skills(self) -> "Oneiron._SelfSkillsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs": ...
+    class _SelfFocusVerbs:
+        @property
+        def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs": ...
+    class _SelfFocusScratchpadVerbs:
+        def recall(self, spec: Facade.ScratchpadRecallRequest) -> Facade.ScratchpadRecallReply:
+            """Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."""
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...
@@ -328,6 +343,8 @@ class Oneiron:
     class _VaultVerbs:
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
+        @property
+        def shape(self) -> "Oneiron._VaultShapeVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
@@ -353,6 +370,8 @@ class Oneiron:
         def members(self) -> "Oneiron._VaultMembersVerbs": ...
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
+        @property
+        def records(self) -> "Oneiron._VaultRecordsVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
@@ -415,6 +434,8 @@ class Oneiron:
         def structural(self) -> "Oneiron._VaultStructuralVerbs": ...
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
+        def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
+            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
@@ -424,6 +445,13 @@ class Oneiron:
             """One page of the people the caller reads, in handle order."""
         def get(self, spec: Facade.PersonRequest) -> Facade.PersonRow:
             """One person the vault knows, by their pr handle."""
+    class _VaultShapeVerbs:
+        def read(self, spec: Facade.EmptyRequest | None = None) -> Facade.ShapeRead:
+            """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
+        def plan(self, spec: Facade.ShapePlanRequest) -> Facade.ShapePlan:
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
+        def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
+            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
     class _VaultClaimsVerbs:
         def upsert(self, claim: ClaimInput) -> CommitReceipt: ...
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:
@@ -518,6 +546,8 @@ class Oneiron:
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+        def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
+            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:
@@ -536,6 +566,11 @@ class Oneiron:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+    class _VaultRecordsVerbs:
+        def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
+            """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
+        def erase_confirm(self, spec: Facade.RecordEraseConfirmRequest) -> Facade.RecordEraseOutcome:
+            """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -614,7 +649,7 @@ class Oneiron:
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection."""
+            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
         def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.GeneratedLens]:
             """Composes the default vault lens from the named sources, read under the caller's own scope."""
     class _VaultDisclosureVerbs:
@@ -652,6 +687,8 @@ class Oneiron:
     class _VaultCodeVerbs:
         def diff(self, request: Facade.CodeDiffRequest) -> Facade.CodeDiffView | None: ...
         def blame(self, request: Facade.CodeStateRequest) -> Facade.CodeBlameView | None: ...
+        def proposal_view(self, request: Facade.CodeProposalViewRequest) -> Facade.CodeProposalView | None: ...
+        def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
     class _VaultRoomsVerbs:
         def list(self) -> list[Facade.RoomEntry]:
             """The caller's rooms its own grants admit; inside a room turn, only that room."""
@@ -687,9 +724,13 @@ class Oneiron:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsOfferVerbs:
         def __call__(self, spec: Facade.OfferDraft) -> Facade.OfferCard:
-            """Publishes an agent's offer card to join a room or one of its threads."""
+            """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""
         def answer(self, spec: Facade.OfferAnswerRequest) -> Facade.OfferSettlement:
             """The room's host answers an offer card: join, or not now."""
+        def vote(self, spec: Facade.OfferVoteRequest) -> Facade.OfferCard:
+            """Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."""
+        def reopen(self, spec: Facade.OfferReopenRequest) -> Facade.OfferCard:
+            """The room's owner or delegated host reopens its aged-out room-wide offer card."""
     class _VaultRoomsHostVerbs:
         def __call__(self, spec: Facade.RoomHostRequest) -> Facade.RoomStanding:
             """Who hosts a room now, and the caller's own speaking role there."""
@@ -720,11 +761,23 @@ class Oneiron:
     class _VaultConversationsVerbs:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs": ...
+        def create(self, spec: Facade.ConversationCreateInput) -> Facade.CoreEntityWriteReceipt:
+            """Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."""
+        @property
+        def turns(self) -> "Oneiron._VaultConversationsTurnsVerbs": ...
+        @property
+        def records(self) -> "Oneiron._VaultConversationsRecordsVerbs": ...
     class _VaultConversationsTurnVerbs:
         def continue_(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues generation that resumes an incomplete assistant reply from exactly its saved text."""
         def retry(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
+    class _VaultConversationsTurnsVerbs:
+        def create(self, spec: Facade.ConversationTurnCreateInput) -> Facade.CoreEntityWriteReceipt:
+            """Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."""
+    class _VaultConversationsRecordsVerbs:
+        def append(self, spec: Facade.DagRecordAppendInput) -> Facade.DagRecordAppendReceipt:
+            """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
     class _VaultMessagesVerbs:
         def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
             """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
@@ -751,7 +804,7 @@ class Oneiron:
         def edit(self, spec: Facade.QuestionEditRequest) -> Facade.QuestionRecord: ...
         def pause(self, spec: Facade.QuestionPauseRequest) -> Facade.QuestionPaused: ...
         def read(self, spec: Facade.QuestionReadRequest) -> Facade.QuestionRecord | None: ...
-        def answers(self, spec: Facade.QuestionAnswersRequest) -> list[Facade.AnswerRecord]: ...
+        def answers(self, spec: Facade.QuestionAnswersRequest) -> list[Facade.QuestionAnswer]: ...
     class _VaultDecisionsVerbs:
         @property
         def asks(self) -> "Oneiron._VaultDecisionsAsksVerbs": ...

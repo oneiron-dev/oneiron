@@ -16,6 +16,9 @@
 //! overwritten, and the door reads that copy again; only a clean copy mints
 //! custody records.
 
+pub(super) mod admit;
+pub(super) mod side_row;
+
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -50,11 +53,13 @@ const MASK_ORIGIN: SideTable<EntityId, MaskOrigin, Named> =
 /// One masked secret's origin. It holds no value.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MaskOrigin {
-    /// The record whose text or field held the value.
+    /// The record whose text or field held the value; for a row outside the
+    /// entity tables, an id derived from its place and key (`side_row`).
     pub(crate) record: EntityId,
     /// The scan's reason code: the key's kind.
     pub(crate) reason: String,
-    /// Where in the record: `body`, `claim`, `text:<field>` or `file`.
+    /// Where in the record: `body`, `claim`, `text:<field>` or `file`; for a
+    /// row outside the entity tables, `side:<table>`, `attempt` or `intake`.
     pub(crate) place: String,
     pub(crate) masked_at: u64,
 }

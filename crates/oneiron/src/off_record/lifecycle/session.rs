@@ -87,7 +87,9 @@ impl<'vault> OffRecordSessionVault<'vault> {
     }
 
     /// Enters anonymous mode. No session content or receipt is retained, and
-    /// the mode cannot be flipped or promoted into persistence.
+    /// the mode cannot be flipped or promoted into persistence. It names no
+    /// entering actor; a door that verified one enters through
+    /// [`Self::enter_anonymous_as`].
     pub fn enter_anonymous(
         &self,
         session_ref: &str,
@@ -95,7 +97,25 @@ impl<'vault> OffRecordSessionVault<'vault> {
     ) -> Result<OffRecordSession<'vault>> {
         let entry = self
             .vault
-            .enter_anonymous_session_entry(session_ref, backend)?;
+            .enter_anonymous_session_entry(session_ref, backend, None)?;
+        Ok(self.handle(session_ref.to_owned(), entry))
+    }
+
+    /// [`Self::enter_anonymous`] on the owner's proof: the stretch keeps the
+    /// owner's live person as the actor who entered it, the one caller its
+    /// no-record exception serves (`Vault::off_record_session_is_anonymous_for`,
+    /// OF-063). That is the id the HTTP facade and the MCP gateway carry for
+    /// the same owner's credential: its bound principal.
+    pub fn enter_anonymous_as(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<OffRecordSession<'vault>> {
+        let actor = owner.revalidate(self.vault)?;
+        let entry = self
+            .vault
+            .enter_anonymous_session_entry(session_ref, backend, Some(actor))?;
         Ok(self.handle(session_ref.to_owned(), entry))
     }
 
@@ -543,7 +563,7 @@ impl OffRecordSession<'_> {
                     // unconditional read sees.
                     let view = self.vault.store.session_view(self.entry.overlay.clone())?;
                     accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-                    table.put(&self.vault.store, wtxn, key, value)
+                    table.put(self.vault, wtxn, key, value)
                 })
             }
         }
@@ -589,11 +609,7 @@ impl OffRecordSession<'_> {
             RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
                 route.revalidate()?;
                 let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                f(
-                    wtxn,
-                    RoutedDbs::Session(&view),
-                    RoutedDbs::Base(&self.vault.store),
-                )
+                f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Base(self.vault))
             }),
         }
     }
@@ -730,7 +746,7 @@ impl OffRecordSession<'_> {
                 table.put(&view, wtxn, key, value)?;
                 counter.put(&view, wtxn, counter_key, &next_counter)?;
             } else {
-                table.put(&self.vault.store, wtxn, key, value)?;
+                table.put(self.vault, wtxn, key, value)?;
                 counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
             }
             Ok((segment, total))

@@ -193,7 +193,7 @@ fn settle_in_txn(
         }
     }
     intent.settled_at = Some(vault.store.clock.now_recorded_at());
-    INTENTS.put(&vault.store, txn, key, &intent)
+    INTENTS.put(vault, txn, key, &intent)
 }
 
 /// The envelope a hook's writes carry: its author, source Generated, and the

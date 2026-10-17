@@ -18,6 +18,7 @@ mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod reader;
+mod reader_fold;
 mod replay;
 mod result_read;
 pub(crate) mod run_verb_call;
@@ -64,20 +65,30 @@ pub use self::storage::{
     bind_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn};
+pub(crate) use self::storage::{
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
+};
+pub use self::storage::{SummaryMember, SummaryRead};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
 pub use self::reader::{
-    ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DelegatedSource, ReaderActor, ReaderFindingRef,
-    ReaderJob, ReaderJobRunner, ReaderJobState, ReaderJobWake, ReaderParent, ReaderReportReceipt,
-    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, RunDeadline, SelfReaderReportCall,
-    SelfReaderSpawnCall, SpawnHostSeat, SpawnParentBinding, TaskWaitFailure, TaskWaitFinding,
-    TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult, reader_task_brief,
+    ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
+    ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
+    ReaderJobWake, ReaderParent, ReaderReportReceipt, ReaderRoute, ReaderRunEnd,
+    ReaderSpawnReceipt, ReaderSpend, RunDeadline, SUMMARY_GROUP_EXCEEDS_WINDOW,
+    SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall,
+    SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
+    SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
+    TaskWaitSetCall, TaskWaitSetResult, reader_task_brief, summary_exceeds_window,
+    summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
-    valid_reader_key, vault_ref,
+    summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
 };
+pub use self::reader_fold::{summarize_input, summarize_prompt};
 pub use self::storage::ReaderJobs;
 pub(crate) use self::storage::SpendBook;
 #[cfg(test)]
@@ -99,8 +110,12 @@ pub use self::types::{
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, MemoryClaimInput,
     MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange, ReaderSpawnInput,
-    SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern, TaskRefuseDomain, TaskRefuseInput,
-    TaskWaitSetRequest,
+    SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern, SummarizeInput, SummarizeInputEffort,
+    TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
+};
+pub use run_verbs::{
+    AgentSpawnKind, AgentSpawnOutput, LeaderPatternFile, LeaderPatternOutput, MemoryEdgeOutput,
+    MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, TaskRefuseOutput,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,

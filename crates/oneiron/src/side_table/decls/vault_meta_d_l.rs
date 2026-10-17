@@ -34,10 +34,10 @@ side_tables! {
     /// visible claim. Key: id16.
     DISCLOSURE_TIER_A: VaultMeta b"disclosure.tier_a.v1:" Raw;
     /// Passive outbound dispatch audit observation for one attempt/try. Key: id16 + u32be.
-    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw;
+    DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw Authored;
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
-    INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson;
+    INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted;
     /// Approved docs source ceiling (source hash, owner, approval), keyed by the asset's hex32 id.
     INGEST_DOCS_DEEP_CEILING: VaultMeta b"docs-deep-ceiling:v1:" LegacyJson;
     /// Last deep-ingest receipt for one docs asset, keyed by its hex32 id.
@@ -91,7 +91,7 @@ side_tables! {
     /// tournament with the identical prefix and key layout (see WHERE) - worth a second look for
     /// accidental collision if the same (attempt, artifact_id) pair is ever used from both callers.
     /// Key: id16 + u16be + string.
-    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named;
+    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
     /// Branch-scoped reflection-gap queue namespaced by partition hash and the branch's
@@ -126,7 +126,7 @@ side_tables! {
     /// unchanged NOTE is not read again, and its verdict and importance. Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
-    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
+    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
     /// ref).
     DREAMER_PEER_WAIT: VaultMeta b"dreamer:peer_wait:v1:" Raw;
@@ -142,7 +142,7 @@ side_tables! {
     /// Prefilter skip receipt. Key: bytes32 + id16.
     PREFILTER_SKIP: VaultMeta b"dreamer:prefilter:skip:v1:" Named;
     /// One emitted proactivity digest, keyed by its content-derived id. Key: hash32.
-    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson;
+    DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored;
     /// Time (u64 BE) of the last digest that delivered judge asks to one recipient. Key: id16.
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
@@ -212,7 +212,7 @@ side_tables! {
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
-    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw;
+    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored;
     /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
     /// value: u64be.
     DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;
@@ -286,7 +286,7 @@ side_tables! {
     EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
-    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw;
+    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored;
     /// Rebuildable training-reservoir candidate index row, keyed by the proposal artifact's entity
     /// id. Key: id16.
     EDIT_DISTANCE_RESERVOIR_CANDIDATE: VaultMeta b"edit_distance/reservoir_candidate/v1\0" Raw;
@@ -475,7 +475,7 @@ side_tables! {
     /// redaction-shape checks), business validation `Named`'s generic
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_gate_decision`/`decode_gate_decision`.
-    GATE_DECISION_LEDGER: VaultMeta b"gate_decision:v0:" Raw;
+    GATE_DECISION_LEDGER: VaultMeta b"gate_decision:v0:" Raw Ciphertext;
     /// Claim-keyed gate decision index. Key: id16 + id16.
     GATE_DECISION_CLAIM_INDEX: VaultMeta b"gate_decision_by_claim:v0:" Raw;
     /// Claim-index backfill flag. Key: ().
@@ -557,19 +557,19 @@ side_tables! {
     /// rate). Key: u8 (OversightKind tag: 0/1/2).
     HEALER_OVERSIGHT_RECEIPT: VaultMeta b"healer:oversight:v1:" Named;
     /// An external healer's repair proposal record and its review state. Key: id16.
-    SELF_HEAL_HEALER_PROPOSAL: VaultMeta b"healer:proposal:" Named;
+    SELF_HEAL_HEALER_PROPOSAL: VaultMeta b"healer:proposal:" Named Authored;
     /// A human-ratified patch pull-request record for a released healer proposal. Key: id16.
     SELF_HEAL_HEALER_RELEASE: VaultMeta b"healer:release:" Named;
     /// Per-actor per-run healer receipt: submitted proposals and reversal state. Key: id16 + bytes32
     /// (actor then blake3 hash of run name).
-    SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named;
+    SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named Authored;
     /// The history import ledger: one row per imported source message (the conversation it landed
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
-    INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
+    INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named Authored;
     /// A hook block: the rows one AddBlock pins for a recipient's board deliveries, its lifetime
     /// and its consumption. Key: id16 (block).
-    HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named;
+    HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named Authored;
     /// An owner check a hook's causal chain raised (a cycle or a deep chain). Key: hash32 (run key).
     HOOKS_CHECK: VaultMeta b"hooks:check:v1:" Named;
     /// A fact hook's cursor in one source. Key: id16 (binding) + u8 (source).
@@ -580,16 +580,16 @@ side_tables! {
     HOOKS_GRANT: VaultMeta b"hooks:grant:v1:" Named;
     /// Queued work a hook run saved before its cursor moved, and whether it landed. Key: hash32
     /// (run key).
-    HOOKS_INTENT: VaultMeta b"hooks:intent:v1:" Named;
+    HOOKS_INTENT: VaultMeta b"hooks:intent:v1:" Named Authored;
     /// The hook chain behind a row a hook landed. Key: id16 (row).
     HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
     /// A hook run's saved result and pinned input. Key: hash32 (run key).
-    HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named;
+    HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named Authored;
     /// A hook run's Hook receipt. Key: hash32 (run key).
-    HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named;
+    HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named Authored;
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
-    HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named;
+    HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored;
     /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
@@ -703,11 +703,11 @@ side_tables! {
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
-    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw;
+    LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored;
     /// Tracker-mirror outbox marker. Key: id16.
-    LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw;
+    LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine;
     /// Tracker-mirror revision counter of a task. Key: id16.
-    LINEAR_TASK_REVISION: VaultMeta b"linear.task_revision.v1/" Raw;
+    LINEAR_TASK_REVISION: VaultMeta b"linear.task_revision.v1/" Raw Engine;
     /// Verified typed writer of a task at its current revision (u64be revision, id16 actor, class
     /// byte). Key: id16.
     LINEAR_TASK_WRITER: VaultMeta b"linear.task_writer.v1/" Raw;
@@ -715,12 +715,12 @@ side_tables! {
     /// operation id.
     LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;
     /// Task to tracker issue link state. Key: id16.
-    LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson;
+    LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson Authored;
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().
     /// Measured description scores keyed inside one singleton map. Key: ().
-    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson;
+    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored;
     /// Vault-owned description policy. Key: ().
-    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson;
+    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored;
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
     /// Training provenance and checkpoint pin for the installed distilled encoder. Key: ().
@@ -730,23 +730,23 @@ side_tables! {
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Revision-pinned description of one registered model, read by seat routing. Key:
     /// string(model id).
-    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson;
+    LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored;
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
-    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson;
+    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored;
     /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
     /// ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;
     /// One routed seat selected and pinned by caller-chosen bounded seat id.
-    LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson;
+    LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson Authored;
     /// A run's immutable model-seat pin and choice receipt, committed before its first provider
     /// call. Key: id16 (run).
     LLM_RUN_SEAT: VaultMeta b"llm:run_seat:v1:" LegacyJson;
     /// Rolling window (max 64) of recent benchmark score-change diffs for one model. Key:
     /// string(model id) "\x00".
-    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson;
+    LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored;
 }

@@ -1,7 +1,9 @@
+use std::borrow::Cow;
 use std::cell::Cell;
 
 use rmpv::Value;
 
+use crate::batch::secret_scan::admitted_from;
 use crate::{EntityId, Error, Result};
 
 use super::codec::{
@@ -156,6 +158,9 @@ impl CodeRunBridgeCall {
             ),
             SelfDispatchOutcome::TaskWaitSet(_) if self.effect != SelfEffect::TasksWaitSet => Err(
                 invalid_code_run_replay("task wait set answer belongs to another effect"),
+            ),
+            SelfDispatchOutcome::Summarize(_) if self.effect != SelfEffect::Summarize => Err(
+                invalid_code_run_replay("summary answer belongs to another effect"),
             ),
             SelfDispatchOutcome::Leader(_) if self.effect != SelfEffect::Leader => Err(
                 invalid_code_run_replay("leader answer belongs to another effect"),
@@ -482,16 +487,21 @@ impl ResultOccurrence {
     /// The occurrence of `output` that `owner` holds, or of its bytes alone
     /// when it has no owner. The one derivation of an occurrence id.
     pub fn of(owner: Option<EntityId>, output: &CodeRunRawOutput) -> Result<Self> {
-        Ok(Self(match owner {
-            Some(owner) => EntityId::derive(
-                b"oneiron:code-run-output-occurrence:v1",
-                &[owner.as_bytes().as_slice(), output.path.as_bytes()],
-            )?,
-            None => EntityId::derive(
+        match owner {
+            Some(owner) => Self::owned(owner, &output.path),
+            None => Ok(Self(EntityId::derive(
                 b"oneiron:code-run-output-unowned:v1",
                 &[output.raw_blake3.as_slice()],
-            )?,
-        }))
+            )?)),
+        }
+    }
+
+    /// The occurrence run `owner` holds at `path`.
+    pub fn owned(owner: EntityId, path: &str) -> Result<Self> {
+        Ok(Self(EntityId::derive(
+            b"oneiron:code-run-output-occurrence:v1",
+            &[owner.as_bytes().as_slice(), path.as_bytes()],
+        )?))
     }
 
     #[must_use]
@@ -711,6 +721,27 @@ impl CodeRunReplayRecord {
         CodeRunReplayGeneration::for_record(self)
     }
 
+    /// This record with each bridge call `held` already stores in its place,
+    /// as the side-row wall admitted it (OF-067). An append rewrites the whole
+    /// row, so a call an earlier append stored keeps its handles and the wall
+    /// mints only for the calls this append adds.
+    pub(crate) fn over_held(&self, held: Option<&Self>) -> Cow<'_, Self> {
+        let Some(held) = held.filter(|held| held.run_id == self.run_id) else {
+            return Cow::Borrowed(self);
+        };
+        let mut record = self.clone();
+        for (call, kept) in record.bridge_calls.iter_mut().zip(&held.bridge_calls) {
+            if call.seq == kept.seq
+                && call.effect == kept.effect
+                && call.started_at_ms == kept.started_at_ms
+                && call.finished_at_ms == kept.finished_at_ms
+            {
+                call.clone_from(kept);
+            }
+        }
+        Cow::Owned(record)
+    }
+
     /// The rows this run's verb calls listed as served, kept beside each
     /// answer it recorded (DEC-0005). `None` when an answer was recorded with
     /// no row set, or does not decode: no caller off this device is released
@@ -828,7 +859,9 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         // difference the guest was never allowed to control.
         let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
         let request = self_call_request_value(&call)?;
-        if stored.request != request {
+        // A stored request keeps the handles the side-row wall placed where
+        // the live call still holds the secrets (OF-067).
+        if stored.request != request && !admitted_from(&stored.request, &request)? {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
         // A cursor can be built from an in-memory record that never passed the

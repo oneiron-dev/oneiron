@@ -719,23 +719,39 @@ impl Memory<'_> {
     }
 
     /// Binds the off-record session the host's request names (its
-    /// `x-oneiron-session`): context, not authority. Inside one the live
-    /// registry holds anonymous, a reference refusal or an unlinked prose
-    /// link is refused or unlinked as anywhere else but writes no receipt
-    /// (OF-063, Engine ruling 10-17, matching OF-538's call receipts).
+    /// `x-oneiron-session`) for this surface's principal, the request's own:
+    /// context, not authority. Inside one the live registry holds anonymous
+    /// and that principal is verified in (its room's roster, or the actor
+    /// who entered it alone), a reference refusal or an unlinked prose link
+    /// is refused or unlinked as anywhere else but writes no receipt
+    /// (OF-063, Engine ruling 10-17, matching OF-538's call receipts). A
+    /// caller whose principal provably differs writes its receipts as
+    /// anywhere else; one with no principal keeps the unchecked rule.
     #[must_use]
     pub fn in_off_record_session(mut self, session_ref: &str) -> Self {
         self.off_record_session = Some(session_ref.trim().to_owned());
         self
     }
 
-    /// Whether this surface's call sits in an anonymous off-record session,
-    /// which keeps no record: the one signal OF-538's call receipts read
-    /// ([`Vault::off_record_session_is_anonymous`]).
+    /// Whether this surface's call sits in an anonymous off-record session
+    /// its principal is verified in, which keeps no record: the one signal
+    /// OF-538's call receipts read
+    /// ([`Vault::off_record_session_is_anonymous_for`]), judged now, when a
+    /// receipt would be written, not when the session was bound.
+    ///
+    /// The principal is the one the bound credential names (its holder,
+    /// the same one the transports' call receipts compare), or none for the
+    /// host root, which names no person; a surface no credential is bound
+    /// to calls for its bound actor.
     pub(crate) fn keeps_no_record(&self) -> bool {
-        self.off_record_session
-            .as_deref()
-            .is_some_and(|session| self.vault.off_record_session_is_anonymous(session))
+        self.off_record_session.as_deref().is_some_and(|session| {
+            let principal = match &self.read_proof {
+                Some(proof) => EntityId::from_hex(&proof.claims().holder_ref).ok(),
+                None => Some(self.actor),
+            };
+            self.vault
+                .off_record_session_is_anonymous_for(session, principal)
+        })
     }
 
     /// The logical verb's id a host bound, if any.

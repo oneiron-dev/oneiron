@@ -87,6 +87,10 @@ pub enum SelfCall {
     Team(crate::team::SelfTeamCall),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
+    /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's
+    /// results, made by a host job on the run's route and memoised by its
+    /// members' occurrences and recipe.
+    Summarize(Box<super::reader::SelfSummarizeCall>),
     /// `self.leader.advice` and `self.leader.pattern` (OF-389): the bound
     /// leader's top shapes, and the pattern she picked from them, on the
     /// host's planner binding. The lease and the skills are the host's.
@@ -125,6 +129,7 @@ impl SelfCall {
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
+            Self::Summarize(_) => SelfEffect::Summarize,
             Self::Leader(_) => SelfEffect::Leader,
             Self::Team(_) => SelfEffect::Team,
         }
@@ -201,6 +206,8 @@ pub enum SelfEffect {
     ReaderReport,
     /// A wait over the run's reader children.
     TasksWaitSet,
+    /// A summary of the run's results, made by a host job.
+    Summarize,
     /// The bound leader's advice or pattern load (OF-389).
     Leader,
     /// A team run the bound agent leads: its start or its receipt.
@@ -240,6 +247,7 @@ impl SelfEffect {
             Self::ReaderSpawn => "self.spawn",
             Self::ReaderReport => "tasks.update",
             Self::TasksWaitSet => "tasks.wait_set",
+            Self::Summarize => "summarize",
             Self::Leader => "self.leader",
             Self::Team => "self.team",
         }
@@ -277,7 +285,8 @@ impl SelfEffect {
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
             Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
-            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Leader => None,
+            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
+            Self::Leader => None,
             Self::Team => None,
         }
     }
@@ -628,6 +637,9 @@ pub enum SelfDispatchOutcome {
     ReaderReport(super::reader::ReaderReportReceipt),
     /// One reduction of a wait over the run's reader children.
     TaskWaitSet(super::reader::TaskWaitSetResult),
+    /// A summary's card, its job while it is made, or a withheld member's
+    /// reply.
+    Summarize(super::reader::SummarizeReply),
     /// The leader's advice or loaded pattern, as JSON.
     Leader(String),
     /// A team run's start or receipt (OF-540).

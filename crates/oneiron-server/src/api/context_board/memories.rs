@@ -62,6 +62,11 @@ pub(crate) struct ContextBoardSessionControls {
     #[serde(default, rename = "session_id", alias = "sessionId")]
     #[schema(example = "session-123")]
     pub(super) session_id: Option<String>,
+    /// The conversation branch this board renders for. A hook block
+    /// addressed to a branch reaches only a board that names it.
+    #[serde(default)]
+    #[schema(example = "branch-2")]
+    pub(super) branch: Option<String>,
 }
 
 /// Companion scope that influences MEMORIES assembly.
@@ -299,6 +304,73 @@ pub(crate) fn resolve_memories_request(
         session_id: session_id.to_owned(),
         companion: Some(companion),
     })
+}
+
+/// The MEMORIES section a board that runs no retrieval still owes its hook blocks (OF-579): each
+/// block's rows, read as a context pack reads its pins, under the caller's read narrowed to the
+/// board's room (or the caller alone) and the disclosure clamp of those present. A once answer
+/// waits for a pack assembly, so these rows read under standing clearance alone. `None` when
+/// MEMORIES is turned off or no row is admitted. What goes out under a contact's standing
+/// clearance gets the owner's post-hoc receipt, as a pack's rows do.
+pub(crate) async fn hook_pins_section(
+    server: &crate::server::SyncServer,
+    auth: &CoreAuth,
+    memories: Option<&ContextBoardMemoriesControls>,
+    room_id: Option<oneiron::EntityId>,
+    pins: &[oneiron::context_board::HookPin],
+) -> Result<Option<oneiron::MemoriesSection>, ApiError> {
+    if pins.is_empty() || memories.and_then(|controls| controls.enabled) == Some(false) {
+        return Ok(None);
+    }
+    let vault = &server.vault;
+    let read = super::super::scoped_read_for_core_auth(vault, auth)?;
+    let (room_members, room) = super::super::resolve_core_room(vault, auth, &read, room_id)?;
+    let interlocutors =
+        super::super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
+    let read = super::super::narrow_to_core_audience(
+        vault,
+        auth,
+        read,
+        room_members.as_deref(),
+        room.as_ref(),
+        interlocutors.as_ref(),
+    )?;
+    let disclosure = super::super::resolve_core_disclosure(
+        vault,
+        interlocutors.as_ref(),
+        room.as_ref().map(|room| room.reader.is_some()),
+    )?;
+    let mut section =
+        oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)));
+    let _receipts = section
+        .include_hook_pins(&read, pins, disclosure.as_ref())
+        .map_err(|error| core_engine_error("hook pin read failed", error))?;
+    if section.rows.is_empty() {
+        return Ok(None);
+    }
+    let delivered = section
+        .rows
+        .iter()
+        .map(|row| oneiron::EntityId::from_hex(&row.id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| core_engine_error("memory delivery id failed", error))?;
+    let channels: std::collections::BTreeSet<String> = room_id
+        .map(|room| oneiron::consent::contact_disclosure_room_channel(&room))
+        .into_iter()
+        .collect();
+    let vault = std::sync::Arc::clone(vault);
+    tokio::task::spawn_blocking(move || {
+        vault.record_standing_disclosure_uses(
+            &delivered,
+            interlocutors.as_ref(),
+            &std::collections::BTreeMap::new(),
+            &channels,
+        )
+    })
+    .await
+    .map_err(|_| ApiError::internal_server_error("disclosure receipt task failed"))?
+    .map_err(|error| core_engine_error("disclosure receipt failed", error))?;
+    Ok(Some(section))
 }
 
 pub(crate) fn resolve_companion_assembly(

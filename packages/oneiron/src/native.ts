@@ -29,6 +29,7 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+selfFocusScratchpadRecall(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -41,6 +42,9 @@ selfInboxConcernOutcome(input: unknown): unknown
 selfInboxConcernMove(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
+vaultShapeRead(input: unknown): unknown
+vaultShapePlan(input: unknown): unknown
+vaultShapeApply(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
@@ -81,6 +85,7 @@ vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
+vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
@@ -97,6 +102,8 @@ vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultRecordsErasePreview(input: unknown): unknown
+vaultRecordsEraseConfirm(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
@@ -139,6 +146,8 @@ vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
+vaultCodeProposalView(requestJson: string): string
+vaultCodeRepoDiff(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
@@ -175,6 +184,8 @@ vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown
+vaultRoomsOfferVote(input: unknown): unknown
+vaultRoomsOfferReopen(input: unknown): unknown
 vaultRoomsOffers(input: unknown): unknown
 vaultProjectsGoalRevisions(input: unknown): unknown
 vaultProjectsGoalDismiss(input: unknown): unknown
@@ -231,6 +242,10 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
+vaultConversationsCreate(input: unknown): unknown
+vaultConversationsTurnsCreate(input: unknown): unknown
+vaultConversationsRecordsAppend(input: unknown): unknown
+vaultBatch(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown

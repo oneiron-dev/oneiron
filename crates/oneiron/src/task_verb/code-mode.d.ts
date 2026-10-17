@@ -75,6 +75,9 @@ declare namespace self {
   };
   const focus: {
     refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
+    scratchpad: {
+      recall(input: { query: string; session_id: string }): Promise<unknown>;
+    };
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
@@ -121,6 +124,7 @@ declare namespace self {
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
+declare function summarize(input: { ref: string; effort?: "low" | "medium" | "high"; group?: string[]; defer?: true }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
@@ -155,6 +159,7 @@ declare const vault: {
       acknowledge(input: { signer: string }): Promise<unknown>;
     };
   };
+  batch(input: { entities: { entity_type: number; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }[] }): Promise<unknown>;
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
     history(input: { claim_ref: string }): Promise<unknown>;
@@ -168,6 +173,8 @@ declare const vault: {
   code: {
     blame(input: { path: string; repo: string; revision_ref?: string | null }): Promise<unknown>;
     diff(input: { after: { path: string; repo: string; revision_ref?: string | null }; before: { path: string; repo: string; revision_ref?: string | null } }): Promise<unknown>;
+    proposal_view(input: { proposal_ref: string }): Promise<unknown>;
+    repo_diff(input: { after: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null }; before: { repo?: string | null; revision_ref?: string | null; snapshot_ref?: string | null } }): Promise<unknown>;
   };
   commit(input: { claims: object[] }): Promise<unknown>;
   companions: {
@@ -181,9 +188,16 @@ declare const vault: {
     status(input: { job_ref: string }): Promise<unknown>;
   };
   conversations: {
+    create(input: { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }): Promise<unknown>;
+    records: {
+      append(input: { conversation: string; parent?: string | null; reply_to?: string | null; addr?: "broadcast" | "direct" | null; to?: string[] | null; advance: boolean; body: unknown; text?: { field: string; value: string }[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: { message: string; start: number; end: number } | null }): Promise<unknown>;
+    };
     turn: {
       continue(input: { turn_id: string }): Promise<unknown>;
       retry(input: { turn_id: string }): Promise<unknown>;
+    };
+    turns: {
+      create(input: { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }): Promise<unknown>;
     };
   };
   decisions: {
@@ -220,7 +234,7 @@ declare const vault: {
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {
-    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
+    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; posture?: string | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
   };
   guests: {
     mint_slip(input: { expires_at: number; grant_ref: string; holder_key: string }): Promise<unknown>;
@@ -265,6 +279,7 @@ declare const vault: {
     add(input: { holder_key?: string | null; member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
     decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
+    invitation_slip(input: { holder_key: string; invitation: string; member: string; vault_id: number }): Promise<unknown>;
     invitations(input: { vault_id: number }): Promise<unknown>;
     leave(input: { vault_id: number }): Promise<unknown>;
     remove(input: { member: string; vault_id: number }): Promise<unknown>;
@@ -315,6 +330,10 @@ declare const vault: {
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
+  records: {
+    erase_confirm(input: { also_same_bytes?: boolean; preview_digest: string; record: string }): Promise<unknown>;
+    erase_preview(input: { record: string }): Promise<unknown>;
+  };
   refs: {
     links(input: { after?: string | null; limit?: number | null; text?: string | null; turn_ref?: string | null }): Promise<unknown>;
     resolve(input: { reference: string }): Promise<unknown>;
@@ -332,8 +351,10 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
-    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; what: string }) => Promise<unknown>) & {
+    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; until?: number | null; what: string }) => Promise<unknown>) & {
       answer(input: { action: "join" | "not_now"; intent_key: string; offer_id: string }): Promise<unknown>;
+      reopen(input: { expected_last_engaged_at: number; offer_id: string; until?: number | null }): Promise<unknown>;
+      vote(input: { action: "join" | "not_now"; offer_id: string }): Promise<unknown>;
     };
     offers(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
@@ -357,6 +378,11 @@ declare const vault: {
     wake_policy: {
       set(input: { policy: unknown; idempotency_key: string }): Promise<unknown>;
     };
+  };
+  shape: {
+    apply(input: { approve?: number[]; plan: object }): Promise<unknown>;
+    plan(input: { seed?: object | null }): Promise<unknown>;
+    read(input: object): Promise<unknown>;
   };
   shared: {
     close_erase_ask(input: { act_id?: string | null; ask_id: string; erased: boolean }): Promise<unknown>;

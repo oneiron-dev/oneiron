@@ -192,6 +192,8 @@ pub mod skill_scan;
 pub mod training_pack;
 // ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron.
 pub mod vault_cleanup;
+// ARCH-0070 vault shape as code: the seed, plan and apply over the setup plane.
+pub mod vault_shape;
 // ===== Code, artifacts & custody ===== code memory, git wire, build cache, artifacts, secrets
 pub mod anchored_annotation;
 pub mod artifact_hosting;
@@ -208,6 +210,7 @@ pub mod code_view;
 pub mod codebase;
 pub mod contract_oracle;
 pub mod conversation_dag;
+pub mod core_write;
 pub(crate) mod credential_door;
 pub mod edit_distance;
 pub mod edit_roundtrip;
@@ -581,6 +584,7 @@ pub use crate::workspace_roster::{
     WorkspaceRosterRole,
 };
 pub use crate::workspace_roster::{CompanionChoice, WorkCompanionPolicy};
+pub use crate::world_keys::{PAGE_SEAL_WARNING, VaultPageSeal};
 pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
 };

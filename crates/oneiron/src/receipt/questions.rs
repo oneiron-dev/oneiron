@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::llm::decision::questions::{
-    AnswerRecord, GraphAskFailure, GraphAskReceipts, QuestionDefinition,
+    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionDefinition,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
@@ -65,6 +65,15 @@ pub struct GraphAskRequest {
     /// ask's: an ask over n units can run up to n times this.
     #[serde(default)]
     pub unit_deadline_ms: Option<u64>,
+    /// Where this ask's unit text may go: `managed`, `relay` or `self-host`;
+    /// the vault's own posture when absent. It only narrows, as a standing
+    /// question's `posture` does: one stricter than the vault's answers
+    /// without the rungs that send unit text off the host where it forbids
+    /// that, and one as loose as the vault's or looser asks under the
+    /// vault's.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub posture: Option<crate::config::HostingPrivacyPosture>,
 }
 
 /// A graph ask's type selection: the engine's by-type entry
@@ -281,4 +290,29 @@ pub struct QuestionReadRequest {
 #[serde(deny_unknown_fields)]
 pub struct QuestionAnswersRequest {
     pub id: EntityId,
+}
+
+/// One entry of `vault.questions.answers`, tagged by `kind`: a graph
+/// question's answer receipt, or a standing artifact question's last ask of
+/// one artifact, whose answers wait as a proposal for Keep
+/// (`vault.artifacts.keep` / `vault.artifacts.discard`) rather than as
+/// claims.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QuestionAnswer {
+    Graph(AnswerRecord),
+    Artifact(ArtifactAskRecord),
+}
+
+impl QuestionAnswer {
+    /// The answers door's one shape: every graph answer receipt in the
+    /// engine's order, then every artifact ask in artifact order.
+    #[must_use]
+    pub fn union(graph: Vec<AnswerRecord>, asks: Vec<ArtifactAskRecord>) -> Vec<Self> {
+        graph
+            .into_iter()
+            .map(Self::Graph)
+            .chain(asks.into_iter().map(Self::Artifact))
+            .collect()
+    }
 }

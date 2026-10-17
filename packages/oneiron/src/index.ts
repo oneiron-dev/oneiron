@@ -144,6 +144,12 @@ export class Oneiron {
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
   readonly self = {
+    focus: {
+      scratchpad: {
+        /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
+        recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
+      },
+    },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
       diary: Object.assign((input: Facade.DiaryEntryRequest): Facade.DiaryEntryReceipt => this.#call(() => this.#client.selfMemoryDiary(input) as Facade.DiaryEntryReceipt), {
@@ -195,6 +201,14 @@ export class Oneiron {
       list: (input: Facade.PeopleListRequest): Facade.PeoplePage => this.#call(() => this.#client.vaultPeopleList(input) as Facade.PeoplePage),
       /** One person the vault knows, by their pr handle. */
       get: (input: Facade.PersonRequest): Facade.PersonRow => this.#call(() => this.#client.vaultPeopleGet(input) as Facade.PersonRow),
+    },
+    shape: {
+      /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+      read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
+      /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+      plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
+      /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+      apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     /**
    * Witnesses one conversational turn.
@@ -324,6 +338,8 @@ export class Oneiron {
     members: {
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
+      /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
+      invitation_slip: (input: Facade.InvitationSlipRequest): Facade.InvitationSlip => this.#call(() => this.#client.vaultMembersInvitationSlip(input) as Facade.InvitationSlip),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
       /** An Admin removes one member from a shared vault. */
@@ -343,6 +359,12 @@ export class Oneiron {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
+    },
+    records: {
+      /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
+      erase_preview: (input: Facade.RecordEraseRequest): Facade.RecordErasePreview => this.#call(() => this.#client.vaultRecordsErasePreview(input) as Facade.RecordErasePreview),
+      /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
+      erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.RecordEraseOutcome => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.RecordEraseOutcome),
     },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
@@ -418,7 +440,7 @@ export class Oneiron {
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
       /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
-      /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. */
+      /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
       /** Composes the default vault lens from the named sources, read under the caller's own scope. */
       default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.GeneratedLens> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.GeneratedLens>),
@@ -476,6 +498,10 @@ export class Oneiron {
       diff: (request: Facade.CodeDiffRequest): Facade.CodeDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeDiff(keyedJson(request))) as Facade.CodeDiffView | null; return result === null ? null : result }),
       /** Every unit of one tested code file state, blamed by the operations that wrote it. */
       blame: (request: Facade.CodeStateRequest): Facade.CodeBlameView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeBlame(keyedJson(request))) as Facade.CodeBlameView | null; return result === null ? null : result }),
+      /** One repo proposal's semantic change from its base, under the provenance it was proposed with. */
+      proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
+      /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
+      repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
     },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */
@@ -502,10 +528,14 @@ export class Oneiron {
       join: (input: Facade.JoinRequest): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsJoin(input) as Facade.JoinOutcome),
       /** One party's answer to a join that waits on it, after which the join is decided again. */
       consent: (input: Facade.ConsentAnswer): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsConsent(input) as Facade.JoinOutcome),
-      /** Publishes an agent's offer card to join a room or one of its threads. */
+      /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
       offer: Object.assign((input: Facade.OfferDraft): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOffer(input) as Facade.OfferCard), {
         /** The room's host answers an offer card: join, or not now. */
         answer: (input: Facade.OfferAnswerRequest): Facade.OfferSettlement => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as Facade.OfferSettlement),
+        /** Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits. */
+        vote: (input: Facade.OfferVoteRequest): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOfferVote(input) as Facade.OfferCard),
+        /** The room's owner or delegated host reopens its aged-out room-wide offer card. */
+        reopen: (input: Facade.OfferReopenRequest): Facade.OfferCard => this.#call(() => this.#client.vaultRoomsOfferReopen(input) as Facade.OfferCard),
       }),
       /** One page of the current offer cards in a room or one of its threads. */
       offers: (input: Facade.OffersRequest): Facade.OffersPage => this.#call(() => this.#client.vaultRoomsOffers(input) as Facade.OffersPage),
@@ -546,6 +576,16 @@ export class Oneiron {
         /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
         retry: (input: Facade.TurnActionRequest): Facade.TurnActionReceipt => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as Facade.TurnActionReceipt),
       },
+      /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
+      create: (input: Facade.ConversationCreateInput): Facade.CoreEntityWriteReceipt => this.#call(() => this.#client.vaultConversationsCreate(input) as Facade.CoreEntityWriteReceipt),
+      turns: {
+        /** Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once. */
+        create: (input: Facade.ConversationTurnCreateInput): Facade.CoreEntityWriteReceipt => this.#call(() => this.#client.vaultConversationsTurnsCreate(input) as Facade.CoreEntityWriteReceipt),
+      },
+      records: {
+        /** Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once. */
+        append: (input: Facade.DagRecordAppendInput): Facade.DagRecordAppendReceipt => this.#call(() => this.#client.vaultConversationsRecordsAppend(input) as Facade.DagRecordAppendReceipt),
+      },
     },
     messages: {
       /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
@@ -575,7 +615,7 @@ export class Oneiron {
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
-      answers: (input: Facade.QuestionAnswersRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.AnswerRecord[]),
+      answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
     },
     decisions: {
       asks: {
@@ -619,6 +659,8 @@ export class Oneiron {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
     },
+    /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
+    batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),
     consolidation: {
       /** Enqueues one consolidation attempt and returns its durable job reference. */
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
