@@ -60,7 +60,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/booking/client_address_tests.rs` | test | m | — | — | Booking admission charges the client the connection proves (C7): its own peer, or the client a configured… |
 | `src/api/booking/constants.rs` | src | s | 14 crate-vis | — | — |
-| `src/api/booking/free_text.rs` | src | s | 1 crate-vis | — | A booking page's free-text constraint (ONE-1816), parsed on the cheap seat… |
+| `src/api/booking/free_text.rs` | src | s | 3 crate-vis | — | A booking page's free-text constraint (ONE-1816), parsed on the cheap seat… |
+| `src/api/booking/front.rs` | src | m | 4 crate-vis | — | ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front |
 | `src/api/booking/helpers.rs` | src | s | 5 crate-vis | — | — |
 | `src/api/booking/instructions.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking/lifecycle.rs` | src | s | 3 crate-vis | — | — |
@@ -150,11 +151,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 7 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | m | 39 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 40 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 6 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
+| `src/api/facade/secret_lift_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067) |
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 2 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 15 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
@@ -226,6 +228,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/commitment_routes.rs` | src | s | 1 crate-vis | — | Owner doors for where commitment reminders go (OF-187) |
 | `src/api/owner_routes/concern_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health cards (OF-568) with its run-tree… |
 | `src/api/owner_routes/conflict_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
+| `src/api/owner_routes/connector_admission_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a… |
 | `src/api/owner_routes/connector_consent_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/connectors/consent`: the owner's one act that lets an actor call a catalog connector's tools… |
 | `src/api/owner_routes/connector_subscription_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/connectors/subscriptions`: the owner's door that lets an agent answer a built-in channel (OF-519) |
 | `src/api/owner_routes/cooperative_deletion_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route |
@@ -440,6 +443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/skills.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | SkillsConfig | The `[skills]` section: how the skill-edit gate's live slice is funded at this server, and the skills a… |
 | `src/config/tests.rs` | test | s | — | — | — |
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
+| `src/connector_admission_host.rs` | src | L | 13 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `src/connector_call_host.rs` | src | m | 1 struct · 2 fn | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
 | `src/connector_call_settle.rs` | src | s | 3 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
 | `src/control_keys.rs` | src | s | 2 struct · 1 enum · 6 fn · 1 const · 1 mod | ControlKeys, KeyError, KeyRecord | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
@@ -498,7 +502,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
 | `src/handler/tests.rs` | test | XL | — | — | — |
-| `src/handler/transport.rs` | src | m | 11 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
+| `src/handler/transport.rs` | src | m | 13 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
 | `src/handler/window_row_tests.rs` | test | L | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
 | `src/handler/window_sync.rs` | src | m | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
 | `src/hook_verdict.rs` | src | s | 2 crate-vis | — | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |

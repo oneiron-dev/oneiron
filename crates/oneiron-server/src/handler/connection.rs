@@ -181,7 +181,8 @@ async fn handle_connection(
         Arc::clone(server.vault()) as Arc<dyn RevokedTokenJtis + Send + Sync>,
         session_jti.clone(),
         conn_id,
-    );
+    )
+    .with_inbound_cap(server.config.max_frame_size);
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
     // must be a supported protocol hello. Malformed frames or unsupported
