@@ -23,13 +23,14 @@
 
 pub(super) mod action_routes;
 mod agent_verbs;
+mod graph_ask_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 pub(super) mod role_picks;
 mod shared_act_doors;
-mod weave_doors;
 #[cfg(test)]
 pub(super) mod tests;
+mod weave_doors;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

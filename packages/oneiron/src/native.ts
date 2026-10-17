@@ -154,6 +154,12 @@ aiVideo(input: unknown): unknown
 aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
 aiVerdict(input: unknown): unknown
+vaultGraphAsk(input: unknown): unknown
+vaultQuestionsCreate(input: unknown): unknown
+vaultQuestionsEdit(input: unknown): unknown
+vaultQuestionsPause(input: unknown): unknown
+vaultQuestionsRead(input: unknown): unknown
+vaultQuestionsAnswers(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
 vaultCommit(input: unknown): unknown

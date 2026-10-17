@@ -25,13 +25,17 @@ impl Vault {
         if row.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
+        // Withdrawn words, a stale body of any kind, or a recorded source
+        // that no longer stands read as absent.
         if crate::origin::lfs::unpublished_lfs_chunk_in_txn(&self.store, txn, id, row.entity_type)?
-            || store.port_deletion_state(txn, id)?.deleted
-            || stale_in_txn(store, txn, id)?
+            || !super::safe_read::body_readable_in_txn(
+                store,
+                txn,
+                id,
+                &row.body,
+                super::safe_read::BodyStale::Withdrawn,
+            )?
         {
-            return Ok(None);
-        }
-        if super::safe_read::body_is_stale(&row.body) {
             return Ok(None);
         }
         #[cfg(feature = "sync")]

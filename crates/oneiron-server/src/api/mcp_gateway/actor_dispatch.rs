@@ -90,9 +90,10 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     if auth.org_ref().is_some() || !auth.has_scope(crate::auth::CoreScope::Read) {
         return Err(mcp_proof_error());
     }
-    // The registry holds all or one world, and all or a set of facets. Refuse
-    // a wider registration instead of silently projecting away verifier bounds.
-    // A facet bound the owner's own credential carries binds nothing (owner
+    // The registry holds all or one world, and all or a set of facets: as a
+    // world/facet Scope it must narrow the proof's. Refuse a wider
+    // registration instead of silently projecting away verifier bounds. A
+    // facet bound the owner's own credential carries binds nothing (owner
     // ruling FACET-READ), so it refuses no facet set.
     let axis = |id: Option<oneiron::EntityId>| {
         id.map_or(ScopeAxis::All, |id| {
@@ -105,8 +106,19 @@ pub(crate) async fn resolve_mcp_gateway_actor(
             .credential_facets_owner_exempt(proof)
             .unwrap_or(false)
     };
-    if !axis(actor.scope.world_ref).is_narrowing_of(&proof.scope().worlds)
-        || (!actor.scope.facets.is_narrowing_of(&proof.scope().facets) && !facets_owner_exempt())
+    let proof_facets =
+        if actor.scope.facets.is_narrowing_of(&proof.scope().facets) || !facets_owner_exempt() {
+            proof.scope().facets.clone()
+        } else {
+            ScopeAxis::All
+        };
+    let projection = |worlds, facets| oneiron::federation::Scope {
+        worlds,
+        facets,
+        ..oneiron::federation::Scope::top()
+    };
+    if !projection(axis(actor.scope.world_ref), actor.scope.facets.clone())
+        .is_narrowing_of(&projection(proof.scope().worlds.clone(), proof_facets))
     {
         return Err(mcp_proof_error());
     }
