@@ -108,35 +108,9 @@ impl Memory<'_> {
     /// found: no copy of a deleted name becomes synced truth.
     pub fn confirm_provisional_entity(&self, id: &EntityId) -> MemoryResult<()> {
         self.with_verified_actor_write_txn(|txn| {
-            if !PROVISIONAL.contains(&self.vault().store, txn, id)? {
+            if !confirm_in_txn(self.vault(), txn, id)? {
                 return Err(MemoryError::not_found("no provisional entity"));
             }
-            if crate::ports::EntityStoreRead::port_entity_raw(&self.vault().store, txn, id)?
-                .is_some()
-            {
-                return Err(
-                    Error::InvariantViolation("a provisional id names an entity row").into(),
-                );
-            }
-            let Some(entity) = sourced_in_txn(self.vault(), txn, id)? else {
-                return Err(MemoryError::not_found("no provisional entity"));
-            };
-            let mut body = Vec::new();
-            rmpv::encode::write_value(
-                &mut body,
-                &rmpv::Value::Map(vec![("name".into(), entity.name.as_str().into())]),
-            )
-            .map_err(|_| Error::InvariantViolation("provisional entity encoding"))?;
-            let now = crate::ports::recorded_at_in_txn(&self.vault().store, txn)?;
-            let at = TimeRange {
-                start: entity.minted_at,
-                end: entity.minted_at,
-            };
-            retire_in_txn(&self.vault().store, txn, id)?;
-            self.vault()
-                .batch_in()
-                .put(id, entity.kind, at, now, &body)
-                .apply(txn)?;
             Ok(())
         })
     }
@@ -349,6 +323,46 @@ pub(crate) fn resolve_in_txn(
     }
     tags::redirect_in_txn(&vault.store, txn, id, *into)?;
     retire_in_txn(&vault.store, txn, id)?;
+    Ok(true)
+}
+
+/// Confirms the provisional entity `id` in the caller's transaction, as
+/// [`Memory::confirm_provisional_entity`] does: the real entity is born
+/// under its id, named by the text a turn still holds for it. The identity
+/// re-check's "someone new" (OF-123); `false` when `id` is no provisional
+/// entity or no readable text names it any more.
+pub(crate) fn confirm_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if !PROVISIONAL.contains(&vault.store, txn, id)? {
+        return Ok(false);
+    }
+    if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.is_some() {
+        return Err(Error::InvariantViolation(
+            "a provisional id names an entity row",
+        ));
+    }
+    let Some(entity) = sourced_in_txn(vault, txn, id)? else {
+        return Ok(false);
+    };
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![("name".into(), entity.name.as_str().into())]),
+    )
+    .map_err(|_| Error::InvariantViolation("provisional entity encoding"))?;
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let at = TimeRange {
+        start: entity.minted_at,
+        end: entity.minted_at,
+    };
+    retire_in_txn(&vault.store, txn, id)?;
+    vault
+        .batch_in()
+        .put(id, entity.kind, at, now, &body)
+        .apply(txn)?;
     Ok(true)
 }
 
