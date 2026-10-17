@@ -208,8 +208,8 @@ pub use gate::{
     resolve_skill_edit_tradeoff, resolve_skill_edit_tradeoff_in_cycle, score_gate_skill_edit,
     score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer, set_skill_edit_cycle_cap,
     set_skill_edit_goal_axes, set_skill_goal_project, set_skill_tradeoff_preferences,
-    settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as_agent, skill_body_binding_digest,
-    skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_axis_report,
+    settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as, settle_skill_tradeoff_ask_as_agent,
+    skill_body_binding_digest, skill_edit_cycle_cap, skill_edit_goal, skill_edit_goal_axis_report,
     skill_edit_needs_goal_axis_report, skill_edit_score_call_purpose, skill_edit_verdict,
     skill_edit_verdicts, skill_edit_verdicts_for_proposal, skill_goal_axis_plan,
     skill_goal_project, skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
@@ -218,9 +218,10 @@ pub use gate::{
 pub(crate) use gate::{
     SkillEditTrialBasis, check_optimizer_admission_in_txn, displaced_judge_revision_in_txn,
     ensure_current_judge_in_txn, optimizer_birth_marker_for_create_in_txn,
-    project_goal_revision_proposals_in_txn, skill_edit_preflight_passed_in_txn,
-    skill_edit_trial_basis_in_txn, skill_edit_verdict_receipts, validate_judge_revision,
-    with_optimized_skill_admission,
+    project_goal_revision_proposals_in_txn, settle_skill_tradeoff_ask_as_in_txn,
+    settle_skill_tradeoff_ask_in_txn, skill_edit_preflight_passed_in_txn,
+    skill_edit_trial_basis_in_txn, skill_edit_verdict_receipts, skill_tradeoff_ask_in_txn,
+    validate_judge_revision, with_optimized_skill_admission,
 };
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;

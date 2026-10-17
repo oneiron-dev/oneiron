@@ -62,6 +62,7 @@ pub mod projection;
 mod protocol;
 pub mod replay_judge;
 pub mod runtime;
+mod saved_query_sweep;
 pub mod server;
 mod skills_pack;
 pub mod usage;
