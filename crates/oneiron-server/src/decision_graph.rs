@@ -411,7 +411,7 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
             runner,
             to,
             record.definition.dial,
-            record.definition.deadline(),
+            record.definition.deadline(server.vault())?,
         )
         .with_criteria(record.definition.criteria.clone()))
     })?;
