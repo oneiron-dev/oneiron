@@ -4703,7 +4703,7 @@
      "path": "src/batch/secret_scan/container.rs",
      "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -4790,7 +4790,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/mask.rs",
@@ -10127,16 +10127,17 @@
       "StoredWeaveDigest",
       "WeaveDigestCadence",
       "WeaveDigestReader",
-      "WeaveDigestSchedule"
+      "WeaveDigestSchedule",
+      "WeaveScheduleHold"
      ],
      "path": "src/claim/scoped_read/weave_digest.rs",
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 10,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -10148,12 +10149,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WeaveLensPlan",
       "WeaveLensPlanLine",
       "WeaveLensPlanSection",
+      "WeaveLensRefusal",
       "WeaveLensRender",
       "WeaveLiveLens"
      ],
@@ -10161,9 +10163,9 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -10905,7 +10907,7 @@
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
       "crate-vis": 9,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -11044,12 +11046,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CodeRunLiveRunBinding",
+      "LiveRunCredential"
+     ],
+     "path": "src/code_run/live_run.rs",
+     "purpose": "A live agent run's attachment to the one credential that may act for it (OF-181)",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
       "crate-vis": 14,
-      "mod": 4,
+      "mod": 5,
       "re-export": 13
      }
     },
@@ -11339,7 +11356,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 11,
       "struct": 2
      }
@@ -11351,7 +11368,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -17991,7 +18008,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WeaveLensModel"
@@ -21218,7 +21235,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -27880,13 +27897,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DecisionReadProvider"
+      "DecisionReadGate",
+      "DecisionReadProvider",
+      "GatedRead"
      ],
      "path": "src/llm/decision/read.rs",
      "purpose": "The escalation rung's decision read: the house model reads the pack's questions over the same state in one…",
      "surface": {
+      "enum": 1,
       "fn": 1,
-      "struct": 1
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -38406,6 +38427,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/known_values.rs",
+     "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -38426,8 +38458,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 16,
-      "re-export": 7
+      "crate-vis": 17,
+      "re-export": 8
      }
     },
     {
@@ -38473,8 +38505,8 @@
      "path": "src/secret_custody/reveal.rs",
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
-      "const": 6,
-      "crate-vis": 15,
+      "const": 7,
+      "crate-vis": 16,
       "enum": 5,
       "fn": 3,
       "struct": 6
@@ -41796,24 +41828,29 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "JudgeIncumbent",
       "JudgeShadowAnswer",
       "JudgeShadowCase",
       "JudgeShadowHost",
+      "JudgeSwapDisagreement",
+      "JudgeSwapPick",
+      "JudgeSwapPolicy",
       "JudgeSwapReceipt",
-      "JudgeSwapReport"
+      "JudgeSwapReport",
+      "JudgeSwapSettledBy",
+      "JudgeTieBreaker"
      ],
      "path": "src/skill_optimize/judge_swap.rs",
-     "purpose": "The judge-swap shadow ladder (ARCH-0053, OF-184)",
+     "purpose": "The judge-swap shadow ladder (ARCH-0053, ARCH-0079 #model-swaps, OF-184)",
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 2,
-      "struct": 4,
+      "enum": 3,
+      "fn": 5,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -42204,7 +42241,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -44498,7 +44535,7 @@
      "path": "src/sync/residence/sealed.rs",
      "purpose": "Home custody of private-world windows the home may not read (OF-534 G7, DEC-0005 world privacy fix 8)",
      "surface": {
-      "const": 4,
+      "const": 3,
       "fn": 8,
       "struct": 1
      }
@@ -51552,7 +51589,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52448,7 +52485,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52819,9 +52856,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 157,
+   "over_bar": 160,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3197,
+   "source_files": 3199,
    "test_files": 903
   },
   "oneiron-android": {
@@ -67786,7 +67823,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 20,
       "struct": 1
      }
@@ -70396,6 +70433,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/server/live_runs.rs",
+     "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
+     "surface": {
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
@@ -70419,7 +70466,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 3
      }
     },
@@ -71603,7 +71650,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -71675,7 +71722,7 @@
    },
    "over_bar": 43,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 580,
+   "source_files": 581,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72643,6 +72690,7 @@
       "WeaveDigestRequest",
       "WeaveDigestView",
       "WeaveItemView",
+      "WeaveLensRefusal",
       "WeaveLinkCorrectionView",
       "WeaveReportRequest",
       "WeaveReportView",
@@ -72683,7 +72731,7 @@
      "purpose": "—",
      "surface": {
       "enum": 242,
-      "struct": 591
+      "struct": 592
      }
     },
     {
