@@ -15433,7 +15433,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 1,
       "re-export": 4
      }
@@ -37447,7 +37447,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "fn": 5,
       "struct": 1
      }
