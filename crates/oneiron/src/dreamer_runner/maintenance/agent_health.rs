@@ -397,13 +397,37 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
 
     let mut traps = Traps::new();
     for wait in open_trap_waits(vault)? {
-        traps.entry(*wait.attempt.as_bytes()).or_default().push(wait);
+        traps
+            .entry(*wait.attempt.as_bytes())
+            .or_default()
+            .push(wait);
     }
 
     let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
-    findings.extend(silent_findings(vault, &calls, &dispatched, &attempts, &traps, &dials, now)?);
-    findings.extend(long_wait_findings(&dispatched, &attempts, &traps, &dials, since, now));
-    findings.extend(duplicate_findings(vault, &dispatched, &attempts, since, now)?);
+    findings.extend(silent_findings(
+        vault,
+        &calls,
+        &dispatched,
+        &attempts,
+        &traps,
+        &dials,
+        now,
+    )?);
+    findings.extend(long_wait_findings(
+        &dispatched,
+        &attempts,
+        &traps,
+        &dials,
+        since,
+        now,
+    ));
+    findings.extend(duplicate_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        since,
+        now,
+    )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
     findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &dials, since)?);
     findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
@@ -413,7 +437,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         let began = finding
             .attempt
             .and_then(|attempt| attempts.get(attempt.as_bytes()))
-            .map_or(finding.window.0, |record| record.claimed_at.unwrap_or(record.created_at));
+            .map_or(finding.window.0, |record| {
+                record.claimed_at.unwrap_or(record.created_at)
+            });
         finding.blocked = said_blocked(vault, finding.subject, finding.task, began)?;
     }
 
@@ -727,7 +753,10 @@ fn long_wait_findings(
         let mut evidence = vec![attempt];
         if live {
             for trap in traps.get(id).into_iter().flatten() {
-                if matches!(trap.kind, DreamerTrapKind::PeerResult | DreamerTrapKind::Budget) {
+                if matches!(
+                    trap.kind,
+                    DreamerTrapKind::PeerResult | DreamerTrapKind::Budget
+                ) {
                     spans.push((trap.opened_at_ms / 1000, now));
                     evidence.push(trap.anchor);
                 }
@@ -885,7 +914,10 @@ fn cost_spike_findings(
             task: task_of(record),
             attempt: Some(record.id),
             evidence: vec![attempt],
-            window: (record.created_at, if live { now } else { record.updated_at }),
+            window: (
+                record.created_at,
+                if live { now } else { record.updated_at },
+            ),
             // A live ratio moves on every review; the DIAGNOSTIC carries it in
             // halves, so it is written again only when it crosses one.
             actual: if live { permille / 500 * 500 } else { permille },
@@ -1637,7 +1669,9 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             CARDS.get(&self.store, &rtxn, &key)?
         };
-        stored.map(|stored| card_view(self, &key, stored)).transpose()
+        stored
+            .map(|stored| card_view(self, &key, stored))
+            .transpose()
     }
 
     /// The cards a digest period carries (agent-mind §3.5: a card that does
@@ -1703,8 +1737,9 @@ impl Memory<'_> {
     /// for one of its recipients or a vault owner.
     pub fn concern_card(&self, input: &ConcernCardRequest) -> MemoryResult<AgentHealthCardView> {
         crate::memory::verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let key = parse_card_ref(&input.card)
-            .ok_or_else(|| MemoryError::bad_request("card is a health: handle from a concern row"))?;
+        let key = parse_card_ref(&input.card).ok_or_else(|| {
+            MemoryError::bad_request("card is a health: handle from a concern row")
+        })?;
         let card = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let card = CARDS
@@ -1725,8 +1760,9 @@ impl Memory<'_> {
         &self,
         input: &ConcernOutcomeRequest,
     ) -> MemoryResult<ConcernCardSummary> {
-        let key = parse_card_ref(&input.card)
-            .ok_or_else(|| MemoryError::bad_request("card is a health: handle from a concern row"))?;
+        let key = parse_card_ref(&input.card).ok_or_else(|| {
+            MemoryError::bad_request("card is a health: handle from a concern row")
+        })?;
         let at = self.vault().store.clock.now_recorded_at();
         self.with_verified_actor_write_txn(|txn| {
             let mut card = CARDS

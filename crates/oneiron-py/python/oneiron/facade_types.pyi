@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 166 facade rows, 623 declarations.
+Census: 166 facade rows, 627 declarations.
 Inputs: 144 of 166 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 140 of 166 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
@@ -263,10 +263,17 @@ class MessagePersonRequest(TypedDict):
     pr: str
     text: str
     mention: NotRequired[MentionProvenance | None]
+class RecordRef(TypedDict):
+    kind: str
+    id: str
+    short_id: NotRequired[str | None]
+    label: str
 class WitnessReceipt(TypedDict):
     turn_short_id: str
     message_short_ids: list[str]
     receipt_ref: str
+    turn: NotRequired[RecordRef | None]
+    messages: NotRequired[list[RecordRef]]
 class MessagePersonReceipt(TypedDict):
     room: str
     receipt: WitnessReceipt
@@ -474,6 +481,8 @@ class CommitReceipt(TypedDict):
     approval: str
     superseded_short_id: NotRequired[str | None]
     receipt_ref: str
+    claim: NotRequired[RecordRef | None]
+    superseded: NotRequired[RecordRef | None]
 RecallEffort = Literal["light", "medium", "high", "xhigh", "max", "call"]
 class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
@@ -509,6 +518,7 @@ class MemoryItem(TypedDict):
     reactions: NotRequired[list[str]]
     cited_messages: NotRequired[list[CitedMessage]]
     conversation_id: NotRequired[str | None]
+    record: NotRequired[RecordRef | None]
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
     census_capped: NotRequired[bool]
@@ -585,6 +595,7 @@ class MemoryReceipt(TypedDict):
     actor_ref: NotRequired[str | None]
     content_kind: str
     claim_ref: NotRequired[str | None]
+    claim: NotRequired[RecordRef | None]
     fields: NotRequired[dict[str, str]]
 class PixelRegion(TypedDict):
     x: int
@@ -610,11 +621,6 @@ class CallOutcomeRefusedBody(TypedDict):
 class CallOutcomeRefused(TypedDict):
     refused: CallOutcomeRefusedBody
 CallOutcome = Literal["ok"] | CallOutcomeRefused
-class RecordRef(TypedDict):
-    kind: str
-    id: str
-    short_id: NotRequired[str | None]
-    label: str
 class CallReceipt(TypedDict):
     receipt_ref: str
     at: int
@@ -685,6 +691,7 @@ class ClaimView(TypedDict):
     valid_to: NotRequired[int | None]
     salience: NotRequired[float | None]
     stale: bool
+    claim: NotRequired[RecordRef | None]
 class WeaveItemViewClaim(TypedDict):
     item: Literal["claim"]
     claim: ClaimView
@@ -2865,6 +2872,14 @@ QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool
     every_seconds: NotRequired[int | None]
+class QuestionCriteria(TypedDict):
+    yes_if_all: list[str]
+    no_if_any: list[str]
+    not_a_reason_to_say_no: list[str]
+QuestionAudience = Literal["asker"]
+HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
+class QuestionMedia(TypedDict):
+    images: bool
 class QuestionDefinition(TypedDict):
     question: DecisionQuestion
     adapter: str
@@ -2877,6 +2892,11 @@ class QuestionDefinition(TypedDict):
     delivery: str
     learning: bool
     binding: NotRequired[OutcomeBinding | None]
+    criteria: NotRequired[QuestionCriteria]
+    audience: NotRequired[QuestionAudience]
+    posture: NotRequired[HostingPrivacyPosture | None]
+    media: NotRequired[QuestionMedia]
+    deadline_ms: NotRequired[int | None]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinition
 class QuestionRecord(TypedDict):
@@ -2961,23 +2981,32 @@ class RecordRefPreview(TypedDict):
 class RecordLinksRequest(TypedDict):
     text: NotRequired[str | None]
     turn_ref: NotRequired[str | None]
+    after: NotRequired[str | None]
+    limit: NotRequired[int | None]
 class ProseSpanPlain(TypedDict):
     kind: Literal["plain"]
     start: int
     end: int
+    start_utf16: int
+    end_utf16: int
     text: str
 class ProseSpanLink(TypedDict):
     kind: Literal["link"]
     start: int
     end: int
+    start_utf16: int
+    end_utf16: int
     label: str
     record: RecordRef
+    narrowing: ScopedReadReceipt
 ProseSpan = ProseSpanPlain | ProseSpanLink
 class LinkedText(TypedDict):
     message_id: NotRequired[str | None]
     spans: list[ProseSpan]
 class RecordLinks(TypedDict):
     texts: list[LinkedText]
+    narrowing: NotRequired[ScopedReadReceipt | None]
+    next_after: NotRequired[str | None]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int
@@ -2986,6 +3015,7 @@ class LexicalHit(TypedDict):
     kind: str
     score: float
     snippet: NotRequired[str | None]
+    record: NotRequired[RecordRef | None]
 class NeighborOpts(TypedDict):
     edge_kind: NotRequired[str | None]
     min_weight: NotRequired[float | None]
@@ -2999,6 +3029,7 @@ class NeighborHit(TypedDict):
     edge_kind: str
     weight: float
     direction: str
+    record: NotRequired[RecordRef | None]
 class TextIndexField(TypedDict):
     field: str
     value: str
@@ -3018,6 +3049,7 @@ class EntityRefReceipt(TypedDict):
     entity_ref: str
     id_hex: str
     receipt_ref: str
+    record: NotRequired[RecordRef | None]
 class HabitCheckinInput(TypedDict):
     habit_ref: str
     id: NotRequired[str | None]
@@ -3051,6 +3083,8 @@ class BlobVersionView(TypedDict):
     content_hash_hex: str
     claim_ref: str
     created_at: int
+    artifact: NotRequired[RecordRef | None]
+    claim: NotRequired[RecordRef | None]
 class ReadBlobVersionRequest(TypedDict):
     artifact_ref: str
     version: int
