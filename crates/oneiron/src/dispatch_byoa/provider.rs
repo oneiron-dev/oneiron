@@ -35,6 +35,16 @@ impl ProviderAdapterRegistry {
             .map(AsRef::as_ref)
             .ok_or_else(|| ByoaError::UnknownProvider(name.into()))
     }
+    /// Whether a provider is registered under `name`.
+    #[must_use]
+    pub fn contains(&self, name: &str) -> bool {
+        self.adapters.contains_key(name)
+    }
+    /// Every registered provider name, in name order.
+    #[must_use]
+    pub fn names(&self) -> Vec<&str> {
+        self.adapters.keys().map(String::as_str).collect()
+    }
     pub fn standard() -> Self {
         let mut registry = Self::default();
         registry

@@ -874,13 +874,21 @@ in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlo
 opens. With no keystore, serve unlocks them with the password the service manager's credential store
 holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
 another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
---unlock password`; `oneiron vault-key prf-input NAME` gives a passkey's input before the vault
-opens. A credential whose wrap was removed or replaced opens nothing, even if an interrupted change
+--unlock password` (or `passkey`, `escrow`, or `kit` with the world kit's pieces); `oneiron
+vault-key prf-input NAME` gives a passkey's input before the vault opens. A credential whose wrap was removed or replaced opens nothing, even if an interrupted change
 left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
 the vault's data is not, init, serve and restore refuse: move the mirror away to create a new vault,
 since it may be the only copy of that vault's wraps. A restore makes a plain vault, so it is refused
 over a sealed one; restore to another `--vault-path`. Body files, `.lines`, LFS staging and lock
 files stay outside the tier.
+
+A managed vault is plain unless its supervisor passes `--maximum-tier` when the vault is created.
+Its pages then seal under the data key the supervisor delivers at every start, with a fresh vault
+id and incarnation, and the mirror beside the data directory is written at the first open, before
+any wrap: the next start reopens from its id and incarnation with the delivered key, which must be
+the one the mirror's commitment names. A sealed managed vault reopens that way with or without the
+flag; a plain one stays plain. The managed and break-glass escrow wraps join the mirror as they are
+sealed, so a restore elsewhere unlocks the pages with either.
 
 ## The world recovery kit
 
@@ -919,12 +927,17 @@ world's settings. A kit opened with one piece and the passphrase is not verified
 pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
 A kit this vault still lists as pending is refused: `confirm` it instead.
 
-On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
-`status` prints:
+On a new host, the kit also opens a backup through the `world-kit` wrap, and a sealed vault's
+pages through the same wrap in its mirror. `--vault-id` is the id `status` prints, the id the kit
+is bound to; it is never read from the vault or its mirror:
 
 ```sh
 oneiron restore BACKUP --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt --trust signer.json
+oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt --piece piece-2.txt
 ```
+
+With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
+with any other unlock, it refuses `--piece` and `--vault-id`.
 
 ## Contact disclosure
 

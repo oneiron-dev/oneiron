@@ -526,6 +526,34 @@ fn escrow_vault_key(vault: &oneiron::Vault, managed: &ManagedArgs) -> anyhow::Re
     Ok(())
 }
 
+/// The page seal a managed vault opens with (OF-570 maximum tier), from the
+/// data key its supervisor delivered: a sealed vault's, reopened from the
+/// mirror beside it; a new one where no vault is yet and `--maximum-tier`
+/// opted in; none for a plain vault, which stays plain (no converter).
+fn managed_page_seal(
+    managed: &ManagedArgs,
+    dek: &[u8; 32],
+) -> anyhow::Result<Option<oneiron::VaultPageSeal>> {
+    let path = &managed.data_dir;
+    if oneiron::world_keys::vault_is_sealed(path)? {
+        return Ok(Some(oneiron::world_keys::reopen_delivered_page_seal(
+            path, dek,
+        )?));
+    }
+    if !managed.maximum_tier {
+        return Ok(None);
+    }
+    if path.join("data.mdb").exists() {
+        tracing::warn!(
+            "--maximum-tier is chosen when a vault is created; this plain vault opens plain"
+        );
+        return Ok(None);
+    }
+    Ok(Some(oneiron::world_keys::new_delivered_page_seal(
+        path, dek,
+    )?))
+}
+
 /// Hands each escrow capsule the outbox does not hold yet to the outbox the
 /// supervisor named (CROSS-ARCH-0022 #ov-custody, invariant 03): the report
 /// is written durably first and marked in the vault after, so a crash
@@ -614,6 +642,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     vault_config.failure_signals.deployment =
         oneiron::config::failure_signals::DeploymentTier::Managed;
     vault_config.failure_signals.training_opt_in = args.failure_signal_training.unwrap_or(false);
+    // Set before the open: LMDB takes the page key with the environment.
+    vault_config.page_seal = managed_page_seal(&managed, &credentials.dek)?;
     let vault = Arc::new(open_managed_vault(
         &managed.data_dir,
         vault_config,
@@ -640,6 +670,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     vault.admit_vault_key(&credentials.dek)?;
     escrow_vault_key(&vault, &managed)?;
     spool_vault_key_escrow(&vault, &managed);
+    // A sealed vault serves only once its mirror reopens it at the next start.
+    vault.check_page_custody()?;
     // Managed mode reads no environment, so the destination carries no
     // bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
@@ -876,6 +908,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
     let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
+    // The paired-machine mesh listener (OF-535), as `serve` starts it: off
+    // unless the host names its bind address.
+    let mesh = crate::handler::mesh::start(
+        Arc::clone(&sync_server),
+        &crate::handler::mesh::MeshConfig::from_env()?,
+        &app,
+        config.limits.connections().header_read_timeout,
+    )
+    .await?;
     let artifact_task = artifacts.map(|listener| {
         let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
         let stop = shutdown.triggered();
@@ -885,6 +926,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.
     let result = http.serve_until(app, shutdown.triggered()).await;
+    if let Some(mesh) = mesh {
+        mesh.stop().await;
+    }
     host.on_stop()?;
     let _ = ctl_task.await;
     if let Some(task) = artifact_task {

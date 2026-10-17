@@ -262,8 +262,9 @@ pub struct VaultKeyArgs {
 #[derive(Args, Clone, Debug)]
 pub struct VaultKeyAddDeviceArgs {
     /// How a sealed vault's pages unlock before it opens: `device` (this
-    /// install's keystore), `password`, `passkey` or `escrow`, its secret
-    /// read as `oneiron restore --unlock` reads it.
+    /// install's keystore), `password`, `passkey`, `escrow` or `kit` (the
+    /// world kit's `world-kit` escrow wrap), its secret read as `oneiron
+    /// restore --unlock` reads it.
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 
@@ -274,6 +275,18 @@ pub struct VaultKeyAddDeviceArgs {
     /// With `--unlock escrow`: the escrow wrap's label.
     #[arg(long, value_name = "NAME")]
     pub label: Option<String>,
+
+    /// With `--unlock kit`: a world kit piece file, a recovery code as text
+    /// or a piece export. Give two, or one and the kit passphrase, read from
+    /// stdin or `--secret-file`.
+    #[arg(long = "piece", value_name = "FILE")]
+    pub pieces: Vec<PathBuf>,
+
+    /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits,
+    /// as `oneiron recovery-kit status` prints it. It is never read from the
+    /// vault's page-seal mirror, which names another id.
+    #[arg(long, value_name = "HEX")]
+    pub vault_id: Option<String>,
 
     #[command(flatten)]
     pub secret: SecretSourceArgs,

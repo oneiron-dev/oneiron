@@ -7,6 +7,7 @@
 //! and an actor the facts do not name gets the not-found shape.
 
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
+use crate::authority::TaskActorVerb;
 use crate::claim::{CallerLocality, ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -154,7 +155,8 @@ impl Memory<'_> {
     }
 
     /// A TASK's status, and its live try's. Readable by its owner and by the
-    /// actors its assignment and acceptance facts name.
+    /// actors its assignment and acceptance facts name, as L02's rule proves
+    /// them.
     fn task_status(
         &self,
         handle: TaskHandle,
@@ -169,17 +171,13 @@ impl Memory<'_> {
             let Some(body) = task_verb_body_in(self.vault(), &txn, task_ref)? else {
                 return Err(not_found());
             };
-            let standing = self
-                .vault()
-                .task_standing_in(&txn, task_ref)?
-                .ok_or_else(not_found)?;
+            self.highway_task_actor_in(
+                &txn,
+                task_ref,
+                TaskActorVerb::Status,
+                "Read status as the task's owner, assignee or taker.",
+            )?;
             let actor = self.actor();
-            let readable = standing.owner == actor
-                || standing.assignee == Some(actor)
-                || standing.taker.is_some_and(|taker| taker.actor == actor);
-            if !readable {
-                return Err(not_found());
-            }
             let generation = self.vault().actor_binding_generation_in_txn(&txn, actor)?;
             (body, generation)
         };
