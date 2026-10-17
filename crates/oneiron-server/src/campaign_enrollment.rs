@@ -17,7 +17,7 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimOutcome, CompleteAttempt, FailAttempt,
 };
 use oneiron::campaign::enrollment::{
-    CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, audience_program,
+    CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, audience_programs,
     campaign_enrollment_event, campaign_home_node_designation, decode_enrollment_attempt_payload,
     elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
 };
@@ -39,23 +39,26 @@ const LEASE_OWNER: &str = "oneiron-server-campaign-enrollment";
 const FAILED: &str = "the campaign enrollment attempt failed";
 
 /// One bounded wake of `record` over `page` under the sweep's `evaluator`. A
-/// query an active campaign's program names as its audience detects and
-/// queues enrollments in the same wake; any other query writes verdicts only.
+/// query that active campaigns' programs name as their audience detects and
+/// queues enrollments in the same wake, one per program a candidate enters;
+/// any other query writes verdicts only.
 pub(crate) async fn wake(
     evaluator: &SavedQueryEvaluator<'_>,
     record: &SavedQueryRecord,
     page: &[EntityId],
     now: u64,
 ) -> oneiron::Result<WakeEvaluationReport> {
-    let Some(program) = audience_program(evaluator.vault, record)? else {
+    let programs = audience_programs(evaluator.vault, record)?;
+    if programs.is_empty() {
         return evaluator
             .evaluate_wake_batch(record.query_ref, page, now)
             .await;
-    };
+    }
     let report = enroll_audience_wake(
         evaluator,
         record.definition.owner_actor,
-        &program,
+        record.query_ref,
+        &programs,
         page,
         now,
     )
@@ -63,7 +66,7 @@ pub(crate) async fn wake(
     if report.recorded > 0 {
         tracing::debug!(
             query = %record.query_ref.to_hex(),
-            program = %program.program_ref.to_hex(),
+            programs = programs.len(),
             recorded = report.recorded,
             enqueued = report.enqueued,
             "a saved query's wake recorded campaign entries"

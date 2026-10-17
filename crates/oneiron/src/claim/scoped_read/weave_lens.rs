@@ -12,8 +12,9 @@
 //! renders, the previous one settles the skill's two axes as evidence.
 //!
 //! `vault.weave.lens` renders the reader's live report the same way, on
-//! demand: the host asks the model between [`WeaveLiveLens`]'s two reads, and
-//! nothing is saved, so a live render settles no axis.
+//! demand: the host asks the model between [`WeaveLiveLens`]'s two reads. It
+//! answers a card whose manifest declares each wrong control as the tool it
+//! calls, and the host holds its frame for the card's events (OF-181).
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -26,10 +27,11 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
 use crate::lens::{
-    ButtonControl, CollectionAtom, GeneratedLens, LedgerCell, LedgerRowAtom, LensAtom, LensAtomId,
-    LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole, LensNode,
-    LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom, SelfUiAction,
-    SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
+    ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
+    GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,
+    LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole,
+    LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
+    SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
 };
 use crate::provenance::EdgeRef;
 use crate::{EntityId, Vault};
@@ -100,6 +102,26 @@ pub struct WeaveLensRender {
     pub rendered_at: u64,
 }
 
+/// Why a period has no render, saved on its digest row in the render's
+/// place: the step's answer did not meet the period, and neither did the
+/// answer to its repair turns. The period's data still serves.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveLensRefusal {
+    pub reason: String,
+    pub skill_ref: String,
+    pub skill_version: String,
+    pub model: String,
+    pub refused_at: u64,
+}
+
+/// How many repair turns a refused plan gets: the refused answer and why go
+/// back to the model, which answers again.
+pub const WEAVE_LENS_PLAN_REPAIRS: usize = 1;
+/// How many times a live render is asked again from a fresh read when the
+/// report moved between its two reads.
+pub const WEAVE_LIVE_LENS_REREADS: usize = 1;
+
 fn item_key(section: usize, item: usize) -> String {
     format!("{section}.{item}")
 }
@@ -159,6 +181,31 @@ impl WeaveLensPlan {
         }
         Ok(())
     }
+}
+
+/// `answer`, the generate step's text, as a plan for `report`; else why it
+/// is refused, in the words a repair turn and the period's row carry.
+pub(crate) fn weave_lens_answer_plan(
+    answer: &str,
+    report: &WeaveReport,
+) -> std::result::Result<WeaveLensPlan, String> {
+    let plan: WeaveLensPlan = serde_json::from_str(answer.trim())
+        .map_err(|error| format!("weave lens: the answer is not a plan: {error}"))?;
+    match plan.validate(report) {
+        Ok(()) => Ok(plan),
+        Err(Error::InvalidConfig(reason)) => Err(reason),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// A repair turn's text: why the plan was refused, and every key the plan
+/// must cite exactly once.
+pub(crate) fn weave_lens_repair_text(report: &WeaveReport, reason: &str) -> String {
+    serde_json::json!({
+        "plan_errors": [reason],
+        "required_keys": keyed_items(report).keys().collect::<Vec<_>>(),
+    })
+    .to_string()
 }
 
 /// The generate step's input: the period's items as their served views,
@@ -249,6 +296,19 @@ impl WeaveLiveLens {
             instruction,
             input,
         }))
+    }
+
+    /// Why `answer` is not a plan for the report the step was shown; `None`
+    /// for a plan.
+    #[must_use]
+    pub fn plan_refusal(&self, answer: &str) -> Option<String> {
+        weave_lens_answer_plan(answer, &self.report).err()
+    }
+
+    /// A repair turn's text for a plan refused for `reason`.
+    #[must_use]
+    pub fn repair_text(&self, reason: &str) -> String {
+        weave_lens_repair_text(&self.report, reason)
     }
 }
 
@@ -368,18 +428,64 @@ fn item_sources(item: &WeaveItem) -> Option<EntityId> {
     }
 }
 
+/// One row's wrong control, calling `verb` with `input` (an SDK verb action
+/// takes the row's whole input as one JSON text, as the action registry
+/// declares it), and its manifest declaration: the deterministic tool the
+/// button names, under the control's own id, so no two buttons share one.
+fn wrong_control(
+    row: &str,
+    label: &str,
+    verb: &str,
+    input: String,
+    actions: &mut Vec<GeneratedUiActionDeclaration>,
+) -> Result<LensNode> {
+    let control = format!("{row}-wrong");
+    let action = SelfUiAction {
+        command: SelfUiActionId::new(verb)?,
+        args: vec![SelfUiValue::Text(LensText::new(input)?)],
+    };
+    actions.push(GeneratedUiActionDeclaration {
+        element_id: LensAtomId::new(control.clone())?,
+        action_id: SelfUiActionId::new(control.clone())?,
+        tier: GeneratedUiActionTier::DeterministicTool,
+        action: action.clone(),
+    });
+    Ok(LensNode::new(
+        LensAtomId::new(control.clone())?,
+        LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
+            id: SelfUiControlId::new(control)?,
+            label: required_text(label, "wrong label")?,
+            action,
+        })),
+    ))
+}
+
 /// Compose a saved render into the lens under `read`, the opener's own read.
-/// Every row binds the source its read admits now; every link row carries
-/// the wrong control over its exact link.
+/// Every row binds the source its read admits now; every link row a human
+/// opens carries the wrong control over its exact link (an agent files no
+/// link label, so its rows carry none).
 pub(super) fn compose_weave_lens(
     read: &ScopedRead<'_>,
     report: &WeaveReport,
     render: &WeaveLensRender,
 ) -> Result<GeneratedLens> {
+    Ok(compose_weave_lens_framed(read, report, render)?.card.tree)
+}
+
+/// [`compose_weave_lens`] as a card beside the frame that minted its rows'
+/// backing refs (OF-181): each wrong control is declared in the card's
+/// manifest as the deterministic tool it calls, for a host that holds the
+/// frame and takes the card's events.
+pub(super) fn compose_weave_lens_framed(
+    read: &ScopedRead<'_>,
+    report: &WeaveReport,
+    render: &WeaveLensRender,
+) -> Result<HostedLensRender> {
     let plan = &render.plan;
     plan.validate(report)?;
     let items = keyed_items(report);
     let mut frame = opener_frame(read)?;
+    let agent = read.actor_key().actor_class() == Some(EdgeActorClass::Agent.gate_actor_class());
     let sources: Vec<EntityId> = items
         .values()
         .filter_map(|item| item_sources(item))
@@ -407,6 +513,7 @@ pub(super) fn compose_weave_lens(
             handles.insert(row.id, LensHandleRef { name, role });
         }
     }
+    let mut actions = Vec::new();
     let mut root = LensNode::new(
         LensAtomId::new("weave-lens")?,
         LensAtom::Sheet(CollectionAtom {
@@ -448,27 +555,21 @@ pub(super) fn compose_weave_lens(
                 kind,
                 target,
             } = item
+                && !agent
             {
-                // An SDK verb action takes the row's whole input as one JSON
-                // text, as the action registry declares it.
                 let input = serde_json::to_string(&super::WeaveWrongLinkRequest {
                     source_ref: source.to_hex(),
                     kind: kind.name().to_owned(),
                     target_ref: target.to_hex(),
                 })
                 .map_err(|_| Error::InvalidConfig("weave wrong link input".into()))?;
-                let control = format!("{id}-wrong");
-                row.children.push(LensNode::new(
-                    LensAtomId::new(control.clone())?,
-                    LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-                        id: SelfUiControlId::new(control)?,
-                        label: required_text(&plan.wrong_label, "wrong label")?,
-                        action: SelfUiAction {
-                            command: SelfUiActionId::new(WRONG_LINK_VERB)?,
-                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
-                        },
-                    })),
-                ));
+                row.children.push(wrong_control(
+                    &id,
+                    &plan.wrong_label,
+                    WRONG_LINK_VERB,
+                    input,
+                    &mut actions,
+                )?);
             }
             // A card's wrong settles it dismissed through the concern door,
             // never as a link correction. The door takes one JSON input.
@@ -481,24 +582,25 @@ pub(super) fn compose_weave_lens(
                     },
                 )
                 .map_err(|_| Error::InvalidConfig("weave card outcome input".into()))?;
-                let control = format!("{id}-wrong");
-                row.children.push(LensNode::new(
-                    LensAtomId::new(control.clone())?,
-                    LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-                        id: SelfUiControlId::new(control)?,
-                        label: required_text(&plan.wrong_label, "wrong label")?,
-                        action: SelfUiAction {
-                            command: SelfUiActionId::new(CONCERN_OUTCOME_VERB)?,
-                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
-                        },
-                    })),
-                ));
+                row.children.push(wrong_control(
+                    &id,
+                    &plan.wrong_label,
+                    CONCERN_OUTCOME_VERB,
+                    input,
+                    &mut actions,
+                )?);
             }
             node.children.push(row);
         }
         root.children.push(node);
     }
-    GeneratedLens::new(root)
+    // The lens declares no `$state`: its only controls are the wrong taps.
+    HostedLensRender::interactive(
+        frame,
+        GeneratedLens::new(root)?,
+        actions,
+        GeneratedUiStateSnapshot::default(),
+    )
 }
 
 /// What a live lens render keeps (OF-499): the skill and model that
@@ -699,8 +801,14 @@ pub(crate) fn settle_weave_lens_axes(
                 now,
             )?;
         }
-        let corrected =
-            corrected_since(vault, txn, id, report_links(report), &cards, render.rendered_at)?;
+        let corrected = corrected_since(
+            vault,
+            txn,
+            id,
+            report_links(report),
+            &cards,
+            render.rendered_at,
+        )?;
         if !corrected && seen != Some(true) {
             return Ok(());
         }

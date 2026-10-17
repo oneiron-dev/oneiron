@@ -12,6 +12,13 @@
 //!
 //! A file whose keys are not all active, admitted to a model (T1) and of one
 //! custody class reads masked, with no ask.
+//!
+//! A sealed file (a container the write door could not read whole, stored
+//! as it is and unmarked) holds keys no mark names. Its read asks for the
+//! file whole, as for one key of [`SEALED_FILE_CLASS`]: under a standing
+//! grant, or once the owner approves the read, the agent gets the stored
+//! bytes and the read leaves its reveal row. No lease is stamped, as no
+//! custody record holds a key of it.
 
 use super::agent::{file_ask_in_txn, standing};
 use super::{
@@ -25,7 +32,7 @@ use crate::consent::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::{
-    SecretCustodyFloor, SecretCustodyStatus, SecretSight, masked_file_in_txn,
+    CustodyClass, SecretCustodyFloor, SecretCustodyStatus, SecretSight, masked_file_in_txn,
     read_secret_custody_admission_in_txn,
 };
 use crate::vault::Vault;
@@ -33,11 +40,19 @@ use crate::vault::Vault;
 /// Domain of the id of the one ask an agent's read of a file files.
 const FILE_ASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_ask.v1";
 
+/// The class a sealed file's read is granted as: the class the write door
+/// gives each key it lifts from a file (CALLS, open).
+const SEALED_FILE_CLASS: CustodyClass = CustodyClass::CustodyPortable;
+
+/// The handle a sealed file's read names in place of its keys'.
+const SEALED_FILE_HANDLE: &str = "sealed file";
+
 impl Vault {
     /// How `asker` reads the stored `bytes` of `artifact` when it says `why`:
     /// [`SecretSight::Granted`] once a grant covers every key in them and
     /// this read's receipt is written, [`SecretSight::Masked`] otherwise. A
-    /// file with no keys in it writes nothing.
+    /// file with no keys in it writes nothing, unless it is sealed: its read
+    /// is asked for as one key of [`SEALED_FILE_CLASS`].
     ///
     /// # Errors
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound)
@@ -51,11 +66,12 @@ impl Vault {
         why: &str,
     ) -> Result<SecretSight> {
         let hash = *blake3::hash(bytes).as_bytes();
-        {
+        let sealed = {
             let txn = self.store.env.read_txn()?;
-            if masked_file_in_txn(&self.store, &txn, &hash)?.is_none() {
-                return Ok(SecretSight::Masked);
-            }
+            masked_file_in_txn(&self.store, &txn, &hash)?.is_none()
+        };
+        if sealed && !crate::batch::secret_scan::is_sealed(bytes) {
+            return Ok(SecretSight::Masked);
         }
         let why = checked_text(
             why,
@@ -63,44 +79,21 @@ impl Vault {
             "a file read's why is one line of at most 512 bytes",
         )?;
         self.with_write_txn_grouped(|txn| {
-            let Some(mark) = masked_file_in_txn(&self.store, txn, &hash)? else {
-                return Ok(SecretSight::Masked);
-            };
-            let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
-            let mut keys: Vec<(EntityId, String)> = Vec::new();
-            let mut class = None;
-            // Every key the mark places: in the stored bytes, and in each
-            // member of a container.
-            let marked = mark
-                .keys
-                .iter()
-                .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
-            for key in marked {
-                if keys.iter().any(|(secret, _)| *secret == key.custody) {
-                    continue;
-                }
-                let Some(rec) =
-                    read_secret_custody_admission_in_txn(&self.store, txn, &key.custody)?
-                else {
+            let (class, first, keys) = if sealed {
+                (SEALED_FILE_CLASS, *artifact, Vec::new())
+            } else {
+                let Some(found) = marked_keys_in_txn(self, txn, &hash)? else {
                     return Ok(SecretSight::Masked);
                 };
-                if rec.status != SecretCustodyStatus::Active
-                    || crate::secret_lease::reveal_tier_admission(&rec, &floor).is_err()
-                    || class.is_some_and(|class| class != rec.class)
-                {
-                    return Ok(SecretSight::Masked);
-                }
-                class = Some(rec.class);
-                let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
-                    &self.store,
-                    txn,
-                    &key.custody,
-                )?
-                .map_or(rec.name, |(short, _)| short);
-                keys.push((key.custody, handle));
-            }
-            let (Some(class), Some((first, _))) = (class, keys.first()) else {
-                return Ok(SecretSight::Masked);
+                found
+            };
+            let handle = if sealed {
+                SEALED_FILE_HANDLE.to_owned()
+            } else {
+                keys.iter()
+                    .map(|(_, handle)| handle.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let row = |state| RevealRow {
@@ -108,12 +101,8 @@ impl Vault {
                 actor: asker.agent,
                 connection: Some(asker.connection()),
                 provider: asker.provider.clone(),
-                secret: *first,
-                handle: keys
-                    .iter()
-                    .map(|(_, handle)| handle.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                secret: first,
+                handle: handle.clone(),
                 class: class.as_str().to_owned(),
                 why: why.clone(),
                 project: asker.project,
@@ -186,6 +175,57 @@ impl Vault {
     }
 }
 
+/// The keys the mark of the file `hash` names, each with its handle, in the
+/// file's order, with their one class and the first key: `None` when no mark
+/// covers the file, or when a key is not active, not admitted to a model
+/// (T1), or of another class than the rest.
+fn marked_keys_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    hash: &[u8; 32],
+) -> Result<Option<(CustodyClass, EntityId, Vec<(EntityId, String)>)>> {
+    let Some(mark) = masked_file_in_txn(&vault.store, txn, hash)? else {
+        return Ok(None);
+    };
+    let floor = SecretCustodyFloor::resolve(&vault.store, txn)?;
+    let mut keys: Vec<(EntityId, String)> = Vec::new();
+    let mut class = None;
+    // Every key the mark places: in the stored bytes, and in each member of a
+    // container.
+    let marked = mark
+        .keys
+        .iter()
+        .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
+    for key in marked {
+        if keys.iter().any(|(secret, _)| *secret == key.custody) {
+            continue;
+        }
+        let Some(rec) = read_secret_custody_admission_in_txn(&vault.store, txn, &key.custody)?
+        else {
+            return Ok(None);
+        };
+        if rec.status != SecretCustodyStatus::Active
+            || crate::secret_lease::reveal_tier_admission(&rec, &floor).is_err()
+            || class.is_some_and(|class| class != rec.class)
+        {
+            return Ok(None);
+        }
+        class = Some(rec.class);
+        let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
+            &vault.store,
+            txn,
+            &key.custody,
+        )?
+        .map_or(rec.name, |(short, _)| short);
+        keys.push((key.custody, handle));
+    }
+    let (Some(class), Some((first, _))) = (class, keys.first()) else {
+        return Ok(None);
+    };
+    let first = *first;
+    Ok(Some((class, first, keys)))
+}
+
 /// The one ask an agent's reads of a file file: by the agent, the stored
 /// bytes, the project and the run.
 fn file_ask_id(asker: &RevealAsker, hash: &[u8; 32]) -> Result<EntityId> {
@@ -237,6 +277,10 @@ fn deliver_file_in_txn(
         file.leases.push(materialized.lease.lease_id);
         delivered_at.get_or_insert(materialized.lease.granted_at);
         drop(materialized.value);
+    }
+    // A sealed file's read stamps no lease: it is delivered now.
+    if delivered_at.is_none() {
+        delivered_at = Some(crate::ports::recorded_at_in_txn(&vault.store, txn)?);
     }
     row.state = SecretRevealState::Delivered;
     row.lease = file.leases.first().copied();

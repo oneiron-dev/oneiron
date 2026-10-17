@@ -5,14 +5,14 @@
 //! proof reads the owner lens.
 use super::{
     ClaimReadStatus, ScopedRead, ScopedReadReceipt, StoredWeaveDigest, WeaveDigestCadence,
-    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensPlan, WeaveLensRender,
-    WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport, WeaveSectionKind,
-    WeaveSectionSpec,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveItem, WeaveLensRefusal, WeaveLensRender,
+    WeaveLinkCorrection, WeaveLiveLens, WeaveReader, WeaveReport, WeaveScheduleHold,
+    WeaveSectionKind, WeaveSectionSpec,
 };
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::lens::GeneratedLens;
+use crate::lens::{GeneratedLens, HostedLensRender};
 use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -173,7 +173,7 @@ pub struct WeaveReportView {
 }
 
 /// One saved digest period, with the receipt saved with it, and its lens
-/// once the generate step has rendered the period.
+/// once the generate step has rendered the period, or why it rendered none.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WeaveDigestView {
     pub scheduled_for: u64,
@@ -182,6 +182,8 @@ pub struct WeaveDigestView {
     pub narrowing: ScopedReadReceipt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lens: Option<GeneratedLens>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens_refused: Option<WeaveLensRefusal>,
 }
 
 /// Who a schedule is for, on the owner's wire.
@@ -234,6 +236,10 @@ pub struct WeaveScheduleView {
     /// The first due Unix second.
     pub next_due_at: u64,
     pub sections: Vec<WeaveSectionInput>,
+    /// Answer only: the timer left this row until `held.until`, after an
+    /// owner's due notice or a refused render. A write ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<WeaveScheduleHold>,
 }
 
 impl WeaveScheduleView {
@@ -251,8 +257,9 @@ impl WeaveScheduleView {
     }
 
     #[must_use]
-    pub fn from_schedule(row: &WeaveDigestSchedule) -> Self {
+    pub fn from_schedule(row: &WeaveDigestSchedule, held: Option<WeaveScheduleHold>) -> Self {
         Self {
+            held,
             reader: WeaveReaderRef::from_reader(row.reader),
             cadence: row.cadence,
             next_due_at: row.next_due_at,
@@ -332,43 +339,35 @@ impl Memory<'_> {
 
     /// `vault.weave.lens`, after its generate step: re-reads the live report
     /// under the bound actor's current read and composes `answer`, the
-    /// step's plan, over it. The plan was written over what the first read
-    /// admitted, so a report that changed meanwhile is refused, as is a plan
-    /// that does not cite each of its items exactly once.
-    pub fn weave_lens_finish(
+    /// step's plan, over it, as a card beside the frame that minted its
+    /// backing refs; its host keeps the frame for the card's events. The
+    /// plan was written over what the first read admitted, so a report that
+    /// changed meanwhile answers `None` and the host asks again from a fresh
+    /// read. A plan that does not cite each item exactly once is refused.
+    pub fn weave_lens_finish_framed(
         &self,
         owner: Option<&AuthenticatedOwner>,
         request: &WeaveReportRequest,
         live: WeaveLiveLens,
         answer: &str,
         model: &str,
-    ) -> MemoryResult<GeneratedLens> {
+    ) -> MemoryResult<Option<HostedLensRender>> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let report = read
             .weave_report(reader, &Self::weave_recipe(request)?)?
             .value;
         if report != live.report {
-            return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_INVALID_STATE,
-                "the weave report changed while its lens rendered",
-                &["Ask for the lens again."],
-            ));
+            return Ok(None);
         }
-        let plan: WeaveLensPlan = serde_json::from_str(answer.trim()).map_err(|_| {
-            MemoryError::new(
-                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
-                "the model's answer is not a weave lens plan",
-                &["Ask for the lens again."],
-            )
-        })?;
-        if plan.validate(&report).is_err() {
-            return Err(MemoryError::new(
-                crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
-                "the model's plan does not cite each report item exactly once",
-                &["Ask for the lens again."],
-            ));
-        }
+        let plan =
+            super::weave_lens::weave_lens_answer_plan(answer, &report).map_err(|reason| {
+                MemoryError::new(
+                    crate::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+                    format!("the model's weave lens plan was refused: {reason}"),
+                    &["Ask for the lens again."],
+                )
+            })?;
         let render = WeaveLensRender {
             plan,
             skill_ref: live.skill_ref,
@@ -376,13 +375,13 @@ impl Memory<'_> {
             model: model.to_owned(),
             rendered_at: self.vault().store.clock.now_recorded_at(),
         };
-        let lens = super::weave_lens::compose_weave_lens(&read, &report, &render)?;
+        let lens = super::weave_lens::compose_weave_lens_framed(&read, &report, &render)?;
         // The render is kept, and the one before it settles on the skill's
         // corrections axis; neither gates the lens.
         if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {
             tracing::warn!(?error, "the live weave lens render was not kept");
         }
-        Ok(lens)
+        Ok(Some(lens))
     }
 
     /// The live report for `reader` under the bound actor's read.
@@ -462,6 +461,7 @@ impl Memory<'_> {
             sections: self.weave_sections(&stored.report.value)?,
             narrowing: stored.report.receipt,
             lens,
+            lens_refused: stored.lens_refused,
         })
     }
 
