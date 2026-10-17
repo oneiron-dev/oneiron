@@ -65,6 +65,18 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
                 None => Value::Nil,
             },
         ),
+        // OF-540: the team run the spawn works in; another team is another
+        // request.
+        (
+            "team",
+            match &call.context.team {
+                Some(team) => Value::from(
+                    serde_json::to_string(team)
+                        .map_err(|_| invalid_code_run_replay("spawn team encode"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
     ]))
 }
 
@@ -123,8 +135,19 @@ fn hold_decode(value: &Value) -> Result<Option<TaskAskHoldReason>> {
         _ => Err(invalid_code_run_replay("ask hold")),
     }
 }
-pub(super) fn ask_value(result: &TaskAskReceipt) -> Value {
-    request_map(vec![
+pub(super) fn ask_value(result: &TaskAskReceipt) -> Result<Value> {
+    // The fan-out statement frozen at admission rides the record, so a
+    // replayed ask hands back the same statement.
+    let statement = match &result.statement {
+        Some(statement) => {
+            let bytes = rmp_serde::to_vec_named(statement)
+                .map_err(|_| invalid_code_run_replay("ask statement encode"))?;
+            rmpv::decode::read_value(&mut bytes.as_slice())
+                .map_err(|_| invalid_code_run_replay("ask statement encode"))?
+        }
+        None => Value::Nil,
+    };
+    Ok(request_map(vec![
         ("kind", Value::from("task_ask")),
         ("group", entity_id_value(result.handle.group_ref)),
         (
@@ -140,7 +163,8 @@ pub(super) fn ask_value(result: &TaskAskReceipt) -> Value {
         ),
         ("hold", hold_value(result.hold)),
         ("replay", Value::Boolean(result.idempotent_replay)),
-    ])
+        ("statement", statement),
+    ]))
 }
 pub(super) fn decode_ask(value: &Value) -> Result<TaskAskReceipt> {
     let m = expect_map(value, "ask outcome map")?;
@@ -151,7 +175,17 @@ pub(super) fn decode_ask(value: &Value) -> Result<TaskAskReceipt> {
         decode_array(map_get(m, "tasks")?, entity_value)?,
         hold_decode(map_get(m, "hold")?)?,
         bool_value(map_get(m, "replay")?)?,
-        None,
+        match map_get(m, "statement")? {
+            Value::Nil => None,
+            statement => {
+                let bytes = rmp_serde::to_vec_named(statement)
+                    .map_err(|_| invalid_code_run_replay("ask statement decode"))?;
+                Some(
+                    rmp_serde::from_slice(&bytes)
+                        .map_err(|_| invalid_code_run_replay("ask statement decode"))?,
+                )
+            }
+        },
     ))
 }
 pub(super) fn status_value(result: &TaskAskStatus) -> Result<Value> {
