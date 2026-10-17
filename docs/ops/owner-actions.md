@@ -284,7 +284,7 @@ oneiron export > vault.zip                     # stdout when --out is omitted
 
 The export is one ZIP archive (OF-222): `manifest.json`, one JSONL file per record kind under
 `records/` (`records/entity/<kind>.jsonl` per entity type, then `edge`, `pack`, `agent_pack`,
-`derivation_envelope`, `run` and `result_body`), and each attached file once under
+`derivation_envelope`, `run`, `result_body` and `epoch_floor`), and each attached file once under
 `files/<blake3>` (skill and pack source files, code-run result bodies). The manifest lists every
 record file and attached file with its length and BLAKE3, and an import refuses an archive whose
 members disagree with it. It is plaintext and re-imports into a fresh vault
@@ -292,6 +292,9 @@ members disagree with it. It is plaintext and re-imports into a fresh vault
 Credentials inside records are nulled by the serializer. Result bodies go through the release
 scan: a text or binary body that passes is a file under `files/<blake3>`; tainted, secret-marked
 and credential-bearing bodies are withheld and named in `result_body.jsonl`.
+`epoch_floor.jsonl` has a row `{session, epoch, turn_end}` for each session whose epoch summary a
+purge removed: where that summary left the count, and nothing it said. An import only raises a
+session's floor to its row, so a re-imported vault never numbers an epoch under a removed one.
 
 Your own archive also carries your keys, by default: each active secret-custody record's value,
 in `records/secret_custody.jsonl` (the custody codec, base64), so a re-import keeps them. Keep
