@@ -76,6 +76,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use wire_decode::{
     TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
     task_is_blocked_in, task_text_in,

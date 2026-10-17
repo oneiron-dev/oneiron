@@ -102,6 +102,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DEFERRED_SPAWNED_BY, CONTENT),
     (&t::DEFERRED_SPAWNED_BY_ENDPOINT, CONTENT),
     (&t::SKILL_JUDGE, CONTENT),
+    (&t::SKILL_TRADEOFF_ROUTE, CONTENT),
     (&t::SYNC_SHARED_LEAVE_RECEIPT, LIVE),
     (&t::TEST_API_SLIP_CACHE, LIVE),
     (&t::TEST_MCP_PAIRED_CACHE, LIVE),

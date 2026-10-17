@@ -145,6 +145,7 @@ mod offer;
 pub(crate) mod policy;
 mod selection;
 mod tier;
+mod tradeoff_route;
 
 pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 #[cfg(test)]
@@ -198,6 +199,11 @@ pub use self::selection::{
     SkillOptimizeCandidate, optimize_candidates, optimize_candidates_for_resident,
 };
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};
+pub(crate) use self::tradeoff_route::run_tradeoff_route;
+pub use self::tradeoff_route::{
+    TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
+    TradeoffRouteReport,
+};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, GoalAxisKind, GoalAxisScore,
     GoalAxisSpec, HELD_OUT_REPLAY_SCORER, HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase,

@@ -16,7 +16,7 @@ use oneiron::actor_claims::{
 };
 use oneiron::dreamer_runner::maintenance::coach::{
     COACH_JUDGE_SWAP_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_SKILL_DISTILL_FACET,
-    PersonThresholdPolicy,
+    COACH_TRADEOFF_ROUTE_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -134,6 +134,11 @@ fn run_one(
     match admitted.status.payload.attempt_type.as_str() {
         COACH_SKILL_DISTILL_FACET => distill(server, admitted),
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
+        COACH_TRADEOFF_ROUTE_FACET => {
+            let report = vault.run_coach_tradeoff_route(admitted, now)?;
+            tracing::debug!(?report, "the Coach's tradeoff routes");
+            Ok(())
+        }
         COACH_PERSON_THRESHOLD_FACET => {
             // Tune from the row an accept may have just changed.
             server.decision_host().refresh_person_threshold(vault)?;
