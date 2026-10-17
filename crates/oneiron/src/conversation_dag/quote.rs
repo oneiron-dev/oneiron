@@ -298,6 +298,74 @@ pub(super) fn pin_in_txn(
     Ok(())
 }
 
+/// Pins, in a MESSAGE document's birth transaction, each body-anchored quote
+/// of that MESSAGE as a citation pin keyed by its citing TURN, at the birth
+/// frontier, so the quoted text stays retained and purge-protected once the
+/// document is edited (OF-460). Only an anchor whose hashes still bind `text`,
+/// the born document's text, is pinned. Body anchors sit in TURN reply
+/// pointers and room trunk rows, neither indexed by the quoted MESSAGE, so the
+/// walk reads every TURN.
+pub(crate) fn pin_body_quotes_at_message_birth_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    message: &EntityId,
+    text: &str,
+    actor: WriteActor,
+) -> Result<()> {
+    let body_hash = *blake3::hash(text.as_bytes()).as_bytes();
+    let turns = vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_TURN, None)?
+        .collect::<Result<Vec<_>>>()?;
+    let mut spans = std::collections::BTreeMap::new();
+    for turn in turns {
+        let mut anchors = Vec::new();
+        if let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &turn)?
+        {
+            // An opaque TURN carries no reply pointer.
+            if super::topology::record_kind(&body)?.is_some() {
+                anchors.extend(read_pointer(&body)?.map(|(_, anchor)| anchor));
+            }
+        }
+        if let Some(quote) = crate::workspace_roster::replicated_turn_in(vault, txn, turn)?
+            .and_then(|row| row.quote)
+        {
+            anchors.push(quote.anchor);
+        }
+        for anchor in anchors {
+            let QuoteAnchor::Body {
+                message: quoted,
+                body_hash: bound,
+                start,
+                end,
+                quote_hash,
+            } = anchor
+            else {
+                continue;
+            };
+            if quoted != *message || bound != body_hash {
+                continue;
+            }
+            let span = (
+                usize::try_from(start).map_err(|_| invalid("quote span overflow"))?,
+                usize::try_from(end).map_err(|_| invalid("quote span overflow"))?,
+            );
+            if scalar_slice(text, span.0, span.1)
+                .is_some_and(|quote| blake3::hash(quote.as_bytes()).as_bytes() == &quote_hash)
+            {
+                spans.insert(turn, span);
+            }
+        }
+    }
+    for (citation, (start, end)) in spans {
+        vault.pin_message_quote_in_txn(txn, &citation, message, start, end, actor)?;
+    }
+    Ok(())
+}
+
 /// The reply target of an append: the caller's, or the quoted message's
 /// TURN. A quote answers exactly the TURN that holds its message.
 pub(super) fn reply_target(

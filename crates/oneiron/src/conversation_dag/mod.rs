@@ -48,7 +48,9 @@ pub(crate) use policy::{
     APPEND_ROW, AppendFailure, admit_append_prose, append_references, receipt_append_refusal,
     require_append_references_in_txn,
 };
-pub(crate) use quote::{ProvenRoomQuote, QuotedReply, carries_quote};
+pub(crate) use quote::{
+    ProvenRoomQuote, QuotedReply, carries_quote, pin_body_quotes_at_message_birth_in_txn,
+};
 pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
