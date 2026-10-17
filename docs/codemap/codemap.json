@@ -58982,7 +58982,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 12,
+      "fn": 13,
       "struct": 2,
       "trait": 1,
       "type": 1
