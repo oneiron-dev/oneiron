@@ -9734,15 +9734,16 @@
       "WeaveLensPlan",
       "WeaveLensPlanLine",
       "WeaveLensPlanSection",
-      "WeaveLensRender"
+      "WeaveLensRender",
+      "WeaveLiveLens"
      ],
      "path": "src/claim/scoped_read/weave_lens.rs",
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -9795,7 +9796,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 6,
+      "fn": 8,
       "struct": 10
      }
     },
@@ -16826,7 +16827,7 @@
      "purpose": "The Dreamer's model roles, and the backend each one calls out on",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 3
      }
@@ -17158,7 +17159,7 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): one saved digest period rendered through the shipped…",
      "surface": {
       "const": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -17529,7 +17530,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 15,
+      "const": 16,
       "crate-vis": 8,
       "fn": 7,
       "trait": 1
@@ -17547,10 +17548,31 @@
      "purpose": "The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CandidateRun",
+      "CodeFixDecisions",
+      "CodeFixDraft",
+      "CodeFixHost",
+      "CodeFixJob",
+      "CodeFixSettled",
+      "CodeFixWork"
+     ],
+     "path": "src/dreamer_runner/maintenance/code_fix.rs",
+     "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 6,
+      "trait": 1
      }
     },
     {
@@ -17668,7 +17690,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 8,
+      "mod": 9,
       "re-export": 3
      }
     },
@@ -20778,7 +20800,7 @@
      "path": "src/failure_signals.rs",
      "purpose": "Content-free, versioned tier-1 agent failure counts",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 9,
       "re-export": 3,
@@ -20796,6 +20818,7 @@
       "CodeFixVerdict",
       "CodeFixWithheld",
       "ExportScrubber",
+      "FailureSource",
       "FixOutcome",
       "InventedExampleDraft",
       "InventedFailureExample",
@@ -20809,9 +20832,10 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
+      "crate-vis": 2,
       "enum": 8,
       "fn": 3,
-      "struct": 5,
+      "struct": 6,
       "trait": 2
      }
     },
@@ -26240,7 +26264,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 35,
+      "const": 36,
       "fn": 1,
       "struct": 1
      }
@@ -44220,7 +44244,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 187
+      "fn": 188
      }
     },
     {
@@ -44609,13 +44633,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -49115,7 +49139,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50095,9 +50119,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 118,
+   "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3025,
+   "source_files": 3026,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57811,7 +57835,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 161
+      "fn": 162
      }
     },
     {
@@ -58825,7 +58849,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 162
+      "fn": 163
      }
     },
     {
@@ -60169,6 +60193,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/code_fix.rs",
+     "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/code_mode.rs",
      "purpose": "MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the…",
      "surface": {
@@ -60245,7 +60279,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 19,
       "re-export": 1,
       "struct": 2
@@ -60367,6 +60401,16 @@
      "purpose": "Live, model-backed wave planning on the server's durable workflow pump",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/weave_lens.rs",
+     "purpose": "The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -61380,9 +61424,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/weave_doors.rs",
-     "purpose": "The weave lens's human doors (OF-499): the one-tap wrong control a person uses on a link in their own report",
+     "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -67236,7 +67280,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 21,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67553,7 +67597,7 @@
    },
    "over_bar": 29,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 486,
+   "source_files": 488,
    "test_files": 182
   },
   "oneiron-spawn": {
