@@ -305,6 +305,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "get",
+        path: "/desktops/stream",
+        summary: "The run desktop's whole display as server-sent events while the owner watches or holds it: state, frame (changed PNGs as base64, paced), error, ended and refused events.",
+        row: None,
+    },
+    OwnerRoute {
         method: "post",
         path: "/desktops/take",
         summary: "The owner holds the run's desktop, asked or not, once the agent's call in flight ends.",

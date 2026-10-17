@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 369 code-mode rows (349 host rows, 20 run rows), 1301 declarations.
+// Census: 369 code-mode rows (349 host rows, 20 run rows), 1302 declarations.
 // Replies: 316 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -439,7 +439,8 @@ declare namespace Sdk {
   type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] };
   type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditOrder = "entry_ref_ascending";
-  type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number };
+  type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean };
+  type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
   type MeshPathReceiptsRequest = { limit?: number | null };
   type MeshPathDirection = "inbound" | "outbound";
   type MeshPathOutcome = "admitted" | "refused" | "failed";
@@ -541,7 +542,7 @@ declare namespace Sdk {
   type SearchEvidence = { measurement: Measurement; confirmed_hits: number; attribution: number; hop_cost: number; expected_gain: number; estimator_version: string; knob_reliability?: number | null; receipt_refs: string[] };
   type HeldOutEvidence = { measurement: Measurement; receipt_refs: string[]; recorded_at: number };
   type InvalidReceipt = { reason: string; evidence_refs: string[]; at: number };
-  type WeaveReceipt = { common_ancestor: AttemptId; validation_overlap: number; claim: EntityId; claim_approval: ClaimApprovalStatus; at: number };
+  type WeaveReceipt = { common_ancestor: AttemptId; validation_overlap: number; claim: EntityId; claim_approval: ClaimApprovalStatus; gate_decision: string; at: number };
   type PruneReason = { dominated: { by: AttemptId } } | { floor_regression: { axis: string } } | "gain_below_floor" | { stopped: { by: EntityId } };
   type PruneReceipt = { reason: PruneReason; evidence_refs: string[]; at: number };
   type ExperimentNode = { attempt: AttemptId; kind: ExperimentKind; parents: AttemptId[]; candidate: CandidateRef; search?: SearchEvidence | null; held_out?: HeldOutEvidence | null; invalid?: InvalidReceipt | null; weave?: WeaveReceipt | null; pruned?: PruneReceipt | null; recorded_at: number };
@@ -1287,7 +1288,7 @@ declare namespace Sdk {
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
-  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null };
+  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null };
   type AgentSpawnKind = "agent_spawn";
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
@@ -1650,7 +1651,7 @@ declare const vault: Sdk.VaultHost & {
     waits(input: Sdk.ArtifactRefRequest): Promise<Sdk.OrganWaitView[] | StoredResult>;
   };
   authority: {
-    /** One page of the dated authority log audit: grants, revokes and confirms, for the owner. */
+    /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
     audit(input: Sdk.AuthorityAuditQuery): Promise<Sdk.AuthorityAuditPage | StoredResult>;
     /** Every saved authority handoff fork alarm, for the owner. */
     handoff_alarms: ((input: Sdk.EmptyRequest) => Promise<Sdk.AuthorityHandoffAlarm[] | StoredResult>) & {

@@ -804,8 +804,17 @@ fn fit_to_budget(
     let fits = |width: u32, per_agent: ExpectedSpend| {
         CostEnvelope::for_shape(width, per_agent, budget).fits(budget)
     };
+    let per_agent = chosen.envelope.per_agent;
+    let dollars = ExpectedSpend {
+        units: chosen.envelope.expected_spend_units,
+        expected_usd_micros: per_agent
+            .expected_usd_micros
+            .and_then(|micros| micros.checked_mul(u64::from(chosen.shape.width))),
+        ..per_agent
+    }
+    .dollar_clause();
     let more = Some(format!(
-        "{} more lease units would buy {} (expected success {:.2})",
+        "raise the available cap by {} lease units for {}{dollars} (expected success {:.2})",
         chosen.envelope.expected_spend_units.saturating_sub(most),
         chosen.candidate,
         chosen.expected_success_rate
