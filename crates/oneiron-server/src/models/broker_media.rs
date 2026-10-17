@@ -14,9 +14,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::llm::BrokerIsolation;
 use oneiron::llm::media::MediaBackend;
-use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
-use oneiron_broker::{BrokerClient, CallHeader, FormData, Shape};
+use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
+use oneiron_broker::{BrokerClient, CallHeader, FormData, Isolation, Shape};
 use oneiron_llm_gemini::{
     GeminiMediaBackend, GeminiMediaFuture, GeminiMediaHttpRequest, GeminiMediaHttpResponse,
     GeminiMediaTransport,
@@ -123,6 +124,32 @@ impl BrokerMedia {
             client,
             keys,
         })
+    }
+
+    /// What a call can fail on before anything is sent, short of the
+    /// broker's own answer, as a chat call's preflight checks it: a broker to
+    /// send through (the same-user child starts here at its first call), and
+    /// a key the custody door would hand over.
+    fn ready(&self) -> LlmResult<()> {
+        if let Err(error) = self.client.ready() {
+            tracing::warn!(%error, "no credential broker to send media through");
+            return Err(RetryableLlmError::StreamCut.into());
+        }
+        self.keys.check(&self.secret).map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door would refuse a media provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })
+    }
+
+    /// How the broker this provider sends through is kept apart.
+    fn isolation(&self) -> BrokerIsolation {
+        match self.client.isolation() {
+            Isolation::SeparateUser => BrokerIsolation::SeparateUser,
+            Isolation::SameUser => BrokerIsolation::SameUser,
+        }
     }
 
     /// Sends `exchange` as the call `lease` admitted: checked as the broker
@@ -293,6 +320,14 @@ impl OpenAiMediaTransport for BrokerMedia {
             })
         })
     }
+
+    fn preflight(&self) -> LlmResult<()> {
+        self.ready()
+    }
+
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        Some(self.isolation())
+    }
 }
 
 impl GeminiMediaTransport for BrokerMedia {
@@ -309,6 +344,14 @@ impl GeminiMediaTransport for BrokerMedia {
                 body,
             })
         })
+    }
+
+    fn preflight(&self) -> LlmResult<()> {
+        self.ready()
+    }
+
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        Some(self.isolation())
     }
 }
 

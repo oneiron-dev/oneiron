@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use super::image::{ImageBackend, ImageBytes, ImageIntent, ImageResponse};
-use super::{BudgetLease, CallEnvelope, FatalLlmError, LlmError, LlmRequest, LlmResult, ModelId};
+use super::{
+    BrokerIsolation, BudgetLease, CallEnvelope, FatalLlmError, LlmError, LlmRequest, LlmResult,
+    ModelId,
+};
 
 pub mod wav;
 
@@ -611,6 +614,23 @@ pub trait MediaBackend: Send + Sync {
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, ()> {
         Box::pin(async { Err::<(), LlmError>(FatalLlmError::InvalidRequest.into()) })
+    }
+
+    /// Every check this backend makes before it sends, with no I/O: the
+    /// refusal its call would return for `request` before any byte leaves (a
+    /// model it does not serve, no broker to send through, a key its custody
+    /// door would refuse), or `Ok` when it would send. A run's media gate
+    /// asks it before the call's permit starts, so a refusal costs nothing.
+    fn preflight(&self, request: &MediaRequest) -> LlmResult<()> {
+        let _ = request;
+        Ok(())
+    }
+
+    /// How the credential broker that sends this backend's calls is kept
+    /// apart from the daemon, for the dispatch receipt. `None`, the default,
+    /// for a backend whose key, if any, no broker holds.
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        None
     }
 }
 

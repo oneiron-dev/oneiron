@@ -9,6 +9,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use oneiron::llm::BrokerIsolation;
 use oneiron::llm::media::wav::WavClip;
 use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
@@ -83,6 +84,19 @@ pub trait OpenAiMediaTransport: Send + Sync {
         request: OpenAiMediaHttpRequest,
         lease: &'a BudgetLease,
     ) -> OpenAiMediaTransportFuture<'a>;
+
+    /// Every check the transport makes before it sends, with no I/O (a
+    /// broker it cannot reach, a key its custody door would refuse); `Ok`,
+    /// the default, for a transport that checks nothing first.
+    fn preflight(&self) -> LlmResult<()> {
+        Ok(())
+    }
+
+    /// How the credential broker that sends for this transport is kept apart
+    /// from the daemon; `None`, the default, when no broker does.
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        None
+    }
 }
 
 /// One provider's media client. It serves each engine model it was built
@@ -537,6 +551,16 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
 }
 
 impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
+    /// A model this client was not built for, or its transport's refusal.
+    fn preflight(&self, request: &MediaRequest) -> LlmResult<()> {
+        self.wire_model(&request.model)?;
+        self.transport.preflight()
+    }
+
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        self.transport.broker_isolation()
+    }
+
     fn run<'a>(
         &'a self,
         request: MediaRequest,
