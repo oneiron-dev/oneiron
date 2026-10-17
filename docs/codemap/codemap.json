@@ -32044,7 +32044,7 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -32055,6 +32055,20 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorReplyBody"
+     ],
+     "path": "src/outbound/reply_content.rs",
+     "purpose": "The body of an agent's reply to a connector event (OF-519)",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -32071,13 +32085,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "OwnedServedChannelSink",
       "ServedChannelSink"
      ],
      "path": "src/outbound/served_sink.rs",
      "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -51367,7 +51382,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51992,7 +52007,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3144,
+   "source_files": 3145,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54858,7 +54873,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 43,
+      "const": 44,
       "crate-vis": 1
      }
     },
@@ -62297,6 +62312,16 @@
      "purpose": "A compaction pass is bounded work: it outlives the call that started it, so its thread holds a permit of its…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/connector_event.rs",
+     "purpose": "The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -70130,7 +70155,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -70482,7 +70507,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 557,
+   "source_files": 558,
    "test_files": 182
   },
   "oneiron-spawn": {
