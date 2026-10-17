@@ -20,11 +20,11 @@ mod witness;
 pub use code_fix::{
     CODE_FIX_MAX_CANDIDATE_ID_BYTES, CODE_FIX_MAX_MESSAGE_BYTES, CODE_FIX_MAX_MESSAGES,
     CODE_FIX_MAX_NOTE_BYTES, CODE_FIX_RECORD_VERSION, CandidateFix, CandidateFixResult,
-    CodeFixExport, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FailureSource,
-    FixOutcome, InventedExampleDraft, InventedFailureExample, InventedMessage, InventedRole,
-    ReplayRun, ScrubRun, ShadowRun,
+    CodeFixExport, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber,
+    FailureSource, FixOutcome, InventedExampleDraft, InventedFailureExample, InventedMessage,
+    InventedRole, ReplayRun, ScrubRun, ShadowRun,
 };
-pub(crate) use code_fix::{failed_case_in, failure_source_in};
+pub(crate) use code_fix::{code_fix_subject_in, failed_case_in};
 pub use delivery::{
     FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,
     FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport,

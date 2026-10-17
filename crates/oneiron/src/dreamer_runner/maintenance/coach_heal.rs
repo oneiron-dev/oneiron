@@ -6,8 +6,9 @@
 //! lands as a proposed heal in the owner's run tray, counted by the oversight
 //! receipts. The Coach is propose-only: nothing here edits a skill, injects a
 //! prompt, resumes a run or touches an environment, and a case the ladder
-//! does not answer goes to a person. A filed case heal wakes the Coach's
-//! code-fix run for it (OF-380) on a deployment that exports.
+//! does not answer goes to a person. A filed heal wakes the Coach's code-fix
+//! run for its case, or for its report when the report's run has no failed
+//! case (OF-380), on a deployment that exports.
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -20,6 +21,7 @@ use crate::code_run::blocked::{BlockedReceipt, read_blocked_receipt};
 use crate::dreamer_runner::{
     COACH_HEAL_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
 };
+use crate::failure_signals::CodeFixSource;
 use crate::llm::decision::catalogue::COACH_HEAL_ROUTE;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
@@ -263,8 +265,9 @@ impl Vault {
             super::code_fix::wake_in_txn(
                 self,
                 txn,
-                &case_ref,
-                key,
+                CodeFixSource::Case {
+                    case_ref: case_ref.clone(),
+                },
                 proposal,
                 route,
                 attempt.status.attempt.id,
@@ -342,6 +345,16 @@ impl Vault {
                     now,
                 )?;
                 blocked_reports::settle_in_txn(self, txn, &receipt, proposal, now)?;
+                super::code_fix::wake_blocked_in_txn(
+                    self,
+                    txn,
+                    receipt,
+                    issue.run,
+                    proposal,
+                    route,
+                    attempt.status.attempt.id,
+                    now,
+                )?;
                 Ok(true)
             })?;
             if filed {

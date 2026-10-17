@@ -35,6 +35,7 @@ use oneiron::dreamer_runner::maintenance::representation::{
     RepresentationCitation, RepresentationRequest, schedule_approved_representation,
 };
 use oneiron::dreamer_runner::maintenance::stewardship::{StewardshipRule, StewardshipRules};
+use oneiron::failure_signals::CodeFixSource;
 use oneiron::memory::OutboundScheduleContext;
 use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
 use oneiron::self_heal::distillation::ReviewedFinding;
@@ -528,11 +529,14 @@ struct CodeFixQuery {
     limit: Option<usize>,
 }
 
-/// One case's code-fix work as the owner sees it.
+/// One failure's code-fix work as the owner sees it: a case's, or a blocked
+/// report's whose run has no failed case.
 #[derive(Debug, Serialize)]
 struct CodeFixView {
-    /// The failure case, as 32 hex.
-    case: String,
+    /// The failure case, as 32 hex; absent for a blocked report's work.
+    case: Option<String>,
+    /// The blocked report's receipt, as 32 hex; absent for a case's work.
+    blocked_report: Option<String>,
     /// The proposed heal the work follows, as 32 hex.
     proposal: String,
     route: String,
@@ -558,12 +562,19 @@ async fn code_fixes(
     .await?;
     Ok(Json(
         work.into_iter()
-            .map(|work| CodeFixView {
-                case: work.case_ref,
-                proposal: work.proposal.to_hex(),
-                route: work.route,
-                queued_at: work.queued_at,
-                settled: work.settled,
+            .map(|work| {
+                let (case, blocked_report) = match work.source {
+                    CodeFixSource::Case { case_ref } => (Some(case_ref), None),
+                    CodeFixSource::Blocked { receipt, .. } => (None, Some(receipt.to_hex())),
+                };
+                CodeFixView {
+                    case,
+                    blocked_report,
+                    proposal: work.proposal.to_hex(),
+                    route: work.route,
+                    queued_at: work.queued_at,
+                    settled: work.settled,
+                }
             })
             .collect(),
     ))
