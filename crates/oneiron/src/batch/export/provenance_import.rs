@@ -176,9 +176,9 @@ impl ProvenanceImport {
         let new_ids = rows
             .iter()
             .filter_map(|(_, id, _)| {
-                match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id) {
-                    Ok(None) => Some(Ok(*id)),
-                    Ok(Some(_)) => None,
+                match crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id) {
+                    Ok(false) => Some(Ok(*id)),
+                    Ok(true) => None,
                     Err(error) => Some(Err(error)),
                 }
             })
