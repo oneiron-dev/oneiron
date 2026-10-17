@@ -21,7 +21,7 @@ use oneiron::voice_cascade::{
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::net::unix::OwnedReadHalf;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::{Instant, timeout, timeout_at};
 
 use oneiron::voice_cascade::media::VoiceMediaOutput;
@@ -174,12 +174,15 @@ impl VoiceHost {
         stream: UnixStream,
         outputs: &mut VoiceOutputs<B, T, C>,
         mut bridge: Option<&mut MediaBridge>,
-        wire: Option<WireMedia>,
+        mut wire: Option<WireMedia>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
         let end_on_drop = EndOnDrop(self);
+        // The write half and the wire outlive the loop, so the end stop's
+        // `session_ended` still goes out on them.
+        let (read, mut write) = stream.into_split();
         let result = self
-            .serve_inner(stream, outputs, bridge.as_deref_mut(), wire, stop)
+            .serve_inner(read, &mut write, outputs, bridge.as_deref_mut(), &mut wire, stop)
             .await;
         if let Some(bridge) = bridge {
             bridge.stop_hearing();
@@ -188,6 +191,9 @@ impl VoiceHost {
             .end()
             .map_err(|_| io::Error::other("voice teardown failed"))?;
         let errors = stop.dispatch(&mut outputs.brain, &mut outputs.tts, &mut outputs.control);
+        if let Some(wire) = wire.as_mut() {
+            farewell(wire, &mut write).await;
+        }
         drop(end_on_drop);
         result?;
         if !errors.is_empty() {
@@ -198,14 +204,14 @@ impl VoiceHost {
 
     async fn serve_inner<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
-        stream: UnixStream,
+        read: OwnedReadHalf,
+        write: &mut OwnedWriteHalf,
         outputs: &mut VoiceOutputs<B, T, C>,
         mut bridge: Option<&mut MediaBridge>,
-        mut wire: Option<WireMedia>,
+        wire: &mut Option<WireMedia>,
         stop: impl Future<Output = ()>,
     ) -> io::Result<()> {
         tokio::pin!(stop);
-        let (read, mut write) = stream.into_split();
         let mut reader = BufReader::new(read);
         let mut frame = FrameReader::new();
         let mut pending: Option<Pending<'_>> = None;
@@ -227,7 +233,7 @@ impl VoiceHost {
                     () = &mut stop => break,
                     // Output first: the loop also fills the wire's queue, and
                     // steady microphone frames must not starve it.
-                    out = WireMedia::next(&mut wire) => match out {
+                    out = WireMedia::next(wire) => match out {
                         WireOut::Playout(Some(VoicePlayout::Pcm(spoken))) => {
                             // Checked again at dequeue: a stopped generation's audio never goes out.
                             let Some(spoken) = spoken.current() else { continue };
@@ -247,10 +253,7 @@ impl VoiceHost {
                             }
                             Response::GenerationEnd { generation: generation.value() }
                         }
-                        WireOut::Control(Some(ControlOut::Flush(generation))) => {
-                            Response::Flush { generation: generation.value() }
-                        }
-                        WireOut::Control(Some(ControlOut::Event(event))) => control_response(event),
+                        WireOut::Control(Some(out)) => control_out(out),
                         WireOut::Playout(None) | WireOut::Control(None) => continue,
                     },
                     // The bridge before wire input: it drives the live hearing's
@@ -264,13 +267,14 @@ impl VoiceHost {
                         let Some(bridge) = bridge.as_deref_mut() else { continue };
                         match event {
                             MediaEvent::Stopped => break,
+                            MediaEvent::PlayoutClosed => return Err(io::Error::other("voice playout closed")),
                             MediaEvent::In(input) => self.media_in(input, bridge, outputs),
-                            MediaEvent::Brain(out) => self.brain_out(out, bridge, outputs).await?,
+                            MediaEvent::Brain(out) => self.brain_out(out, bridge, outputs)?,
                             MediaEvent::Verdict(verdict) => self.verdict(verdict, bridge, outputs),
-                            MediaEvent::Tick => self.speech_tick(bridge, outputs).await?,
+                            MediaEvent::Tick => self.speech_tick(bridge, outputs)?,
                             // Spoken audio plays only for the session's current generation.
                             MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
-                                self.spoken(frame, bridge).await?;
+                                self.spoken(frame, bridge)?;
                             }
                             // A sentence that was not spoken stops its generation.
                             MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
@@ -455,6 +459,38 @@ fn media_input(request: Request) -> Option<VoiceMediaIn> {
         Request::RosterChanged => VoiceMediaIn::RosterChanged,
         _ => return None,
     })
+}
+
+/// How long the wire's last frames may take: the sibling may be gone.
+const FAREWELL: Duration = Duration::from_secs(1);
+
+/// The controls still queued for the wire, the end stop's `session_ended`
+/// last, as the connection's final frames. Best effort within [`FAREWELL`];
+/// audio still queued is dropped with the session.
+async fn farewell(wire: &mut WireMedia, write: &mut OwnedWriteHalf) {
+    let frames = async {
+        while let Some(out) = wire.queued_control() {
+            let mut bytes = serde_json::to_vec(&control_out(out)).map_err(io::Error::other)?;
+            if bytes.len() > MAX_FRAME_BYTES {
+                continue;
+            }
+            bytes.push(b'\n');
+            write.write_all(&bytes).await?;
+        }
+        Ok::<_, io::Error>(())
+    };
+    if !matches!(timeout(FAREWELL, frames).await, Ok(Ok(()))) {
+        tracing::debug!("voice wire: the session's end did not reach the sibling");
+    }
+}
+
+fn control_out(out: ControlOut) -> Response {
+    match out {
+        ControlOut::Flush(generation) => Response::Flush {
+            generation: generation.value(),
+        },
+        ControlOut::Event(event) => control_response(event),
+    }
 }
 
 fn control_response(event: ControlEvent) -> Response {

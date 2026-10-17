@@ -141,6 +141,7 @@ class MemoryPack(TypedDict):
 
 class FacadeReceipt(TypedDict):
     receipt_ref: str
+    kind: str
     outcome: str
     created_at: int
     reason_codes: list[str]
@@ -148,6 +149,7 @@ class FacadeReceipt(TypedDict):
     actor_ref: str | None
     content_kind: str
     claim_ref: str | None
+    fields: NotRequired[dict[str, str]]
 
 
 class KeyValueAddress(TypedDict):
@@ -374,6 +376,8 @@ class Oneiron:
         @property
         def kv(self) -> "Oneiron._VaultKvVerbs": ...
         @property
+        def campaign(self) -> "Oneiron._VaultCampaignVerbs": ...
+        @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs": ...
@@ -491,7 +495,7 @@ class Oneiron:
         def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
             """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
     class _VaultReceiptsVerbs:
-        def __call__(self, limit: int = 100) -> list[FacadeReceipt]: ...
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
     class _VaultImagesVerbs:
@@ -502,18 +506,48 @@ class Oneiron:
         def delete(self, request: KeyValueAddress) -> KeyValueDeleteReceipt: ...
         def search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
         def namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
+    class _VaultCampaignVerbs:
+        @property
+        def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+    class _VaultCampaignProgramVerbs:
+        def create(self, spec: Facade.CreateCampaignProgramRequest) -> Facade.CampaignProgramRecord:
+            """Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."""
+        def read(self, spec: Facade.CampaignProgramReadRequest) -> Facade.CampaignProgramReadResult:
+            """One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now."""
+        def update(self, spec: Facade.UpdateCampaignProgramRequest) -> Facade.CampaignProgramRecord:
+            """Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops."""
+        def archive(self, spec: Facade.ArchiveCampaignProgramRequest) -> Facade.CampaignProgramRecord:
+            """Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."""
     class _VaultWeaveVerbs:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
         def digest(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
-            """One of the bound actor's saved weave digests, or the newest, under the current read policy."""
+            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
         def lens(self, spec: Facade.WeaveReportRequest) -> Facade.LensFrameCard:
             """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
+        @property
+        def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
     class _VaultWeaveLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
+    class _VaultWeaveOwnerVerbs:
+        @property
+        def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs": ...
+    class _VaultWeaveOwnerLinkVerbs:
+        def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
+            """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
+    class _VaultWeaveOwnerItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+    class _VaultWeaveItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
@@ -947,7 +981,7 @@ class Oneiron:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""
         def poll(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoJob:
-            """Where a video job stands; a finished one answers with its clip, once."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
             """Stops a video job at its provider."""
     class _ConnectorVerbs:

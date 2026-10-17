@@ -574,6 +574,9 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "team_start_invalid_input",
     "team_start_tournament_not_market",
     "team_start_invalid_tournament",
+    "team_start_tournament_unknown",
+    "team_start_tournament_foreign",
+    "team_start_tournament_unbound",
     "team_record_not_led",
     "team_record_invalid_input",
     "team_record_unknown_member",
@@ -704,6 +707,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({ "output": output })
         }
         SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
+        SelfDispatchOutcome::TeamSubmitted(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }

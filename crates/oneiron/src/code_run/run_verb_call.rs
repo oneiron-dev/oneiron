@@ -31,11 +31,12 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 /// `self.skills.call`, `self.spawn`, `summarize` and `tasks.wait` need the
 /// running sandbox (its bridge, its results, its park). None of those is
 /// here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 10] = [
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 11] = [
     RunVerb::TasksRefuse,
     RunVerb::SelfAgentsSpawn,
     RunVerb::SelfTeamStart,
     RunVerb::SelfTeamRecord,
+    RunVerb::SelfTeamSubmit,
     RunVerb::SelfLeaderAdvice,
     RunVerb::SelfLeaderPattern,
     RunVerb::SelfFold,
@@ -200,6 +201,7 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         RunVerb::SelfTeamRecord => {
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
         }
+        RunVerb::SelfTeamSubmit => SelfCall::TeamSubmit(decode(input)?),
         RunVerb::TasksWait => {
             let args: crate::code_run::TaskWaitSetRequest = decode(input)?;
             SelfCall::TasksWaitSet(crate::code_run::TaskWaitSetCall {

@@ -6,6 +6,7 @@
 
 use super::HostSelfDispatcher;
 use crate::agent_dispatch::{AgentDispatchTarget, AgentSpawnContext};
+use crate::autoreason_campaign::authoring::tournament_start_check;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
     SelfAgentSpawnCall, SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult,
@@ -44,6 +45,16 @@ impl HostSelfDispatcher<'_> {
             Ok(stamp) => stamp,
             Err(code) => return Ok(Err(code)),
         };
+        // A tournament team joins its own campaign's run, checked before any
+        // member spawns. An off-record run can't show its campaign.
+        if let Some(run) = &input.tournament {
+            let ExecutorStorage::Canonical(vault) = &self.storage else {
+                return Ok(Err("team_off_record"));
+            };
+            if let Err(code) = tournament_start_check(vault, leader, run)? {
+                return Ok(Err(code));
+            }
+        }
         // What this start's spawns answered: the host's fact of the team.
         let mut observed = TeamRunBinding {
             stamp: stamp.clone(),

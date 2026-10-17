@@ -17,5 +17,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dto.rs` | src | L | 50 struct · 7 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews +49 | The typed UniFFI records of the SDK surface |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/facade_generated.rs` | src | L | — | — | — |
-| `src/facade_types_generated.rs` | src | XL | 594 struct · 241 enum | ActExecution, AdmissionBasis, AdmissionConsent, AgentHealthCard, AgentHealthCardView, AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft +827 | — |
+| `src/facade_types_generated.rs` | src | XL | 604 struct · 243 enum | ActExecution, AdmissionBasis, AdmissionConsent, AgentHealthCard, AgentHealthCardView, AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft +839 | — |
 | `src/lib.rs` | src | s | 1 struct · 7 fn · 1 const · 3 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |

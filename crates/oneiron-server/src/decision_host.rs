@@ -50,8 +50,8 @@ use oneiron::{
 };
 
 use crate::config::models::{
-    BigSettings, BookingParseSettings, ImagePickSettings, ModelsConfig, SeatPickSettings,
-    SystemOneSettings,
+    BigSettings, BookingParseSettings, ConnectorSlateSettings, ImagePickSettings, ModelsConfig,
+    SeatPickSettings, SystemOneSettings,
 };
 use crate::models::DecisionReadDoor;
 use crate::server::SyncServer;
@@ -115,6 +115,7 @@ pub struct DecisionHost {
     auto_checker: Option<BoundedAutoChecker>,
     image_pick: Option<ImagePickSettings>,
     booking_parse: Option<BookingParseSettings>,
+    connector_slate: Option<ConnectorSlateSettings>,
     /// The owner's explicit opt-in to send unit text off the host,
     /// `[models.decisions.system_one].remote_opt_in`.
     remote_opt_in: bool,
@@ -150,6 +151,7 @@ impl DecisionHost {
             auto_checker: None,
             image_pick: None,
             booking_parse: None,
+            connector_slate: None,
             remote_opt_in: false,
             big_model: None,
         }
@@ -356,6 +358,25 @@ impl DecisionHost {
         })
     }
 
+    /// A ladder whose one rung is `role`'s seat on the Big rung (OF-568):
+    /// asked as the configured big model is, worded and on its meter, but
+    /// routed to that role's seat. Every other slot is empty and no person
+    /// is asked: run it with [`MODEL_DIAL`]. Fails when `[models.decisions.big]`
+    /// fills no Big rung, or no rung serves the role's seat.
+    pub fn ladder_for_role(&self, role: oneiron::llm::manifest::ModelRole) -> anyhow::Result<HeldLadder> {
+        let big = self
+            .big_model
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no [models.decisions.big] fills the Big rung"))?;
+        let seat = big.for_role(role)?;
+        let pin = seat.pin();
+        let provider = ModelDecisionProvider::new(pin, Arc::new(seat))?;
+        Ok(HeldLadder {
+            big: Some(Arc::new(provider)),
+            ..HeldLadder::unstaffed()
+        })
+    }
+
     /// The write gate's auto check through this ladder, worded `wording`,
     /// for `principal`.
     fn with_auto_check(mut self, wording: Option<&str>, principal: Option<EntityId>) -> Self {
@@ -383,6 +404,20 @@ impl DecisionHost {
     fn with_booking_parse(mut self, settings: Option<BookingParseSettings>) -> Self {
         self.booking_parse = settings;
         self
+    }
+
+    /// The connector slate drafter's wording and budget (OF-189).
+    fn with_connector_slate(mut self, settings: Option<&ConnectorSlateSettings>) -> Self {
+        self.connector_slate = settings.cloned();
+        self
+    }
+
+    /// The per-row wording `[models.decisions.connector_slate]` gives a
+    /// connector registration's slate drafter; `None` leaves the rule rung
+    /// drafting alone.
+    #[must_use]
+    pub fn connector_slate(&self) -> Option<&ConnectorSlateSettings> {
+        self.connector_slate.as_ref()
     }
 
     /// The seat `[models.decisions.booking_parse]` names for a booking's
@@ -727,6 +762,14 @@ impl SyncServer {
         self.decisions.ladder_for_model(model)
     }
 
+    /// [`DecisionHost::ladder_for_role`] on this server's ladder.
+    pub fn decision_ladder_for_role(
+        &self,
+        role: oneiron::llm::manifest::ModelRole,
+    ) -> anyhow::Result<HeldLadder> {
+        self.decisions.ladder_for_role(role)
+    }
+
     /// The family `model` belongs to, as its provider's config or its
     /// registry row names it; a seat's when every rung shares one. `None`
     /// when nothing names it, never guessed.
@@ -782,7 +825,8 @@ impl SyncServer {
             )
             .with_auto_check(models.decisions.auto_check.as_deref(), principal)
             .with_image_pick(models.decisions.image_pick.as_ref())
-            .with_booking_parse(models.decisions.booking_parse.clone());
+            .with_booking_parse(models.decisions.booking_parse.clone())
+            .with_connector_slate(models.decisions.connector_slate.as_ref());
         self
     }
 

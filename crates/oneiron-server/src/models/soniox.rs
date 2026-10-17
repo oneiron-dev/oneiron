@@ -17,12 +17,13 @@
 //! A socket that drops (it fails or closes before its `finished`, or Soniox
 //! reports a request timeout or a failure of its own) is reconnected once:
 //! the next segment opens on a fresh lease, the dropped one's final words
-//! carried, and what it had not sent yet goes to the next. A cut it sent
-//! whose `<fin>` never came is answered with the words carried. Audio it
-//! sent that Soniox had not made final is lost. A second drop before the
-//! next socket says anything fails the hearing.
+//! carried. What it sent after the last audio Soniox made final goes to the
+//! next again, its cuts whose `<fin>` never came in place, ahead of what it
+//! had not sent yet; the next socket answers those cuts. A second drop
+//! before the next socket says anything fails the hearing.
 use std::collections::{BTreeMap, VecDeque};
 use std::future::{Future, poll_fn};
+use std::ops::Range;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -213,10 +214,161 @@ impl SonioxTransport for Outbox {
     }
 }
 
+/// What a segment sent that Soniox has not made final yet, in order: its
+/// audio, and each cut whose `<fin>` has not come. A dropped socket's next
+/// segment hears it again.
+struct Journal {
+    /// Each item sent, at the byte of the segment's audio it follows.
+    sent: VecDeque<(u64, Held)>,
+    /// Audio bytes the segment has sent.
+    end: u64,
+    /// Audio bytes the journal holds.
+    bytes: usize,
+    /// The audio dropped past the limit that Soniox has not made final, as
+    /// a span of the segment's bytes: a replay misses it.
+    lost: Option<Range<u64>>,
+    /// Bytes per sample frame (every channel), and per second.
+    frame_bytes: u64,
+    per_second: u64,
+}
+
+impl Journal {
+    fn new(sample_rate: u32, channels: u16) -> Self {
+        let frame_bytes = u64::from(channels.max(1)) * 2;
+        Self {
+            sent: VecDeque::new(),
+            end: 0,
+            bytes: 0,
+            lost: None,
+            frame_bytes,
+            per_second: u64::from(sample_rate) * frame_bytes,
+        }
+    }
+
+    /// A frame the socket took. Past [`QUEUE_LIMIT_BYTES`] the oldest audio
+    /// goes: a long silence Soniox never reported final.
+    fn record(&mut self, frame: &Message) {
+        match frame {
+            Message::Binary(pcm) if !pcm.is_empty() => {
+                self.sent.push_back((self.end, Held::Audio(pcm.to_vec())));
+                self.end = self.end.saturating_add(pcm.len() as u64);
+                self.bytes = self.bytes.saturating_add(pcm.len());
+                while self.bytes > QUEUE_LIMIT_BYTES {
+                    let Some(at) = self
+                        .sent
+                        .iter()
+                        .position(|(_, held)| matches!(held, Held::Audio(_)))
+                    else {
+                        break;
+                    };
+                    if let Some((start, Held::Audio(pcm))) = self.sent.remove(at) {
+                        self.bytes -= pcm.len();
+                        let end = start.saturating_add(pcm.len() as u64);
+                        let start = self.lost.as_ref().map_or(start, |lost| lost.start);
+                        self.lost = Some(start..end);
+                    }
+                }
+            }
+            Message::Text(text) if text.as_str() == FINALIZE => {
+                self.sent.push_back((self.end, Held::Cut));
+            }
+            // Its config, a keepalive, its end.
+            _ => {}
+        }
+    }
+
+    /// What one frame said: each `<fin>` answers the oldest cut, and the
+    /// audio Soniox made final (its `final_audio_proc_ms`, or the end of the
+    /// last final word) leaves.
+    fn heard(&mut self, frame: &serde_json::Value, updates: &[SonioxUpdate]) {
+        for _ in updates
+            .iter()
+            .filter(|update| matches!(update, SonioxUpdate::Finalized))
+        {
+            if let Some(at) = self
+                .sent
+                .iter()
+                .position(|(_, held)| matches!(held, Held::Cut))
+            {
+                self.sent.remove(at);
+            }
+        }
+        let words = updates
+            .iter()
+            .filter_map(|update| match update {
+                SonioxUpdate::Asr(event) => Some(event.tokens.iter()),
+                SonioxUpdate::Finalized => None,
+            })
+            .flatten()
+            .filter(|token| token.is_final)
+            .filter_map(|token| token.end_ms);
+        let processed = frame
+            .get("final_audio_proc_ms")
+            .and_then(serde_json::Value::as_f64);
+        let Some(ms) = words.chain(processed).reduce(f64::max) else {
+            return;
+        };
+        if !ms.is_finite() || ms <= 0.0 {
+            return;
+        }
+        let byte = (ms / 1_000.0 * self.per_second as f64) as u64;
+        self.confirm(byte / self.frame_bytes * self.frame_bytes);
+    }
+
+    /// Drops the audio before byte `upto`; cuts stay until their `<fin>`.
+    /// Lost audio Soniox made final is lost no more.
+    fn confirm(&mut self, upto: u64) {
+        self.lost = self
+            .lost
+            .take()
+            .map(|lost| lost.start.max(upto)..lost.end)
+            .filter(|lost| !lost.is_empty());
+        let mut bytes = 0;
+        self.sent.retain_mut(|(at, held)| {
+            let Held::Audio(pcm) = held else {
+                return true;
+            };
+            let end = at.saturating_add(pcm.len() as u64);
+            if end <= upto {
+                return false;
+            }
+            if *at < upto {
+                let made_final = usize::try_from(upto - *at).map_or(pcm.len(), |n| n.min(pcm.len()));
+                pcm.drain(..made_final);
+                *at = upto;
+            }
+            bytes += pcm.len();
+            true
+        });
+        self.bytes = bytes;
+    }
+
+    /// What the next segment hears again, in order, and its audio bytes.
+    /// Audio dropped past the limit is not among it: its span is logged.
+    fn replay(self) -> (VecDeque<Held>, usize) {
+        if let Some(lost) = &self.lost {
+            tracing::warn!(
+                from_ms = self.ms(lost.start),
+                to_ms = self.ms(lost.end),
+                bytes = lost.end - lost.start,
+                "live transcribe replay misses audio dropped past its queue limit"
+            );
+        }
+        (self.sent.into_iter().map(|(_, held)| held).collect(), self.bytes)
+    }
+
+    /// The segment's millisecond at byte `at`.
+    fn ms(&self, at: u64) -> u64 {
+        at.saturating_mul(1_000) / self.per_second.max(1)
+    }
+}
+
 /// One socket and the lease its audio is metered on.
 struct Segment {
     stream: LeasedAsrStream<SonioxAsrClient<Outbox>>,
     socket: Socket,
+    /// What it sent that Soniox has not made final.
+    journal: Journal,
     /// Its end is queued: it is read on until `finished`.
     ending: bool,
 }
@@ -257,6 +409,7 @@ impl Segment {
         Ok(Self {
             stream,
             socket,
+            journal: Journal::new(sample_rate, channels),
             ending: false,
         })
     }
@@ -278,6 +431,7 @@ impl Segment {
             let Some(frame) = self.stream.inner_mut().transport_mut().pop() else {
                 break;
             };
+            self.journal.record(&frame);
             Pin::new(&mut self.socket)
                 .start_send(frame)
                 .map_err(|error| socket_error(&error))?;
@@ -568,6 +722,7 @@ impl SonioxLive {
             };
             self.reconnected = false;
             let updates = segment.stream.inner_mut().receive(&frame)?;
+            segment.journal.heard(&frame, &updates);
             let updates = self.carry(updates)?;
             if !updates.is_empty() {
                 return Poll::Ready(Ok(updates));
@@ -576,11 +731,11 @@ impl SonioxLive {
     }
 
     /// A dropped socket, once in a row and while the owner still speaks.
-    /// Its lease settles the audio it admitted. Its final words are carried,
-    /// and what it had not sent waits for the next segment, ahead of what
-    /// already waited. Each cut it sent whose `<fin>` never came is answered
-    /// here, with the words carried so far. The next segment opens on the
-    /// next poll.
+    /// Its lease settles the audio it admitted. Its final words are carried.
+    /// What it sent after the audio Soniox made final, each cut whose
+    /// `<fin>` never came among it, then what it had not sent, wait for the
+    /// next segment ahead of what already waited; the next socket answers
+    /// those cuts. The next segment opens on the next poll.
     fn reconnect(&mut self, error: oneiron::Error) -> oneiron::Result<Vec<SonioxUpdate>> {
         if self.ending || self.reconnected {
             return Err(error);
@@ -589,21 +744,16 @@ impl SonioxLive {
         tracing::warn!(%error, "live transcribe socket dropped; reconnecting once");
         self.reconnected = true;
         segment.stream.cancel()?;
+        let (mut unsent, mut unsent_bytes) = segment.journal.replay();
         let client = segment.stream.inner_mut();
-        let (words, finalizing) = client.dropped();
-        let mut unsent = VecDeque::new();
-        let mut unsent_bytes = 0_usize;
-        let mut unsent_cuts = 0_usize;
+        let (words, _) = client.dropped();
         while let Some(frame) = client.transport_mut().pop() {
             match frame {
                 Message::Binary(pcm) if !pcm.is_empty() => {
                     unsent_bytes = unsent_bytes.saturating_add(pcm.len());
                     unsent.push_back(Held::Audio(pcm.to_vec()));
                 }
-                Message::Text(text) if text.as_str() == FINALIZE => {
-                    unsent_cuts += 1;
-                    unsent.push_back(Held::Cut);
-                }
+                Message::Text(text) if text.as_str() == FINALIZE => unsent.push_back(Held::Cut),
                 // Its config, a keepalive, its end.
                 _ => {}
             }
@@ -615,10 +765,6 @@ impl SonioxLive {
         unsent.append(&mut self.held);
         self.held = unsent;
         self.carried.extend(words);
-        let unanswered = finalizing.saturating_sub(unsent_cuts);
-        if unanswered > 0 {
-            return self.carry(vec![SonioxUpdate::Finalized; unanswered]);
-        }
         Ok(if self.carried.is_empty() {
             Vec::new()
         } else {

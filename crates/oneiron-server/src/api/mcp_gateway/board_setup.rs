@@ -521,8 +521,9 @@ fn mcp_board_sections(
             .is_none_or(|overflow| overflow.source_exhausted),
     };
     let worlds_section = mcp_worlds_section(server, actor, served)?;
-    let tasks_section = oneiron::context_board::assemble_tasks_section(&tasks, Vec::new())
-        .map_err(mcp_board_frame_error)?;
+    let tasks_section =
+        oneiron::context_board::assemble_tasks_section(&tasks, mcp_fanout_rows(server, actor)?)
+            .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];
     if let Some(memories) = mcp_pinned_memories(server, actor, pins)? {
         hooks.memories = memories.section.hook_shares(pins);
@@ -565,6 +566,29 @@ fn mcp_board_sections(
         &oneiron::context_board::PeopleView::new(&people, &resident),
     ));
     Ok((sections, omissions, hooks))
+}
+
+/// The fan-out launches that wait on the owner, as TASKS lead rows (OF-393):
+/// the agent's own, or every one for an owner's connector. They are
+/// actor-wide, as its children are, so a world/facet-narrowed or
+/// record-restricted connector reads none.
+fn mcp_fanout_rows(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+) -> Result<Vec<String>, McpGatewayError> {
+    if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
+        return Ok(Vec::new());
+    }
+    let launches = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality())
+    .pending_task_fanout_launches()
+    .map_err(mcp_facade_error)?;
+    Ok(oneiron::context_board::fanout_action_rows(&launches))
 }
 
 /// A connector's READERS: its agent's own reader list, which is actor-wide
@@ -1297,8 +1321,18 @@ fn run_board_sections(
             .board_section()
             .map_err(mcp_board_frame_error)?
     };
-    let tasks_section = oneiron::context_board::assemble_tasks_section(&tasks, Vec::new())
-        .map_err(mcp_board_frame_error)?;
+    // The agent's own fan-out launches that wait on the owner (OF-393).
+    let launches = server
+        .vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .at(oneiron::claim::CallerLocality::OnDevice)
+        .pending_task_fanout_launches()
+        .map_err(mcp_facade_error)?;
+    let tasks_section = oneiron::context_board::assemble_tasks_section(
+        &tasks,
+        oneiron::context_board::fanout_action_rows(&launches),
+    )
+    .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];
     if let Some(memories) = crate::api::context_board::lane_hook_pins_projection(read, pins)
         .map_err(super::mcp_api_error)?

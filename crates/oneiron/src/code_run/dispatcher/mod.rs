@@ -8,6 +8,7 @@ mod leader;
 mod memory_verbs;
 mod reader_spawn;
 mod summarize;
+mod team_submit;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
@@ -496,6 +497,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Summarize(call) => self.dispatch_summarize(*call, site),
             SelfCall::Leader(call) => self.dispatch_leader(call),
             SelfCall::Team(call) => self.dispatch_team(call),
+            SelfCall::TeamSubmit(input) => self.dispatch_team_submit(input),
         }
     }
 }
