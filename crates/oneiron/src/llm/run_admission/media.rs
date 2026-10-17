@@ -104,6 +104,16 @@ impl MediaGate {
         job
     }
 
+    /// Takes up a job that an earlier run's submit started, as a restart
+    /// leaves one: starts this permit under the checks a submit takes, and
+    /// sends nothing, so the job's polls and its cancel ride this permit.
+    /// Its dispatch receipt stands for the job going on here.
+    pub fn resume(&self, request: &MediaRequest, lease: &BudgetLease) -> LlmResult<()> {
+        let mut opened = self.open(request, lease)?;
+        opened.finish(None, true);
+        Ok(())
+    }
+
     /// Where the job a submit through this gate started stands.
     pub async fn poll(
         &self,
