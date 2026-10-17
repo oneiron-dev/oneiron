@@ -10,8 +10,8 @@ pub mod blocked;
 pub mod consent;
 pub mod vault_read;
 
-// The guest authoring request is decoded only at the typed component bridge.
-#[cfg(any(test, feature = "code-sandbox-wasmtime"))]
+// The guest authoring request is decoded at the typed component bridge, and
+// a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
 mod codec;
 mod coordination_codec;
@@ -30,8 +30,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "code-sandbox-wasmtime")]
-pub(crate) use self::agent_authoring::parse_agent_put_request;
+pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
 pub(crate) use self::codec::encode_code_run_replay_value;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
@@ -78,11 +77,12 @@ pub use self::reader::{
     ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DEFAULT_READER_WINDOW_TOKENS, DelegatedSource,
     ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState,
     ReaderJobWake, ReaderParent, ReaderReportReceipt, ReaderRoute, ReaderRunEnd,
-    ReaderSpawnReceipt, RunDeadline, SUMMARY_GROUP_EXCEEDS_WINDOW, SUMMARY_READ_BYTES_PER_TOKEN,
-    SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall, SelfReaderSpawnCall, SelfSummarizeCall,
-    SpawnHostSeat, SpawnParentBinding, SummarizeEffort, SummarizeRecipe, SummarizeReply,
-    TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall,
-    TaskWaitSetResult, reader_task_brief, summary_exceeds_window, summary_token_budget,
+    ReaderSpawnReceipt, ReaderSpend, RunDeadline, SUMMARY_GROUP_EXCEEDS_WINDOW,
+    SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall,
+    SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
+    SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
+    TaskWaitSetCall, TaskWaitSetResult, reader_task_brief, summary_exceeds_window,
+    summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,

@@ -92,8 +92,7 @@ impl VerifiedClaimTransition {
         };
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, predecessor)?
             .ok_or(Error::EntityNotFound)?;
-        if id == predecessor
-            || crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some()
+        if id == predecessor || crate::ports::EntityStoreRead::port_entity_present(store, txn, id)?
         {
             return Err(Error::InvalidClaimBody("claim successor already exists"));
         }
@@ -287,7 +286,7 @@ impl VerifiedClaimTransition {
         }
         let pinned = match self.successor_of {
             Some(predecessor) => {
-                if crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some() {
+                if crate::ports::EntityStoreRead::port_entity_present(store, txn, id)? {
                     return Ok(false);
                 }
                 predecessor

@@ -51,21 +51,16 @@ impl Vault {
     }
 
     /// Deletes an entity according to the pinned ARCH-0038 reason behavior.
+    /// A refusal a hold made in any of its writers is logged before it
+    /// returns, whatever it returns.
     pub fn delete_entity_with_reason(
         &self,
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self
-            .delete_entity_with_reason_impl(id, reason, None, false)
-            .inspect_err(|_| self.flush_legal_hold_refusals_after_failure())?;
-        // The dependents past the first batch go before the delete returns.
-        self.finish_dependent_walks()?;
-        while self.collect_lfs_garbage(32)? != 0 {}
-        #[cfg(unix)]
-        self.collect_released_result_bodies(256)?;
-        self.finish_gate_decision_retirements_after_commit();
-        Ok(outcome)
+        let deleted = self.delete_entity_through_dependents(id, reason, None);
+        self.store.flush_legal_hold_refusals_settled();
+        deleted
     }
 
     /// Facade delete seam carrying an owner gate evaluated before TXN1.
@@ -80,9 +75,20 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self
-            .delete_entity_with_reason_impl(id, reason, Some(gate), false)
-            .inspect_err(|_| self.flush_legal_hold_refusals_after_failure())?;
+        let deleted = self.delete_entity_through_dependents(id, reason, Some(gate));
+        self.store.flush_legal_hold_refusals_settled();
+        deleted
+    }
+
+    /// One delete and its dependent walks. Its caller logs the refusals once
+    /// every writer here has ended.
+    fn delete_entity_through_dependents(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<GatedDeletion<'_>>,
+    ) -> Result<DeleteEntityOutcome> {
+        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false)?;
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
