@@ -36,6 +36,11 @@ pub const PACK_CONNECTION_ACTOR_CLASS: &str = "pack-connection";
 pub const SLACK_AUTH_TEST_CHECK: &str = "slack.auth_test";
 pub const LINE_BOT_INFO_CHECK: &str = "line.bot_info";
 pub const GMAIL_PROFILE_CHECK: &str = "gmail.profile";
+pub const LINKEDIN_SESSION_CHECK: &str = "linkedin.session";
+/// Local readiness, not a provider call: the host's browser guest starts a
+/// session and closes it. Only a served host with a `[browser]` guest runs it.
+pub const BROWSER_SESSION_CHECK: &str = "browser.session";
+const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
 const MAX_CHECK_REPLY_BYTES: u64 = 64 * 1024;
 const MAX_CHECK_TEXT_BYTES: usize = 512;
 
@@ -259,7 +264,8 @@ impl Vault {
                 checked_at: at,
             },
         };
-        let view = self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
+        let view =
+            self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
         self.qualify_checked_builtin(owner, pack, view)
     }
 
@@ -324,7 +330,8 @@ impl Vault {
                 checked_at: at,
             },
         };
-        let view = self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
+        let view =
+            self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
         self.qualify_checked_builtin(owner, pack, view)
     }
 
@@ -391,7 +398,9 @@ impl Vault {
             .ok_or_else(|| invalid("the pack declares no setup"))?;
         let declared = declared_connection(&setup.connections, connection)?;
         for session in self.pack_setup_sessions_in_txn(&txn, pack, &receipt.content_hash)? {
-            if self.connection_state_in_txn(&txn, declared, &session)?.ready
+            if self
+                .connection_state_in_txn(&txn, declared, &session)?
+                .ready
                 && let Some(check) = session
                     .checks
                     .into_iter()
@@ -624,10 +633,11 @@ pub struct ProviderConnectionChecks {
 
 impl ProviderConnectionChecks {
     /// Every check name this verifier answers.
-    pub const CHECKS: [&'static str; 3] = [
+    pub const CHECKS: [&'static str; 4] = [
         SLACK_AUTH_TEST_CHECK,
         LINE_BOT_INFO_CHECK,
         GMAIL_PROFILE_CHECK,
+        LINKEDIN_SESSION_CHECK,
     ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
@@ -656,6 +666,13 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
                 reqwest::Method::GET,
                 "https://gmail.googleapis.com/gmail/v1/users/me/profile",
             ),
+            LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
+            BROWSER_SESSION_CHECK => {
+                return Err(
+                    "this host runs no browser guest; a served host with a [browser] guest checks it"
+                        .to_owned(),
+                );
+            }
             other => return Err(format!("this host has no connection check named {other}")),
         };
         let secret = check
@@ -667,17 +684,18 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
             .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
                 let credential = std::str::from_utf8(value)
                     .map_err(|_| invalid("the stored credential is not text"))?;
-                let response = self
-                    .client
-                    .request(method.clone(), url)
-                    .bearer_auth(credential.trim())
-                    .send()
-                    .map_err(|error| {
-                        Error::InvalidConfig(format!(
-                            "connection check could not reach the provider: {}",
-                            error.without_url()
-                        ))
-                    })?;
+                let request = self.client.request(method.clone(), url);
+                let request = if check.check == LINKEDIN_SESSION_CHECK {
+                    linkedin_session(request, credential)
+                } else {
+                    request.bearer_auth(credential.trim())
+                };
+                let response = request.send().map_err(|error| {
+                    Error::InvalidConfig(format!(
+                        "connection check could not reach the provider: {}",
+                        error.without_url()
+                    ))
+                })?;
                 let status = response.status().as_u16();
                 let scopes = response
                     .headers()
@@ -726,6 +744,26 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
                 field("displayName").unwrap_or("Official Account"),
                 field("basicId").unwrap_or("unknown")
             ),
+            LINKEDIN_SESSION_CHECK => {
+                let profile = |name| {
+                    reply
+                        .get("miniProfile")
+                        .and_then(|profile| reply_field(profile, name))
+                };
+                profile("publicIdentifier").map_or_else(String::new, |handle| {
+                    let name = [profile("firstName"), profile("lastName")]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let name = if name.trim().is_empty() {
+                        "LinkedIn member"
+                    } else {
+                        name.trim()
+                    };
+                    format!("{name} ({handle})")
+                })
+            }
             _ => field("emailAddress").unwrap_or_default().to_owned(),
         };
         Ok(PackConnectionEvidence {
@@ -831,6 +869,29 @@ fn judge_evidence(
         basis,
         checked_at: at,
     }
+}
+
+/// LinkedIn's signed-in member read: the session goes as its `li_at` cookie,
+/// with a CSRF token this check picks and echoes as `JSESSIONID`. It reads
+/// the member only; it never sends a message or a request.
+fn linkedin_session(
+    request: reqwest::blocking::RequestBuilder,
+    cookie: &str,
+) -> reqwest::blocking::RequestBuilder {
+    let session = cookie.trim();
+    let session = session.strip_prefix("li_at=").unwrap_or(session);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos() % 10_u128.pow(19));
+    let csrf = format!("ajax:{nanos:019}");
+    request
+        .header(
+            reqwest::header::COOKIE,
+            format!("li_at={session}; JSESSIONID=\"{csrf}\""),
+        )
+        .header("csrf-token", csrf)
+        .header("x-restli-protocol-version", "2.0.0")
+        .header(reqwest::header::ACCEPT, "application/json")
 }
 
 fn reply_field<'a>(reply: &'a serde_json::Value, name: &str) -> Option<&'a str> {

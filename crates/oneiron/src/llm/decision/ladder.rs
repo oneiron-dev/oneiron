@@ -5,7 +5,8 @@ use super::policy::{
 };
 use super::types::{invalid, paired_valid};
 use super::{
-    AnswerContract, DecisionAnswer, DecisionDial, DecisionImage, DecisionQuestion, DecisionReceipt,
+    AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
+    DecisionReceipt,
     DecisionRung, DecisionTime, HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin,
     Reasoning, ReasoningCause, StopCause, TypedDecision,
 };
@@ -90,6 +91,9 @@ pub struct DecisionCall<'a> {
     /// Images the question reads, each filling the state field of its name. Only a
     /// provider that reads images gets a call with any.
     pub images: &'a [DecisionImage],
+    /// Audio clips the question reads, each filling the state field of its name. Only a
+    /// provider that reads audio gets a call with any.
+    pub audio: &'a [DecisionAudio],
     /// A JSON object of at most [`MAX_DECISION_STATE_BYTES`]; never an implicit vault dump.
     pub state: &'a Value,
     /// A provider with a native deadline gets [`RetrievalDeadline::decision_time_left`], and
@@ -104,6 +108,7 @@ pub struct DecisionPack<'a> {
     pub questions: &'a [&'a DecisionQuestion],
     pub evidence: &'a [EntityId],
     pub images: &'a [DecisionImage],
+    pub audio: &'a [DecisionAudio],
     pub state: &'a Value,
     pub deadline: &'a RetrievalDeadline,
 }
@@ -115,6 +120,7 @@ impl<'a> DecisionPack<'a> {
             question,
             evidence: self.evidence,
             images: self.images,
+            audio: self.audio,
             state: self.state,
             deadline: self.deadline,
         })
@@ -153,13 +159,17 @@ impl ProviderCapability {
     }
 }
 
-/// Whether `provider` can take `question` over `images`.
+/// Whether `provider` can take `question` over `images` and `audio`. A call carrying both
+/// needs a provider that reads both; the ladder never drops one to fit.
 fn takes(
     provider: &dyn DecisionProvider,
     question: &DecisionQuestion,
     images: &[DecisionImage],
+    audio: &[DecisionAudio],
 ) -> bool {
-    provider.capability().takes(question) && (images.is_empty() || provider.reads_images())
+    provider.capability().takes(question)
+        && (images.is_empty() || provider.reads_images())
+        && (audio.is_empty() || provider.reads_audio())
 }
 
 /// Providers see only caller-prepared, access-checked evidence references and the state the
@@ -175,6 +185,11 @@ pub trait DecisionProvider: Send + Sync {
     /// Whether it reads images. The ladder skips a provider that does not for a call with
     /// images, and so for every Box question.
     fn reads_images(&self) -> bool {
+        false
+    }
+    /// Whether it hears audio clips. The ladder skips a provider that does not for a call
+    /// with any.
+    fn reads_audio(&self) -> bool {
         false
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
@@ -246,6 +261,10 @@ pub trait DecisionModel: Send + Sync {
     fn reads_images(&self) -> bool {
         false
     }
+    /// See [`DecisionProvider::reads_audio`].
+    fn reads_audio(&self) -> bool {
+        false
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -283,6 +302,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn reads_images(&self) -> bool {
         self.model.reads_images()
+    }
+    fn reads_audio(&self) -> bool {
+        self.model.reads_audio()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)
@@ -409,11 +431,45 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<TypedDecision> {
-        let mut decisions = self.run_pack_images(
+        self.run_media(
+            question,
+            principal,
+            evidence,
+            images,
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )
+    }
+
+    /// [`Self::run`] over the images and audio clips the question reads. Only providers
+    /// that read every medium the call carries take it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's media, state and clock join the question, its scope, the dial and the policy"
+    )]
+    pub fn run_media(
+        &self,
+        question: &DecisionQuestion,
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> Result<TypedDecision> {
+        let mut decisions = self.run_pack_media(
             &[question],
             principal,
             evidence,
             images,
+            audio,
             state,
             dial,
             policy,
@@ -482,11 +538,46 @@ impl DecisionLadder<'_> {
         reversibility: Reversibility,
         deadline: &RetrievalDeadline,
     ) -> Result<Vec<TypedDecision>> {
+        self.run_pack_media(
+            questions,
+            principal,
+            evidence,
+            images,
+            &[],
+            state,
+            dial,
+            policy,
+            reversibility,
+            deadline,
+        )
+    }
+
+    /// [`Self::run_pack_images`] over audio clips as well. A clip fills the state field of
+    /// its name like an image, and each receipt keeps every clip's evidence ref and
+    /// version, never its samples.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the call's media, state and clock join the questions, their scope, dial and policy"
+    )]
+    pub fn run_pack_media(
+        &self,
+        questions: &[&DecisionQuestion],
+        principal: EntityId,
+        evidence: &[EntityId],
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+        reversibility: Reversibility,
+        deadline: &RetrievalDeadline,
+    ) -> Result<Vec<TypedDecision>> {
         let pack = self.open(
             questions,
             principal,
             evidence,
             images,
+            audio,
             state,
             dial,
             policy,
@@ -508,6 +599,7 @@ impl DecisionLadder<'_> {
                     questions: chunk,
                     evidence,
                     images,
+                    audio,
                     state,
                     deadline,
                 };
@@ -524,7 +616,7 @@ impl DecisionLadder<'_> {
     /// A pack's checked routing inputs, before its first read.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the inputs of run_pack_images, checked once for every first read"
+        reason = "the inputs of run_pack_media, checked once for every first read"
     )]
     pub(super) fn open<'a>(
         &'a self,
@@ -532,6 +624,7 @@ impl DecisionLadder<'_> {
         principal: EntityId,
         evidence: &'a [EntityId],
         images: &'a [DecisionImage],
+        audio: &'a [DecisionAudio],
         state: &'a Value,
         dial: DecisionDial,
         policy: &'a DecisionBandPolicy,
@@ -559,6 +652,8 @@ impl DecisionLadder<'_> {
                 .any(|question| question.contract == AnswerContract::Box),
         )
         .map_err(|_| invalid("invalid decision images"))?;
+        DecisionAudio::check_call(audio, images, state)
+            .map_err(|_| invalid("invalid decision audio"))?;
         dial.band.validate()?;
         if dial.first > dial.ceiling {
             return Err(invalid("invalid decision dial"));
@@ -585,6 +680,7 @@ impl DecisionLadder<'_> {
             principal,
             evidence,
             images,
+            audio,
             state,
             dial,
             rows,
@@ -615,6 +711,7 @@ impl DecisionLadder<'_> {
                     principal: pack.principal,
                     evidence: pack.evidence,
                     images: pack.images,
+                    audio: pack.audio,
                     state: pack.state,
                     dial: pack.dial,
                     row,
@@ -642,6 +739,7 @@ impl DecisionLadder<'_> {
             principal,
             evidence,
             images,
+            audio,
             state,
             dial,
             row,
@@ -707,7 +805,7 @@ impl DecisionLadder<'_> {
                 break;
             }
             // A stronger rung, the person's included, starts only while work time is left.
-            match self.next_available(rung, dial.ceiling, question, images) {
+            match self.next_available(rung, dial.ceiling, question, images, audio) {
                 None => {
                     unavailable = true;
                     if let Some(cause) = cause {
@@ -727,6 +825,7 @@ impl DecisionLadder<'_> {
                         questions: &questions,
                         evidence,
                         images,
+                        audio,
                         state,
                         deadline,
                     };
@@ -788,7 +887,11 @@ impl DecisionLadder<'_> {
         };
         // A rung that abstained answered nothing.
         let answered = answered.filter(|_| outcome.answer != DecisionAnswer::Abstain);
-        let evidence_versions = images.iter().map(|image| image.evidence.clone()).collect();
+        let evidence_versions = images
+            .iter()
+            .map(|image| image.evidence.clone())
+            .chain(audio.iter().map(|clip| clip.evidence.clone()))
+            .collect();
         Ok(TypedDecision {
             answer: outcome.answer,
             probability: outcome.probability,
@@ -815,6 +918,32 @@ impl DecisionLadder<'_> {
                 }),
             },
         })
+    }
+
+    /// The first rung from `first` up to `ceiling` whose provider reads images when
+    /// `images` and audio when `audio`, for a host that starts a media call there. `None`
+    /// when no rung in that span reads every medium the call carries: the host abstains
+    /// rather than drop one.
+    #[must_use]
+    pub fn first_media_reader(
+        &self,
+        first: DecisionRung,
+        ceiling: DecisionRung,
+        images: bool,
+        audio: bool,
+    ) -> Option<DecisionRung> {
+        let mut rung = first;
+        loop {
+            if self.slot(rung).is_some_and(|provider| {
+                (!images || provider.reads_images()) && (!audio || provider.reads_audio())
+            }) {
+                return Some(rung);
+            }
+            if rung >= ceiling || rung == DecisionRung::Human {
+                return None;
+            }
+            rung = next_rung(rung);
+        }
     }
 
     fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
@@ -859,13 +988,14 @@ impl DecisionLadder<'_> {
         ceiling: DecisionRung,
         question: &DecisionQuestion,
         images: &[DecisionImage],
+        audio: &[DecisionAudio],
     ) -> Option<DecisionRung> {
         while rung < ceiling {
             rung = next_rung(rung);
             if rung == DecisionRung::Human
                 || self
                     .slot(rung)
-                    .is_some_and(|provider| takes(provider, question, images))
+                    .is_some_and(|provider| takes(provider, question, images, audio))
             {
                 return Some(rung);
             }
@@ -892,7 +1022,7 @@ impl DecisionLadder<'_> {
         if !pack
             .questions
             .iter()
-            .all(|question| takes(provider, question, pack.images))
+            .all(|question| takes(provider, question, pack.images, pack.audio))
         {
             return Err(invalid("decision provider cannot take the question"));
         }
@@ -1008,6 +1138,7 @@ pub(super) struct OpenPack<'a> {
     principal: EntityId,
     evidence: &'a [EntityId],
     images: &'a [DecisionImage],
+    audio: &'a [DecisionAudio],
     state: &'a Value,
     dial: DecisionDial,
     rows: Vec<LearnedBand>,
@@ -1033,6 +1164,7 @@ struct Route<'a> {
     principal: EntityId,
     evidence: &'a [EntityId],
     images: &'a [DecisionImage],
+    audio: &'a [DecisionAudio],
     state: &'a Value,
     dial: DecisionDial,
     row: LearnedBand,

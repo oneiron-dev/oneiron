@@ -483,6 +483,7 @@ impl DecisionProvider for SystemOneRung {
             question: call.question.clone(),
             state: call.state.clone(),
             images: call.images.to_vec(),
+            audio: call.audio.to_vec(),
             score_levels: Vec::new(),
             posture: self.posture,
             remote_opt_in: self.remote_opt_in,

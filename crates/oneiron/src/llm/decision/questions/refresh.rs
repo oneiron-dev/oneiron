@@ -366,8 +366,14 @@ fn graph_proposal(
     } else {
         Vec::new()
     };
+    let audio = if answerer.reads_audio() && kind == crate::registry::ENTITY_TYPE_ASSET {
+        let lane = vault.scoped_read(graph_ask::asker_reader(vault, record.principal)?);
+        graph_ask::unit_audio(&lane, &context)?
+    } else {
+        Vec::new()
+    };
     let question = &record.definition.question;
-    Ok(match answerer.decide(question, &context, &images)? {
+    Ok(match answerer.decide(question, &context, &images, &audio)? {
         None => None,
         Some(GraphDecision::Prediction(prediction)) => {
             graph_ask::validate_prediction(question, &prediction)?;
@@ -386,7 +392,7 @@ fn graph_proposal(
         Some(GraphDecision::Decision(decision)) => {
             graph_ask::validate_decision(question, record.principal, &decision)?;
             Some(Proposed::Decision(Box::new(graph_ask::decided(
-                &context, &images, *decision,
+                &context, &images, &audio, *decision,
             ))))
         }
     })
