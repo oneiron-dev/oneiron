@@ -18909,7 +18909,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 22,
+      "const": 23,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -18975,6 +18975,21 @@
       "crate-vis": 2,
       "fn": 3,
       "struct": 7,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContributionForks",
+      "ContributionReplayHost"
+     ],
+     "path": "src/dreamer_runner/maintenance/contribution.rs",
+     "purpose": "The Coach's contribution checks (ARCH-0037 #lineage-credit, ARCH-0053): each sampled credited run's skill…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1,
       "trait": 1
      }
     },
@@ -19105,7 +19120,7 @@
       "crate-vis": 7,
       "fn": 1,
       "mod": 14,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -19549,7 +19564,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -26142,7 +26157,7 @@
      "purpose": "The owner's review of what the Dreamer proposes from one import (ARCH-0027 trust tier): imported material…",
      "surface": {
       "crate-vis": 2,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -26498,14 +26513,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PdfText",
       "PdfTextError"
      ],
      "path": "src/ingest/pdf.rs",
      "purpose": "A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: \"The first adapter reads a…",
      "surface": {
-      "const": 1,
       "enum": 1,
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -27624,7 +27640,7 @@
      "purpose": "The engine's `[limits]` rows and their question port, defined in `oneiron-contracts`",
      "surface": {
       "crate-vis": 2,
-      "fn": 1,
+      "fn": 2,
       "re-export": 1
      }
     },
@@ -53052,7 +53068,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54062,7 +54078,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3282,
+   "source_files": 3283,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68419,7 +68435,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import/notes.rs",
@@ -73456,7 +73472,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 50,
+   "over_bar": 51,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 613,
    "test_files": 182
