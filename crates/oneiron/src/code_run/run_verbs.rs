@@ -113,3 +113,38 @@ pub struct SkillCallInput {
     /// The call's arguments, in the shape its contract's `arguments` names.
     pub args: serde_json::Value,
 }
+
+/// `self.spawn`: one reader child over a result of the run (ARCH-0079
+/// #reader-forks). The child is queued and answers through its task; it
+/// never runs inline.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReaderSpawnInput {
+    /// The result the child reads: a name, a handle or a range ref, or a
+    /// card by its `ref` or `handle`.
+    pub source: serde_json::Value,
+    /// What the child is asked about its source.
+    pub ask: String,
+    /// The spawn's key in the run: the same key spawns the same child.
+    pub intent_key: String,
+}
+
+/// `tasks.wait`: one wait over reader children the run spawned, answered
+/// once all of them, or `n_of` of them, have a finding, or at `until`.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaitSetRequest {
+    /// The children's task ids, hex, as `self.spawn` returned them.
+    pub tasks: Vec<String>,
+    /// Wait for every child; the default.
+    pub all: Option<bool>,
+    /// Wait for this many children with a finding.
+    #[schemars(range(min = 1, max = "u32::MAX"))]
+    pub n_of: Option<u32>,
+    /// When the wait answers at the latest, unix milliseconds; clamped to the
+    /// children's cutoff, which is also its default.
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
+    pub until: Option<u64>,
+    /// The wait's key in the run: the same key answers as the same wait.
+    pub step_key: String,
+}

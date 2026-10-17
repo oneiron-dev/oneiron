@@ -74,6 +74,15 @@ pub enum SelfCall {
     /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
     /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
     Fold(crate::compaction::SelfFoldCall),
+    /// `self.spawn`: one reader child over a result of the run, queued on
+    /// the run's route (ARCH-0079 #reader-forks). The parent run is the
+    /// bridge call's.
+    ReaderSpawn(Box<super::reader::SelfReaderSpawnCall>),
+    /// `tasks.update({task_ref, resultRef})` from a reader child: its
+    /// finding, one of its own stored results.
+    ReaderReport(super::reader::SelfReaderReportCall),
+    /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
+    TasksWaitSet(super::reader::TaskWaitSetCall),
 }
 
 impl SelfCall {
@@ -105,6 +114,9 @@ impl SelfCall {
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
             Self::Fold(_) => SelfEffect::Fold,
+            Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
+            Self::ReaderReport(_) => SelfEffect::ReaderReport,
+            Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
         }
     }
 
@@ -173,6 +185,12 @@ pub enum SelfEffect {
     AgentVerb,
     /// A fold verb on the run's own log, answered by its fold ledger.
     Fold,
+    /// A reader child queued over one of the run's results.
+    ReaderSpawn,
+    /// A reader child's finding.
+    ReaderReport,
+    /// A wait over the run's reader children.
+    TasksWaitSet,
 }
 
 impl SelfEffect {
@@ -205,6 +223,9 @@ impl SelfEffect {
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
             Self::Fold => "self.fold",
+            Self::ReaderSpawn => "self.spawn",
+            Self::ReaderReport => "tasks.update",
+            Self::TasksWaitSet => "tasks.wait_set",
         }
     }
 
@@ -240,6 +261,7 @@ impl SelfEffect {
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
             Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
+            Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet => None,
         }
     }
 
@@ -583,6 +605,12 @@ pub enum SelfDispatchOutcome {
     TaskRefusal(SelfTaskRefusalResult),
     /// What one callable skill returned.
     SkillCall(SelfSkillCallResult),
+    /// A queued reader child.
+    ReaderSpawn(super::reader::ReaderSpawnReceipt),
+    /// A reader child's finding, kept.
+    ReaderReport(super::reader::ReaderReportReceipt),
+    /// One reduction of a wait over the run's reader children.
+    TaskWaitSet(super::reader::TaskWaitSetResult),
 }
 
 /// `self.skills.call(...)`: the skill and the arguments its call contract
