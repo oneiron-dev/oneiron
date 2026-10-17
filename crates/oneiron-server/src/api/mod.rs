@@ -128,6 +128,7 @@ mod openapi_registry;
 // scan switch, whole-batch import consent and whole-run agent consent.
 mod owner_origin;
 mod owner_routes;
+pub(crate) use owner_routes::owner;
 mod packs;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
