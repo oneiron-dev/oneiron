@@ -616,6 +616,10 @@ fn admitted_catalog_in_txn(
     if record.status != ConnectorKeyStatus::Active {
         return Err(invalid("the connector is not active"));
     }
+    // The OpenAI proxy's keys have no endpoint: no tool grant derives from one.
+    if record.connector == super::PROXY_CONNECTOR {
+        return Err(invalid("the OpenAI proxy's connector grants no tools"));
+    }
     let server = catalog_server(&record)
         .ok_or_else(|| invalid("the connector name has no scoped identity"))?;
     admitted_from_record(vault, txn, &record, server)
