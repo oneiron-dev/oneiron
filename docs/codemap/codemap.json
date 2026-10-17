@@ -28879,7 +28879,7 @@
      "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
      "surface": {
       "crate-vis": 3,
-      "fn": 13,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -36275,6 +36275,8 @@
      "kind": "src",
      "notable": [
       "RecallExecution",
+      "RecallMediaSeed",
+      "RecallQueryVectors",
       "RetrievalDeadline",
       "SlowRetrievalStage"
      ],
@@ -36282,8 +36284,8 @@
      "purpose": "Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the…",
      "surface": {
       "crate-vis": 9,
-      "fn": 10,
-      "struct": 3
+      "fn": 11,
+      "struct": 5
      }
     },
     {
@@ -44632,7 +44634,7 @@
      "path": "src/task_verb/recall_door.rs",
      "purpose": "The recall door: when a recall's clock starts, what it answers when its door stops waiting, and how it…",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
