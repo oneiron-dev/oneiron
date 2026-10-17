@@ -396,6 +396,12 @@ impl Vault {
         if pending.qualification_report_hash.as_deref() != Some(expected_report_hash) {
             return Err(invalid_body("connector qualification report changed"));
         }
+        // A catalog connector moves to Active only through qualification,
+        // which meets its slate stamp and the suite; an approval alone
+        // leaves its status as it was.
+        let activates = record.catalog.is_none()
+            && (pending.drift.requires_reregistration
+                || record.status == ConnectorKeyStatus::Pending);
         let approved = ConnectorKeyRecord {
             qualification_receipt: Some(ConnectorQualificationReceipt::new(
                 expected_report_hash.to_owned(),
@@ -406,16 +412,12 @@ impl Vault {
             protocol_revision: Some(pending.protocol_revision.clone()),
             retained_manifest: Some(pending.manifest.clone()),
             pending_manifest: None,
-            status: if pending.drift.requires_reregistration
-                || record.status == ConnectorKeyStatus::Pending
-            {
+            status: if activates {
                 ConnectorKeyStatus::Active
             } else {
                 record.status
             },
-            status_changed_at: if pending.drift.requires_reregistration
-                || record.status == ConnectorKeyStatus::Pending
-            {
+            status_changed_at: if activates {
                 Some(at)
             } else {
                 record.status_changed_at

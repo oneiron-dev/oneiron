@@ -579,6 +579,61 @@ fn catalog_budget_pool_in_txn(
     derived_key_catalog_in_txn(store, txn, key)
 }
 
+/// Two distinct per-grant keys of one catalog share its pool. One effect
+/// charged to both debits the pool through the first only; the second
+/// meets its own rows (`pool: false` below).
+pub(crate) fn shares_budget_pool(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    first: &ConnectorKeyRecord,
+    second: &ConnectorKeyRecord,
+) -> Result<bool> {
+    let Some((pool, ..)) = catalog_budget_pool_in_txn(store, txn, first)? else {
+        return Ok(false);
+    };
+    Ok(catalog_budget_pool_in_txn(store, txn, second)?.is_some_and(|(other, ..)| other == pool))
+}
+
+/// [`preflight_effector_budgets`], or the key's own rows alone when `pool`
+/// is false.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn preflight_effector_budgets_pooled(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    record: &ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+    pool: bool,
+) -> Result<Option<(u16, EffectorBudgetOnExhaust)>> {
+    if pool {
+        preflight_effector_budgets(store, txn, key_id, record, effect_channel, send_like, now)
+    } else {
+        preflight_key_budgets(store, txn, key_id, record, effect_channel, send_like, now)
+    }
+}
+
+/// [`charge_effector_budgets`], or the key's own rows alone when `pool` is
+/// false.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn charge_effector_budgets_pooled(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    key_id: &EntityId,
+    key: &mut ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+    pool: bool,
+) -> Result<EffectorBudgetChargeOutcome> {
+    if pool {
+        charge_effector_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)
+    } else {
+        charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)
+    }
+}
+
 /// Read-only preflight for a set of connector keys charged in ONE Gate
 /// transaction. Callers preflight every distinct key before writing usage to
 /// any of them, so a later exhausted key cannot partially debit an earlier.

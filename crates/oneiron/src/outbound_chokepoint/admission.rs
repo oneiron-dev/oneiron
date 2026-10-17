@@ -374,9 +374,20 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         co.budget_target_mut()
             .is_some_and(|target| Some(target.key_id) != primary_key)
     });
+    // Two per-grant keys of one catalog share its pool: the co-actor key
+    // meets only its own rows, so the effect debits the pool once (ONE-1794).
+    let co_pool = match (
+        governance.budget_target_mut(),
+        co_governance.as_mut().and_then(|co| co.budget_target_mut()),
+    ) {
+        (Some(primary), Some(co)) if co_key_distinct => {
+            !connector_key::shares_budget_pool(&vault.store, &wtxn, &primary.key, &co.key)?
+        }
+        _ => true,
+    };
     let co_exhausted = match co_governance.as_mut() {
         Some(co) if co_key_distinct => {
-            co_actor_exhausted(vault, &mut wtxn, co, prepared.budget_class, now_ms)?
+            co_actor_exhausted(vault, &mut wtxn, co, prepared.budget_class, now_ms, co_pool)?
         }
         _ => false,
     };
@@ -392,6 +403,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         &mut governance,
         prepared.budget_class,
         now_ms,
+        true,
     )?;
     if exhausted {
         governance.deny_budget_exhausted();
@@ -403,7 +415,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         return Ok(result);
     }
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
-        let (_, _, exhausted) = charge_once(vault, &mut wtxn, co, prepared.budget_class, now_ms)?;
+        let (_, _, exhausted) =
+            charge_once(vault, &mut wtxn, co, prepared.budget_class, now_ms, co_pool)?;
         if exhausted {
             // Preflighted above under this writer: fail the transaction
             // rather than persist the primary's debit alone.
@@ -579,12 +592,13 @@ fn co_actor_exhausted(
     co: &mut gate::ExternalEffectGovernance,
     budget_class: BudgetClass,
     now_ms: u64,
+    pool: bool,
 ) -> Result<bool, IntentLedgerError> {
     let Some(target) = co.budget_target_mut() else {
         return Ok(false);
     };
     let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    if connector_key::preflight_effector_budgets(
+    if connector_key::preflight_effector_budgets_pooled(
         &vault.store,
         wtxn,
         &target.key_id,
@@ -592,12 +606,13 @@ fn co_actor_exhausted(
         &target.governing_connector,
         budget_class.is_send(),
         now,
+        pool,
     )?
     .is_none()
     {
         return Ok(false);
     }
-    let (_, _, exhausted) = charge_once(vault, wtxn, co, budget_class, now_ms)?;
+    let (_, _, exhausted) = charge_once(vault, wtxn, co, budget_class, now_ms, pool)?;
     if !exhausted {
         return Err(Error::InvariantViolation("co-actor budget preflight diverged").into());
     }
@@ -611,6 +626,7 @@ fn charge_once(
     governance: &mut gate::ExternalEffectGovernance,
     budget_class: BudgetClass,
     now_ms: u64,
+    pool: bool,
 ) -> Result<(BudgetChargeMarker, Option<EffectorBudgetCharge>, bool), IntentLedgerError> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let Some(target) = governance.budget_target_mut() else {
@@ -630,7 +646,7 @@ fn charge_once(
     // trusted clock rather than a caller-supplied occurrence timestamp. This
     // also keeps the post-charge echo aligned with `effector_budget_read`.
     let budget_now = mutation_recorded_at;
-    let outcome = connector_key::charge_effector_budgets(
+    let outcome = connector_key::charge_effector_budgets_pooled(
         &vault.store,
         wtxn,
         &target.key_id,
@@ -638,6 +654,7 @@ fn charge_once(
         &target.governing_connector,
         budget_class.is_send(),
         budget_now,
+        pool,
     )?;
     let (mut charge, exhausted) = match outcome {
         EffectorBudgetChargeOutcome::NoRows(charge)

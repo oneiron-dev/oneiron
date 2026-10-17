@@ -570,7 +570,7 @@ impl Vault {
             Ok(governed) => governed,
             Err(stop) => return Ok(unavailable(stop)),
         };
-        let (_, destructive_hint) = self.connector_tool_class(&governed.key, &route, tool)?;
+        let (_, destructive_hint, _) = self.connector_tool_class(&governed.key, &route, tool)?;
         Ok(ConnectorToolSchema::Approved {
             input_schema: governed.schema,
             destructive_hint,
@@ -781,7 +781,7 @@ impl Vault {
         if key.protocol_revision.is_none() {
             return Ok(held("connector_protocol_unpinned"));
         }
-        let (payload_data_class, destructive_hint) =
+        let (payload_data_class, destructive_hint, replay) =
             self.connector_tool_class(&key, &route, &pending.tool)?;
         let arguments: Value = serde_json::from_str(&pending.arguments)
             .map_err(|_| IntentLedgerError::InvalidRecord("held connector call arguments"))?;
@@ -794,12 +794,9 @@ impl Vault {
         let descriptor = ToolCallDescriptor {
             schema: &schema,
             destructive_hint,
-            // The approved manifest carries no replay annotations, so the
-            // call is effectful and not idempotent.
-            replay: OutboundToolDescriptor {
-                read_only_hint: None,
-                idempotency_supported_hint: None,
-            },
+            // The slate row's declared hints: a tool declared neither
+            // read-only nor idempotent is effectful and not idempotent.
+            replay,
         };
         let prepared = match self.prepare_connector_tool_call(
             &key_id,
@@ -922,15 +919,16 @@ impl Vault {
         Ok(first)
     }
 
-    /// The tool's payload class and destructive flag from its slate row on
-    /// the governing key, else on the catalog key. A tool no slate names is
-    /// Unclassified, which the grant check holds for the owner.
+    /// The tool's payload class, destructive flag and declared replay hints
+    /// from its slate row on the governing key, else on the catalog key. A
+    /// tool no slate names is Unclassified, which the grant check holds for
+    /// the owner.
     fn connector_tool_class(
         &self,
         governing: &ConnectorKeyRecord,
         route: &ConnectorCallRoute,
         tool: &str,
-    ) -> crate::Result<(DataClass, bool)> {
+    ) -> crate::Result<(DataClass, bool, OutboundToolDescriptor)> {
         let catalog_slate = self
             .get_connector_key(&route.key_ref)?
             .and_then(|key| key.slate_ref);
@@ -944,10 +942,18 @@ impl Vault {
                     SlateDataClass::Secret => DataClass::Secret,
                     SlateDataClass::Header => DataClass::Unclassified,
                 };
-                return Ok((class, row.destroys));
+                let replay = OutboundToolDescriptor {
+                    read_only_hint: Some(row.read_only),
+                    idempotency_supported_hint: Some(row.idempotent),
+                };
+                return Ok((class, row.destroys, replay));
             }
         }
-        Ok((DataClass::Unclassified, false))
+        let replay = OutboundToolDescriptor {
+            read_only_hint: None,
+            idempotency_supported_hint: None,
+        };
+        Ok((DataClass::Unclassified, false, replay))
     }
 }
 

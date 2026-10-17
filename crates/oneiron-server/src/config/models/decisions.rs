@@ -19,6 +19,8 @@ const DEFAULT_IMAGE_PICK_BUDGET_MS: u64 = 1_000;
 /// The longest booking free text the parse reads when the file names none:
 /// the engine's own ceiling.
 const DEFAULT_BOOKING_PARSE_INPUT_BYTES: usize = 4096;
+/// One registration's whole slate-drafting budget when the file names none.
+const DEFAULT_CONNECTOR_SLATE_BUDGET_MS: u64 = 30_000;
 
 /// `[models.decisions]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -31,6 +33,19 @@ pub(super) struct DecisionsFile {
     big: Option<BigFile>,
     image_pick: Option<ImagePickFile>,
     booking_parse: Option<BookingParseFile>,
+    connector_slate: Option<ConnectorSlateFile>,
+}
+
+/// `[models.decisions.connector_slate]`: the per-row question a connector
+/// registration's grant slate is drafted with (OF-189), asked up to the Big
+/// rung. Without it, the rule rung drafts every row from the owner's past
+/// rulings.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConnectorSlateFile {
+    /// "What should this connector tool's setting be?"
+    wording: String,
+    budget_ms: Option<u64>,
 }
 
 /// `[models.decisions.booking_parse]`: the cheap seat a booking page's free
@@ -118,6 +133,15 @@ pub struct DecisionsSettings {
     pub big: Option<BigSettings>,
     pub image_pick: Option<ImagePickSettings>,
     pub booking_parse: Option<BookingParseSettings>,
+    pub connector_slate: Option<ConnectorSlateSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConnectorSlateSettings {
+    pub wording: String,
+    /// One registration's whole drafting budget; a row past it keeps its
+    /// rule draft.
+    pub budget: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,6 +279,22 @@ impl DecisionsFile {
                 })
             })
             .transpose()?;
+        let connector_slate = self
+            .connector_slate
+            .map(|slate| -> anyhow::Result<_> {
+                Ok(ConnectorSlateSettings {
+                    wording: filled("connector_slate.wording", slate.wording)?,
+                    budget: Duration::from_millis(
+                        match slate.budget_ms.unwrap_or(DEFAULT_CONNECTOR_SLATE_BUDGET_MS) {
+                            0 => anyhow::bail!(
+                                "models.decisions.connector_slate.budget_ms must be above 0"
+                            ),
+                            ms => ms,
+                        },
+                    ),
+                })
+            })
+            .transpose()?;
         Ok(DecisionsSettings {
             auto_check,
             seat,
@@ -262,6 +302,7 @@ impl DecisionsFile {
             big,
             image_pick,
             booking_parse,
+            connector_slate,
         })
     }
 }

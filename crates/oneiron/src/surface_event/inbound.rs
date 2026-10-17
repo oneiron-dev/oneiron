@@ -584,9 +584,9 @@ pub(crate) fn route_inbound_surface_event_admitting_in_txn(
             Ok::<_, Error>((admit(&identity_ref)?, identity_ref, identity))
         })
         .transpose()?;
-    // Who the event is for is the identity's binding head (OF-272), read on
-    // this same snapshot; an identity with no heads states no binding at all.
-    // How it routes stays custody's `inbound()` projection below.
+    // Who the event is for is the identity's binding head, and how it routes
+    // is its state head read on its custody's machine (OF-272), both on this
+    // same snapshot; an identity with no heads states neither.
     let found = match found {
         Some((true, identity_ref, identity)) => {
             crate::channel_identity::channel_identity_facts_in_txn(
@@ -594,11 +594,14 @@ pub(crate) fn route_inbound_surface_event_admitting_in_txn(
                 txn,
                 &identity_ref,
             )?
-            .map(|facts| (identity_ref, identity, facts.binding))
+            .map(|facts| {
+                let inbound = facts.inbound_with_custody(identity.custody());
+                (identity_ref, facts.binding, inbound)
+            })
         }
         _ => None,
     };
-    let Some((identity_ref, identity, binding)) = found else {
+    let Some((identity_ref, binding, inbound)) = found else {
         return Ok(rejected_receipt(
             input,
             None,
@@ -635,13 +638,13 @@ pub(crate) fn route_inbound_surface_event_admitting_in_txn(
     let at = input.received_at;
     // A rejection names the identity's agent only to a submitter that reads it.
     let named_agent = admit(&actor_ref)?.then_some(actor_ref);
-    // ONE projection, asked of the row, rather than this router's own match on
-    // the row's state. The delegated machine has no ROTATING and no QUARANTINE,
-    // so a `(shape, state)` match here had to name states one of the two
-    // machines cannot be in and silently agree with the lifecycle verb about
-    // which of them retire. `inbound()` is where that answer lives now, and
+    // ONE projection rather than this router's own match on the state. The
+    // delegated machine has no ROTATING and no QUARANTINE, so a
+    // `(shape, state)` match here had to name states one of the two machines
+    // cannot be in and silently agree with the lifecycle verb about which of
+    // them retire. `inbound_with_custody` is where that answer lives, and
     // both callers read it.
-    match identity.inbound() {
+    match inbound {
         InboundDisposition::Deliver => routed_receipt(
             input,
             identity_ref,
