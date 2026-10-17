@@ -2,9 +2,10 @@
 //! wrote, or what a receipt, an op log or a snapshot's hash binds: a code
 //! file's frontiers and ingress, a deck's fork log, a typed body's history,
 //! a codebase or repo snapshot, an LFS object, a run's output, and the
-//! stored history of each document. A carrier with a door of its own is read
-//! and marked through it (`retained`); a hit in any other files a proposal,
-//! and the row keeps its bytes.
+//! stored history of each document. A carrier with a door of its own goes
+//! through it: a retained one is marked (`retained`), an authored one masked
+//! (`authored`). A hit in any other files a proposal, and the row keeps its
+//! bytes.
 
 use std::borrow::Cow;
 
@@ -107,6 +108,9 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
             Err(_) => None,
         },
     };
+    if let Some(done) = super::authored::lift(vault, txn, decl, row_key, row.as_deref())? {
+        return Ok(done);
+    }
     Ok(match row.as_deref().and_then(write_payload_hit) {
         Some(reason) => Done::Propose(LiftCause::NoDoor, reason),
         None => Done::Clean,

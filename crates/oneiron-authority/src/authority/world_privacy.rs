@@ -31,7 +31,9 @@ const WORLD_PRIVACY_KEYS: [&str; 8] = [
 ];
 
 /// Where a world's rows may be read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum ReadLocation {
     /// Only on this machine, which must be one the owner marked "yours".
     OneMachine(EntityId),
@@ -53,7 +55,18 @@ pub enum SealedCopies {
 }
 
 /// The model routes a world prefers. Route ids are opaque here.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum ModelOrder {
     /// The vault's own order.
     #[default]
@@ -62,7 +75,9 @@ pub enum ModelOrder {
 }
 
 /// One world's settings, as one edit states them in full.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct WorldPrivacy {
     pub read: ReadLocation,
     pub sealed: SealedCopies,
