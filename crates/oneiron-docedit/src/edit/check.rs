@@ -16,7 +16,7 @@ use crate::retained_opc::{Package, rels_name};
 
 const TYPES: &str = "[Content_Types].xml";
 
-type Path = &'static [(&'static str, &'static str)];
+pub(super) type Path = &'static [(&'static str, &'static str)];
 
 /// An element (and everything in it), or one attribute of an element, that
 /// an edit may write. The path runs from the shape element, or from the part
@@ -136,7 +136,12 @@ pub(super) fn verify(
         }
     }
     let after = DeckView::read(&candidate)?;
-    same_deck(before, &after)?;
+    // A glue edit rewrites its connector's entry in the connection index.
+    let glued = match *op {
+        ValueEdit::SetGlue { target, .. } => Some((target.slide, target.shape)),
+        _ => None,
+    };
+    same_deck(before, &after, glued)?;
     reads_back(&candidate, before, &after, op)?;
     Ok(changed)
 }
@@ -354,8 +359,13 @@ pub(super) fn declared_type(package: &Package, part: &str) -> Result<Option<Stri
         .or_else(|| entry("Default", "Extension", extension)))
 }
 
-/// The same slides, identities, ambiguities and animation index.
-fn same_deck(before: &DeckView, after: &DeckView) -> Result<(), EditRefusal> {
+/// The same slides, identities, ambiguities and animation index; the
+/// `glued` connector's own connection entry aside.
+fn same_deck(
+    before: &DeckView,
+    after: &DeckView,
+    glued: Option<(&str, u32)>,
+) -> Result<(), EditRefusal> {
     let fault = |why| Err(EditRefusal::ReadBack(why));
     if before.slides.len() != after.slides.len() || before.ambiguities != after.ambiguities {
         return fault("the slide list or its ambiguities changed");
@@ -375,7 +385,19 @@ fn same_deck(before: &DeckView, after: &DeckView) -> Result<(), EditRefusal> {
         {
             return fault("a shape's identity changed");
         }
-        if timing(&old.animation) != timing(&new.animation) {
+        let aside = |index: &AnimationIndex| {
+            let mut index = index.clone();
+            if let Some((part, connector)) = glued
+                && part == old.part
+            {
+                index
+                    .connections
+                    .retain(|cxn| cxn.connector != Some(connector));
+            }
+            index
+        };
+        let (was, now) = (aside(&old.animation), aside(&new.animation));
+        if timing(&was) != timing(&now) {
             return fault("the animation index changed");
         }
     }
@@ -603,6 +625,22 @@ fn reads_back(
                 || descr != Some(picture.record.description.as_str())
             {
                 return fault("the picture does not read as written");
+            }
+        }
+        ValueEdit::SetPreset { target, preset } => {
+            let (_, tree) = xml::read(candidate, target.slide)?;
+            let at = find_shape(&tree, target.shape)
+                .ok_or(EditRefusal::ReadBack("the target is gone"))?;
+            if super::geometry::preset_of(&tree, at) != Some(preset) {
+                return fault("the preset does not read as written");
+            }
+        }
+        ValueEdit::SetGlue { target, start, end } => {
+            let (_, tree) = xml::read(candidate, target.slide)?;
+            let at = find_shape(&tree, target.shape)
+                .ok_or(EditRefusal::ReadBack("the target is gone"))?;
+            if super::geometry::glue_of(&tree, at) != (start, end) {
+                return fault("the glue does not read as written");
             }
         }
         ValueEdit::SetNotes { slide, text, .. } => {

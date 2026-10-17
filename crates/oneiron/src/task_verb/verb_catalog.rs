@@ -106,6 +106,7 @@ pub enum AgentVerb {
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
+    VaultSecretsLiftHistory,
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
@@ -409,6 +410,7 @@ impl AgentVerb {
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
+        Self::VaultSecretsLiftHistory,
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
@@ -717,6 +719,7 @@ impl AgentVerb {
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
+            Self::VaultSecretsLiftHistory => "vault.secrets.lift_history",
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
@@ -1021,6 +1024,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -1331,6 +1335,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -1666,6 +1671,7 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -1924,6 +1930,7 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesDelete
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultSecretsLiftHistory
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
@@ -2161,6 +2168,7 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
@@ -2465,6 +2473,7 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultSecretsLiftHistory => &["spec"],
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
@@ -2950,6 +2959,9 @@ impl AgentVerb {
             Self::VaultSettingsLearningClear => {
                 "The owner clears one learned-setting row of a key, mode and scope."
             }
+            Self::VaultSecretsLiftHistory => {
+                "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."
+            }
             Self::VaultWidenProposals => {
                 "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."
             }
@@ -2981,7 +2993,7 @@ impl AgentVerb {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
-                "Composes the default vault lens from the named sources, read under the caller's own scope."
+                "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."
             }
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
@@ -3404,7 +3416,7 @@ impl AgentVerb {
                 "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses."
             }
             Self::VaultArtifactsBodyDeckExport => {
-                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands."
+                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep."
             }
             Self::VaultArtifactsBodyDeckGate => {
                 "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector."

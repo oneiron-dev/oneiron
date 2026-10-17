@@ -2330,6 +2330,30 @@ async fn vault_settings_learning_clear(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_secrets_lift_history(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.lift_history")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.lift_history", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.secrets.lift_history", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_secrets_lift_history(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_widen_proposals(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -2586,19 +2610,18 @@ async fn vault_lenses_default(
         );
         auth.require_record_scope_carried(worlds, facets)?;
     }
+    facade_outside_room_turn(call, "vault.lenses.default")?;
     let value = input?;
-    let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "vault.lenses.default",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    oneiron::task_verb::sdk::validate_input("vault.lenses.default", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.lenses.default", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_lenses_default(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: Some(listed),
+    })
 }
 async fn vault_disclosure_offer(
     server: &Arc<SyncServer>,
@@ -6023,6 +6046,7 @@ pub(crate) async fn call_verb(
         "vault.settings.learning" => vault_settings_learning(server, call, input).await,
         "vault.settings.learning.put" => vault_settings_learning_put(server, call, input).await,
         "vault.settings.learning.clear" => vault_settings_learning_clear(server, call, input).await,
+        "vault.secrets.lift_history" => vault_secrets_lift_history(server, call, input).await,
         "vault.widen_proposals" => vault_widen_proposals(server, call, input).await,
         "vault.widen_proposals.approve" => vault_widen_proposals_approve(server, call, input).await,
         "vault.widen_proposals.decline" => vault_widen_proposals_decline(server, call, input).await,

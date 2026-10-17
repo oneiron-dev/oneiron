@@ -390,6 +390,8 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
+        @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs": ...
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs": ...
@@ -652,6 +654,9 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultSecretsVerbs:
+        def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
     class _VaultWidenProposalsVerbs:
         def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
             """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
@@ -668,8 +673,8 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
-        def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.GeneratedLens]:
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+        def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.LensFrameCard]:
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
     class _VaultDisclosureVerbs:
         def offer(self, spec: Facade.DisclosureOfferRequest) -> Facade.DisclosureOffered:
             """An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."""

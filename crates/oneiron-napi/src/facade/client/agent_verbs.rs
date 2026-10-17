@@ -938,6 +938,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_secrets_lift_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.lift_history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_widen_proposals(
         &self,
         input: serde_json::Value,
