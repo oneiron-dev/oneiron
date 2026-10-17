@@ -1102,6 +1102,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::ProposeInput>(),
             ),
             (
+                "self.browser.library.retire",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetireInput>(
+                ),
+            ),
+            (
                 "self.browser.library.run",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRunInput>(),
             ),
@@ -3955,6 +3960,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.library.propose" => {
             let _input: oneiron_browser::ProposeInput = decode(value.clone())?;
         }
+        "self.browser.library.retire" => {
+            let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
+        }
         "self.browser.library.run" => {
             let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
         }
@@ -4638,6 +4646,10 @@ pub fn invoke_browser(
             serde_json::from_value(value).map_err(invalid)?,
         )?),
         "self.browser.library.propose" => serde_json::to_value(self_browser_library_propose(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.library.retire" => serde_json::to_value(self_browser_library_retire(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -6462,6 +6474,12 @@ pub fn self_browser_library_propose(
     input: oneiron_browser::ProposeInput,
 ) -> Result<oneiron_browser::ProposeOutput, oneiron_browser::BrowserError> {
     driver.library_propose(input)
+}
+pub fn self_browser_library_retire(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::LibraryRetireInput,
+) -> Result<oneiron_browser::LibraryRetireOutput, oneiron_browser::BrowserError> {
+    driver.library_retire(input)
 }
 pub fn self_browser_library_run(
     driver: &mut dyn oneiron_browser::BrowserDriver,

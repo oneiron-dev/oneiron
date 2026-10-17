@@ -33,9 +33,10 @@ mod session;
 #[cfg(feature = "driver")]
 pub use desktop::{DesktopGuest, DesktopSession};
 pub use library::{
-    LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRunInput, LibraryRunOutput,
-    ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
-    WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, site_of,
+    LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
+    LibraryRunInput, LibraryRunOutput, ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS,
+    WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
+    WorkflowProof, site_of,
 };
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
@@ -785,6 +786,16 @@ pub trait BrowserDriver: Send {
     /// Runs a library program live; a missed postcondition goes back to the
     /// planner.
     fn library_run(&mut self, _input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
+    }
+
+    /// Takes a program out of the library, for every run after.
+    fn library_retire(
+        &mut self,
+        _input: LibraryRetireInput,
+    ) -> Result<LibraryRetireOutput, BrowserError> {
         Err(BrowserError::Library(
             "this browser host keeps no library".to_owned(),
         ))

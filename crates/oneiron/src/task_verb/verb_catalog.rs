@@ -221,6 +221,7 @@ pub enum AgentVerb {
     SelfBrowserBatch,
     SelfBrowserLibraryFind,
     SelfBrowserLibraryPropose,
+    SelfBrowserLibraryRetire,
     SelfBrowserLibraryRun,
     SelfDesktopOpen,
     SelfDesktopObserve,
@@ -510,6 +511,7 @@ impl AgentVerb {
         Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryPropose,
+        Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRun,
         Self::SelfDesktopOpen,
         Self::SelfDesktopObserve,
@@ -806,6 +808,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
+            Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfDesktopOpen => "self.desktop.open",
             Self::SelfDesktopObserve => "self.desktop.observe",
@@ -1145,6 +1148,7 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
@@ -1712,6 +1716,7 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
@@ -1902,6 +1907,7 @@ impl AgentVerb {
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
@@ -2183,6 +2189,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
@@ -2473,6 +2480,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
@@ -3111,6 +3119,9 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryPropose => {
                 "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition."
+            }
+            Self::SelfBrowserLibraryRetire => {
+                "Takes a program out of the replay library for every later run, and returns the card it had."
             }
             Self::SelfBrowserLibraryRun => {
                 "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."

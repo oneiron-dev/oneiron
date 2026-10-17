@@ -27,10 +27,11 @@ use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT,
     EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt,
     ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, LibraryFindInput,
-    LibraryFindOutput, LibraryRunInput, LibraryRunOutput, NoDecider, Observation, ObserveInput,
-    OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput, RoutineDecider, Row,
-    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SelectInput, SendPolicy, TypeInput,
-    ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRunInput, LibraryRunOutput,
+    NoDecider, Observation, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
+    ProposeOutput, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
+    SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary,
+    ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -439,6 +440,17 @@ impl BrowserDriver for BrowserSession {
         self.with_library(|session, library, decider| {
             crate::library::run(session, library, decider, input)
         })
+    }
+
+    fn library_retire(
+        &mut self,
+        input: LibraryRetireInput,
+    ) -> Result<LibraryRetireOutput, BrowserError> {
+        let library = self.library.as_mut().ok_or_else(no_library)?;
+        let retired = library
+            .retire(&input.workflow)?
+            .ok_or(BrowserError::NoWorkflow(input.workflow))?;
+        Ok(LibraryRetireOutput { retired })
     }
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {

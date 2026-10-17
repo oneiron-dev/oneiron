@@ -7,7 +7,8 @@
 //! A filed program is the library's `code` TASK: one subgoal's parameterised
 //! program, stamped with its task type (OF-543). It is kept here rather than
 //! as a TASK entity, so filing it routes no work; running it is the browser
-//! verb `self.browser.library.run`.
+//! verb `self.browser.library.run`, and `self.browser.library.retire` takes
+//! it out.
 
 use std::cmp::Reverse;
 
@@ -25,6 +26,11 @@ use crate::task_type::{PlacementDecisions, PlacementRequest, place_type_ref};
 /// The library's programs. Key: the site's BLAKE3 hash, then the program's id.
 const WORKFLOWS: SideTable<([u8; 32], EntityId), WorkflowRecord, Named> =
     SideTable::new(&side_table::BROWSER_WORKFLOW);
+
+/// Whether only the caller whose run filed a program may retire it. A filed
+/// program is the vault's: any caller the library serves may run or refile
+/// it (a refile moves `filed_by`), so any may retire it too.
+pub const RETIRE_FILER_ONLY: bool = false;
 
 /// One filed program, with its proof and its runs since.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,5 +199,39 @@ pub fn record_workflow_run(vault: &Vault, id: EntityId, met: bool, at: u64) -> R
         }
         record.last_run_at = Some(at);
         WORKFLOWS.put(vault, wtxn, &key, &record)
+    })
+}
+
+/// What a retire did.
+#[derive(Debug)]
+pub enum Retired {
+    /// The program left the library; this is the record it had.
+    Taken(Box<WorkflowRecord>),
+    /// No program is filed under the id.
+    NotFiled,
+    /// Another caller's run filed it, and [`RETIRE_FILER_ONLY`] holds.
+    NotFiler,
+}
+
+/// Takes the program filed under `id` out of the library, at `by`'s word.
+/// A later solved run that passes both checks files it afresh, with no runs.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn retire_workflow(vault: &Vault, id: EntityId, by: EntityId) -> Result<Retired> {
+    let Some(filed) = workflow(vault, id)? else {
+        return Ok(Retired::NotFiled);
+    };
+    let key = (site_key(&filed.site), id);
+    vault.with_write_txn_grouped(|wtxn| {
+        let Some(record) = WORKFLOWS.get(&vault.store, wtxn, &key)? else {
+            return Ok(Retired::NotFiled);
+        };
+        if RETIRE_FILER_ONLY && record.filed_by != by {
+            return Ok(Retired::NotFiler);
+        }
+        WORKFLOWS.delete(&vault.store, wtxn, &key)?;
+        Ok(Retired::Taken(Box::new(record)))
     })
 }
