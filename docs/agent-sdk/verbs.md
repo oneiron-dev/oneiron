@@ -120,6 +120,7 @@ both bindings and their export-census tests in one change.
 - `reveal`
 - `reveal.wait`
 - `reveal.describe`
+- `self.use`
 - `vault.shares.create`
 - `vault.shares.revoke`
 - `vault.shares.view`
