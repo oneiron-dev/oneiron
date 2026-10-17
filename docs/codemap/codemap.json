@@ -59136,13 +59136,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/live/held.rs",
-     "purpose": "What a retained element is written as, in live-model terms: a shape's or connector's preset, a connector's…",
+     "purpose": "What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 16
      }
     },
     {
@@ -59168,6 +59168,7 @@
       "ChangeKind",
       "ChartKind",
       "ChartSeries",
+      "ChartSource",
       "Conflict",
       "ConnectorEnd",
       "DeckDiff",
@@ -59175,6 +59176,7 @@
       "DeckNode",
       "DeckOp",
       "GeometryProps",
+      "HeldMedia",
       "Landing",
       "LandingReceipt",
       "LiveDeck",
@@ -59191,16 +59193,27 @@
       "RenderSide",
       "Run",
       "SlideRender",
+      "SmartArtNode",
       "StampedOp",
       "TextBody"
      ],
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 5,
-      "enum": 8,
-      "fn": 28,
-      "struct": 22
+      "crate-vis": 12,
+      "enum": 9,
+      "fn": 31,
+      "struct": 24
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape.rs",
+     "purpose": "Shape changes to a written table or chart at export (OF-510)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -59236,7 +59249,7 @@
      "path": "src/native_patch/mod.rs",
      "purpose": "Native tables and bounded classic charts (ARCH-0077 \"Creation operation\", \"Chart and table edits\")",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 1,
       "re-export": 1,
@@ -59561,7 +59574,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59617,9 +59630,9 @@
      "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its named cell style…"
     }
    },
-   "over_bar": 9,
+   "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 67,
+   "source_files": 68,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -74165,6 +74178,7 @@
       "ChannelSubscriptionsRequest",
       "ChartKind",
       "ChartSeries",
+      "ChartSource",
       "ClaimApprovalStatus",
       "ClaimLineAtom",
       "CodeBlameView",
@@ -74416,6 +74430,7 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
       "HolderKind",
@@ -74989,6 +75004,7 @@
       "SlideReviewUnitInput",
       "SlideUnitRefused",
       "SliderControl",
+      "SmartArtNode",
       "SpaceMove",
       "SpaceMoveCheck",
       "SpaceMoveState",
@@ -75156,8 +75172,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 306,
-      "struct": 812
+      "enum": 307,
+      "struct": 814
      }
     },
     {
