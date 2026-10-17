@@ -62,7 +62,7 @@ vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
 vaultExport(input: unknown): unknown
-vaultReceipts(limit: number | undefined): FacadeReceipt[]
+vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
 vaultKvGet(requestJson: string): string
@@ -79,6 +79,8 @@ vaultWeaveDigest(input: unknown): unknown
 vaultWeaveLens(input: unknown): unknown
 vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
+vaultWeaveItemWrong(input: unknown): unknown
+vaultWeaveOwnerItemWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
@@ -302,6 +304,8 @@ vaultNotesLifecycle(requestJson: string): string
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
   retry(pending: unknown, verb: string, input: unknown): unknown
+  lensFrameEvent(cardId: string, request: unknown): unknown
+  closeLensFrame(cardId: string): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

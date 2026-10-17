@@ -118,6 +118,11 @@ pub struct EsignDocument {
     /// Frozen pack timing and per-document notice switches, carried by the draft claim.
     #[serde(default)]
     pub lifecycle: Option<super::EsignLifecycleRules>,
+    /// The project the document is sent for: a held sign act's ask climbs
+    /// its boards before the vault owners. Only its members or a live vault
+    /// owner bind it ([`super::PROJECT_MEMBERS_ONLY`]).
+    #[serde(default)]
+    pub project: Option<EntityId>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

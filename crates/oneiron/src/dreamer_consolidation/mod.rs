@@ -97,8 +97,8 @@ pub use roles::{
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
 pub use settle::{
-    CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement,
-    OpenConflict, ParkedConflictPass, SettledConflict, settle_parked_conflicts,
+    CONFLICT_SETTLE_DIAL, ConflictReviewScope, ConflictSettleDecisions, ConflictSettleReceipt,
+    ConflictSettlement, OpenConflict, ParkedConflictPass, SettledConflict, settle_parked_conflicts,
 };
 pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,

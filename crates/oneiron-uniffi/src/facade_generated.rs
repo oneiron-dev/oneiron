@@ -166,9 +166,9 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
-"vault.receipts" => fn vault_receipts(&self, limit: u32) -> Vec<FacadeReceipt> = |client| {
+"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>) -> Vec<FacadeReceipt> = |client| {
     let limit: usize = limit.lower()?;
-    let output = client.vault_receipts(limit)?;
+    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
     Lift::lift(output)
 };
 "vault.images.view" => fn vault_images_view(&self, input: ImageViewRequest) -> PulledImage = |client| {
@@ -250,6 +250,16 @@ export_facade! {
     let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::lower_record("vault.weave.owner.link.wrong", input)?;
     let output = client.vault_weave_owner_link_wrong(&input)?;
     crate::codec::lift_record("vault.weave.owner.link.wrong", &output)
+};
+"vault.weave.item.wrong" => fn vault_weave_item_wrong(&self, input: WeaveWrongItemRequest) -> WeaveItemCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongItemRequest = crate::codec::lower_record("vault.weave.item.wrong", input)?;
+    let output = client.vault_weave_item_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.item.wrong", &output)
+};
+"vault.weave.owner.item.wrong" => fn vault_weave_owner_item_wrong(&self, input: WeaveWrongItemRequest) -> WeaveItemCorrectionView = |client| {
+    let input: oneiron::claim::WeaveWrongItemRequest = crate::codec::lower_record("vault.weave.owner.item.wrong", input)?;
+    let output = client.vault_weave_owner_item_wrong(&input)?;
+    crate::codec::lift_record("vault.weave.owner.item.wrong", &output)
 };
 "vault.packs.put" => fn vault_packs_put(&self, input: PackPutRequest) -> PackPutReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackPutRequest = crate::codec::lower_record("vault.packs.put", input)?;
@@ -1196,8 +1206,8 @@ export_facade! {
     let output = client.vault_artifacts_body_read(&input)?;
     crate::codec::lift_record("vault.artifacts.body.read", &output)
 };
-"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyArtifactRequest) -> Vec<TextCommitReceipt> = |client| {
-    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
+"vault.artifacts.body.commits" => fn vault_artifacts_body_commits(&self, input: OfficeBodyCommitsRequest) -> Vec<OfficeBodyCommitView> = |client| {
+    let input: oneiron::office_body::OfficeBodyCommitsRequest = crate::codec::lower_record("vault.artifacts.body.commits", input)?;
     let output = client.vault_artifacts_body_commits(&input)?;
     crate::codec::lift_record("vault.artifacts.body.commits", &output)
 };
@@ -1246,8 +1256,8 @@ export_facade! {
     let output = client.vault_artifacts_body_export(&input)?;
     crate::codec::lift_record("vault.artifacts.body.export", &output)
 };
-"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyArtifactRequest) -> XlsxPreview = |client| {
-    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
+"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyPreviewRequest) -> XlsxPreview = |client| {
+    let input: oneiron::office_body::OfficeBodyPreviewRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
     let output = client.vault_artifacts_body_preview(&input)?;
     crate::codec::lift_record("vault.artifacts.body.preview", &output)
 };

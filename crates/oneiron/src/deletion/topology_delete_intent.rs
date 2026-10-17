@@ -7,11 +7,12 @@
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::identity_topology::IdentityTopologyRejection;
+use crate::ports::WindowDeletionRows;
 use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::store::Store;
 
 use super::tombstone::{
-    DecodedTombstoneValue, HARD_DELETE_MARKER, PENDING_TOMBSTONE, TombstoneReason, TombstoneValueV2,
+    DecodedTombstoneValue, HARD_DELETE_MARKER, TombstoneReason, TombstoneValueV2,
 };
 
 /// One reservation per entity (`topology-delete-intent:{entity_hex}`), value
@@ -433,24 +434,29 @@ fn matching_recovery_tombstone_in_txn(
     // Raw rows, matched on the full stored key as before: a `pt:` row of any
     // key shape that names this entity is still a witness.
     let entity_suffix = format!(":{}", entity.to_hex());
-    for row in PENDING_TOMBSTONE.iter_raw_from(store, txn, &[])? {
-        let (key, raw) = row?;
-        let name = [PENDING_TOMBSTONE.decl().prefix, key.as_slice()].concat();
-        if name.ends_with(entity_suffix.as_bytes()) {
-            observe(&raw)?;
+    for row in store.port_pending_tombstone_rows_raw(txn, |name, raw| {
+        if name.ends_with(entity_suffix.as_str()) {
+            observe(raw)
+        } else {
+            Ok(())
         }
+    })? {
+        row??;
     }
     #[cfg(feature = "sync")]
     {
+        use crate::ports::WindowAddress;
         use crate::sync::loro_support::{doc_from_snapshot, import_doc, tombstone_values_for_id};
-        use crate::sync::window_rows::{WINDOW_SNAPSHOT, WINDOW_UPDATE};
-        for row in WINDOW_SNAPSHOT.iter_from(store, txn, &[])? {
-            let (label, snapshot) = row?;
-            let doc = doc_from_snapshot(&snapshot)?;
+        for row in store.port_window_doc_rows_raw(txn, |label, snapshot| {
+            doc_from_snapshot(snapshot).map(|doc| (label.as_str().to_owned(), doc))
+        })? {
+            let (label, doc) = row??;
+            let window = WindowAddress::new(&label);
             // Raw rows: every stored update imports, whatever its key's tail.
-            for update in WINDOW_UPDATE.iter_raw_from(store, txn, format!("{label}:").as_bytes())? {
-                let (_, bytes) = update?;
-                import_doc(&doc, &bytes)?;
+            for update in
+                store.port_window_updates_raw(txn, window, |_, bytes| import_doc(&doc, bytes))?
+            {
+                update??;
             }
             for value in tombstone_values_for_id(&doc.get_map("tombstones"), entity) {
                 observe(&value)?;
