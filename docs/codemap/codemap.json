@@ -4281,6 +4281,7 @@
       "ExportDerivationEnvelope",
       "ExportEdge",
       "ExportEntity",
+      "ExportEpochFloor",
       "ExportLedger",
       "ExportPack",
       "ExportPackSource",
@@ -4302,7 +4303,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -13316,7 +13317,7 @@
      "path": "src/compaction/epoch_floor.rs",
      "purpose": "Where a removed epoch summary leaves the count (OF-013)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -16922,7 +16923,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/erase/active_store.rs",
