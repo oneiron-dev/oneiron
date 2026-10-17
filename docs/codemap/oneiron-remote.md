@@ -24,7 +24,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/checkpoint.rs` | src | s | 2 fn | — | A pinned authority checkpoint's image and attestations (OF-469), over the server route `GET… |
 | `src/remote/mod.rs` | src | m | 14 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 | `src/remote/origin.rs` | src | s | 2 crate-vis | — | — |
-| `src/remote/pairing.rs` | src | s | 2 crate-vis | — | — |
+| `src/remote/pairing.rs` | src | s | 3 crate-vis | — | — |
+| `src/remote/renewal.rs` | src | s | 1 fn | — | FIX 3377: a paired owner device renews its own credential over the server route `POST /v1/core/slips/renew` |
 | `src/remote/response.rs` | src | s | 8 crate-vis | — | — |
 | `src/remote/tests.rs` | test | s | — | — | — |
 | `src/remote/wire.rs` | src | s | 3 crate-vis | — | The transport seam under [`RemoteClient`] (OF-237): what carries a request this client signed, and the reply… |
