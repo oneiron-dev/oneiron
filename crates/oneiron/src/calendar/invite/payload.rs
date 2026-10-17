@@ -91,6 +91,10 @@ pub struct CalendarInvitePayload {
     pub ics_blob_ref: String,
     /// Delivery target.
     pub recipient: String,
+    /// The saved mention `recipient` came from, when an agent named the
+    /// person (OF-123): admission refuses while that mention is unsettled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 impl CalendarInvitePayload {

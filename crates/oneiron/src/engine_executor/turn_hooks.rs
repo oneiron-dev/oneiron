@@ -17,16 +17,8 @@ const HOST_TURN_GENERATE: &str = "host.turn.generate";
 
 /// A turn past its pre chain, as its post chain picks it up. `None` for a run
 /// bound to an off-record session: its receipts would land on record.
-#[allow(
-    dead_code,
-    reason = "the REPL loop splices the turn's hooks around its model call (OF-580)"
-)]
 pub(super) struct TurnHooks(Option<VerbHookPre>);
 
-#[allow(
-    dead_code,
-    reason = "the REPL loop splices the turn's hooks around its model call (OF-580)"
-)]
 impl EngineNativeExecutor<'_> {
     /// Runs the pre chain of `host.turn.generate` for step `step_seq`, before
     /// the step's request is built. `Err(stop)` when a hook skipped the turn,
