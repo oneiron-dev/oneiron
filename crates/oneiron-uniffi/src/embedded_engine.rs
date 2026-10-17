@@ -65,7 +65,7 @@ pub struct EngineHeader {
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EngineRequest {
     pub method: String,
-    /// Origin form: the path and query, such as `/v1/health`.
+    /// Origin form: the path and query, such as `/.well-known/oneiron`.
     pub path: String,
     /// Sent as given; the caller brings its own auth. A request without a
     /// `Host` header is sent with `Host: localhost`.

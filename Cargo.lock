@@ -7920,9 +7920,13 @@ dependencies = [
 name = "oneiron-android"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "jni 0.21.1",
  "oneiron",
+ "oneiron-server",
+ "oneiron-vault-contract",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]

@@ -13,6 +13,13 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 oneiron = { path = "../oneiron" }
 jni = "0.21.1"
+# OF-237 slice 2: the Kotlin `EmbeddedEngine` runs the full server in the
+# app's process (`oneiron_server::embedded`), the Kotlin `AppHost` is its host
+# (`AppHost`), and the keychain's secrets cross as `Zeroizing` bytes.
+oneiron-server = { path = "../oneiron-server" }
+oneiron-vault-contract = { path = "../oneiron-vault-contract" }
+anyhow = "1"
+zeroize = "1"
 
 [dev-dependencies]
 tempfile = "3"

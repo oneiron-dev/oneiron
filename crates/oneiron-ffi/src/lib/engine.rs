@@ -188,7 +188,7 @@ pub unsafe extern "C" fn oneiron_engine_start(
 /// Send the engine one buffered HTTP/1.1 request and collect the whole
 /// reply.
 ///
-/// `method` and `path` (origin form, such as `/v1/health`) are UTF-8.
+/// `method` and `path` (origin form, such as `/.well-known/oneiron`) are UTF-8.
 /// `headers` holds zero or more `name: value` lines, each ended by CRLF, sent
 /// as given: bring your own auth. A request without `Host` is sent with
 /// `Host: localhost`. `headers` and `body` may be empty with a null

@@ -56,7 +56,7 @@ const ENGINE_AUTHORITY: &str = "localhost";
 /// One HTTP/1.1 request an app sends its engine.
 pub struct EmbeddedRequest {
     pub method: String,
-    /// Origin form: the path and query, such as `/v1/health`.
+    /// Origin form: the path and query, such as `/.well-known/oneiron`.
     pub path: String,
     /// Sent as given, repeats and order kept; the caller brings its own
     /// auth.
