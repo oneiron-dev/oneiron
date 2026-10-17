@@ -369,6 +369,8 @@ pub struct NapiRecallMedia {
 }
 
 /// One BM25 hit (engine index scores).
+#[napi(object)]
+pub struct NapiLexicalHit {
     /// Short ref (hex fallback).
     pub short_id: String,
     /// Registry kind string.
