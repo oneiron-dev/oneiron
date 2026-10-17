@@ -55,7 +55,9 @@ mod highway_status;
 mod highway_types;
 mod lifecycle_facade;
 mod lifecycle_receipt;
-pub(crate) use lifecycle_receipt::task_lifecycle_receipts;
+pub(crate) use lifecycle_receipt::{
+    erase_in_txn as erase_lifecycle_receipts_in_txn, task_lifecycle_receipts,
+};
 mod linear_store;
 mod owner_index;
 mod policy_change_followup;

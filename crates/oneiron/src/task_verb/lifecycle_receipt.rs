@@ -36,6 +36,8 @@ const RECEIPT_ID_DOMAIN: &[u8] = b"oneiron.tasks.lifecycle_receipt.v1";
 const RECEIPT_ID_PREFIX: &str = "task_lifecycle:";
 /// The receipt field naming the highway call it records.
 const FIELD_CALL: &str = "call";
+/// The lifecycle field naming a parked post's or brief revision's proposal.
+const FIELD_PROPOSAL_REF: &str = "proposal_ref";
 
 /// Receipt id → the call's receipt, as the receipt family reads it.
 const RECEIPTS: SideTable<String, ReceiptRecord, Named> =
@@ -149,6 +151,26 @@ fn project(
         append_task_type_fields(&mut row, type_ref)?;
     }
     Ok(row)
+}
+
+/// Drops every lifecycle receipt naming `id` as its TASK or its parked
+/// proposal, in the transaction that erases it; a no-op for any other
+/// entity, as the report journal's erase is. The table keys on the receipt
+/// id, so its rows are found by what each one names.
+pub(crate) fn erase_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> crate::Result<()> {
+    let hex = id.to_hex();
+    for (key, row) in RECEIPTS.scan(store, txn)? {
+        if row.trigger_ref.as_deref() == Some(hex.as_str())
+            || row.fields.get(FIELD_PROPOSAL_REF) == Some(&hex)
+        {
+            RECEIPTS.delete(store, txn, &key)?;
+        }
+    }
+    Ok(())
 }
 
 /// The kept lifecycle receipts `query` matches, for the receipt family
