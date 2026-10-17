@@ -435,6 +435,7 @@ fn run_bound(
 /// its model calls spend under `spend`, and `seat`, which its reader
 /// children spawn under. With the host's `[models.planner]` seats, its
 /// spawns are planned on `decisions`' ladder and its leader calls answer.
+/// A run its parent planned is born on the model its plan picked.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -471,6 +472,7 @@ fn enter_run(
         compaction,
         reactor,
         spend,
+        status.input.plan.as_ref(),
     )
 }
 

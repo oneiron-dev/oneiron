@@ -4,7 +4,7 @@ use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
 use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
@@ -509,6 +509,7 @@ fn run_engine_native_code_mode(
         compaction,
         &reactor,
         None,
+        None,
     )
     .map_err(|error| match error {
         EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
@@ -561,6 +562,9 @@ impl From<String> for EngineRunError {
 /// makes its model calls on a meter that scope bounds, and what they used is
 /// booked on the scope once the entry ends, whatever it answered. With none,
 /// the calls run on the provider's own meter.
+///
+/// A planned child (`plan`: the receipt its spawn froze, OF-541) is born on
+/// the seat its plan picked (`planned_seat`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -571,6 +575,7 @@ pub(crate) fn enter_engine_native_run(
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     spend: Option<&SpendScopeId>,
+    plan: Option<&SpawnPlanReceipt>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
     let Some(scope) = spend else {
@@ -583,6 +588,7 @@ pub(crate) fn enter_engine_native_run(
             warm_scope,
             compaction,
             reactor,
+            plan,
         );
     };
     let dispatcher = AgentDispatcher::new(vault);
@@ -600,11 +606,22 @@ pub(crate) fn enter_engine_native_run(
         warm_scope,
         compaction,
         reactor,
+        plan,
     );
     dispatcher
         .record_guard_spend(scope, guard.read().used_units)
         .map_err(binding)?;
     entered
+}
+
+/// The model a planned child's seat is born on (OF-541): the one its plan
+/// picked, so the child runs the model its receipt states. The seat pool
+/// admits that model alone, so a host that cannot seat it refuses the
+/// birth rather than seat another. The plan's effort is not pinned: it
+/// follows the plan's care, and the seat's own ladder picks the effort
+/// that model takes. An unplanned run pins nothing.
+fn planned_seat(plan: Option<&SpawnPlanReceipt>) -> Option<oneiron::ModelId> {
+    plan.map(|plan| plan.plan.model.clone())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -617,6 +634,7 @@ fn enter_on(
     warm_scope: String,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
+    plan: Option<&SpawnPlanReceipt>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
     let mut runtime = provider.runtime();
@@ -644,7 +662,7 @@ fn enter_on(
             required: Vec::new(),
             min_context_tokens: 1,
             locality: config.model_locality,
-            override_model: None,
+            override_model: planned_seat(plan),
             override_effort: None,
         };
         Some(
