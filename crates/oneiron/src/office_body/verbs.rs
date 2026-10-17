@@ -337,14 +337,12 @@ impl Memory<'_> {
         let base = input.base.as_deref();
         let actor = self.body_actor();
         Ok(match &input.ops {
-            OfficeBodyOps::Docx { ops } => {
-                self.vault()
-                    .edit_docx_body(&artifact, base, ops, actor, &made_by)?
-            }
-            OfficeBodyOps::Xlsx { ops } => {
-                self.vault()
-                    .edit_xlsx_body(&artifact, base, ops, actor, &made_by)?
-            }
+            OfficeBodyOps::Docx { ops } => self
+                .vault()
+                .edit_docx_body(&artifact, base, ops, actor, &made_by)?,
+            OfficeBodyOps::Xlsx { ops } => self
+                .vault()
+                .edit_xlsx_body(&artifact, base, ops, actor, &made_by)?,
         })
     }
 
@@ -374,14 +372,12 @@ impl Memory<'_> {
         let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.fork_edit")?;
         let actor = self.body_actor();
         Ok(match &input.ops {
-            OfficeBodyOps::Docx { ops } => {
-                self.vault()
-                    .edit_docx_body_fork(&artifact, &fork, ops, actor, &made_by)?
-            }
-            OfficeBodyOps::Xlsx { ops } => {
-                self.vault()
-                    .edit_xlsx_body_fork(&artifact, &fork, ops, actor, &made_by)?
-            }
+            OfficeBodyOps::Docx { ops } => self
+                .vault()
+                .edit_docx_body_fork(&artifact, &fork, ops, actor, &made_by)?,
+            OfficeBodyOps::Xlsx { ops } => self
+                .vault()
+                .edit_xlsx_body_fork(&artifact, &fork, ops, actor, &made_by)?,
         })
     }
 
