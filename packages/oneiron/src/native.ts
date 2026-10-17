@@ -33,6 +33,8 @@ selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
 selfIdentityAnswer(input: unknown): unknown
 selfIdentitySettle(input: unknown): unknown
+selfInboxList(input: unknown): unknown
+selfInboxMark(input: unknown): unknown
 selfInboxConcern(input: unknown): unknown
 selfInboxConcernOutcome(input: unknown): unknown
 selfInboxConcernMove(input: unknown): unknown
@@ -191,6 +193,9 @@ vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
+vaultDecisionsAsksAnswer(input: unknown): unknown
+vaultDecisionsAsksClimb(input: unknown): unknown
+selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
 vaultCommit(input: unknown): unknown
@@ -213,6 +218,9 @@ vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
+vaultConsolidationEnqueue(input: unknown): unknown
+vaultConsolidationStatus(input: unknown): unknown
+vaultClaimsSeed(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown

@@ -8,6 +8,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.memory.diary.review", post(self_memory_diary_review))
         .route("/self.identity.answer", post(self_identity_answer))
         .route("/self.identity.settle", post(self_identity_settle))
+        .route("/self.inbox.list", post(self_inbox_list))
+        .route("/self.inbox.mark", post(self_inbox_mark))
         .route("/self.inbox.concern", post(self_inbox_concern))
         .route(
             "/self.inbox.concern.outcome",
@@ -298,6 +300,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.questions.pause", post(vault_questions_pause))
         .route("/vault.questions.read", post(vault_questions_read))
         .route("/vault.questions.answers", post(vault_questions_answers))
+        .route(
+            "/vault.decisions.asks.answer",
+            post(vault_decisions_asks_answer),
+        )
+        .route(
+            "/vault.decisions.asks.climb",
+            post(vault_decisions_asks_climb),
+        )
+        .route("/self.decisions.asks", post(self_decisions_asks))
         .route("/connector.list", post(connector_list))
         .route("/connector.status", post(connector_status))
         .route("/vault.commit", post(vault_commit))
@@ -320,6 +331,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.put", post(vault_artifacts_put))
         .route("/vault.artifacts.append", post(vault_artifacts_append))
         .route("/vault.artifacts.read", post(vault_artifacts_read))
+        .route(
+            "/vault.consolidation.enqueue",
+            post(vault_consolidation_enqueue),
+        )
+        .route(
+            "/vault.consolidation.status",
+            post(vault_consolidation_status),
+        )
+        .route("/vault.claims.seed", post(vault_claims_seed))
         .route(
             "/connector.outbound.schedule",
             post(connector_outbound_schedule),
@@ -452,6 +472,46 @@ async fn self_identity_settle(
         actor,
         class,
         "self.identity.settle",
+        value,
+    )?))
+}
+async fn self_inbox_list(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.inbox.list",
+        value,
+    )?))
+}
+async fn self_inbox_mark(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "self.inbox.mark",
         value,
     )?))
 }
@@ -3843,6 +3903,82 @@ async fn vault_questions_answers(
     )?;
     Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
+async fn vault_decisions_asks_answer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.decisions.asks.answer")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.decisions.asks.answer", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.decisions.asks.answer",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_decisions_asks_answer(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_decisions_asks_climb(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.decisions.asks.climb")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.decisions.asks.climb", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.decisions.asks.climb",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_decisions_asks_climb(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn self_decisions_asks(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "self.decisions.asks")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("self.decisions.asks", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "self.decisions.asks", value).await?;
+    let output = facade_output(
+        super::host_doors::self_decisions_asks(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
 async fn connector_list(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -4292,6 +4428,66 @@ async fn vault_artifacts_read(
         actor,
         class,
         "vault.artifacts.read",
+        value,
+    )?))
+}
+async fn vault_consolidation_enqueue(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.consolidation.enqueue",
+        value,
+    )?))
+}
+async fn vault_consolidation_status(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.consolidation.status",
+        value,
+    )?))
+}
+async fn vault_claims_seed(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "vault.claims.seed",
         value,
     )?))
 }

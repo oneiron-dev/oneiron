@@ -1,4 +1,5 @@
 [
+  {"row_ref":"default.artifact_answer_quiet_seconds","key":"artifact_answer_quiet_seconds","value":60,"scope":{"level":"vault"}},
   {"row_ref":"default.comm_opt_out_posture","key":"comm_opt_out_posture","value":"escalate","scope":{"level":"vault"}},
   {"row_ref":"default.proposal_check_threshold","key":"proposal_check_threshold","value":1000000,"scope":{"level":"vault"}},
   {"row_ref":"default.provider_cooldown_default_seconds","key":"provider_cooldown_default_seconds","value":600,"scope":{"level":"vault"}},
