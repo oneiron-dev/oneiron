@@ -79,15 +79,30 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     if let Some(optimizer) = &optimizer {
         driver = driver.with_skill_optimizer(optimizer.optimizer());
     }
-    let mut executors = if scope == DreamerConsolidationScope::Macro {
+    let executors = if scope == DreamerConsolidationScope::Macro {
         let buckets = oneiron::DreamerRunnerStore::new(vault)
             .macro_bucket_count()
             .map_err(PassRunError::PreAdmission)?;
         factory.macro_executors(&guard, buckets)
     } else {
         factory.executor(&guard).map(|executor| vec![executor])
+    };
+    // A live role route the executor setup refuses fails every pass here,
+    // and the supervisor redrives the tick after backoff without end. The
+    // due digests are display projections on their own cadence, so a
+    // Deadline tick still serves them before it fails (each redrive serves
+    // what fell due since). The attachment above already let this vault
+    // run, so a managed vault frozen for reap still serves none.
+    if executors.is_err() && matches!(tick, Tick::Deadline(_)) {
+        let now = (*now_secs)();
+        if let Err(error) = vault.emit_due_proactivity_digest(now, config.local_node_id) {
+            tracing::error!(?error, "scheduled digest projection failed");
+        }
+        if let Err(error) = vault.serve_due_weave_digests(now, config.local_node_id) {
+            tracing::error!(?error, "scheduled weave digests failed");
+        }
     }
-    .map_err(PassRunError::PreAdmission)?;
+    let mut executors = executors.map_err(PassRunError::PreAdmission)?;
     let input = RunWakePass {
         trigger,
         scope,
