@@ -38,11 +38,11 @@ use super::highway_accept::{
     HostFence, Lane, host_fence_in, lane_of, require_assignee, require_live_standard,
 };
 use super::highway_block::{BlockContinuation, BlockPurpose, selected_task_ask_option};
-use super::runner_done::RunnerDoneAnswer;
 use super::highway_types::{
     AttemptHandle, TaskCallReceipt, TaskHandle, TaskLifecycleRecord, TaskOutcome, TaskPhase,
     TaskReport, TaskReportBody, TaskVia,
 };
+use super::runner_done::RunnerDoneAnswer;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::wire_decode::task_verb_body;
 

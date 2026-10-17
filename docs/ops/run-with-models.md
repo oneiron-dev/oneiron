@@ -617,34 +617,43 @@ max_response_bytes = 67108864                  # one answer body (the default, 6
 person_threshold = 0.9                         # the PersonThreshold row's start value
 ```
 
-The recipe is yours, not the server's (`format = 2`): it names the prompt
-template (with `{question}`, `{labels}`, `{state}` and `{state.<key>}`
-slots), one label's row wording (`row`, with `{token}` and `{label}`), the
-`yes` and `no` words, `no_first` (a yes/no question lists no before yes, as
-test 6b's side questions did; its readout still reports yes first), the
-single-token label verbalizers (`tokens`, at least two), the end token
-(`eos`), `n_probs` (how many of the top probabilities come back),
-`n_probs_full` (the whole vocabulary, for the retry below) and, for the
-owner's probe, `[probe] paired` and `person`. Every question of a pack
-renders the same template over the same state with its own text and its own
-label rows, so the template's text before `{question}` is the pack's shared
-prefix; a question's text is its whole description. A question of `n` labels
-takes the first `n` tokens, so `tokens` bounds a choice question's options.
-Each label must be one distinct token on the served tokenizer, or every read
-is refused. The read's revision is the provider's `revision` plus a digest of
-the recipe and its template: change either and decide()'s pins name a new
-read.
+The recipe is yours, not the server's (`format = 3`): it names the plain
+prompt template (`template`, with `{question}`, `{labels}`, `{state}` and
+`{state.<key>}` slots), the joint template (`joint_template`, the same slots
+and `{paired}`), one label's row wording (`row`, with `{token}` and
+`{label}`), one joint label's row wording (`joint_row`, with `{token}`,
+`{label}` and `{think}`), the `yes` and `no` words, `no_first` (a plain
+yes/no question lists no before yes, as test 6b's side questions did; its
+readout still reports yes first), the single-token label verbalizers
+(`tokens`, at least four), the end token (`eos`), `n_probs` (how many of the
+top probabilities come back), `n_probs_full` (the whole vocabulary, for the
+retry below) and, for the owner's probe, `[probe] paired` and `person`.
+
+A question and "does this need more thinking?" stay joint (ARCH-0076
+`#ask-a-person`): the question renders the joint template, its text as
+`{question}` and the paired question as `{paired}`, over one table of joint
+labels, one row per option and paired answer: row `2i` is option `i` with
+`{think}` the `no` word, row `2i + 1` with the `yes` word, each its own token.
+The read normalizes once over all of them; the option's share is the sum of
+its two rows, and P(more thinking) is the sum of the `yes` rows. A yes/no
+question's options keep yes first here, whatever `no_first` says. "Ask a
+person?" is read separately on the plain template, over its own yes and no.
+A question of `n` options takes the first `2n` tokens, so `tokens` bounds a
+choice question at half its count. Each label must be one distinct token on
+the served tokenizer, or every read is refused. The read's revision is the
+provider's `revision` plus a digest of the recipe and both templates: change
+any of them and decide()'s pins name a new read.
 
 The pack goes to `/completion` as one request whose `prompt` is an array,
 one prompt per question, with `id_slot` -1: llama.cpp gives each prompt a
 free slot (run `llama-server` with one slot per question, `-np`, to read a
 pack side by side) and each slot's prompt cache keeps what it last read. The
 request reads the state once; it is not a promise that the shared prefix is
-evaluated once. decide()'s pack is "does this need more thinking?" first, then
-the call's questions in order, then "ask a person?" when the surface asks it.
-A call past the decision policy's questions-per-call row (16 by default) goes
-as several packs in turn, each with its own "more thinking?" and "ask a
-person?" questions.
+evaluated once. decide()'s pack is the call's questions in order, each joint
+with "does this need more thinking?", then "ask a person?" when the surface
+asks it. A call past the decision policy's questions-per-call row (16 by
+default) goes as several packs in turn, each with its own "ask a person?"
+question.
 
 The read goes to llama.cpp's raw `/completion`, which applies no chat
 template, and the server adds no text: the rendered template is the whole
@@ -1161,6 +1170,38 @@ The engine's one-off graph ask and saved graph recipes take the same
 answerer and keep the same receipts. There, a unit's outgoing neighbours join
 its state, and an image or audio asset among them is read as such. No door serves
 a one-off ask yet.
+
+### Typed questions over files
+
+The same ladder answers a typed question over parts of a file. Each unit is
+one call, read from the file version the ask pinned:
+
+| Unit | What the call reads | Where the answer lands |
+|----|----|----|
+| A sheet row | The row's cells across the asked range, plus an optional header row | A cell in the answer column: yes/no as a boolean, a pick as text, a score as a number |
+| A paragraph | The paragraph's text | A Word comment quoting it, in your display words |
+| A slide or shape | Its text, and its rendered image as an image | A modern comment with a severity band |
+| A file in a folder | An office file's text, a text file, or a PNG or JPEG as an image | One cell per file in a column of a result workbook |
+
+**Images.** Images are read at the Local-vision rung when
+`[models.roles.local_vision]` is bound and the dial spans the Local rung.
+Without that seat, a slide is read as its text alone, and an image file in a
+folder abstains.
+
+**Proposals.** The answers become one proposal on a copy. Keep or Discard
+settles it once (`vault.artifacts.keep`/`discard`). A unit with nothing to
+read abstains and writes nothing; an abstention is never a no. If every unit
+abstains, no proposal is made.
+
+**Receipts.** Every answer, abstentions included, keeps the ladder's full
+receipt and the file version it read. Keep's receipt carries the sheet
+answers and paragraph judgments next to the slide judgments.
+
+**Stale answers.** A folder column refuses Keep when a file it read has
+changed since; ask again. Answers never go to the owner's queue: the slide
+door holds its ceiling at Big. On a server the engine's
+`Memory::artifacts_ask_through` answers these asks. Until its door is in the
+SDK table, `vault.artifacts.review_slides` is the only door that serves one.
 
 ## 14. Tagger tiers and the teacher's handoff
 

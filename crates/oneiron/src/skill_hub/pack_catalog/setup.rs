@@ -92,6 +92,8 @@ pub enum PackSetupAuth {
     AppPassword,
     Session,
     Webhook,
+    /// Nothing to sign in to: the host checks a guest it runs itself.
+    Local,
 }
 
 impl PackSetupAuth {
@@ -104,6 +106,7 @@ impl PackSetupAuth {
             Self::AppPassword => "app_password",
             Self::Session => "session",
             Self::Webhook => "webhook",
+            Self::Local => "local",
         }
     }
 
@@ -117,6 +120,7 @@ impl PackSetupAuth {
             Self::AppPassword => "An app password you create",
             Self::Session => "A signed-in browser session",
             Self::Webhook => "A webhook signing value",
+            Self::Local => "Nothing to sign in to; it runs on this host",
         }
     }
 }

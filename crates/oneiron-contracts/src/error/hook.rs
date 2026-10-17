@@ -22,7 +22,10 @@ impl std::fmt::Display for VerbHookStop {
         match self {
             Self::Skipped { hook, reason } => write!(f, "hook {hook} skipped the verb: {reason}"),
             Self::Pending { invocation, ask } => {
-                write!(f, "a hook asked first: ask {ask}; retry invocation {invocation}")
+                write!(
+                    f,
+                    "a hook asked first: ask {ask}; retry invocation {invocation}"
+                )
             }
             Self::Hidden { hook } => write!(f, "hook {hook} failed safe; the result stays hidden"),
         }
