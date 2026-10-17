@@ -73,6 +73,8 @@ pub enum AgentVerb {
     VaultSharedCloseEraseAsk,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
+    VaultRecordsErasePreview,
+    VaultRecordsEraseConfirm,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -328,6 +330,8 @@ impl AgentVerb {
         Self::VaultSharedCloseEraseAsk,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
+        Self::VaultRecordsErasePreview,
+        Self::VaultRecordsEraseConfirm,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -586,6 +590,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
+            Self::VaultRecordsErasePreview => "vault.records.erase_preview",
+            Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -844,6 +850,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1106,6 +1114,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1393,6 +1403,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1613,6 +1625,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -1806,6 +1820,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2062,6 +2078,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2438,6 +2456,12 @@ impl AgentVerb {
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
+            Self::VaultRecordsErasePreview => {
+                "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
+            }
+            Self::VaultRecordsEraseConfirm => {
+                "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
             }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."

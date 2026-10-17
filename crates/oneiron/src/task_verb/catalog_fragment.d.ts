@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 269 code-mode rows (252 host rows, 17 run rows), 805 declarations.
-// Replies: 200 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Census: 271 code-mode rows (254 host rows, 17 run rows), 813 declarations.
+// Replies: 202 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
 // Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
@@ -312,6 +312,15 @@ declare namespace Sdk {
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
+  type RecordEraseRequest = { record: EntityId };
+  type EraseShare = { grant: string; recipient: string };
+  type EraseHeldBytes = { content_hash: string; other_holders: string[] };
+  type EraseLfsChunk = { chunk_hash: string; other_owners: string[] };
+  type RecordErasePreview = { record: string; shared_with: EraseShare[]; held_bytes: EraseHeldBytes[]; lfs_chunks: EraseLfsChunk[]; same_bytes: string[]; remote_copies_may_remain: boolean; preview_digest: string };
+  type RecordEraseConfirmRequest = { record: EntityId; preview_digest: string; also_same_bytes?: boolean };
+  type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
+  type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
+  type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
   type AuthorityHandoffAlarmAck = { by: string; at: number };
   type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] };
   type HandoffAlarmRequest = { signer: string };
@@ -745,7 +754,6 @@ declare namespace Sdk {
   type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
-  type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
   type ReceiptsRequest = { limit?: number | null };
   type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null };
   type HydrateRequest = { refs: string[] };
@@ -1312,6 +1320,12 @@ declare const vault: {
   receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.Reply<Sdk.MemoryReceipt[]>>) & {
     /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
     get(input: Sdk.CallReceiptRequest): Promise<Sdk.Reply<Sdk.CallReceipt | null>>;
+  };
+  records: {
+    /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
+    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.Reply<Sdk.RecordEraseOutcome>>;
+    /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
+    erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.Reply<Sdk.RecordErasePreview>>;
   };
   refs: {
     /** A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */

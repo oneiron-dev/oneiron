@@ -410,6 +410,9 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs":
             return Oneiron._VaultGuestsVerbs(self._client)
         @property
+        def records(self) -> "Oneiron._VaultRecordsVerbs":
+            return Oneiron._VaultRecordsVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -719,6 +722,15 @@ class Oneiron:
         def mint_slip(self, spec):
             """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
             return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
+    class _VaultRecordsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def erase_preview(self, spec):
+            """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
+            return json.loads(_translate(lambda: self._client.vault_records_erase_preview(json.dumps(spec))))
+        def erase_confirm(self, spec):
+            """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
+            return json.loads(_translate(lambda: self._client.vault_records_erase_confirm(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

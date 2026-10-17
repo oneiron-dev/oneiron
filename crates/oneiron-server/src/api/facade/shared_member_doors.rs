@@ -10,13 +10,15 @@
 //! only the invitation it names.
 use std::sync::Arc;
 
+use oneiron::EdgeActorClass;
 use oneiron::federation::{
     PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActExecutionReceipt,
     SharedEraseAsk, SharedInvitation,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, GuestSlipMintRequest, GuestSlipMinted, SharedActRequest, SharedEraseAskCloseRequest,
+    self, GuestSlipMintRequest, GuestSlipMinted, RecordEraseConfirmRequest, RecordEraseOutcome,
+    RecordErasePreview, RecordEraseRequest, SharedActRequest, SharedEraseAskCloseRequest,
     SharedEraseAskRequest, SharedInvitationRequest, SharedInvitationWithdrawRequest,
     SharedVaultRequest,
 };
@@ -43,6 +45,39 @@ fn require_slip_invitation(auth: &CoreAuth, verb: &str, invitation: &str) -> Mem
         )),
         _ => Ok(()),
     }
+}
+
+/// `vault.records.erase_preview`: what erasing one record takes, read under
+/// the caller's own person proof; the engine's deletion authority decides.
+pub(crate) async fn vault_records_erase_preview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RecordEraseRequest,
+) -> MemoryResult<RecordErasePreview> {
+    const VERB: &str = "vault.records.erase_preview";
+    let caller = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        let memory = server.vault().memory(caller.actor(), EdgeActorClass::Human);
+        sdk::preview_record_erase(&memory, input)
+    })
+    .await
+}
+
+/// `vault.records.erase_confirm`: the caller's own erase of the record they
+/// previewed. Their proof starts a held record's `erase` act, which
+/// `vault.shared.execute` carries out after its veto window.
+pub(crate) async fn vault_records_erase_confirm(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RecordEraseConfirmRequest,
+) -> MemoryResult<RecordEraseOutcome> {
+    const VERB: &str = "vault.records.erase_confirm";
+    let caller = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        let memory = server.vault().memory(caller.actor(), EdgeActorClass::Human);
+        sdk::confirm_record_erase(&memory, &caller, input)
+    })
+    .await
 }
 
 /// `act` off the runtime: every engine door here reads or writes LMDB.

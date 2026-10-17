@@ -363,6 +363,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.records.erase_preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RecordEraseRequest,
+                >(),
+            ),
+            (
+                "vault.records.erase_confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RecordEraseConfirmRequest,
+                >(),
+            ),
+            (
                 "vault.authority.handoff_alarms",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -1810,6 +1822,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.records.erase_preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.records.erase_confirm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.authority.handoff_alarms" => &[],
         "vault.authority.handoff_alarms.acknowledge" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -3057,6 +3083,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.guests.mint_slip" => {
             let _input: crate::task_verb::sdk::GuestSlipMintRequest = decode(value.clone())?;
         }
+        "vault.records.erase_preview" => {
+            let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
+        }
+        "vault.records.erase_confirm" => {
+            let _input: crate::task_verb::sdk::RecordEraseConfirmRequest = decode(value.clone())?;
+        }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -3739,6 +3771,12 @@ pub fn invoke(
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
+        "vault.records.erase_preview" => {
+            encode(vault_records_erase_preview(memory, decode(value)?)?)
+        }
+        "vault.records.erase_confirm" => {
+            encode(vault_records_erase_confirm(memory, decode(value)?)?)
+        }
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -4739,6 +4777,18 @@ pub fn vault_guests_mint_slip(
     input: crate::task_verb::sdk::GuestSlipMintRequest,
 ) -> MemoryResult<crate::task_verb::sdk::GuestSlipMinted> {
     crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)
+}
+pub fn vault_records_erase_preview(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RecordEraseRequest,
+) -> MemoryResult<crate::task_verb::sdk::RecordErasePreview> {
+    crate::task_verb::sdk::preview_record_erase(memory, input)
+}
+pub fn vault_records_erase_confirm(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RecordEraseConfirmRequest,
+) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
+    crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
 }
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,

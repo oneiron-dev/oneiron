@@ -1565,6 +1565,54 @@ async fn vault_guests_mint_slip(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_records_erase_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.records.erase_preview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.records.erase_preview", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.records.erase_preview", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_records_erase_preview(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_records_erase_confirm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.records.erase_confirm")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.records.erase_confirm", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.records.erase_confirm", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_records_erase_confirm(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_authority_handoff_alarms(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4808,6 +4856,8 @@ pub(crate) async fn call_verb(
         "vault.shared.close_erase_ask" => vault_shared_close_erase_ask(server, call, input).await,
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
+        "vault.records.erase_preview" => vault_records_erase_preview(server, call, input).await,
+        "vault.records.erase_confirm" => vault_records_erase_confirm(server, call, input).await,
         "vault.authority.handoff_alarms" => {
             vault_authority_handoff_alarms(server, call, input).await
         }
