@@ -1032,13 +1032,7 @@ export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" |
             catalog += 'Self::' + variants[r['name']] + ' => &' + json.dumps(list(r.get(field, r['mcp_fields']))) + ',\n'
         catalog += '} }\n'
     catalog += '}\n'
-    uniffi = HEADER + 'export_facade! {\n'
-    for row in ROWS + DEFINITIONS:
-        if 'uniffi' not in row: continue
-        signature = row['uniffi']
-        args = ', '.join(name + ': ' + typ for name, typ in signature['args'].items())
-        uniffi += f'"{row["name"]}" => fn {row["name"].replace('.', '_')}(&self, {args}) -> {signature["output"]};\n'
-    uniffi += '}\n'
+    uniffi = uniffi_facade(facade_rows)
     http = HEADER + 'import type * as Facade from "./facade-types.js";\n'
     http += 'export const FACADE_VERBS = ' + json.dumps([r['name'] for r in facade_rows]) + ' as const;\n'
     http += 'export type FacadeVerb = typeof FACADE_VERBS[number];\n'
@@ -1079,6 +1073,118 @@ export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" |
             files[path] = result.stdout
     files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs', 'crates/oneiron-py/python/oneiron/agent_verbs.py', 'crates/oneiron-py/python/oneiron/agent_verbs.pyi']})
     return files
+
+# OF-237: the UniFFI binding. Every facade row is one exported method of the
+# UniFFI `Oneiron` handle whose body calls the shared `OneironClient`'s typed
+# method for the row, so an embedded handle and a connected one answer it the
+# way napi and Python do. A row's `uniffi` block spells its typed foreign
+# signature over the crate's records. A row without one projects by type: an
+# engine type with a UniFFI record crosses as that record, a typed binding
+# argument as its foreign value, and any other input or output as the crate's
+# `WireJson` leaf, parsed into the row's engine input type and written from its
+# typed output on the Rust side. That is one typed call per verb with a JSON
+# body; there is no generic `call`. A definition row with a `uniffi` block
+# exports its signature and fails closed until the table makes it callable.
+# Codecs are selected by type (`crates/oneiron-uniffi/src/codec.rs`), never by
+# verb name.
+UNIFFI_INPUTS = {
+    'crate::memory::WitnessTurn': 'WitnessTurn',
+    'crate::memory::ClaimInput': 'ClaimInput',
+    'crate::memory::ClaimListFilter': 'ClaimListFilter',
+    'crate::memory::StructuralPutInput': 'StructuralPutInput',
+    'crate::memory::HabitCheckinInput': 'HabitCheckinInput',
+    'crate::memory::AdmitImportedClaimInput': 'AdmitImportedClaimInput',
+    'crate::memory::BlobArtifactInput': 'BlobArtifactInput',
+}
+UNIFFI_RESULTS = {
+    'crate::memory::WitnessReceipt': 'WitnessReceipt',
+    'crate::memory::CommitReceipt': 'CommitReceipt',
+    'crate::memory::MemoryPack': 'MemoryPack',
+    'crate::memory::MemoryReceipt': 'FacadeReceipt',
+    'crate::memory::DeleteReceipt': 'DeleteReceipt',
+    'crate::memory::PendingWrite': 'PendingWrite',
+    'crate::memory::EntityRefReceipt': 'EntityRefReceipt',
+    'crate::memory::BlobVersionView': 'BlobVersionView',
+    'crate::memory::OutboundIntentReceipt': 'OutboundIntentReceipt',
+    'crate::task_verb::sdk::BlobContent': 'Vec<u8>',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>': 'ClaimViews',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>': 'EntityViews',
+    'crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>': 'EntityRead',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>': 'LexicalHits',
+    'crate::claim::ScopedReadResult<Vec<crate::memory::NeighborHit>>': 'NeighborHits',
+}
+# A typed binding argument the client takes as is: its foreign type and how it
+# is passed. Any other binding argument is lowered into its `ARGUMENTS` type.
+UNIFFI_ARGUMENTS = {
+    'text': ('String', '&{name}'),
+    'ref': ('Option<String>', '{name}.as_deref()'),
+    'format': ('Option<String>', '{name}.as_deref()'),
+    'as_of': ('Option<u64>', '{name}'),
+    'deadline_ms': ('Option<u64>', '{name}'),
+}
+
+def uniffi_record(value, records):
+    'The UniFFI type an engine type crosses as, or None when it has no record.'
+    for container in ('Option', 'Vec'):
+        if value.startswith(container + '<') and value.endswith('>'):
+            inner = uniffi_record(value[len(container) + 1:-1], records)
+            return inner and f'{container}<{inner}>'
+    return records.get(value)
+
+def uniffi_export(row):
+    'One `export_facade!` arm: lower the arguments, call the typed client method, lift.'
+    name, method = json.dumps(row['name']), row['name'].replace('.', '_')
+    signature = row.get('uniffi')
+    if 'call' not in row:
+        declaration = ', '.join(arg + ': ' + typ for arg, typ in signature['args'].items())
+        unused = ', '.join('&' + arg for arg in signature['args'])
+        return f'{name} => fn {method}(&self, {declaration}) -> {signature["output"]} = |_client| {{\n    let _ = ({unused},);\n    definition_only({name})\n}};\n'
+    binding = row.get('binding') or {}
+    typed_args = binding['args'] if binding.get('args') and binding.get('wire') != 'json' else None
+    engine_input = rust_type(row['input'])
+    setup, values = [], []
+    if signature:
+        params, output, result = dict(signature['args']), signature['output'], 'Lift::lift(output)'
+        if typed_args:
+            if list(params) != [a['name'] for a in typed_args]:
+                raise ValueError(f'{row["name"]}: its uniffi arguments are its binding arguments, in order')
+            for a in typed_args:
+                if a['kind'] in UNIFFI_ARGUMENTS:
+                    values.append(UNIFFI_ARGUMENTS[a['kind']][1].format(name=a['name']))
+                    continue
+                target = ARGUMENTS[a['kind']]['rust']
+                setup.append(f'let {a["name"]}: {target.lstrip("&")} = {a["name"]}.lower()?;')
+                values.append(('&' if target.startswith('&') else '') + a['name'])
+        else:
+            lowered = next(iter(params)) if len(params) == 1 else '(' + ', '.join(params) + ')'
+            setup.append(f'let input: {engine_input} = {lowered}.lower()?;')
+            values.append('&input')
+    else:
+        if typed_args:
+            unknown = [a['kind'] for a in typed_args if a['kind'] not in UNIFFI_ARGUMENTS]
+            if unknown: raise ValueError(f'{row["name"]}: no UniFFI projection for binding argument kinds {unknown}')
+            params = {a['name']: UNIFFI_ARGUMENTS[a['kind']][0] for a in typed_args}
+            values = [UNIFFI_ARGUMENTS[a['kind']][1].format(name=a['name']) for a in typed_args]
+        elif uniffi_record(row['input'], UNIFFI_INPUTS):
+            params = {'input': uniffi_record(row['input'], UNIFFI_INPUTS)}
+            setup.append(f'let input: {engine_input} = input.lower()?;')
+            values.append('&input')
+        else:
+            params = {'input': 'WireJson'}
+            setup.append(f'let input: {engine_input} = crate::codec::decode({name}, &input)?;')
+            values.append('&input')
+        record = uniffi_record(row['output'], UNIFFI_RESULTS)
+        output, result = (record, 'Lift::lift(output)') if record else ('WireJson', f'crate::codec::encode({name}, &output)')
+    declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())
+    body = ''.join(f'    {line}\n' for line in setup + [f'let output = client.{method}({", ".join(values)})?;', result])
+    return f'{name} => fn {method}(&self, {declaration}) -> {output} = |client| {{\n{body}}};\n'
+
+def uniffi_facade(facade_rows):
+    'The UniFFI verb surface: every facade row, then the definition rows it still names.'
+    rows = facade_rows + [row for row in DEFINITIONS if 'uniffi' in row]
+    if any('uniffi' in row for row in ROWS if row not in facade_rows):
+        raise ValueError('only a facade row carries a uniffi signature')
+    return HEADER + 'export_facade! {\n' + ''.join(uniffi_export(row) for row in rows) + '}\n'
 
 # The code-mode declarations a model is taught and a shadow type check reads.
 # The engine renders each row's signature from its compiled input schema
