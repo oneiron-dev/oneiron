@@ -5,7 +5,9 @@
 //! The pad is a NOTE, so it is an entity: exact-author private admission,
 //! BM25 and indexed-idle text, and the kind's AfterSeal/SessionSealed
 //! defaults. This module keeps only what a NOTE has no field for: the pad
-//! each (actor, session) writes, the actor's one unsealed pad, and the seal.
+//! each (actor, session) writes, the actor's one unsealed pad, and each pad's
+//! author and session. The seal is the NOTE seal (`note/lifecycle.rs`), the
+//! one seal authority every NOTE shares.
 //! Line marks and pins have no NOTE body field either, so each line carries a
 //! fixed engine-owned header the write door stamps and the projection reads
 //! back: `[-]`, `[keep]`, `[scratch]`, `[pin]`, `[pin keep]`, `[pin scratch]`,
@@ -61,10 +63,10 @@ const HEADERS: [(&str, Option<ScratchpadMark>, bool); 6] = [
 
 const TAG_SESSION: u8 = 1;
 const TAG_LIVE: u8 = 2;
-const TAG_SEALED: u8 = 3;
+const TAG_PAD: u8 = 3;
 
-/// Scratchpad pointers and seals. Key: one tag byte, then an id, then (for a
-/// session pointer) the session bytes; see [`PadKey`].
+/// Scratchpad pointers. Key: one tag byte, then an id, then (for a session
+/// pointer) the session bytes; see [`PadKey`].
 const PAD: SideTable<PadKey, PadRow, Named> = SideTable::new(&side_table::CONTEXT_BOARD_SCRATCHPAD);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,8 +75,8 @@ enum PadKey {
     Session { actor: EntityId, session: String },
     /// The actor's one unsealed pad: tag 2 ‖ actor.
     Live { actor: EntityId },
-    /// A sealed pad: tag 3 ‖ pad NOTE id.
-    Sealed { pad: EntityId },
+    /// Every pad, written at its birth: tag 3 ‖ pad NOTE id.
+    Pad { pad: EntityId },
 }
 
 impl SideKey for PadKey {
@@ -89,8 +91,8 @@ impl SideKey for PadKey {
                 out.push(TAG_LIVE);
                 out.extend_from_slice(actor.as_bytes());
             }
-            Self::Sealed { pad } => {
-                out.push(TAG_SEALED);
+            Self::Pad { pad } => {
+                out.push(TAG_PAD);
                 out.extend_from_slice(pad.as_bytes());
             }
         }
@@ -106,7 +108,7 @@ impl SideKey for PadKey {
                 session: std::str::from_utf8(rest).ok()?.to_owned(),
             }),
             TAG_LIVE if rest.is_empty() => Some(Self::Live { actor: id }),
-            TAG_SEALED if rest.is_empty() => Some(Self::Sealed { pad: id }),
+            TAG_PAD if rest.is_empty() => Some(Self::Pad { pad: id }),
             _ => None,
         }
     }
@@ -351,35 +353,23 @@ impl crate::Vault {
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
     ) -> crate::error::Result<Vec<EntityId>> {
-        Ok(PAD
-            .scan_from(&self.store, txn, &[TAG_SEALED])?
-            .into_iter()
-            .filter_map(|(key, row)| match key {
-                PadKey::Sealed { pad } if row.actor == *actor.as_bytes() => Some(pad),
-                _ => None,
-            })
-            .collect())
-    }
-
-    /// Refuses a write to `note` when it is a sealed scratchpad. Every NOTE
-    /// edit, fork and head move checks it, so the seal holds beyond this
-    /// door's own append.
-    pub(crate) fn refuse_sealed_pad_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        note: EntityId,
-    ) -> MemoryResult<()> {
-        if PAD.contains(&self.store, txn, &PadKey::Sealed { pad: note })? {
-            return Err(sealed_pad());
+        let mut sealed = Vec::new();
+        for (key, row) in PAD.scan_from(&self.store, txn, &[TAG_PAD])? {
+            if let PadKey::Pad { pad } = key
+                && row.actor == *actor.as_bytes()
+                && crate::note::note_sealed_in_txn(&self.store, txn, pad)?
+            {
+                sealed.push(pad);
+            }
         }
-        Ok(())
+        Ok(sealed)
     }
 
-    /// Whether `pad` is a scratchpad this door sealed: the gate an
-    /// after-seal extraction reads (ARCH-0032 NoteKind defaults).
+    /// Whether `pad` is a scratchpad and sealed: the gate an after-seal
+    /// extraction reads (ARCH-0032 NoteKind defaults).
     pub fn scratchpad_sealed(&self, pad: EntityId) -> crate::error::Result<bool> {
         let txn = self.store.env.read_txn()?;
-        PAD.contains(&self.store, &txn, &PadKey::Sealed { pad })
+        self.scratchpad_sealed_in_txn(&txn, pad)
     }
 
     /// [`Self::scratchpad_sealed`] inside the caller's read.
@@ -388,14 +378,15 @@ impl crate::Vault {
         txn: &heed::RoTxn<'_>,
         pad: EntityId,
     ) -> crate::error::Result<bool> {
-        PAD.contains(&self.store, txn, &PadKey::Sealed { pad })
+        Ok(PAD.contains(&self.store, txn, &PadKey::Pad { pad })?
+            && crate::note::note_sealed_in_txn(&self.store, txn, pad)?)
     }
 }
 
-/// The pointer and seal rows an erase of `id` purges: each session and live
-/// pointer `id` writes as the actor or names as its pad, and the seal of pad
-/// `id`. An erased author's sealed pads keep their seals: each pad is its own
-/// NOTE and stays sealed until it is erased itself.
+/// The pointer rows an erase of `id` purges: each session and live pointer
+/// `id` writes as the actor or names as its pad, and pad `id`'s own row. An
+/// erased author's pads keep their rows and seals: each pad is its own NOTE
+/// and stays a sealed pad until it is erased itself.
 fn rows_erased_with(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
@@ -408,10 +399,24 @@ fn rows_erased_with(
             PadKey::Session { actor, .. } | PadKey::Live { actor } => {
                 actor == id || row.pad == *id.as_bytes()
             }
-            PadKey::Sealed { pad } => pad == id,
+            PadKey::Pad { pad } => pad == id,
         })
         .map(|(key, _)| key)
         .collect())
+}
+
+/// Seals `pad` through the NOTE seal, unless it was deleted or archived
+/// since: such a pad is past sealing, and its pointers move on all the same.
+fn seal_pad_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pad: EntityId,
+    actor: EntityId,
+) -> crate::error::Result<()> {
+    if !crate::ports::TombstoneStore::port_tombstone_is_deleted(vault, txn, &pad)? {
+        crate::note::seal_note_in_txn(vault, txn, pad, actor)?;
+    }
+    Ok(())
 }
 
 /// Whether an erase of `id` has scratchpad rows to purge.
@@ -454,7 +459,7 @@ impl Memory<'_> {
             return Err(corrupt_pad());
         }
         let pad = EntityId::from_bytes(row.pad)?;
-        let sealed = PAD.contains(store, &txn, &PadKey::Sealed { pad })?;
+        let sealed = crate::note::note_sealed_in_txn(store, &txn, pad)?;
         Ok(Some((pad, sealed)))
     }
 
@@ -525,11 +530,12 @@ impl Memory<'_> {
             let prior = match PAD.get(store, txn, &PadKey::Live { actor })? {
                 Some(live) => {
                     let prior = EntityId::from_bytes(live.pad)?;
-                    PAD.put(store, txn, &PadKey::Sealed { pad: prior }, &live)?;
+                    seal_pad_in_txn(self.vault(), txn, prior, actor)?;
                     Some(prior)
                 }
                 None => None,
             };
+            PAD.put(store, txn, &PadKey::Pad { pad }, &row)?;
             let session = PadKey::Session {
                 actor,
                 session: session.to_owned(),
@@ -562,7 +568,7 @@ impl Memory<'_> {
                 return Ok(None);
             };
             let pad = EntityId::from_bytes(row.pad)?;
-            PAD.put(store, txn, &PadKey::Sealed { pad }, &row)?;
+            seal_pad_in_txn(self.vault(), txn, pad, actor)?;
             if PAD
                 .get(store, txn, &PadKey::Live { actor })?
                 .is_some_and(|live| live.pad == row.pad)

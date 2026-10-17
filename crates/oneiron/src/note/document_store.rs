@@ -200,10 +200,13 @@ impl Memory<'_> {
         pins: &[NotePin],
     ) -> MemoryResult<EntityRefReceipt> {
         let markdown = markdown.into();
+        let kind = NoteKind::Plugin("brief".into());
+        self.vault()
+            .check_auto_note_birth(&kind, self.actor_class(), &markdown)?;
         let id = self.vault().new_entity_id()?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
         let body = encode_note_body(&NoteBody {
-            kind: NoteKind::Plugin("brief".into()),
+            kind,
             author_ref: self.actor(),
             markdown: markdown.clone(),
             source_revision_ref: *id.as_bytes(),
@@ -392,6 +395,12 @@ impl Memory<'_> {
                 for (_, pin) in NOTE_PIN_SOURCE.scan_from(&self.vault().store, txn, &key_prefix)? {
                     pin.validate()?;
                     pins.push(frontier(&pin.frontier)?);
+                }
+                // A seal pins its frontier too (ARCH-0032 #pins).
+                if let Some(seal) =
+                    super::lifecycle::note_seal_in_txn(&self.vault().store, txn, note)?
+                {
+                    pins.push(frontier(&seal.frontier)?);
                 }
                 let at_or_before = |a: &loro::Frontiers, b: &loro::Frontiers| {
                     matches!(

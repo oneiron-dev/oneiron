@@ -4144,6 +4144,66 @@
       "section": false
     },
     {
+      "name": "vault.notes.seal",
+      "description": "Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::NoteRefRequest",
+      "output": "crate::note::NoteSeal",
+      "call": "memory.seal_note(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Seals one NOTE: its document freezes, and a later edit opens a fork.\n",
+          "ts": "/** Seals one NOTE: its document freezes, and a later edit opens a fork. */",
+          "py": "Seals one NOTE: its document freezes, and a later edit opens a fork."
+        }
+      }
+    },
+    {
+      "name": "vault.notes.lifecycle",
+      "description": "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one.",
+      "refs": ["/note_ref"],
+      "input": "crate::note::NoteRefRequest",
+      "output": "crate::note::NoteLifecycleView",
+      "call": "memory.note_lifecycle(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "note_ref"
+        ]
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Where one NOTE stands (active, sealed, archived or tombstoned) and its seal.\n",
+          "ts": "/** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal. */",
+          "py": "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."
+        }
+      }
+    },
+    {
       "name": "self.fold",
       "input": "crate::compaction::FoldMarkInput",
       "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",

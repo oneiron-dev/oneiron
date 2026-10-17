@@ -1165,4 +1165,14 @@ export_facade! {
     let output = client.vault_notes_edit(&input)?;
     crate::codec::lift_record("vault.notes.edit", &output)
 };
+"vault.notes.seal" => fn vault_notes_seal(&self, input: NoteRefRequest) -> NoteSeal = |client| {
+    let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.seal", input)?;
+    let output = client.vault_notes_seal(&input)?;
+    crate::codec::lift_record("vault.notes.seal", &output)
+};
+"vault.notes.lifecycle" => fn vault_notes_lifecycle(&self, input: NoteRefRequest) -> NoteLifecycleView = |client| {
+    let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.lifecycle", input)?;
+    let output = client.vault_notes_lifecycle(&input)?;
+    crate::codec::lift_record("vault.notes.lifecycle", &output)
+};
 }

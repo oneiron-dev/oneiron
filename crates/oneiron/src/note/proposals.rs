@@ -182,7 +182,12 @@ impl Vault {
                     }
                     fork.proposal = Some(bundle.id);
                     NOTE_FORK.put(&self.store, txn, id, &fork)?;
-                    if !fork.rewrite && grant_allows(self, txn, fork.note, actor)? {
+                    // A sealed NOTE's fork waits: landing it would move the
+                    // frozen head.
+                    if !fork.rewrite
+                        && grant_allows(self, txn, fork.note, actor)?
+                        && !super::lifecycle::note_sealed_in_txn(&self.store, txn, fork.note)?
+                    {
                         if let Some(receipt) =
                             land(self, txn, &mut fork, NoteVerdict::Merge, actor)?
                         {
@@ -220,10 +225,10 @@ impl Vault {
                     if !grant_allows(self, txn, fork.note, actor)? {
                         return Err(invalid("no grant to accept this fork").into());
                     }
-                    // A merge or switch moves a sealed pad's text; a reject
+                    // A merge or switch moves a sealed NOTE's text; a reject
                     // only decides the fork.
                     if verdict != NoteVerdict::Reject {
-                        self.refuse_sealed_pad_in_txn(txn, fork.note)?;
+                        super::lifecycle::refuse_sealed_note_in_txn(&self.store, txn, fork.note)?;
                     }
                     if let Some(receipt) = land(self, txn, fork, verdict, actor)? {
                         bundle.landed.push(receipt);
@@ -253,8 +258,8 @@ impl Vault {
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
+                    // A sealed NOTE forks too: the fork leaves its seal intact.
                     super::verbs::note_core(self, txn, note)?;
-                    self.refuse_sealed_pad_in_txn(txn, note)?;
                     let parent =
                         load_doc(self, txn, note)?.ok_or(invalid("note has no document"))?;
                     let fork_doc = parent

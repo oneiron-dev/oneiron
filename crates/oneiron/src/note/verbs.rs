@@ -308,8 +308,8 @@ impl Vault {
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
-                    // A fork of a sealed pad is a write to it too.
-                    self.refuse_sealed_pad_in_txn(txn, note)?;
+                    // A sealed NOTE's edit opens a fork and leaves the seal intact.
+                    let sealed = super::lifecycle::note_sealed_in_txn(&self.store, txn, note)?;
                     let existed = load_doc(self, txn, note)?.is_some();
                     if existed && matches!(edit, NoteEdit::WholeText { base: None, .. }) {
                         return Err(invalid("whole-text edit requires its read version").into());
@@ -327,7 +327,7 @@ impl Vault {
                         None
                     };
                     let authorized = super::proposals::grant_allows(self, txn, note, actor)?;
-                    if let Some((base, edits)) = semantic.filter(|_| authorized) {
+                    if let Some((base, edits)) = semantic.filter(|_| authorized && !sealed) {
                         let operation = super::NoteOperation {
                             request_id: self.store.clock.entity_id()?,
                             change: super::NoteChange::Edit { base, edits },

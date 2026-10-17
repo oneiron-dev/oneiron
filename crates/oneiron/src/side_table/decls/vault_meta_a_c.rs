@@ -503,7 +503,8 @@ side_tables! {
     /// under an admitted plugin section. Key: id16 + u64be + string + id16.
     CONTEXT_BOARD_PLUGIN_BLOCK: VaultMeta b"context_board.block.v1:" LegacyJson Authored;
     /// Session scratchpad pointers: the `scratchpad` NOTE each (actor, session) writes (tag 1), the
-    /// actor's one unsealed pad (tag 2) and each sealed pad (tag 3). Key: u8 tag + id16 [+ string].
+    /// actor's one unsealed pad (tag 2) and every pad with its author and session (tag 3); the
+    /// seal is NOTE_SEAL. Key: u8 tag + id16 [+ string].
     CONTEXT_BOARD_SCRATCHPAD: VaultMeta b"context_board.scratchpad.v1:" Named;
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:

@@ -106,6 +106,8 @@ impl Memory<'_> {
                 ));
             }
         };
+        self.vault
+            .check_auto_note_birth(&envelope.kind, self.actor_class, &envelope.markdown)?;
         let body = encode_note_body(&NoteBody {
             kind: envelope.kind.clone(),
             author_ref: self.actor,

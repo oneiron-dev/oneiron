@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 233 facade rows, 674 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 193.
+// UniFFI census: 235 facade rows, 678 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 195.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -10865,4 +10865,50 @@ pub enum NoteEditOutcome {
         #[serde(rename = "receipt")]
         receipt: WireCommitReceipt,
     },
+}
+
+/// `oneiron::note::lifecycle::NoteRefRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteRefRequest {
+    #[serde(rename = "note_ref")]
+    pub note_ref: String,
+}
+
+/// `oneiron::note::lifecycle::NoteSeal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteSeal {
+    #[serde(rename = "note")]
+    pub note: String,
+    #[serde(rename = "document")]
+    pub document: String,
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "sealed_by")]
+    pub sealed_by: String,
+    #[serde(rename = "sealed_at")]
+    pub sealed_at: u64,
+}
+
+/// `oneiron::note::lifecycle::NoteLifecycleStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum NoteLifecycleStatus {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "sealed")]
+    Sealed,
+    #[serde(rename = "archived")]
+    Archived,
+    #[serde(rename = "tombstoned")]
+    Tombstoned,
+}
+
+/// `oneiron::note::lifecycle::NoteLifecycleView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteLifecycleView {
+    #[serde(rename = "status")]
+    pub status: NoteLifecycleStatus,
+    #[serde(rename = "seal", default, skip_serializing_if = "Option::is_none")]
+    pub seal: Option<NoteSeal>,
 }
