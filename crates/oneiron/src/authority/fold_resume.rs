@@ -32,15 +32,46 @@ use crate::EntityId;
 pub(super) struct FoldCapture {
     once: RefCell<Option<Box<Once>>>,
     spoiled: Cell<bool>,
+    /// The checkpoint image build's capture (OF-469, checkpoint v2): it keeps
+    /// an [`ImageFold`] in place of a resumable once fold.
+    image: Option<ImageSlot>,
+}
+
+/// The frontier an image build keeps fold states at, and what it kept of the
+/// last once fold.
+struct ImageSlot {
+    frontier: BTreeSet<AuthorityEntryHash>,
+    fold: RefCell<Option<Box<ImageFold>>>,
 }
 
 impl FoldCapture {
+    /// A capture for the checkpoint image build: it keeps the fold state at
+    /// each row of `frontier`. No resumed fold reads it.
+    pub(super) fn for_image(frontier: BTreeSet<AuthorityEntryHash>) -> Self {
+        Self {
+            image: Some(ImageSlot {
+                frontier,
+                fold: RefCell::new(None),
+            }),
+            ..Self::default()
+        }
+    }
+
+    /// What the image build kept of the last once fold.
+    pub(super) fn take_image(self) -> Option<Box<ImageFold>> {
+        self.image.and_then(|image| image.fold.into_inner())
+    }
+
     pub(super) fn spoil(&self) {
         self.spoiled.set(true);
     }
 
     pub(super) fn record(&self, parts: OnceParts<'_>) {
-        *self.once.borrow_mut() = Once::of(parts).map(Box::new);
+        if let Some(image) = &self.image {
+            *image.fold.borrow_mut() = ImageFold::of(parts, &image.frontier).map(Box::new);
+        } else {
+            *self.once.borrow_mut() = Once::of(parts).map(Box::new);
+        }
     }
 
     fn take(self) -> Option<Box<Once>> {
@@ -272,6 +303,127 @@ impl Once {
     }
 }
 
+/// What the checkpoint image build keeps of the last once fold (OF-469,
+/// checkpoint v2): the fold state at each frontier row, not only at one main
+/// head, and the merge, projection and safety indexes a fold past the image
+/// reads. Unlike [`Once`] it asks for no single head and no settled main row:
+/// an image holds forks and rejected rows as they are.
+pub(super) struct ImageFold {
+    /// Each frontier row's state; None for a row the fold holds none for.
+    pub(super) per_parent: BTreeMap<AuthorityEntryHash, Option<FoldState>>,
+    /// The merge of every surviving state, before any restrictive fact.
+    pub(super) merged: FoldState,
+    /// The projected once fold, before any install's stale window.
+    pub(super) fold: AuthorityFold,
+    pub(super) safety: super::checkpoint_image::CheckpointSafety,
+}
+
+impl ImageFold {
+    fn of(parts: OnceParts<'_>, frontier: &BTreeSet<AuthorityEntryHash>) -> Option<Self> {
+        let OnceParts {
+            by_hash,
+            states,
+            entry_ancestors,
+            original_floors: _,
+            merged,
+            valid_entries,
+            revoke_facts,
+            retired_keys,
+            closed_handoffs,
+            unsettled,
+            counted_ancestor_pairs,
+            issues,
+            final_merged,
+            fold,
+        } = parts;
+        let final_merged = final_merged?;
+        let is_main = |hash: &AuthorityEntryHash| {
+            by_hash
+                .get(hash)
+                .is_some_and(|entry| super::world_privacy::side_world(&entry.op).is_none())
+        };
+        let issuers = super::log_structure::authority_structure(by_hash.values()).issuers;
+        let uncounted = by_hash
+            .iter()
+            .filter(|(_, entry)| super::log_budget::is_uncounted(entry, &issuers))
+            .map(|(hash, _)| *hash)
+            .collect::<BTreeSet<_>>();
+        let mut writers = BTreeMap::<_, BTreeSet<_>>::new();
+        let mut bound_keys = BTreeSet::new();
+        let (mut confirm_ids, mut confirm_nonces) = (BTreeSet::new(), BTreeSet::new());
+        for (hash, state) in states {
+            add_writers(&mut writers, state);
+            if is_main(hash) {
+                add_bound_keys(&mut bound_keys, state);
+            }
+            if let Some(AuthorityOp::FederationConfirm(action)) =
+                by_hash.get(hash).map(|entry| &entry.op)
+            {
+                confirm_ids.insert(action.confirm_id);
+                confirm_nonces.insert(action.nonce);
+            }
+        }
+        let marks = valid_entries
+            .iter()
+            .filter_map(|hash| {
+                let AuthorityOp::MachineProfile(profile) = &by_hash.get(hash)?.op else {
+                    return None;
+                };
+                let chain = states
+                    .get(hash)?
+                    .machines
+                    .get(&profile.machine)?
+                    .get(&MachineAdmitter::Roster)?;
+                (chain.head.entry == *hash && chain.head.signer_class == SignerClass::OwnerHeld)
+                    .then(|| (*hash, chain.head.signer.clone()))
+            })
+            .collect();
+        let missing_parents = by_hash
+            .values()
+            .flat_map(|entry| entry.parent_hashes.iter())
+            .filter(|parent| !by_hash.contains_key(*parent))
+            .copied()
+            .collect();
+        let frontier_ancestry = frontier
+            .iter()
+            .filter_map(|hash| {
+                let past = entry_ancestors.get(hash)?;
+                let counted = past.iter().filter(|row| !uncounted.contains(*row)).count();
+                Some((*hash, (past.len() as u64, counted as u64)))
+            })
+            .collect();
+        let safety = super::checkpoint_image::CheckpointSafety {
+            pairs: entry_ancestors.values().map(|past| past.len() as u64).sum(),
+            counted_pairs: counted_ancestor_pairs,
+            frontier_ancestry,
+            issuers,
+            uncounted,
+            revoke_facts,
+            retired_keys,
+            closed_handoffs,
+            unsettled,
+            issues,
+            missing_parents,
+            marks,
+            revocations: final_merged.actor_revocation_hashes.clone(),
+            writers,
+            bound_keys,
+            confirm_ids,
+            confirm_nonces,
+            nonce_provenance: merged.critical_write_confirm_nonce_provenance.clone(),
+        };
+        Some(Self {
+            per_parent: frontier
+                .iter()
+                .map(|hash| (*hash, states.get(hash).cloned()))
+                .collect(),
+            merged,
+            fold: fold.clone(),
+            safety,
+        })
+    }
+}
+
 type ConfirmKeys = (BTreeSet<[u8; 32]>, BTreeSet<[u8; 16]>);
 
 fn add_writers(
@@ -383,7 +535,7 @@ impl<'a> RowMeta<'a> {
 /// the world-key records whose envelopes a folded key carries
 /// (`world_key_fold::folded_world_keys`). Every other row's summary is all
 /// a later fold reads of it.
-fn is_projected(op: &AuthorityOp) -> bool {
+pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::BindActor { .. }
