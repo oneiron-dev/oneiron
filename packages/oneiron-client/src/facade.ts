@@ -248,7 +248,7 @@ export interface FacadeInputs {
   "vault.artifacts.body.import": Facade.OfficeBodyImportRequest;
   "vault.artifacts.body.head": Facade.OfficeBodyArtifactRequest;
   "vault.artifacts.body.read": Facade.OfficeBodyReadRequest;
-  "vault.artifacts.body.commits": Facade.OfficeBodyArtifactRequest;
+  "vault.artifacts.body.commits": Facade.OfficeBodyCommitsRequest;
   "vault.artifacts.body.edit": Facade.OfficeBodyEditRequest;
   "vault.artifacts.body.fork.open": Facade.OfficeBodyForkOpenRequest;
   "vault.artifacts.body.fork.edit": Facade.OfficeBodyForkEditRequest;
@@ -520,7 +520,7 @@ export interface FacadeResults {
   "vault.artifacts.body.import": Facade.OfficeBodyHead;
   "vault.artifacts.body.head": Facade.OfficeBodyHead | null;
   "vault.artifacts.body.read": Facade.OfficeBodyView;
-  "vault.artifacts.body.commits": Facade.TextCommitReceipt[];
+  "vault.artifacts.body.commits": Facade.OfficeBodyCommitView[];
   "vault.artifacts.body.edit": Facade.OfficeBodyEdit;
   "vault.artifacts.body.fork.open": Facade.OfficeBodyFork;
   "vault.artifacts.body.fork.edit": Facade.OfficeBodyEdit;
@@ -765,7 +765,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "ai.transcribe": { description: "Text out of speech audio, from the host's transcription model.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.embed": { description: "One embedding vector per input text, from the host's embedding model.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.video": { description: "Starts a video render as a provider job and answers with its ticket.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.video.poll": { description: "Where a video job stands; a finished one answers with its clip, once.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "ai.video.poll": { description: "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.video.cancel": { description: "Stops a video job at its provider.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.verdict": { description: "The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.graph.ask": { description: "", scope: "Write", proposes: true, hostDoor: true, section: false },
@@ -808,7 +808,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.body.import": { description: "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.head": { description: "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.read": { description: "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.artifacts.body.commits": { description: "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.commits": { description: "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.edit": { description: "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.fork.open": { description: "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.fork.edit": { description: "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1280,8 +1280,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           head: (input: Facade.OfficeBodyArtifactRequest, options?: O): FacadeReturns<"vault.artifacts.body.head">[K] => invoke("vault.artifacts.body.head", input, options, newInvocation()),
           /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history. */
           read: (input: Facade.OfficeBodyReadRequest, options?: O): FacadeReturns<"vault.artifacts.body.read">[K] => invoke("vault.artifacts.body.read", input, options, newInvocation()),
-          /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
-          commits: (input: Facade.OfficeBodyArtifactRequest, options?: O): FacadeReturns<"vault.artifacts.body.commits">[K] => invoke("vault.artifacts.body.commits", input, options, newInvocation()),
+          /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone. */
+          commits: (input: Facade.OfficeBodyCommitsRequest, options?: O): FacadeReturns<"vault.artifacts.body.commits">[K] => invoke("vault.artifacts.body.commits", input, options, newInvocation()),
           /** A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head. */
           edit: (input: Facade.OfficeBodyEditRequest, options?: O): FacadeReturns<"vault.artifacts.body.edit">[K] => invoke("vault.artifacts.body.edit", input, options, newInvocation()),
           fork: {
@@ -1564,7 +1564,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       embed: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.embed">[K] => invoke("ai.embed", input, options, newInvocation()),
       /** Starts a video render as a provider job and answers with its ticket. */
       video: Object.assign((input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.video">[K] => invoke("ai.video", input, options, newInvocation()), {
-        /** Where a video job stands; a finished one answers with its clip, once. */
+        /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
         poll: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.poll">[K] => invoke("ai.video.poll", input, options, newInvocation()),
         /** Stops a video job at its provider. */
         cancel: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.cancel">[K] => invoke("ai.video.cancel", input, options, newInvocation()),

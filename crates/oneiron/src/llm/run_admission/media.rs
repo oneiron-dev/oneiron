@@ -16,6 +16,7 @@ use super::super::{
 use super::admission::{RunDenied, RunInner};
 use super::gate::Dispatch;
 use super::permit::RunPermit;
+use super::receipt::RunStreamUsage;
 use super::settle::CallOutcome;
 
 /// Keys a media adapter stamps into [`MediaUsage::raw_provider`](super::super::media::MediaUsage)
@@ -295,7 +296,13 @@ impl MediaStreamLease {
                 .dispatched(dispatch, &self.route, served_model, answered);
         }
         let units = stream_units(self.operation, &self.caps, self.admitted_ms);
-        Some(permit.settle(CallOutcome::Used(units)))
+        Some(permit.settle_stream(
+            units,
+            RunStreamUsage {
+                admitted_ms: self.admitted_ms,
+                bound_ms: self.bound_ms,
+            },
+        ))
     }
 }
 

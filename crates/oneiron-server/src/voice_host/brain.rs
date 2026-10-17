@@ -7,7 +7,9 @@
 //! the payer, one line per turn, admitted through its role before any model
 //! is called. Its stream's text comes back to the host as [`VoiceBrainOut`],
 //! and the host speaks it past the session's safeguards. A cancel drops the
-//! turn's stream, and its run settles what it spent.
+//! turn's stream, and its run settles what it spent; what it had already
+//! said stays in the history, marked interrupted. Each safeguard notice said
+//! to the person enters the history too, and the next turn hears it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -15,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use futures_util::StreamExt;
 use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest};
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, FinishReason};
+use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, GenerationEpoch};
 use oneiron::{
     BudgetExhaustionPolicy, DisclosureContext, EntityId, LlmMessage, LlmMessageRole, LlmStream,
@@ -32,6 +35,9 @@ use crate::models::Seat;
 /// A turn that hears retrieved memories carries context from outside it,
 /// so its speech passes the outbound safeguard as a tool result's would.
 const MEMORIES_TAINT_TURN: bool = true;
+/// How an interrupted answer's history entry ends: the person cut in after
+/// the brain had said this much.
+const INTERRUPTED_MARK: &str = " [interrupted: the person cut in here]";
 
 fn refused(message: impl std::fmt::Display) -> oneiron::Error {
     oneiron::Error::InvalidConfig(format!("voice brain: {message}"))
@@ -59,7 +65,16 @@ pub struct ChatBrain {
     seat: Seat,
     /// This call's turns so far, the person's and the brain's.
     history: Arc<Mutex<Vec<LlmMessage>>>,
-    turn: Option<(GenerationEpoch, JoinHandle<()>)>,
+    turn: Option<Running>,
+}
+
+/// The turn answering now.
+struct Running {
+    generation: GenerationEpoch,
+    handle: JoinHandle<()>,
+    /// What it has handed the speech host so far; whichever ends it, the
+    /// turn's terminal or a cancel, takes it.
+    said: Arc<Mutex<Option<String>>>,
 }
 
 /// The turn's retrieved memories, as the brain hears them.
@@ -216,9 +231,21 @@ impl ChatBrain {
         }))
     }
 
+    /// Stops the turn answering. What it had handed the speech host enters
+    /// the history, marked interrupted; the rest was never said.
     fn abort(&mut self) {
-        if let Some((_, turn)) = self.turn.take() {
-            turn.abort();
+        let Some(running) = self.turn.take() else {
+            return;
+        };
+        running.handle.abort();
+        let said = running.said.lock().ok().and_then(|mut said| said.take());
+        if let Some(said) = said.filter(|said| !said.is_empty())
+            && let Ok(mut history) = self.history.lock()
+        {
+            history.push(text_message(
+                LlmMessageRole::Assistant,
+                format!("{said}{INTERRUPTED_MARK}"),
+            ));
         }
     }
 }
@@ -235,18 +262,24 @@ impl Brain for ChatBrain {
                 LlmMessageRole::User,
                 request.transcript.clone(),
             ));
+        let said = Arc::new(Mutex::new(Some(String::new())));
         let turn = Turn {
             generation,
             tainted,
             out: self.bindings.out.clone(),
             history: Arc::clone(&self.history),
+            said: Arc::clone(&said),
         };
         let entered = self.bindings.ai.enter_turn();
         let handle = tokio::spawn(async move {
             let _entered = entered;
             turn.run(stream).await;
         });
-        self.turn = Some((generation, handle));
+        self.turn = Some(Running {
+            generation,
+            handle,
+            said,
+        });
         Ok(())
     }
 
@@ -259,10 +292,26 @@ impl Brain for ChatBrain {
         if self
             .turn
             .as_ref()
-            .is_some_and(|(current, _)| *current == generation)
+            .is_some_and(|running| running.generation == generation)
         {
             self.abort();
         }
+        Ok(())
+    }
+
+    /// The notice enters the call's history as System context, so the next
+    /// turn hears it; a turn already answering is not interrupted.
+    fn notice(&mut self, notice: &GateSystemNoticeRecord) -> oneiron::Result<()> {
+        self.history
+            .lock()
+            .map_err(|_| refused("history poisoned"))?
+            .push(text_message(
+                LlmMessageRole::System,
+                format!(
+                    "Safeguard notice said to the person ({}): {}",
+                    notice.notice_type, notice.body
+                ),
+            ));
         Ok(())
     }
 }
@@ -281,17 +330,22 @@ struct Turn {
     tainted: bool,
     out: mpsc::Sender<VoiceBrainOut>,
     history: Arc<Mutex<Vec<LlmMessage>>>,
+    /// What the turn has handed the speech host, shared with its cancel.
+    said: Arc<Mutex<Option<String>>>,
 }
 
 impl Turn {
     async fn run(self, mut stream: LlmStream<'static>) {
-        let mut said = String::new();
         let event = loop {
             match stream.next().await {
                 Some(Ok(LlmStreamEvent::TextDelta { text, .. })) => {
-                    said.push_str(&text);
-                    if !self.send(BrainEvent::TextDelta(text)).await {
+                    if !self.send(BrainEvent::TextDelta(text.clone())).await {
                         return;
+                    }
+                    if let Ok(mut draft) = self.said.lock()
+                        && let Some(said) = draft.as_mut()
+                    {
+                        said.push_str(&text);
                     }
                 }
                 // A cancelled terminal is no answer: nothing more is said.
@@ -305,7 +359,9 @@ impl Turn {
                 None => break BrainEvent::Error("stream ended without a terminal".into()),
             }
         };
+        let said = self.said.lock().ok().and_then(|mut said| said.take());
         if matches!(event, BrainEvent::Done)
+            && let Some(said) = said
             && let Ok(mut history) = self.history.lock()
         {
             history.push(text_message(LlmMessageRole::Assistant, said));
