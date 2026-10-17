@@ -74,7 +74,8 @@ impl HostSelfDispatcher<'_> {
         };
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
-                .with_task_host(task_host);
+                .with_task_host(task_host)
+                .with_model_provider(self.model_provider());
         // The call's step names the logical verb its hooks fire once for, the
         // same across replays of the step, and a call a hook's ask parked
         // keeps its invocation into a later step (ARCH-0080 §3). A hook's

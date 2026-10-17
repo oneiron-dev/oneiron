@@ -181,12 +181,16 @@ pub struct TaskCancelReceipt {
     pub forced: bool,
 }
 
-/// Result of one `tasks.update`: today it records the acknowledgement of a
-/// failed task, and leaves any other task as it was.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Result of one `tasks.update`. Without a report it records the
+/// acknowledgement of a failed task, and leaves any other task as it was;
+/// with one, `report` is the task highway's answer unchanged, an asked-up,
+/// stale-fence or wrong-node outcome included.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TaskUpdateReceipt {
     pub task_ref: EntityId,
     pub acked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<super::TaskCallReceipt>,
 }
 
 /// What `describe` returns: the TASKS section when no task is named, or the
