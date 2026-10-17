@@ -55,15 +55,17 @@ const WINDOW_WAIT_SECS: u64 = 15 * 60;
 const MAX_RESET_TIMES: usize = 4;
 
 /// Whether a provider's answer is a limit refusal: any 429 or 402, a 400
-/// or a 5xx whose body reads as spent credit (an error inside an open
-/// stream that names no status reads as a 5xx), or a 403 or a 5xx whose
-/// body reads as a spent quota or a rate limit. Any other request error is
-/// never one, whatever its body says.
+/// whose body reads as spent credit, or a 403 or a 5xx whose body reads as
+/// a spent quota or a rate limit. A server error that only mentions
+/// billing is a server error; an error inside an open stream that names
+/// no status but reads as spent credit stands for a 402
+/// ([`stream_error_status`]). Any other request error is never one,
+/// whatever its body says.
 #[must_use]
 pub fn is_limit_status(status: u16, body: &JsonValue) -> bool {
     status == 429
         || status == 402
-        || ((status == 400 || status >= 500) && reads_as(body, &CREDIT_WORDS))
+        || (status == 400 && reads_as(body, &CREDIT_WORDS))
         || ((status == 403 || status >= 500) && reads_as_limit(body))
 }
 
@@ -104,8 +106,8 @@ pub fn limit_refusal(
 /// The HTTP status an error a provider sends inside an open stream stands
 /// for: its own numeric `code` or `status`, else what its `type` or a
 /// worded `code` names (a request error, a key refused, spent credit, a
-/// rate limit), else a server error. An OpenAI-compatible provider may
-/// name the kind in `code` alone.
+/// rate limit), else spent credit when its words say so, else a server
+/// error. An OpenAI-compatible provider may name the kind in `code` alone.
 #[must_use]
 pub fn stream_error_status(body: &JsonValue) -> u16 {
     let error = body.get("error").unwrap_or(body);
@@ -128,7 +130,13 @@ pub fn stream_error_status(body: &JsonValue) -> u16 {
             "rate_limit_error" => Some(429),
             _ => None,
         });
-    numeric.or(named).unwrap_or(500)
+    numeric.or(named).unwrap_or_else(|| {
+        if reads_as(body, &CREDIT_WORDS) {
+            402
+        } else {
+            500
+        }
+    })
 }
 
 /// Whether a provider's error body reads as a spent quota or a rate limit:

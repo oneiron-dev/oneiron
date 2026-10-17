@@ -535,6 +535,20 @@ pub struct TaskAskHandle {
 pub enum TaskAskHoldReason {
     /// Mailbox TASKs are queued, but no native delivery route is known now.
     NoLiveRoute,
+    /// The vault's approval mode holds the ask for the owner's launch
+    /// approval (OF-393): no member TASK or guest grant exists until the
+    /// owner approves; a denial keeps it held and visible.
+    ApprovalRequired,
+}
+
+/// The launch approval an ask waits on: the ref the owner's resume door
+/// takes, the frozen plan digest a ruling names, and the durable hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskAskLaunchHold {
+    pub launch_ref: EntityId,
+    pub plan_digest: String,
+    pub surface_ref: String,
+    pub denied: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -551,6 +565,10 @@ pub struct TaskAskReceipt {
     /// The member TASKs as typed record refs (OF-063), in `task_refs`
     /// order, built from their ids with no read.
     pub task_records: Vec<RecordRef>,
+    /// The launch approval a held ask waits on; `None` once it launched,
+    /// and on every ask that was never held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<TaskAskLaunchHold>,
 }
 impl TaskAskReceipt {
     /// A receipt from today's fields. Build receipts here rather than by
@@ -573,7 +591,15 @@ impl TaskAskReceipt {
             idempotent_replay,
             statement,
             task_records,
+            launch: None,
         }
+    }
+
+    /// This receipt, naming the launch approval its ask waits on.
+    #[must_use]
+    pub fn with_launch(mut self, launch: TaskAskLaunchHold) -> Self {
+        self.launch = Some(launch);
+        self
     }
 }
 
