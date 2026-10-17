@@ -29,9 +29,9 @@ use crate::{
     ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, LibraryFindInput,
     LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRunInput, LibraryRunOutput,
     NoDecider, Observation, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
-    ProposeOutput, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
-    SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary,
-    ZoomInput, site_of,
+    ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
+    ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -92,6 +92,7 @@ pub struct BrowserSession {
     receipt_seq: u64,
     decider: Option<Box<dyn RoutineDecider>>,
     library: Option<Box<dyn WorkflowLibrary>>,
+    receipt_sink: Option<Box<dyn ReceiptEvidenceSink>>,
 }
 
 impl BrowserSession {
@@ -126,6 +127,7 @@ impl BrowserSession {
             receipt_seq: 0,
             decider: None,
             library: None,
+            receipt_sink: None,
         })
     }
 
@@ -158,6 +160,11 @@ impl BrowserSession {
     /// Gives the session's batches the host's routine decider.
     pub fn set_decider(&mut self, decider: Box<dyn RoutineDecider>) {
         self.decider = Some(decider);
+    }
+
+    /// Gives the session the host's keeper of receipt screenshots.
+    pub fn set_receipt_sink(&mut self, sink: Box<dyn ReceiptEvidenceSink>) {
+        self.receipt_sink = Some(sink);
     }
 
     /// A browser may only be started through the engine's tier selector.
@@ -239,7 +246,7 @@ impl BrowserSession {
             })
             .ok()
             .map(|shot| shot.image);
-        let receipt = EffectReceipt {
+        let mut receipt = EffectReceipt {
             seq: self.receipt_seq,
             verb: verb.to_owned(),
             url: observation.url.clone(),
@@ -249,7 +256,20 @@ impl BrowserSession {
             effect_class: effect_class.map(str::to_owned),
             press: press.as_str().to_owned(),
             screenshot,
+            screenshot_evidence: None,
         };
+        // The pixels are kept before the receipt is stored, while the
+        // session still holds them.
+        if let Some(mut sink) = self.receipt_sink.take() {
+            if let Some(png) = receipt
+                .screenshot
+                .as_deref()
+                .and_then(|image| self.image(image))
+            {
+                receipt.screenshot_evidence = Some(sink.keep(&receipt, png));
+            }
+            self.receipt_sink = Some(sink);
+        }
         self.receipts.push(receipt.clone());
         observation.receipt = Some(receipt);
     }
