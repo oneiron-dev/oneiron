@@ -4,16 +4,13 @@
 use super::{Decision, held, held_by_both};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::conversation::{AudienceCache, room_for_record_in};
-use crate::counterparty_contact::read_counterparty_contact_in_txn;
+use crate::counterparty_contact::counterparty_contacts_in_claims_in_txn;
 use crate::disclosure::{DisclosureContext, DisclosureMode};
 use crate::edge::EdgeKind;
 use crate::federation::Scope;
 use crate::interlocutor::{InterlocutorPartyInput, InterlocutorResolutionInput};
 use crate::ports::EntityStoreRead;
-use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_RELATIONSHIP,
-};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP};
 use crate::side_table::RawValue;
 use crate::voice_identity::VoiceSessionRosterV1;
 use crate::workspace_roster::{LEADER_CHAT_FIELD, LeaderChat, ProjectReader};
@@ -168,11 +165,13 @@ impl Decision for DisclosureClamps {
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
             let store = &vault.store;
-            for id in store.port_entity_ids_by_type(&txn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)? {
-                // A contact that does not decode names no sender.
-                if let Ok(Some(contact)) = read_counterparty_contact_in_txn(store, &txn, &id?) {
-                    parties.insert(Party::Channel(contact.identity_ref, contact.counterparty));
-                }
+            // Contacts are claims-first: a cache drop hides none, and one whose
+            // heads do not rebuild names no sender.
+            for contact in counterparty_contacts_in_claims_in_txn(store, &txn)?
+                .into_iter()
+                .flatten()
+            {
+                parties.insert(Party::Channel(contact.identity_ref, contact.counterparty));
             }
         }
         // A roster is one row: one only one vault holds is content.

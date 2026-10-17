@@ -5,12 +5,14 @@ use super::{Decision, field};
 use crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use crate::channel_identity_provider::native_mail;
 use crate::comm::{PREDICATE_COMM_SEND_OVERRIDE, SendOverrideMatch};
-use crate::counterparty_contact::{normalize_channel_class, read_counterparty_contact_in_txn};
+use crate::counterparty_contact::{
+    counterparty_contacts_in_claims_in_txn, normalize_channel_class,
+};
 use crate::gate::{
     ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
 };
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::{EntityId, Result, Vault};
 use std::collections::BTreeSet;
 
@@ -254,11 +256,13 @@ impl Known {
             known
                 .parties
                 .extend(crate::comm::comm_party_keys_in_txn(store, &txn)?);
-            for id in store.port_entity_ids_by_type(&txn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)? {
-                // One that does not decode fails every send closed alike.
-                if let Ok(Some(contact)) = read_counterparty_contact_in_txn(store, &txn, &id?) {
-                    known.parties.insert(contact.counterparty);
-                }
+            // Claims-first, as the send gate reads contacts. One whose heads do
+            // not rebuild fails every send closed alike.
+            for contact in counterparty_contacts_in_claims_in_txn(store, &txn)?
+                .into_iter()
+                .flatten()
+            {
+                known.parties.insert(contact.counterparty);
             }
             for id in store.port_entity_ids_by_type(&txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
                 let id = id?;

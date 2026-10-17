@@ -323,6 +323,35 @@ pub(crate) fn counterparty_contacts_for_send_in_claims_in_txn(
     Ok(records)
 }
 
+/// Every live contact, each rebuilt from its live `counterparty_contact.*`
+/// heads, in id order: the checkpoint decisions' contact read (OF-272). A
+/// contact is found through any live `counterparty_contact.counterparty` head,
+/// so a cache drop hides none and a deleted contact is skipped. Each entry is
+/// that contact's own rebuild, so one malformed family fails only itself.
+pub(crate) fn counterparty_contacts_in_claims_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<Result<CounterpartyContactRecord>>> {
+    let contacts = live_head_contact_ids_in_txn(
+        store,
+        txn,
+        PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+        None,
+    )?;
+    let mut records = Vec::with_capacity(contacts.len());
+    for contact in contacts {
+        if let Some(record) =
+            super::lifecycle::counterparty_contact_record_from_store_claims_in_txn(
+                store, txn, &contact,
+            )
+            .transpose()
+        {
+            records.push(record);
+        }
+    }
+    Ok(records)
+}
+
 /// Every contact whose live `predicate` head holds exactly `value`, in id
 /// order: the claim-posting lookup behind the contact read doors (OF-272). It
 /// walks the predicate's whole posting list under the scan-check door, so a
@@ -334,6 +363,17 @@ pub(super) fn contact_ids_with_live_head_in_txn(
     txn: &heed::RoTxn<'_>,
     predicate: &str,
     value: &str,
+) -> Result<Vec<EntityId>> {
+    live_head_contact_ids_in_txn(store, txn, predicate, Some(value))
+}
+
+/// [`contact_ids_with_live_head_in_txn`], where `None` takes a live head of
+/// any value.
+fn live_head_contact_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    value: Option<&str>,
 ) -> Result<Vec<EntityId>> {
     const PAGE: usize = 256;
     let mut contacts = std::collections::BTreeSet::new();
@@ -348,7 +388,7 @@ pub(super) fn contact_ids_with_live_head_in_txn(
                 continue;
             };
             if body.predicate != predicate
-                || body.value.as_str() != Some(value)
+                || value.is_some_and(|value| body.value.as_str() != Some(value))
                 || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
                 || body.stale
             {
