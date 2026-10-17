@@ -112,7 +112,12 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        crate::embed::erase_turn_vectors_in_txn(self, wtxn, turns)?;
+        crate::embed::erase_turn_vectors_in_txn(
+            self,
+            wtxn,
+            turns,
+            crate::ports::DependentWalkDoor::Purge,
+        )?;
         Ok((
             existed || note_removed || had_refinement || had_merge_receipt || had_tags,
             citing,
@@ -283,7 +288,12 @@ impl Vault {
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
-        crate::embed::erase_turn_vectors_in_txn(self, wtxn, turns)?;
+        crate::embed::erase_turn_vectors_in_txn(
+            self,
+            wtxn,
+            turns,
+            crate::ports::DependentWalkDoor::SoftErase,
+        )?;
         Ok((true, had_vector, ledger_changed))
     }
 }
