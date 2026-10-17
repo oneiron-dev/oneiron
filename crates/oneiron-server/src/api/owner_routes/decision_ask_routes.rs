@@ -139,9 +139,9 @@ async fn revoke_rule(
 ) -> OwnerReply<HostRule> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let id = EntityId::from_hex(&request.id)
-        .map_err(|_| OwnerError::Invalid("rule id is not an entity id".into()))?;
     let rule = blocking(move || -> OwnerResult<HostRule> {
+        let id = EntityId::from_hex(&request.id)
+            .map_err(|_| OwnerError::Invalid("rule id is not an entity id".into()))?;
         server
             .vault()
             .revoke_host_rule(&owner, id)
