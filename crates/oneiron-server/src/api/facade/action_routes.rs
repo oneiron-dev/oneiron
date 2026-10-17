@@ -231,6 +231,7 @@ async fn execute(
         let binding = ActionHostBinding {
             verb_door: Some(door),
             owner: owner.as_ref(),
+            live_run: None,
         };
         executor.execute_call(
             &vault,
