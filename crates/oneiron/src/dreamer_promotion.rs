@@ -65,6 +65,8 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
+use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::write_envelope::{SourceLineage, WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -315,6 +317,30 @@ fn promote_one(
         );
     }
 
+    // Rule A: the claim is concluded from the evidence that survived
+    // admission, the head it supersedes and the MESSAGEs its evidence cites,
+    // the first MAX_BIRTH_INPUTS of them, taken before `surviving` moves.
+    let birth = {
+        let cited = verified
+            .map(VerifiedEvidenceSet::cited_messages)
+            .unwrap_or_default();
+        let inputs: Vec<EntityId> = surviving
+            .iter()
+            .chain(&candidate.supersedes)
+            .chain(&cited)
+            .copied()
+            .take(MAX_BIRTH_INPUTS)
+            .collect();
+        RowBirth::written(
+            run.agent_actor,
+            MadeByClass::Concluded,
+            "dreamer.promotion",
+            &inputs,
+            &[],
+            candidate.learned_at,
+        )
+    };
+
     // Surviving evidence + the typed chain + the computed meet ride the
     // candidate's structured evidence payload: the envelope evidence map's
     // candidate_evidence entry that GATE-12's evidence floor reads, and the
@@ -459,6 +485,16 @@ fn promote_one(
             )?;
             #[cfg(test)]
             crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Promotion);
+        }
+        // Both write paths reach here; a replayed attempt keeps the claim's
+        // first birth.
+        if let Some(birth) = &birth {
+            crate::provenance::birth::stamp_birth_if_absent_in_txn(
+                &vault.store,
+                wtxn,
+                &candidate.claim_id,
+                birth,
+            )?;
         }
         // The MESSAGE words the evidence names become this claim's
         // dependencies in the claim's own transaction.
