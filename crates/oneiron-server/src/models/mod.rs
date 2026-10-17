@@ -38,6 +38,7 @@ mod driven;
 #[cfg(test)]
 mod fallback_tests;
 mod forward;
+mod gemini_media;
 mod hosted_speech;
 mod http;
 #[cfg(test)]
@@ -552,11 +553,12 @@ fn build_provider(
         }
         // The tagger slot's worker is the consumer of this kind; it never
         // answers generate calls, so no LLM backend is built for it. A
-        // speech provider's only client is its media rung's.
+        // media-only provider's only client is its media rung's.
         ProviderKind::Oneironer
         | ProviderKind::Cartesia
         | ProviderKind::Elevenlabs
-        | ProviderKind::Voxcpm2 => {
+        | ProviderKind::Voxcpm2
+        | ProviderKind::Gemini => {
             return Ok(None);
         }
     };
