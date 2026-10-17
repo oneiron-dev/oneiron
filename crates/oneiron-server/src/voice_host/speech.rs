@@ -190,7 +190,7 @@ impl VoiceHost {
     }
 
     /// One of the brain's events, through the session first.
-    pub(super) async fn brain_out<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+    pub(super) fn brain_out<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         out: VoiceBrainOut,
         bridge: &mut MediaBridge,
@@ -246,7 +246,7 @@ impl VoiceHost {
                     self.output_failed(generation, bridge, outputs);
                 }
             }
-            Ok((Some(BrainEvent::Done), _)) => self.brain_done(generation, bridge, outputs).await?,
+            Ok((Some(BrainEvent::Done), _)) => self.brain_done(generation, bridge, outputs)?,
             Ok((Some(BrainEvent::Error(_)), _)) => {
                 tracing::warn!("voice media: the brain broke off");
                 self.output_failed(generation, bridge, outputs);
@@ -264,7 +264,7 @@ impl VoiceHost {
     /// The cadence's clock. Held sentences go as the media queue makes
     /// room, a Done held behind them follows, and a quiet brain's buffered
     /// words become a sentence once the cadence's wait runs out.
-    pub(super) async fn speech_tick<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+    pub(super) fn speech_tick<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         bridge: &mut MediaBridge,
         outputs: &mut VoiceOutputs<B, T, C>,
@@ -275,7 +275,7 @@ impl VoiceHost {
                 event: BrainEvent::Done,
                 externally_tainted,
             };
-            return self.brain_out(done, bridge, outputs).await;
+            return self.brain_out(done, bridge, outputs);
         }
         let now = bridge.now_ms();
         let Some((generation, text)) = bridge
@@ -326,7 +326,7 @@ impl VoiceHost {
 
     /// One sentence's audio: handed over only for the session's current
     /// generation, and checked again when it is dequeued.
-    pub(super) async fn spoken(&self, frame: PcmFrame, bridge: &mut MediaBridge) -> io::Result<()> {
+    pub(super) fn spoken(&self, frame: PcmFrame, bridge: &mut MediaBridge) -> io::Result<()> {
         if let Some(speech) = speech_mut(bridge, frame.generation) {
             speech.spoken = speech.spoken.saturating_add(1);
         }
@@ -335,9 +335,9 @@ impl VoiceHost {
                 frame,
                 session: Arc::downgrade(&self.state),
             };
-            bridge.play(VoicePlayout::Pcm(frame)).await?;
+            bridge.play(VoicePlayout::Pcm(frame))?;
         }
-        self.end_playout(bridge).await
+        self.end_playout(bridge)
     }
 
     /// A sentence's verdict: its control and every notice are delivered,
@@ -483,7 +483,7 @@ impl VoiceHost {
 
     /// The brain is done: no sentence follows. A generation whose audio a
     /// safeguard already closed waits on no playout.
-    async fn brain_done<B: Brain, T: TtsSeamClient, C: CascadeControl>(
+    fn brain_done<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         generation: GenerationEpoch,
         bridge: &mut MediaBridge,
@@ -501,12 +501,12 @@ impl VoiceHost {
         if let Some(speech) = speech_mut(bridge, generation) {
             speech.ended = true;
         }
-        self.end_playout(bridge).await
+        self.end_playout(bridge)
     }
 
     /// Marks the generation's last audio for playout, once the brain is
     /// done and every sentence's audio came back.
-    async fn end_playout(&self, bridge: &mut MediaBridge) -> io::Result<()> {
+    fn end_playout(&self, bridge: &mut MediaBridge) -> io::Result<()> {
         let Some(speech) = bridge
             .speech
             .as_mut()
@@ -516,7 +516,7 @@ impl VoiceHost {
         };
         speech.end_sent = true;
         let generation = speech.generation;
-        bridge.play(VoicePlayout::End(generation)).await
+        bridge.play(VoicePlayout::End(generation))
     }
 
     /// Closes `generation` once its brain, every verdict and its playout
