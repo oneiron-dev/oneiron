@@ -29,6 +29,7 @@ mod big_rung;
 mod broadcast;
 mod builtin_host;
 mod byte_line;
+mod campaign_enrollment;
 pub mod cli;
 pub mod commands;
 pub mod config;
