@@ -420,7 +420,7 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs":
             return Oneiron._VaultClaimsVerbs(self._client)
-        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None) -> dict[str, Any]:
+        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None, query_affect: dict[str, Any] | None = None) -> dict[str, Any]:
             """Recalls a memory pack.
 
             ``effort="high"`` needs a lease this package never mints: an embedded
@@ -433,9 +433,12 @@ class Oneiron:
             ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
             ``media`` (``{"space", "mime", "bytes_b64", "kinds"}``) is embedded
             by the server into its declared space; an embedded client raises
-            ``MODEL_UNAVAILABLE``.
+            ``MODEL_UNAVAILABLE``. ``query_affect`` (``{"valence", "arousal",
+            "dominance"}``: valence in -1..1, arousal and dominance in 0..1)
+            ranks by emotion congruence, embedded and remote alike; out of range
+            it raises ``BAD_REQUEST``.
             """
-            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None)))
+            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
         def export(self, format: str | None = None) -> dict[str, Any]:
             """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
@@ -963,7 +966,7 @@ class Oneiron:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
             return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
     class _VaultDisclosureVerbs:
         def __init__(self, client: _NativeClient) -> None:

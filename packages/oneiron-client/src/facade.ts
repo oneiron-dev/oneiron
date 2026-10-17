@@ -382,7 +382,7 @@ export interface FacadeResults {
   "vault.lenses.activate": Facade.LensActivationReceipt;
   "vault.lenses.deactivate": Facade.LensActivationReceipt;
   "vault.lenses.list": Facade.LensListPage;
-  "vault.lenses.default": Facade.ScopedReadResult<Facade.GeneratedLens>;
+  "vault.lenses.default": Facade.ScopedReadResult<Facade.LensFrameCard>;
   "vault.disclosure.offer": Facade.DisclosureOffered;
   "reveal": Facade.RevealPending;
   "reveal.wait": Facade.RevealWaitAnswer;
@@ -573,8 +573,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "tasks.create": { description: "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "tasks.wave": { description: "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.fanout.launch": { description: "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.fanout.resume": { description: "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.fanout.ack": { description: "The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.fanout.resume": { description: "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.fanout.ack": { description: "The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "tasks.update": { description: "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK.", scope: "Write", proposes: false, hostDoor: false, section: true },
   "vault.witness": { description: "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.claims.upsert": { description: "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate.", scope: "Write", proposes: true, hostDoor: false, section: false },
@@ -660,7 +660,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.lenses.activate": { description: "The owner selects a proposed lens revision for its pack slot.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.deactivate": { description: "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.list": { description: "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.lenses.default": { description: "Composes the default vault lens from the named sources, read under the caller's own scope.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.lenses.default": { description: "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.disclosure.offer": { description: "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "reveal": { description: "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "reveal.wait": { description: "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -792,7 +792,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.body.preview": { description: "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.review": { description: "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.merge": { description: "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.artifacts.body.deck.export": { description: "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.deck.export": { description: "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.gate": { description: "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.oracle": { description: "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.append": { description: "Appends one version of bytes to a blob artifact's append-only chain.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1170,7 +1170,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         deactivate: (input: Facade.LensDeactivateRequest, options?: O): FacadeReturns<"vault.lenses.deactivate">[K] => invoke("vault.lenses.deactivate", input, options, newInvocation()),
         /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
         list: (input: Facade.LensListRequest, options?: O): FacadeReturns<"vault.lenses.list">[K] => invoke("vault.lenses.list", input, options, newInvocation()),
-        /** Composes the default vault lens from the named sources, read under the caller's own scope. */
+        /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
         default: (input: Facade.LensDefaultRequest, options?: O): FacadeReturns<"vault.lenses.default">[K] => invoke("vault.lenses.default", input, options, newInvocation()),
       },
       disclosure: {
@@ -1248,7 +1248,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
             review: (input: Facade.OfficeBodyForkRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.review">[K] => invoke("vault.artifacts.body.deck.review", input, options, newInvocation()),
             /** A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses. */
             merge: (input: Facade.DeckForkMergeRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.merge">[K] => invoke("vault.artifacts.body.deck.merge", input, options, newInvocation()),
-            /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands. */
+            /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep. */
             export: (input: Facade.DeckExportRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.export">[K] => invoke("vault.artifacts.body.deck.export", input, options, newInvocation()),
             /** The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector. */
             gate: (input: Facade.DeckGateRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.gate">[K] => invoke("vault.artifacts.body.deck.gate", input, options, newInvocation()),

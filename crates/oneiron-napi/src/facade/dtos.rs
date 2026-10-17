@@ -368,6 +368,18 @@ pub struct NapiRecallMedia {
     pub kinds: Option<Vec<String>>,
 }
 
+/// A recall's query affect (OF-423): emotion congruence ranks a candidate by
+/// how near its own valence, arousal and dominance sit.
+#[napi(object)]
+pub struct NapiQueryAffect {
+    /// Valence, -1 to 1.
+    pub valence: f64,
+    /// Arousal, 0 to 1.
+    pub arousal: f64,
+    /// Dominance, 0 to 1.
+    pub dominance: f64,
+}
+
 /// One BM25 hit (engine index scores).
 #[napi(object)]
 pub struct NapiLexicalHit {
