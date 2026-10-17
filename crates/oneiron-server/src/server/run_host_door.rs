@@ -321,6 +321,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsAnswers
             | AgentVerb::TasksWave
             | AgentVerb::ConnectorCall
+            | AgentVerb::SelfUse
     )
 }
 
@@ -482,6 +483,8 @@ fn host_row(
             memory,
             decode(input)?,
         )?),
+        // The agent's own handle; a connector call under its grant and gate.
+        AgentVerb::SelfUse => encode(crate::api::self_use_as(server, memory, decode(input)?)?),
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => Err(owners(verb, "ai.* media calls are the owner's")),
     }
