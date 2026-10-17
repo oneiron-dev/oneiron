@@ -939,6 +939,52 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
     emit(&view)
 }
 
+/// The context-widen proposals agents raised (OF-568), on a stopped vault;
+/// `serve` answers the same at `/v1/owner/widen-proposals`. Approve and
+/// decline act as the board above, so the local owner must own the board's
+/// TASK.
+pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Result<()> {
+    use crate::cli::{WidenProposalStateArg, WidenProposalsCommand};
+    use oneiron::agent_dispatch::widen_doors::{
+        self as doors, WidenProposalAnswer, WidenProposalState, WidenProposalsRequest,
+    };
+    let serve = match &command {
+        WidenProposalsCommand::List(args) => &args.serve,
+        WidenProposalsCommand::Approve(args) | WidenProposalsCommand::Decline(args) => &args.serve,
+    };
+    let config = resolve_serve_config(serve)?;
+    let vault = open_vault(&config, "GET /v1/owner/widen-proposals")?;
+    let owner = local_owner(&vault)?;
+    match command {
+        WidenProposalsCommand::List(args) => {
+            let state = args.state.map(|state| match state {
+                WidenProposalStateArg::Pending => WidenProposalState::Pending,
+                WidenProposalStateArg::Approved => WidenProposalState::Approved,
+                WidenProposalStateArg::Declined => WidenProposalState::Declined,
+            });
+            emit(&doors::widen_proposals_as_owner(
+                &vault,
+                &owner,
+                &WidenProposalsRequest { state },
+            )?)
+        }
+        WidenProposalsCommand::Approve(args) => emit(&doors::approve_widen_proposal_as_owner(
+            &vault,
+            &owner,
+            &WidenProposalAnswer {
+                proposal_id: args.proposal_id,
+            },
+        )?),
+        WidenProposalsCommand::Decline(args) => emit(&doors::decline_widen_proposal_as_owner(
+            &vault,
+            &owner,
+            &WidenProposalAnswer {
+                proposal_id: args.proposal_id,
+            },
+        )?),
+    }
+}
+
 /// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
 /// same at `/v1/owner/legal-holds`. Lifting a hold is only the one "Lift the
 /// hold and erase?" confirm: its title and prompt are printed first, and it

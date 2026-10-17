@@ -12,6 +12,7 @@ mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
 mod wake_args;
+mod widen_proposal_args;
 pub use hook_args::{
     HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
     HookRecallArgs,
@@ -39,6 +40,9 @@ pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
     VaultKeyNamedArgs,
+};
+pub use widen_proposal_args::{
+    WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand,
 };
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
@@ -132,6 +136,10 @@ pub enum Command {
     /// vault, a project or a task type; put or clear one.
     #[command(subcommand)]
     LearningSettings(LearningSettingsCommand),
+    /// Context-widen proposals your agents raised: list them, or approve or
+    /// decline one as the board above.
+    #[command(subcommand)]
+    WidenProposals(WidenProposalsCommand),
     /// Your legal holds: place, widen, list, read the log, or lift one
     /// through the "Lift the hold and erase?" confirm.
     #[command(subcommand)]
@@ -929,6 +937,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Runs(command) => commands::runs(command),
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LearningSettings(command) => commands::learning_settings(command),
+        Command::WidenProposals(command) => commands::widen_proposals(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),
         Command::EmbeddingSpaces(command) => commands::embedding_spaces(command),

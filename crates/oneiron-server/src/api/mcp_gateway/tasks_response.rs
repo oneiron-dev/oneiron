@@ -730,6 +730,12 @@ fn mcp_agent_verb_input(
         "vault.settings.learning" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.learning.put" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.learning.clear" => a.spec.clone().ok_or_else(invalid),
+        "vault.widen_proposals" => a.spec.clone().ok_or_else(invalid),
+        "vault.widen_proposals.approve" => a.spec.clone().ok_or_else(invalid),
+        "vault.widen_proposals.decline" => a.spec.clone().ok_or_else(invalid),
+        "vault.settings.wake_policy.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.settings.inference_defaults" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.settings.inference_defaults.replace" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.activate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
@@ -1264,6 +1270,22 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.settings.learning.clear" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.widen_proposals" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.widen_proposals.approve" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.widen_proposals.decline" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.settings.wake_policy.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.settings.inference_defaults" => {}
+        "vault.settings.inference_defaults.replace" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.propose" => {
@@ -2940,6 +2962,88 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_settings_learning_clear(server, auth, input)
                     .await
                     .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.widen_proposals" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.widen_proposals", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::agent_dispatch::widen_doors::WidenProposalsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_widen_proposals(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.widen_proposals.approve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.widen_proposals.approve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::agent_dispatch::widen_doors::WidenProposalAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_widen_proposals_approve(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.widen_proposals.decline" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.widen_proposals.decline", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::agent_dispatch::widen_doors::WidenProposalAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_widen_proposals_decline(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.settings.wake_policy.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.settings.wake_policy.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_setting_doors::WakePolicySetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_settings_wake_policy_set(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.settings.inference_defaults" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.settings.inference_defaults", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_settings_inference_defaults(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.settings.inference_defaults.replace" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.settings.inference_defaults.replace",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_setting_doors::InferenceDefaultsReplaceRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_settings_inference_defaults_replace(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
