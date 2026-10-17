@@ -4,23 +4,25 @@
 //! beside the serving space and swaps in only when the vault's own probes read
 //! it not worse (NOT-WORSE = A); the owner may say yes over an undecided check,
 //! undo a swap, or abandon a move. The media backfill fills and checks on its
-//! own; `check` runs the probes now.
+//! own; `check` runs the probes now. The owner sees the documents each space's
+//! model refused and may clear one, so the backfill tries it again.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
-use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::embed::{
-    EmbeddingSpace, InputKind, SpaceMove, SpaceMoveOutcome, SpaceProbe, SpaceRef,
+    EmbeddingSpace, InputKind, MediaRefused, SpaceMove, SpaceMoveOutcome, SpaceProbe, SpaceRef,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -38,7 +40,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/embedding-spaces/move/abandon", post(abandon_move))
         .route("/embedding-spaces/probes", get(probes).post(put_probe))
         .route("/embedding-spaces/probes/delete", post(delete_probe))
+        .route("/embedding-spaces/refused", get(refused))
+        .route("/embedding-spaces/refused/clear", post(clear_refused))
 }
+
+/// How long `move/check` holds the request for the probes before it answers
+/// `running`; the check goes on and records its reading on the move.
+const MOVE_CHECK_ANSWER_DEADLINE: Duration = Duration::from_secs(20);
 
 /// Every declared space, where each kind slot reads, and every move.
 #[derive(Debug, Serialize)]
@@ -51,6 +59,28 @@ struct Spaces {
     moves: Vec<SpaceMove>,
     /// Stored probes per kind.
     probes: BTreeMap<InputKind, usize>,
+    /// Documents each space's model refused by their content, by space id; a
+    /// space with none is absent.
+    refused: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefusedQuery {
+    space: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Refused {
+    refused: Vec<MediaRefused>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClearRefused {
+    space: String,
+    /// The refused document, as 32 hex.
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,7 +115,8 @@ struct Candidate {
 
 #[derive(Debug, Serialize)]
 struct MoveChecked {
-    /// `filling`, `swapped_in`, `kept` or `undecided`.
+    /// `filling`, `swapped_in`, `kept` or `undecided`; `running` once
+    /// [`MOVE_CHECK_ANSWER_DEADLINE`] passes with the probes still running.
     outcome: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     check: Option<oneiron::embed::SpaceMoveCheck>,
@@ -166,6 +197,7 @@ fn spaces(vault: &oneiron::Vault) -> OwnerResult<Spaces> {
         slots,
         moves: vault.space_moves()?,
         probes,
+        refused: vault.media_refusal_counts()?,
     })
 }
 
@@ -284,7 +316,9 @@ async fn begin_move(
 }
 
 /// `POST /v1/owner/embedding-spaces/move/check`: runs the move's probes now,
-/// through both spaces' towers, and acts on the reading.
+/// through both spaces' towers, and acts on the reading. Past
+/// [`MOVE_CHECK_ANSWER_DEADLINE`] it answers `running` and the check finishes on
+/// its own thread: the move's `last_check`, state and note show its reading.
 async fn check_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -293,7 +327,9 @@ async fn check_move(
     owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let runtime = tokio::runtime::Handle::current();
-    Ok(Json(
+    // Dropping the timed-out future detaches the blocking task; it runs on.
+    let checked = tokio::time::timeout(
+        MOVE_CHECK_ANSWER_DEADLINE,
         blocking(move || {
             let moving = server
                 .vault()
@@ -324,9 +360,16 @@ async fn check_move(
                     check: Some(check),
                 },
             })
-        })
-        .await?,
-    ))
+        }),
+    )
+    .await;
+    Ok(Json(match checked {
+        Ok(checked) => checked?,
+        Err(_) => MoveChecked {
+            outcome: "running",
+            check: None,
+        },
+    }))
 }
 
 /// `POST /v1/owner/embedding-spaces/move/approve`: the owner's yes over a
@@ -464,6 +507,49 @@ async fn delete_probe(
             Ok(Done {
                 ok: server.vault().delete_space_probe(&id)?,
             })
+        })
+        .await?,
+    ))
+}
+
+/// `GET /v1/owner/embedding-spaces/refused?space=`: every document the space's
+/// model refused by its content, with the reason and when.
+async fn refused(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<RefusedQuery>, QueryRejection>,
+) -> OwnerReply<Refused> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    Ok(Json(
+        blocking(move || {
+            Ok(Refused {
+                refused: server.vault().media_refusals(&query.space)?,
+            })
+        })
+        .await?,
+    ))
+}
+
+/// `POST /v1/owner/embedding-spaces/refused/clear`: forgets one refusal, so
+/// the backfill sends the same bytes to the space's model again.
+async fn clear_refused(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ClearRefused>, JsonRejection>,
+) -> OwnerReply<Spaces> {
+    owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    Ok(Json(
+        blocking(move || {
+            let id = entity_id("id", &request.id)?;
+            if !server.vault().clear_media_refusal(&request.space, &id)? {
+                return Err(OwnerError::NotFound(
+                    "refused document",
+                    format!("{} in {}", request.id, request.space),
+                ));
+            }
+            spaces(server.vault())
         })
         .await?,
     ))

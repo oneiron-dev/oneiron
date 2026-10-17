@@ -13,7 +13,7 @@
 //! a search reads exactly one space and two spaces' vectors are never compared. Each space's
 //! search is its own ranked list; fusion z-scores every list on its own scale.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -274,6 +274,15 @@ pub(super) fn put_media_refusal_in_txn(
             at,
         },
     )
+}
+
+/// One document a space's model refused, as the owner sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MediaRefused {
+    pub id: EntityId,
+    pub reason: String,
+    /// Vault seconds.
+    pub at: u64,
 }
 
 /// Forgets a refusal of `id` in `space`, once a vector of it lands there.
@@ -778,5 +787,45 @@ impl Vault {
         EMBEDDING_SPACE.delete(&self.store, &mut wtxn, &space_id.to_owned())?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// How many documents each declared space's model refused, by space id; a space with none
+    /// is absent.
+    pub fn media_refusal_counts(&self) -> Result<BTreeMap<String, usize>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut counts = BTreeMap::new();
+        for (id, space) in EMBEDDING_SPACE.scan(&self.store, &rtxn)? {
+            let refused = MEDIA_REFUSED
+                .scan_keys(&self.store, &rtxn, &space.key())?
+                .len();
+            if refused > 0 {
+                counts.insert(id, refused);
+            }
+        }
+        Ok(counts)
+    }
+
+    /// Every document `space_id`'s model refused, in id order.
+    pub fn media_refusals(&self, space_id: &str) -> Result<Vec<MediaRefused>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(MEDIA_REFUSED
+            .scan_from(&self.store, &rtxn, &space_key(space_id))?
+            .into_iter()
+            .map(|((_, id), row)| MediaRefused {
+                id,
+                reason: row.reason,
+                at: row.at,
+            })
+            .collect())
+    }
+
+    /// Forgets `space_id`'s refusal of `id` by the owner's hand, so the backfill tries the
+    /// same bytes again (a provider whose policy moved, a model swapped behind the rung).
+    /// Returns whether a refusal was there.
+    pub fn clear_media_refusal(&self, space_id: &str, id: &EntityId) -> Result<bool> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let cleared = MEDIA_REFUSED.delete(&self.store, &mut wtxn, &(space_key(space_id), *id))?;
+        wtxn.commit()?;
+        Ok(cleared)
     }
 }
