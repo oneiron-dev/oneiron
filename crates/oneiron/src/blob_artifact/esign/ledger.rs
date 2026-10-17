@@ -248,14 +248,24 @@ pub(super) fn append(
 
 /// Whether only a member of a project (a seat in its home room, its leader or
 /// a board holder) may create a document for it, and so put its board on a
-/// held sign act's chain.
+/// held sign act's chain. A live vault owner is never refused: it may send a
+/// document for any live project.
 pub const PROJECT_MEMBERS_ONLY: bool = true;
+
+/// Whether the hex `actor` is one of the vault's live owners.
+fn is_live_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &str) -> Result<bool> {
+    match EntityId::from_hex(actor) {
+        Ok(id) => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &id),
+        Err(_) => Ok(false),
+    }
+}
 
 impl Vault {
     /// Creates the signing overlay on an existing artifact. Original item
     /// versions are pinned before the first event; later send rechecks them.
     /// A document for a project needs the project live and, under
-    /// [`PROJECT_MEMBERS_ONLY`], `actor` among its members.
+    /// [`PROJECT_MEMBERS_ONLY`], `actor` among its members or a live vault
+    /// owner.
     pub fn create_esign_document(
         &self,
         document: EntityId,
@@ -273,13 +283,12 @@ impl Vault {
                     .effective_project_in_txn(txn, project)?
                     .ok_or_else(|| invalid("the document's project is not a live project"))?;
                 let by = actor.actor.as_str();
-                if PROJECT_MEMBERS_ONLY
-                    && !effective.seats(by)
-                    && effective.leader != by
-                    && !effective.board.iter().any(|holder| holder == by)
-                {
+                let member = effective.seats(by)
+                    || effective.leader == by
+                    || effective.board.iter().any(|holder| holder == by);
+                if PROJECT_MEMBERS_ONLY && !member && !is_live_owner(self, txn, by)? {
                     return Err(invalid(
-                        "only a member of a project sends a document for it",
+                        "only a member of a project or a vault owner sends a document for it",
                     ));
                 }
             }
