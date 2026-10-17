@@ -122,6 +122,12 @@ impl VoiceServeBindings {
 pub struct VoiceServeConnection(Serve);
 
 impl VoiceServeConnection {
+    /// Serves the connection on its own, for an owner that runs one call
+    /// rather than a pass, until `stop` or the host's shutdown.
+    pub(crate) async fn serve_until(self, host: VoiceHost, stop: ShutdownSignal) -> io::Result<()> {
+        (self.0)(host, stop).await
+    }
+
     /// Polls serve alongside the pass on the existing runtime. Pass completion
     /// cancels extraction and dispatches output stops without triggering global
     /// shutdown. ManagedShutdown still stops serve through the attached host.
