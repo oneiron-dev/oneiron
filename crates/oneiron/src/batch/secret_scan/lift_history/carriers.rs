@@ -1,9 +1,11 @@
 //! Carriers no door rewrites. Their stored bytes are what an operation
 //! wrote, or what a receipt, an op log or a snapshot's hash binds: a code
 //! file's frontiers and ingress, a deck's fork log, a typed body's history,
-//! a codebase or repo snapshot, an LFS object, a stream's seed, a run's
-//! output, an owner-policy change, an eval case, and the stored history of
-//! each document. A hit in one files a proposal; the row keeps its bytes.
+//! a codebase or repo snapshot, an LFS object, a run's output, and the
+//! stored history of each document. A carrier with a door of its own goes
+//! through it: a retained one is marked (`retained`), an authored one masked
+//! (`authored`). A hit in any other files a proposal, and the row keeps its
+//! bytes.
 
 use std::borrow::Cow;
 
@@ -64,9 +66,14 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
             .map_err(|_| Error::InvariantViolation("the lift sweep's carriers outgrew a byte"))?;
         for (key, value) in &rows {
             page.read += 1;
-            if write_payload_hit(value).is_some()
-                || super::loro_blocks::hit(vault, txn, decl, key, value)?.is_some()
-            {
+            let found = match super::retained::hit(vault, txn, decl, key, value)? {
+                Some(found) => found,
+                None => match write_payload_hit(value) {
+                    None => super::loro_blocks::hit(vault, txn, decl, key, value)?,
+                    raw => raw,
+                },
+            };
+            if found.is_some() {
                 page.hits.push(cursor(place, key));
             }
         }
@@ -86,6 +93,9 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     let Some((decl, row_key)) = carrier_of(key) else {
         return Ok(Done::Clean);
     };
+    if let Some(done) = super::retained::lift(vault, txn, decl, row_key)? {
+        return Ok(done);
+    }
     let row = match decl.db {
         SideDb::VaultMeta => vault
             .store

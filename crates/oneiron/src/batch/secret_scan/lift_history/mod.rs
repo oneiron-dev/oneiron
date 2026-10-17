@@ -30,6 +30,7 @@ mod notice;
 mod proposals;
 mod record_text;
 mod records;
+mod retained;
 mod side_rows;
 
 use std::borrow::Cow;
