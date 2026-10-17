@@ -64,12 +64,30 @@ pub(super) async fn handle_sync_message(
             }
             Ok(())
         }
-        SyncMessage::Rpc(payload) => {
-            handle_app_message(server, conn_state, protocol::TAG_RPC, &payload, direct_tx)
-        }
-        SyncMessage::Sub(payload) => {
-            handle_app_message(server, conn_state, protocol::TAG_SUB, &payload, direct_tx)
-        }
+        // A socket's owner loop answers its own app-tier frames; a verb RPC
+        // runs only off that loop, where its answer can queue.
+        SyncMessage::Rpc(payload) => match handle_app_message_with_connection(
+            server,
+            conn_state,
+            protocol::TAG_RPC,
+            &payload,
+            direct_tx,
+            None,
+        )? {
+            None => Ok(()),
+            Some(_) => Err(ProtocolError::InvalidPayload(
+                "a verb RPC is answered on its socket's loop",
+            )),
+        },
+        SyncMessage::Sub(payload) => handle_app_message_with_connection(
+            server,
+            conn_state,
+            protocol::TAG_SUB,
+            &payload,
+            direct_tx,
+            None,
+        )
+        .map(drop),
         SyncMessage::RootUpdate(_update_bytes) => {
             // Root doc is server-authoritative — reject client updates silently
             tracing::debug!(
