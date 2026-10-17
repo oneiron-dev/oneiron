@@ -4675,8 +4675,9 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 35,
-      "enum": 1
+      "crate-vis": 36,
+      "enum": 1,
+      "re-export": 1
      }
     },
     {
@@ -4717,6 +4718,59 @@
      "purpose": "A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/carriers.rs",
+     "purpose": "Carriers no door rewrites",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "LiftCause",
+      "LiftCounts",
+      "LiftFamily",
+      "LiftTrigger",
+      "SecretLiftHistoryProposal",
+      "SecretLiftProgress",
+      "SecretLiftReceipt",
+      "SecretLiftRequest",
+      "SecretLiftStatus"
+     ],
+     "path": "src/batch/secret_scan/lift_history/mod.rs",
+     "purpose": "The historical lift sweep (OF-067; ARCH-0069 #mask-on-write)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/records.rs",
+     "purpose": "The entity table",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/lift_history/side_rows.rs",
+     "purpose": "The side tables the catalog classes as authored",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -24665,6 +24719,7 @@
       "HousekeepingBudget",
       "HousekeepingReport",
       "HousekeepingSweep",
+      "SecretLiftWork",
       "SweepOutcome",
       "SweepReport",
       "SweepWork"
@@ -24676,7 +24731,7 @@
       "crate-vis": 2,
       "enum": 4,
       "fn": 13,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -30416,7 +30471,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 28,
+      "crate-vis": 29,
       "enum": 3,
       "fn": 4,
       "re-export": 10,
@@ -33918,7 +33973,7 @@
      "purpose": "Policy classification over two planes",
      "surface": {
       "crate-vis": 3,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -39690,7 +39745,7 @@
      "path": "src/side_table/decls/mod.rs",
      "purpose": "The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -46328,7 +46383,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 304
+      "fn": 305
      }
     },
     {
@@ -51242,7 +51297,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 113,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52670,9 +52725,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 154,
+   "over_bar": 155,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3188,
+   "source_files": 3192,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60607,7 +60662,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 258
+      "fn": 259
      }
     },
     {
@@ -61623,7 +61678,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 259
+      "fn": 260
      }
     },
     {
@@ -64350,7 +64405,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 39
+      "crate-vis": 40
      }
     },
     {
@@ -64389,6 +64444,16 @@
      "notable": [],
      "path": "src/api/facade/role_picks.rs",
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/secret_lift_doors.rs",
+     "purpose": "The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067)",
      "surface": {
       "crate-vis": 1
      }
@@ -71058,7 +71123,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 290,
+     "files": 291,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71431,7 +71496,7 @@
    },
    "over_bar": 42,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 574,
+   "source_files": 575,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -71953,6 +72018,10 @@
       "LensProposeRequest",
       "LensSlot",
       "LensSlotDecision",
+      "LiftCause",
+      "LiftCounts",
+      "LiftFamily",
+      "LiftTrigger",
       "LinkedText",
       "LlmCapability",
       "LlmError",
@@ -72206,6 +72275,13 @@
       "ScratchpadRecallReply",
       "ScratchpadRecallReplyLine",
       "ScratchpadRecallRequest",
+      "SecretLiftHistoryProposal",
+      "SecretLiftProgress",
+      "SecretLiftProposal",
+      "SecretLiftReceipt",
+      "SecretLiftRequest",
+      "SecretLiftStatus",
+      "SecretScanMode",
       "SecretUseAnswer",
       "SecretUseRecord",
       "SecretUseRequest",
@@ -72415,8 +72491,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 234,
-      "struct": 577
+      "enum": 238,
+      "struct": 584
      }
     },
     {
