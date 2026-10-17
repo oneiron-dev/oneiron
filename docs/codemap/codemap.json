@@ -33175,7 +33175,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/tool_schema.rs",
