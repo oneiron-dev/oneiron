@@ -59,7 +59,7 @@ pub use self::residence::{
     OpenedItem, ResidenceHit, ResidenceIndexWindow, ResidenceSearch, SealedRelay, SearchSource,
     ThinItem,
 };
-pub(crate) use self::residence::{catch_up_authority, relay_sealed_windows};
+pub(crate) use self::residence::{catch_up_authority, relay_sealed_windows, retry_refused_retains};
 pub use self::sync_frames::next_backoff;
 pub use self::types::{
     EphemeralChangeOrigin, NoteSyncSession, ResidenceHomeRoute, SyncClientConfig, SyncEvent,
