@@ -158,6 +158,7 @@ pub(super) async fn oauth_exchange(
     Ok(Json(Paired {
         token: slip.to_token().map_err(|_| ApiError::unauthorized())?,
         pin: None,
+        home: None,
     }))
 }
 
@@ -212,6 +213,30 @@ pub(super) struct Paired {
     /// checks it against the challenge and digest its link carries.
     #[serde(skip_serializing_if = "Option::is_none")]
     pin: Option<oneiron::authority::AuthorityCheckpointPin>,
+    /// This home, for the machine a machine link just added: what the
+    /// device dials (`oneiron device enrol`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    home: Option<PairedHome>,
+}
+#[derive(Serialize)]
+pub(super) struct PairedHome {
+    /// This install's MACHINE id.
+    machine: String,
+    /// This install's sync node id, as `oneiron whoami` prints it.
+    sync_node_id: u64,
+}
+/// This home, or `None` while this install is no machine yet. The redeem
+/// stands without it.
+fn paired_home(vault: &oneiron::Vault) -> Option<PairedHome> {
+    let machine = vault.local_machine().ok()??.id;
+    let sync_node_id = oneiron::DreamerRunnerStore::new(vault)
+        .local_home_node_candidate(true, true, false)
+        .ok()?
+        .node_id;
+    Some(PairedHome {
+        machine: machine.to_hex(),
+        sync_node_id,
+    })
 }
 pub(super) async fn redeem(
     State(server): State<Arc<SyncServer>>,
@@ -269,9 +294,15 @@ pub(super) async fn redeem(
     {
         tracing::warn!(%error, "pairing: the OpenAI proxy was not admitted for the linked holder");
     }
+    let home = redeemed
+        .machine
+        .is_some()
+        .then(|| paired_home(server.vault()))
+        .flatten();
     Ok(Json(Paired {
         token,
         pin: redeemed.pin,
+        home,
     }))
 }
 

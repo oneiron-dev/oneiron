@@ -70,7 +70,9 @@ pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };
-pub(crate) use weave_lens::{WeaveLensCaller, render_live_weave_lens};
+pub(crate) use weave_lens::{
+    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_listing,
+};
 
 use dreamer::{DreamerHost, DreamerStart};
 use policy::{DreamerRoute, dreamer_role_purpose};

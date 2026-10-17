@@ -219,6 +219,16 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
+    /// Returns a NEW handle whose every verb runs inside the off-record
+    /// session `session_ref` names, bound to this handle's principal: the
+    /// app host's actor when embedded (OF-063). It grants nothing.
+    fn in_off_record_session(&self, py: Python<'_>, session_ref: String) -> PyResult<Self> {
+        let inner = py
+            .detach(|| self.inner.in_off_record_session(&session_ref))
+            .map_err(raise)?;
+        Ok(Self { inner })
+    }
+
     /// The lasting call receipt the last verb's reply stated, as
     /// `call:<32hex>`, whether it answered or refused. `None` for an embedded
     /// handle, before any call, after a call that reached no server, and for
@@ -1052,6 +1062,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.guests.mint_slip")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.guests.mint_slip", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_mode(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.mode")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.mode", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_index(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.index")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.index", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_residence_prune(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.prune")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.prune", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -2311,6 +2349,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "connector.schema")?;
         let output = py
             .detach(|| self.inner.agent_verb("connector.schema", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn connector_call_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "connector.call_status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("connector.call_status", input))
             .map_err(raise)?;
         encode(&output)
     }
