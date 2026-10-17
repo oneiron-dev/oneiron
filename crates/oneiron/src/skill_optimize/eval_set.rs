@@ -50,7 +50,7 @@ use super::invalid;
 use crate::Vault;
 use crate::batch::secret_scan::admit_typed;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 
 pub use cohort::{EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease};
 pub use sufficiency::{
@@ -278,17 +278,60 @@ pub(super) fn case_in_txn(
 }
 
 /// Writes `case` as the side-row wall keeps it (OF-067), and `case` takes its
-/// handles. A case is authored and lives outside the declared catalog, so it
-/// meets the wall here, as a declared authored row would.
+/// handles; `true` when the wall placed one. A case is authored and lives
+/// outside the declared catalog, so it meets the wall here, as a declared
+/// authored row would.
 pub(super) fn put_case_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     case: &mut EvalCase,
-) -> Result<()> {
+) -> Result<bool> {
     let key = [CASE_PREFIX, case.id.as_bytes()].concat();
-    admit_typed(vault, txn, (CASE_PLACE, key.as_slice()), case)?;
+    let placed = admit_typed(vault, txn, (CASE_PLACE, key.as_slice()), case)?;
     vault.store.vault_meta.put(txn, &key, &encode(case)?)?;
-    Ok(())
+    Ok(placed)
+}
+
+impl Vault {
+    /// The lift sweep's door for a stored case (OF-067): case `id` is written
+    /// again through [`put_case_in_txn`], the door a new case takes, so each
+    /// secret the wall places goes to custody and leaves its handle. No case,
+    /// label or cohort is made: the case keeps its id, family, seat, kind,
+    /// parents, labels and times, and a masked copy that would change one
+    /// refuses as a hit the wall cannot place. `None` when no case reads
+    /// there; `Some(true)` when a handle replaced a secret.
+    pub(crate) fn lift_eval_case_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<bool>> {
+        let Some(before) = self
+            .store
+            .vault_meta
+            .get(txn, &[CASE_PREFIX, id.as_bytes()].concat())?
+            .and_then(|raw| rmp_serde::from_slice::<EvalCase>(&raw).ok())
+            .filter(|case| case.id == *id)
+        else {
+            return Ok(None);
+        };
+        let mut case = before.clone();
+        let placed = put_case_in_txn(self, txn, &mut case)?;
+        let kept = case.id == before.id
+            && case.family == before.family
+            && case.seat == before.seat
+            && case.kind == before.kind
+            && case.parents == before.parents
+            && case.labels.len() == before.labels.len()
+            && case.source_at == before.source_at
+            && case.recorded_at == before.recorded_at;
+        if !kept {
+            return Err(Error::Gate(GateError::GateWriteRejected {
+                outcome: "deny",
+                reason_codes: vec!["gate.secret_scan.detected"],
+            }));
+        }
+        Ok(Some(placed))
+    }
 }
 
 pub(super) fn rows_in_txn<T: serde::de::DeserializeOwned>(

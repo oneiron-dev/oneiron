@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::notifications::PolicyNotificationTarget;
 use crate::batch::secret_scan::admit_typed;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
@@ -107,12 +107,7 @@ pub(super) fn append_change_in_txn(
     };
     // OF-067: the owner's row text and reasons as the side-row wall keeps them.
     let receipt_key = [RECEIPT, &next.to_be_bytes()].concat();
-    admit_typed(
-        vault,
-        txn,
-        (RECEIPT_PLACE, receipt_key.as_slice()),
-        &mut receipt,
-    )?;
+    put_receipt_in(vault, txn, &receipt_key, &mut receipt)?;
     let event = PolicyChangedEvent {
         kind: "policy.changed".to_owned(),
         receipt_id: id.clone(),
@@ -128,12 +123,24 @@ pub(super) fn append_change_in_txn(
     vault
         .store
         .vault_meta
-        .put(txn, &receipt_key, &encode(&receipt)?)?;
+        .put(txn, &key(EVENT, &id), &encode(&event)?)?;
+    Ok(receipt)
+}
+
+/// Writes `receipt` at `row_key` as the side-row wall keeps it (OF-067), and
+/// `receipt` takes its handles; `true` when the wall placed one.
+fn put_receipt_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row_key: &[u8],
+    receipt: &mut PolicyRowReceipt,
+) -> Result<bool> {
+    let placed = admit_typed(vault, txn, (RECEIPT_PLACE, row_key), receipt)?;
     vault
         .store
         .vault_meta
-        .put(txn, &key(EVENT, &id), &encode(&event)?)?;
-    Ok(receipt)
+        .put(txn, row_key, &encode(&*receipt)?)?;
+    Ok(placed)
 }
 
 /// The shared typed event stream, bound through the declared table. Key: the
@@ -174,22 +181,97 @@ pub(super) fn read_proposal_in(
 }
 
 /// Writes `proposal` as the side-row wall keeps it (OF-067), and `proposal`
-/// takes its handles.
+/// takes its handles; `true` when the wall placed one.
 pub(super) fn put_proposal_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     proposal: &mut PolicyRowProposal,
-) -> Result<()> {
+) -> Result<bool> {
     let row_key = key(PROPOSAL, &proposal.proposal_id);
-    admit_typed(vault, txn, (PROPOSAL_PLACE, row_key.as_slice()), proposal)?;
+    let placed = admit_typed(vault, txn, (PROPOSAL_PLACE, row_key.as_slice()), proposal)?;
     vault
         .store
         .vault_meta
         .put(txn, &row_key, &encode(proposal)?)?;
-    Ok(())
+    Ok(placed)
+}
+
+/// A stored row that does not read as `T`, or is gone: no door of this
+/// ledger wrote it.
+fn stored_in<T: serde::de::DeserializeOwned>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row_key: &[u8],
+) -> Result<Option<T>> {
+    Ok(vault
+        .store
+        .vault_meta
+        .get(txn, row_key)?
+        .and_then(|raw| rmp_serde::from_slice(&raw).ok()))
+}
+
+/// The refusal of a masked copy that would change what the row is: its ids,
+/// author, holders, status, time or previous link.
+fn kept_or_refused(kept: bool) -> Result<()> {
+    if kept {
+        return Ok(());
+    }
+    Err(Error::Gate(GateError::GateWriteRejected {
+        outcome: "deny",
+        reason_codes: vec!["gate.secret_scan.detected"],
+    }))
 }
 
 impl Vault {
+    /// The lift sweep's door for a stored ruling or proposal (OF-067): the row
+    /// at `row_key`, its whole key, is written again through the door its own
+    /// write took, at the same place and key, so each secret the wall places
+    /// goes to custody and leaves its handle. The ruling is not applied again
+    /// and no sequence, event or notification is written. Its id, revision,
+    /// author, holders, status, time and previous link stay; a masked copy
+    /// that would change one refuses as a hit the wall cannot place. `None`
+    /// when no ruling or proposal reads there; `Some(true)` when a handle
+    /// replaced a secret.
+    pub(crate) fn lift_policy_change_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        row_key: &[u8],
+    ) -> Result<Option<bool>> {
+        if row_key.starts_with(RECEIPT) {
+            let Some(before) = stored_in::<PolicyRowReceipt>(self, txn, row_key)? else {
+                return Ok(None);
+            };
+            let mut receipt = before.clone();
+            let placed = put_receipt_in(self, txn, row_key, &mut receipt)?;
+            kept_or_refused(
+                receipt.receipt_id == before.receipt_id
+                    && receipt.revision == before.revision
+                    && receipt.author == before.author
+                    && receipt.previous_receipt_id == before.previous_receipt_id
+                    && receipt.at == before.at,
+            )?;
+            return Ok(Some(placed));
+        }
+        if row_key.starts_with(PROPOSAL) {
+            let Some(before) = stored_in::<PolicyRowProposal>(self, txn, row_key)?
+                .filter(|proposal| key(PROPOSAL, &proposal.proposal_id) == row_key)
+            else {
+                return Ok(None);
+            };
+            let mut proposal = before.clone();
+            let placed = put_proposal_in(self, txn, &mut proposal)?;
+            kept_or_refused(
+                proposal.proposal_id == before.proposal_id
+                    && proposal.author == before.author
+                    && proposal.holders == before.holders
+                    && proposal.status == before.status
+                    && proposal.at == before.at,
+            )?;
+            return Ok(Some(placed));
+        }
+        Ok(None)
+    }
+
     /// Every landed ruling in ledger order, including ones superseded by a later holder.
     pub fn policy_row_change_log(&self) -> Result<Vec<PolicyRowReceipt>> {
         let txn = self.store.env.read_txn()?;

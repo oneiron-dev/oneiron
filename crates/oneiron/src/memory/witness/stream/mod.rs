@@ -3,6 +3,7 @@
 mod admission;
 mod completion;
 mod lifecycle;
+mod lift;
 mod policy;
 #[cfg(feature = "sync")]
 mod presence;
@@ -55,6 +56,11 @@ struct State {
     lifted: Lifted,
     /// Whether `pending` withholds a secret `raw` may still be writing.
     withheld: bool,
+    /// The lift sweep stored this stream's seed again with its handles
+    /// (OF-067): the stream's next checkpoint, or its end, admits its text
+    /// and axes again in its own transaction and adopts them once that
+    /// commits.
+    relift: bool,
     last_op_at_ms: u64,
     sequence: u64,
     emitted_chars: usize,
