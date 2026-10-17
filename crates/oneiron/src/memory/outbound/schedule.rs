@@ -225,6 +225,9 @@ impl Memory<'_> {
         if let Some(dedupe_key) = &draft.dedupe_key {
             intent_draft = intent_draft.dedupe_key(dedupe_key.clone());
         }
+        if let Some(mention) = &draft.mention {
+            intent_draft = intent_draft.mention(mention.clone());
+        }
         let intent = OutboundIntent::from_trigger(intent_draft, trigger);
 
         let task_ref = self.vault.store.clock.entity_id()?;

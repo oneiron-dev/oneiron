@@ -85,6 +85,10 @@ pub struct OutboundDraftInput {
     pub job_ref: Option<String>,
     /// Unix seconds; `None` ⇒ now.
     pub occurred_at: Option<u64>,
+    /// The saved mention `target` came from, when the agent named the
+    /// person (OF-123): the send refuses while that mention is unsettled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 /// Receipt for one scheduled outbound intent.

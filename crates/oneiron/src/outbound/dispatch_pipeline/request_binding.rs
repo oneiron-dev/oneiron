@@ -72,6 +72,22 @@ impl PreparedOutboundDispatch {
                 },
             )));
         }
+        // OF-123 act-now guard: a target the agent took from a saved mention
+        // waits until that mention is settled. A replayed task reads the
+        // mention's state again here.
+        if let Some(mention) = request.intent.mention.as_ref() {
+            let unsettled = {
+                let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+                    vault, &txn, mention,
+                )?
+            };
+            if let Some(name) = unsettled {
+                return Err(OutboundDispatchError::Engine(Error::Record(
+                    crate::error::RecordError::IdentityUnsettled { name },
+                )));
+            }
+        }
 
         let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
         vault.require_builtin_channel_pack(&request.intent.channel)?;

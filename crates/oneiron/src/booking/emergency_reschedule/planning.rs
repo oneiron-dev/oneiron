@@ -452,6 +452,7 @@ pub(super) fn plan_item(
             sequence,
             ics_blob_ref: String::new(),
             recipient: recipient.clone(),
+            mention: None,
         }),
         booking,
         proposals,

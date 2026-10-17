@@ -367,6 +367,7 @@ impl ActorScopedVault {
             job_ref: draft.job_ref,
             occurred_at: ts_opt_to_engine(draft.occurred_at, "occurred_at")
                 .map_err(boundary_error)?,
+            mention: None,
         };
         let receipt = self
             .facade()?
@@ -483,6 +484,7 @@ impl ActorScopedVault {
                 sequence: input.sequence,
                 ics_blob_ref: input.ics_blob_ref,
                 recipient: input.recipient,
+                mention: None,
             })
             .map_err(facade_error)?;
         Ok(NapiOutboundIntentReceipt {

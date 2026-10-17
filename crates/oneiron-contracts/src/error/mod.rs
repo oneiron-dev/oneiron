@@ -307,6 +307,7 @@ pub enum ErrorKind {
     ProjectDependencyPending,
     ProjectRevisionCollision,
     ProjectRevisionWrite,
+    IdentityUnsettled,
     ProjectHistoryOverBudget,
     ProjectAuthorityUnresolved,
     InvalidConversationBody,

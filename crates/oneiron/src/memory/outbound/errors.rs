@@ -20,6 +20,9 @@ pub(super) fn facade_error_from_calendar(err: crate::calendar::CalendarError) ->
                 ],
             )
         }
+        crate::calendar::CalendarError::IdentityUnsettled { name } => MemoryError::from(
+            crate::Error::Record(crate::error::RecordError::IdentityUnsettled { name }),
+        ),
         crate::calendar::CalendarError::ImipEmit { ref reason } => MemoryError::bad_request_with(
             format!("iMIP emit failure: {reason}"),
             &["Render the invitation with an explicit METHOD, UID, and zone label."],
