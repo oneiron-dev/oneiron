@@ -56,3 +56,4 @@ pub use source::{
 };
 pub(crate) use store::hook_receipts;
 pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};
+pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};

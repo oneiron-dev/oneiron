@@ -85,6 +85,7 @@ pub(super) fn settle_with_owner_in(
         // A replay runs the continuation again; it acts at most once.
         super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
         deliver_to_parked_runs(vault, txn, id, &result, now)?;
+        crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
         return Ok(Some(result));
     }
     let Some(group) = ask_record::read_group(vault, txn, id)? else {
@@ -265,6 +266,8 @@ pub(super) fn settle_with_owner_in(
     // OF-220: an engine block's ask moves its TASK in the settling commit.
     super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
     deliver_to_parked_runs(vault, txn, id, &result, now)?;
+    // A verb hook's ask marks its stopped call ready for the hook runner.
+    crate::runtime_hooks::verb_ask_settled_in_txn(vault, txn, id, &result, now)?;
     Ok(Some(result))
 }
 

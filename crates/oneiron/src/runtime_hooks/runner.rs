@@ -130,6 +130,12 @@ impl FactHookRunner {
             report.disabled = true;
             return Ok(report);
         }
+        // Calls a settled verb hook ask made ready run here, the first pass
+        // at start included: outside any write, at hook depth 0. A failed
+        // drain leaves its calls for the next pass.
+        if let Err(error) = vault.drain_verb_asks() {
+            tracing::warn!(%error, "settled verb hook asks wait for the next pass");
+        }
         if !self.drained.swap(true, Ordering::AcqRel) {
             apply::drain_pending(vault, &mut report)?;
         }

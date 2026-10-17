@@ -47,6 +47,10 @@ const VERB_HOOK_PENDING: &str = "verb_hook_pending";
 /// What the wait a hook's ask parks a call on says, before the invocation the
 /// ask waits under.
 const VERB_HOOK_WAIT: &str = "verb_hook:";
+/// The refusal a guest reads when settlement already ran the call a hook's
+/// ask stopped, so it never runs twice. Its reason codes are the invocation,
+/// and the error's code when the call failed.
+const VERB_HOOK_COMPLETED: &str = "verb_hook_completed";
 
 /// A call by its replay row, less the bridge's own stamps.
 pub(crate) type ParkedCall = (SelfEffect, rmpv::Value);
@@ -230,6 +234,12 @@ fn stopped(effect: SelfEffect, stop: VerbHookStop) -> SelfDispatchOutcome {
             denied(effect, VERB_HOOK_SKIPPED, vec![hook, reason])
         }
         VerbHookStop::Hidden { hook } => denied(effect, VERB_HOOK_HIDDEN, vec![hook]),
+        VerbHookStop::Completed { invocation, .. } => {
+            denied(effect, VERB_HOOK_COMPLETED, vec![invocation])
+        }
+        VerbHookStop::CompletedWithError {
+            invocation, code, ..
+        } => denied(effect, VERB_HOOK_COMPLETED, vec![invocation, code]),
     }
 }
 
@@ -247,6 +257,10 @@ fn stopped_view(stop: &VerbHookStop) -> Value {
         VerbHookStop::Skipped { hook, reason } => (VERB_HOOK_SKIPPED, vec![hook, reason]),
         VerbHookStop::Pending { invocation, ask } => (VERB_HOOK_PENDING, vec![invocation, ask]),
         VerbHookStop::Hidden { hook } => (VERB_HOOK_HIDDEN, vec![hook]),
+        VerbHookStop::Completed { invocation, .. } => (VERB_HOOK_COMPLETED, vec![invocation]),
+        VerbHookStop::CompletedWithError {
+            invocation, code, ..
+        } => (VERB_HOOK_COMPLETED, vec![invocation, code]),
     };
     json!({"denied": word, "reasonCodes": codes})
 }
