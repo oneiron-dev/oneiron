@@ -4004,6 +4004,7 @@ pub fn vault_settings_learning(
         &memory.embedded_owner("vault.settings.learning")?,
         &input,
     )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_settings_learning_put(
     memory: &Memory<'_>,
@@ -4014,6 +4015,7 @@ pub fn vault_settings_learning_put(
         &memory.embedded_owner("vault.settings.learning.put")?,
         input,
     )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_settings_learning_clear(
     memory: &Memory<'_>,
@@ -4024,6 +4026,7 @@ pub fn vault_settings_learning_clear(
         &memory.embedded_owner("vault.settings.learning.clear")?,
         input,
     )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_lenses_propose(
     memory: &Memory<'_>,
