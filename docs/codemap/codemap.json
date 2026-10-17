@@ -10772,6 +10772,7 @@
       "ActionBuildContext",
       "ActionDispatch",
       "ActionHostBinding",
+      "ActionJson",
       "ActionRegistry",
       "ActionVerbDefinition",
       "AgentActionCall"
@@ -10779,10 +10780,11 @@
      "path": "src/code_run/actions.rs",
      "purpose": "One named verb registry for validated UI events and agent calls",
      "surface": {
+      "const": 1,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 16,
-      "struct": 6,
+      "fn": 18,
+      "struct": 7,
       "type": 1
      }
     },
@@ -26718,7 +26720,7 @@
      "purpose": "Principal identity and validated-action outcome types",
      "surface": {
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
