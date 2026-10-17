@@ -229,12 +229,15 @@ class OneironError(RuntimeError):
     message: str
     suggestions: tuple[str, ...]
     wrong_root: dict[str, str] | None
+    # The verb hook's stop; on PENDING_ASK `{"status": "pending", "invocation", "ask"}`.
+    hook: dict[str, Any] | None
     def __init__(
         self,
         code: str,
         message: str,
         suggestions: list[str],
         wrong_root: dict[str, str] | None = None,
+        hook: dict[str, Any] | None = None,
     ) -> None: ...
 
 class Oneiron:
@@ -252,6 +255,8 @@ class Oneiron:
     def as_actor(self, actor_key: str) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
     def last_receipt_ref(self) -> str | None: ...
+    def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
+        """Resends a PENDING_ASK call under its invocation; the reply is the verb's shared wire JSON."""
 # BEGIN GENERATED FACADE VERBS
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -768,9 +773,14 @@ class Oneiron:
         def confirm(self, spec: Facade.ProjectCardConfirmRequest) -> Facade.ProjectMintReceipt:
             """The owner's tap that confirms a host-held project card; only the host's own door can complete it."""
         @property
+        def roster(self) -> "Oneiron._VaultProjectsRosterVerbs": ...
+        @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs": ...
         def route_tradeoff(self, spec: Facade.ProjectTradeoffRouteRequest) -> Facade.TaskAskReceipt:
             """Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."""
+    class _VaultProjectsRosterVerbs:
+        def write(self, spec: Facade.ProjectRosterWriteRequest) -> Facade.ProjectRosterWriteOutcome:
+            """Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."""
     class _VaultProjectsGoalVerbs:
         def intake(self, spec: Facade.ProjectRefRequest) -> Facade.ProjectGoalInterviewContext:
             """What a project's goal-intake interview starts from, for a member of its home room."""

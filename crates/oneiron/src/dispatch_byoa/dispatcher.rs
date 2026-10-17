@@ -28,7 +28,6 @@ use super::connector::{
     ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec, DispatchByoa, MAX_ALLOWED_HOSTS,
     ProtocolAttachSpec, encode_byoa_attempt_payload,
 };
-use super::error::ERR_SEAT_TASK;
 use super::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT,
     ERR_EXECUTION_CHECKOUT, ERR_EXECUTION_SHAPE, ERR_EXHAUST_TOO_LARGE, ERR_LEASE_EXPIRED,
@@ -374,15 +373,16 @@ where
     /// unless the host already knows one (`spent`, from
     /// [`ByoaError::SeatSpent`]). Stop parks the work until the seat is back;
     /// NextSeat dispatches the next seat this runtime may run, as a child of
-    /// the spent attempt, and parks when none is left; InternalModels hands
-    /// the work back to the Dreamer's own model roles. A replay finds the
-    /// same capture and the same child.
+    /// the spent attempt, and parks when none is left — or when the spent
+    /// attempt carries no CLI runner task to hand on (an endpoint or MCP
+    /// seat), so its capture still stands. InternalModels hands the work
+    /// back to the Dreamer's own model roles. A replay finds the same
+    /// capture and the same child.
     ///
     /// # Errors
     ///
-    /// Refuses an invalid policy or seat index, a NextSeat route from an
-    /// attempt that carries no registered runner's task, and every refusal
-    /// capture and dispatch have, without durable writes.
+    /// Refuses an invalid policy or seat index, and every refusal capture
+    /// and dispatch have, without durable writes.
     pub fn route_runner_terminal(
         &mut self,
         registry: &ProviderAdapterRegistry,
@@ -418,12 +418,20 @@ where
                 OnSeatSpent::Stop => Ok(park(receipt, spent)),
                 OnSeatSpent::InternalModels => Ok(SeatRoute::InternalModels { receipt, spent }),
                 OnSeatSpent::NextSeat => {
+                    // Only a CLI runner attempt carries its task (the argv
+                    // after `--`), so only it can hand the work on from the
+                    // durable row alone. An endpoint or MCP seat's work
+                    // parks instead: the capture stands, nothing is lost to
+                    // a refusal, and the host that holds the task may
+                    // dispatch the next seat itself.
                     let ByoaConnectorSpec::CliSandbox(ran) =
                         decode_byoa_record(&receipt.attempt)?.connector
                     else {
-                        return Err(invalid(ERR_SEAT_TASK));
+                        return Ok(park(receipt, spent));
                     };
-                    let task = runner_task(&ran).ok_or_else(|| invalid(ERR_SEAT_TASK))?;
+                    let Some(task) = runner_task(&ran) else {
+                        return Ok(park(receipt, spent));
+                    };
                     let parent = *receipt.attempt.id.as_bytes();
                     for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
                         let connector =
