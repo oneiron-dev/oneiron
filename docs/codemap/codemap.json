@@ -530,7 +530,7 @@
      "path": "src/agent_def/portable.rs",
      "purpose": "Canonical, inert AGENT_PACK facets derived from real definitions and selected rows",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -988,7 +988,7 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 7,
       "struct": 3,
@@ -16171,7 +16171,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/policy.rs",
@@ -17926,7 +17926,7 @@
      "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 1
      }
@@ -22667,7 +22667,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 2,
       "re-export": 15
      }
@@ -22952,6 +22952,16 @@
      "path": "src/federation/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/vault_id_decimal.rs",
+     "purpose": "A shared vault's id on the wire (OF-158): a decimal string, since a `u64` past 2^53 does not survive a…",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "m",
@@ -23832,13 +23842,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -24568,18 +24578,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferAnswerIntent",
-      "OfferCardPayload"
+      "OfferCardIntent",
+      "OfferCardOutcome",
+      "OfferCardPayload",
+      "OfferCardPhase",
+      "OfferReopenIntent",
+      "OfferVoteIntent"
      ],
      "path": "src/genui/offer_card.rs",
-     "purpose": "The offer card's render-neutral payload and its write-free answer intent (OF-530)",
+     "purpose": "The offer card's render-neutral payload and its write-free intents (OF-530): the host's answer, a room…",
      "surface": {
-      "const": 2,
-      "fn": 7,
-      "struct": 2
+      "const": 5,
+      "enum": 3,
+      "fn": 15,
+      "struct": 4
      }
     },
     {
@@ -26431,7 +26447,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 4,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -26446,6 +26462,20 @@
      "surface": {
       "crate-vis": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PdfTextError"
+     ],
+     "path": "src/ingest/pdf.rs",
+     "purpose": "A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: \"The first adapter reads a…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -26776,7 +26806,7 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 15,
+      "const": 16,
       "crate-vis": 12,
       "enum": 2,
       "fn": 11,
@@ -27337,7 +27367,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LinkedText",
@@ -27352,6 +27382,7 @@
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
       "const": 5,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 6
@@ -31124,7 +31155,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 3,
       "fn": 4,
       "re-export": 10,
@@ -31352,9 +31383,9 @@
      "purpose": "A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 5
      }
     },
@@ -37352,7 +37383,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/vault_meta_s_z.rs",
@@ -40858,6 +40889,23 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "ContributionCandidate",
+      "ContributionCheckRecord",
+      "ContributionFork",
+      "ContributionPair"
+     ],
+     "path": "src/skill_attribution/contribution.rs",
+     "purpose": "Contribution checks (ARCH-0037 #lineage-credit, ARCH-0053): whether one loaded skill contributed to a run's…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/host.rs",
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
@@ -40921,7 +40969,7 @@
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
       "crate-vis": 8,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -40933,6 +40981,7 @@
      "path": "src/skill_attribution/pack_learning.rs",
      "purpose": "The manifest-to-learning bridge",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -45344,7 +45393,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 2
      }
@@ -45450,7 +45499,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 6
      }
     },
@@ -46772,7 +46821,7 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -46847,6 +46896,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/lifecycle_receipt.rs",
+     "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -46867,7 +46926,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 2,
       "re-export": 24
      }
@@ -46970,7 +47029,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -47042,7 +47101,7 @@
      "path": "src/task_verb/room_thread.rs",
      "purpose": "Existing TASK intent and follow-up facts projected onto a room thread",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -47621,7 +47680,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GuestSlipMintRequest",
@@ -50112,7 +50171,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 17
      }
     },
@@ -50808,7 +50867,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 10
      }
     },
@@ -50869,7 +50928,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 2,
       "fn": 6,
       "re-export": 9,
@@ -52930,7 +52989,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53042,7 +53101,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53086,7 +53145,7 @@
     "lens": {
      "files": 50,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
     },
@@ -53553,7 +53612,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53665,7 +53724,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53826,9 +53885,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 177,
+   "over_bar": 179,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3266,
+   "source_files": 3270,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68179,7 +68238,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import/notes/folder.rs",
-     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes that stays attached to the…",
+     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes and PDFs that stays attached…",
      "surface": {
       "crate-vis": 4
      }
@@ -73416,6 +73475,7 @@
       "AiVoice",
       "AnswerContract",
       "AnswerRecord",
+      "AnswerSheetAtom",
       "AnsweringAuthority",
       "ApproveScope",
       "ArchiveAxis",
@@ -73442,6 +73502,7 @@
       "AskPrior",
       "AskRole",
       "AskTo",
+      "AsofScrubberAtom",
       "AssetRef",
       "AttemptHandle",
       "AttemptId",
@@ -73474,6 +73535,7 @@
       "BudgetLease",
       "BundleVerdict",
       "BundledSkillPermissions",
+      "ButtonControl",
       "CalibrationPair",
       "CallOutcome",
       "CallReceipt",
@@ -73509,6 +73571,7 @@
       "ChartKind",
       "ChartSeries",
       "ClaimApprovalStatus",
+      "ClaimLineAtom",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -73527,6 +73590,7 @@
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
+      "CollectionAtom",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "CompanionSharingStored",
@@ -73652,6 +73716,7 @@
       "DollarBasis",
       "DoneMeans",
       "EditNoteRequest",
+      "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
       "EmbeddingSpaceMoveChecked",
@@ -73663,6 +73728,7 @@
       "EmbeddingSpaceProbePutRequest",
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
+      "EmbeddingSpacesView",
       "EraseAskKind",
       "EraseAskStatus",
       "EraseHeldBytes",
@@ -73678,6 +73744,7 @@
       "EvalLabelKind",
       "EvalRelease",
       "EvalSeat",
+      "EvidenceFloors",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectedSpend",
@@ -73708,6 +73775,17 @@
       "ForkState",
       "GateDecisionId",
       "GeneratedLens",
+      "GeneratedUiActionDeclaration",
+      "GeneratedUiActionTier",
+      "GeneratedUiArchiveReason",
+      "GeneratedUiCardLifecycle",
+      "GeneratedUiCardPhase",
+      "GeneratedUiCatalog",
+      "GeneratedUiNode",
+      "GeneratedUiRender",
+      "GeneratedUiResultSetAtom",
+      "GeneratedUiResultSetRow",
+      "GeneratedUiResultSetSelectAll",
       "GeometryProps",
       "GoalPreference",
       "GrantAskReceipt",
@@ -73717,6 +73795,8 @@
       "GraphAskOutcome",
       "GraphAskRequest",
       "GraphAskSelection",
+      "GraphEdge",
+      "GraphNode",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
       "GuestPactStanding",
@@ -73756,6 +73836,7 @@
       "InspectionResolveRequest",
       "InspectionResolved",
       "InspectionState",
+      "InspectorAtom",
       "InvalidReceipt",
       "InvitationSlip",
       "InvitationSlipRequest",
@@ -73793,6 +73874,8 @@
       "LearningSettingSpecView",
       "LearningSettingsRequest",
       "LearningSettingsView",
+      "LedgerCell",
+      "LedgerRowAtom",
       "LegalHold",
       "LegalHoldActorKind",
       "LegalHoldEraseState",
@@ -73809,18 +73892,25 @@
       "LensActivateRequest",
       "LensActivationReceipt",
       "LensApproval",
+      "LensAtomWire",
       "LensBackingTargetKind",
       "LensDeactivateRequest",
       "LensDefaultRequest",
       "LensDossierSource",
+      "LensFrameCard",
+      "LensHandleRef",
+      "LensHandleRole",
       "LensListPage",
       "LensListRequest",
       "LensListRow",
+      "LensNode",
       "LensProposalReceipt",
       "LensProposalState",
       "LensProposeRequest",
       "LensSlot",
       "LensSlotDecision",
+      "LensStatus",
+      "LensTextSpan",
       "LiftCause",
       "LiftCauseCount",
       "LiftCloseReason",
@@ -73837,6 +73927,7 @@
       "MadeByProcess",
       "MadeByTrigger",
       "Measurement",
+      "MediaAtom",
       "MediaUsage",
       "MemberAnswer",
       "MemberVerdict",
@@ -73854,12 +73945,14 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MetaLineAtom",
       "MetricAxis",
       "MetricDirection",
       "MetricRole",
       "MetricSet",
       "MutationIntent",
       "NativeOutputRequest",
+      "NeighborhoodGraphAtom",
       "NodeKind",
       "NodeMove",
       "NodePayload",
@@ -73926,6 +74019,7 @@
       "PackInstallReceipt",
       "PackInstallStatus",
       "PackKind",
+      "PackLineAtom",
       "PackPermissions",
       "PackPutOutcome",
       "PackPutReceipt",
@@ -73935,7 +74029,10 @@
       "PackSection",
       "PackSetup",
       "PackSetupAccount",
+      "PackSetupAnswer",
+      "PackSetupAnswerRequest",
       "PackSetupAuth",
+      "PackSetupCardActionInput",
       "PackSetupCheck",
       "PackSetupConnection",
       "PackSetupConnectionState",
@@ -73970,9 +74067,11 @@
       "PinnedRef",
       "PixelRegion",
       "PolicyActionOutcome",
+      "PostmarkAtom",
       "Preset",
       "PriorRung",
       "PriorSeed",
+      "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
       "ProjectCardRecord",
@@ -73983,12 +74082,16 @@
       "ProjectGoalDismissRequest",
       "ProjectGoalDraft",
       "ProjectGoalInterviewContext",
+      "ProjectGoalRecord",
       "ProjectGoalRevisionProposal",
       "ProjectMintReceipt",
+      "ProjectParentWitness",
       "ProjectProposalCard",
       "ProjectProposalPicks",
       "ProjectProposalRequest",
+      "ProjectRecord",
       "ProjectRefRequest",
+      "ProjectRole",
       "ProjectRoom",
       "ProjectRosterWriteOutcome",
       "ProjectRosterWriteRequest",
@@ -74021,12 +74124,14 @@
       "QuestionRecord",
       "QuestionRefreshRequest",
       "QueueTaskBrief",
+      "QuickFilterAtom",
       "QuoteAnchor",
       "QuoteReplyGroup",
       "QuoteReplyStrip",
       "QuoteStripStatus",
       "Reasoning",
       "ReasoningCause",
+      "ReceiptAtom",
       "ReceiptKind",
       "ReceiptRecord",
       "RecordEraseConfirmRequest",
@@ -74126,14 +74231,22 @@
       "Run",
       "RunSignalState",
       "RunTree",
+      "RunTreeEvent",
+      "RunTreeEventKind",
+      "RunTreeFailure",
+      "RunTreeNode",
       "RunTreeRepair",
       "RunTreeStatus",
+      "RunTreeTimestamps",
       "ScheduledBackfill",
       "Scope",
       "ScopeAxisScopeId",
       "ScopeAxisString",
       "ScopeAxisU8",
+      "ScopeResource",
+      "ScopeScope",
       "ScopedReadReceipt",
+      "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
       "ScratchpadAppendRequest",
@@ -74143,6 +74256,8 @@
       "ScratchpadRecallRequest",
       "ScratchpadSealRequest",
       "ScratchpadWriteReply",
+      "SealAtom",
+      "SealLevel",
       "SearchAxis",
       "SearchEvidence",
       "SecretLiftClose",
@@ -74157,12 +74272,22 @@
       "SecretUseRecord",
       "SecretUseRequest",
       "SecretUseStatus",
+      "SectionAtom",
+      "SegmentedControl",
+      "SelectControl",
       "SelectionBenchmark",
       "SelectionRanking",
       "SelectionReceipt",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
+      "SelfUiAction",
+      "SelfUiBindableProperty",
+      "SelfUiBinding",
+      "SelfUiControlWire",
+      "SelfUiOption",
+      "SelfUiStateValue",
+      "SelfUiValue",
       "Sensitivity",
       "SensitivityCeiling",
       "SettleVerdict",
@@ -74237,6 +74362,7 @@
       "SlideReviewSubmit",
       "SlideReviewUnitInput",
       "SlideUnitRefused",
+      "SliderControl",
       "SpaceMove",
       "SpaceMoveCheck",
       "SpaceMoveState",
@@ -74248,6 +74374,7 @@
       "SpendConsent",
       "SpentKind",
       "StateFamilyRef",
+      "StatusDotAtom",
       "SteerReceipt",
       "SteerRequest",
       "StepAssetKind",
@@ -74324,12 +74451,18 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TextBlockAtom",
       "TextBody",
       "TextCommitReceipt",
+      "TextInputControl",
+      "ThreadEntryAtom",
+      "ThrobberAtom",
+      "ToggleControl",
       "TravelChoice",
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TwoClocksAtom",
       "TypeRef",
       "TypedDecision",
       "UndoneKeep",
@@ -74338,10 +74471,14 @@
       "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
+      "VadBadge",
+      "VoiceLineAtom",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
+      "WeaveDigestView",
       "WeaveItemCorrectionView",
       "WeaveItemView",
+      "WeaveLensRefusal",
       "WeaveLinkCorrectionView",
       "WeaveReceipt",
       "WeaveReportRequest",
@@ -74390,8 +74527,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 281,
-      "struct": 722
+      "enum": 300,
+      "struct": 781
      }
     },
     {

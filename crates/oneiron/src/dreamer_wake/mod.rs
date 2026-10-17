@@ -48,11 +48,13 @@ pub use self::types::*;
 /// shared staleness writer (a tombstone, a stale mark). An
 /// erased TURN leaves the sieve and the projection; a TURN whose MESSAGE is
 /// erased leaves them too and is owed a new read of the words it keeps.
+/// An erased fact about a person takes that person's PEOPLE `about` lines.
 pub(crate) fn erase_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &crate::EntityId,
 ) -> crate::Result<()> {
+    crate::dreamer_consolidation::erase_person_about_in_txn(store, txn, id)?;
     let turns = text_turns_in_txn(store, txn, id)?;
     for turn in &turns {
         sieve::erase_turn_in_txn(store, txn, turn)?;
