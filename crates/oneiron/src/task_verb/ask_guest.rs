@@ -241,6 +241,18 @@ pub(super) fn mint_guest_grants(
     Ok(guest_grants)
 }
 
+/// The FEDERATION_GRANT the ask `group_ref` minted for guest `person`, as its
+/// group record holds it (OF-220): none when the ask recorded no such guest.
+pub(crate) fn ask_guest_grant_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+    person: EntityId,
+) -> Result<Option<EntityId>> {
+    Ok(super::ask_record::read_group(vault, txn, group_ref)?
+        .and_then(|group| group.guest_grants.get(&person).copied()))
+}
+
 pub(super) fn check_companion_answer(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
