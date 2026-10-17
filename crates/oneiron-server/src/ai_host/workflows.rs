@@ -9,8 +9,10 @@
 //! unattached, once the comment is back (OF-368); a reattach signals no
 //! attempt, so while any is held the timer runs too.
 //! A failed step goes to the engine's failure ladder ([`super::step_failure`]).
-//! A metered leaf with no spend left under its lease's cap stops before its
-//! model call (OF-532); the engine pump settles each leaf's lease.
+//! A metered leaf near its cap sends the run's other running agents the
+//! wrap-up warning; with no spend left it is held before its model call, its
+//! saved results kept and its checkpoint recorded, resumable and never failed
+//! (OF-532, OF-541); the engine pump settles each leaf's lease.
 //!
 //! On the same signal it asks each queued project question (OF-501): a
 //! person's turn queued it by reference, and it runs here, off that turn, on
@@ -20,9 +22,10 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::agent_dispatch::{
-    AgentDispatcher, ProjectDetection, ProjectDetectionRun, WorkflowProgress,
+    AgentDispatcher, BudgetHoldLease, ProjectDetection, ProjectDetectionRun, SpendSignal,
+    WorkflowProgress,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptQueue};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint};
 use oneiron::failure_ladder::FailureLadderOutcome;
 use tokio::sync::{broadcast, watch};
 
@@ -169,6 +172,7 @@ fn pump_once(
             }
             let mut claimed: Option<(AttemptId, u32)> = None;
             let mut retryable = false;
+            let mut held = None;
             let progress = dispatcher.run_workflow_step_output(
                 *root,
                 LEASE_OWNER,
@@ -179,15 +183,42 @@ fn pump_once(
                         status.workflows.state = WorkState::Working;
                         status.workflows.started += 1;
                     });
-                    // OF-532: a metered leaf runs under its spend lease. With
-                    // nothing left under the cap it stops here, before any
-                    // model call, and is not retried; the steps already done
-                    // keep their saved results.
+                    // OF-532/OF-541: a metered leaf runs under its spend lease.
+                    // Near the cap the run's other agents get the wrap-up
+                    // warning. With nothing left the leaf is held here, before
+                    // any model call: paused with its checkpoint, the steps
+                    // already done keep their saved results, and the owner is
+                    // owed a notice. A hold is not a failure and not retried.
                     if let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)? {
-                        let guard = dispatcher.guard_for_scope(&scope)?;
-                        if guard.read().remaining_units == 0 {
+                        let read = dispatcher.spend_read(&scope)?;
+                        let now = now_secs();
+                        let reason = format!("workflow spend cap under scope {scope}");
+                        dispatcher.budget_signal(
+                            *root,
+                            &read,
+                            Some(step.attempt.id),
+                            &reason,
+                            now,
+                        )?;
+                        if matches!(read.signal, Some(SpendSignal::AtCap { .. })) {
+                            let hold = dispatcher.hold_for_budget(
+                                *root,
+                                BudgetHoldLease {
+                                    attempt: step.attempt.id,
+                                    lease_owner: LEASE_OWNER.to_owned(),
+                                    attempt_count: step.attempt.attempt_count,
+                                    resume_point: AttemptResumePoint::new(
+                                        "workflow-step:before-model-call",
+                                        now,
+                                    ),
+                                },
+                                None,
+                                &reason,
+                                now,
+                            )?;
+                            held = Some(hold);
                             return Err(oneiron::Error::InvalidConfig(format!(
-                                "workflow step spend cap reached under scope {scope}"
+                                "workflow step held at the spend cap under scope {scope}"
                             )));
                         }
                     }
@@ -202,12 +233,20 @@ fn pump_once(
                 match &progress {
                     Ok(_) if claimed.is_some() => status.workflows.completed += 1,
                     Ok(_) => {}
+                    Err(_) if held.is_some() => {}
                     Err(error) => {
                         status.workflows.failed += u64::from(claimed.is_some());
                         status.workflows.last_error = Some(error.to_string());
                     }
                 }
             });
+            // The held leaf waits paused; its workflow waits with it until
+            // the owner resumes the hold. The notice rides the hold.
+            if let Some(hold) = held {
+                let notice = hold.notice.as_ref().map(|notice| notice.text.as_str());
+                tracing::info!(?root, notice, "a workflow is held at its spend cap");
+                break;
+            }
             match progress {
                 Ok(WorkflowProgress::Advanced(_)) => continue,
                 Ok(_) => break,
