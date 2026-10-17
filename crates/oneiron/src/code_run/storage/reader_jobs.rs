@@ -289,8 +289,10 @@ impl ReaderTxn<'_, '_> {
     }
 
     /// Settles `job` into `state` with `finding` at `now_ms`: its queue,
-    /// due and finding rows, its spend scope and its parent's counts move in
-    /// this transaction, and so does every wait set over it that it settles.
+    /// due and finding rows, its child scope when it spends under one, and
+    /// its parent's counts move in this transaction, and so does every wait
+    /// set over it that it settles. A child on the host's meter has no child
+    /// scope: the meter settled each of its calls itself.
     fn settle(
         &mut self,
         mut job: ReaderJob,
@@ -317,9 +319,11 @@ impl ReaderTxn<'_, '_> {
             self.drop_finding_row(parent_run, dropped, job.task)?;
         }
         self.delete_index(&due_key(job.binding.child_cutoff_unix_ms, job.task))?;
-        self.spend
-            .spend()
-            .settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+        if job.binding.spend.scope().is_some() {
+            self.spend
+                .spend()
+                .settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+        }
         job.state = state;
         job.finding = finding;
         job.settled_at_ms = Some(now_ms);
@@ -641,9 +645,10 @@ impl ExecutorStorage<'_> {
     }
 
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
-    /// at its first spawn and read from there after: the clock is fixed
-    /// once. A child past the cutoff, or under a scope that is gone, is
-    /// refused with nothing written.
+    /// at its first spawn and read from there after: the clock and the meter
+    /// are fixed once. A child past the cutoff, or under a scope that is
+    /// gone, is refused with nothing written; one on the host's meter is
+    /// admitted with no ledger lookup.
     pub(crate) fn spawn_reader_job(
         &self,
         seat: &SpawnHostSeat,
@@ -666,10 +671,8 @@ impl ExecutorStorage<'_> {
             if now_ms >= child_cutoff {
                 return Ok(SpawnAdmission::PastCutoff);
             }
-            if tx
-                .spend
-                .open_scope_in_txn(&*tx.txn, &parent.spend)?
-                .is_none()
+            if let Some(scope) = parent.spend.scope()
+                && tx.spend.open_scope_in_txn(&*tx.txn, scope)?.is_none()
             {
                 return Ok(SpawnAdmission::Unmetered);
             }
@@ -711,7 +714,9 @@ impl ExecutorStorage<'_> {
 
     /// Claims queued child `task` for its runner: it becomes active at its
     /// next generation, its spend held from its parent's scope in the same
-    /// transaction. A child past its cutoff settles instead.
+    /// transaction when it spends under one; one on the host's meter holds
+    /// nothing and never waits for spend. A child past its cutoff settles
+    /// instead.
     pub(crate) fn claim_reader_job(&self, task: EntityId, now_ms: u64) -> Result<ClaimOutcome> {
         self.reader_txn(|tx| {
             let mut job = tx
@@ -740,27 +745,29 @@ impl ExecutorStorage<'_> {
                 .parent(parent_run)?
                 .ok_or(Error::CorruptedIndex("code-run reader parent"))?;
             // A requeued child keeps the scope its first claim reserved.
-            let reserved = tx
-                .spend
-                .spend()
-                .scope_with_root_in_txn(&*tx.txn, &SpendScopeId::for_attempt(&job.attempt))?
-                .is_some();
-            if !reserved {
-                if tx.spend.available_in_txn(&*tx.txn, &job.binding.spend)? == 0 {
-                    return Ok(ClaimOutcome::WaitingForSpend);
-                }
-                tx.spend
+            if let Some(scope) = job.binding.spend.scope() {
+                let reserved = tx
+                    .spend
                     .spend()
-                    .reserve_child_in_txn(
-                        tx.txn,
-                        &job.binding.spend,
-                        &job.attempt,
-                        ChildSpend::Hold {
-                            expected_units: parent.hold_units,
-                        },
-                        now_ms / 1000,
-                    )
-                    .map_err(Error::from)?;
+                    .scope_with_root_in_txn(&*tx.txn, &SpendScopeId::for_attempt(&job.attempt))?
+                    .is_some();
+                if !reserved {
+                    if tx.spend.available_in_txn(&*tx.txn, scope)? == 0 {
+                        return Ok(ClaimOutcome::WaitingForSpend);
+                    }
+                    tx.spend
+                        .spend()
+                        .reserve_child_in_txn(
+                            tx.txn,
+                            scope,
+                            &job.attempt,
+                            ChildSpend::Hold {
+                                expected_units: parent.hold_units,
+                            },
+                            now_ms / 1000,
+                        )
+                        .map_err(Error::from)?;
+                }
             }
             tx.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
             job.state = ReaderJobState::Active;

@@ -298,7 +298,7 @@ pub(super) fn clear_media_refusal_in_txn(
 }
 
 /// Width of a text row's text hash.
-const TEXT_HASH_LEN: usize = 32;
+pub(crate) const TEXT_HASH_LEN: usize = 32;
 
 /// A stored media vector: its input kind byte, for a text row the hash of the text it embeds,
 /// then the v1 vector row.
@@ -346,6 +346,29 @@ impl RawValue for MediaVectorRow {
 /// The hash a text row keeps of the text it embeds.
 pub(crate) fn text_hash(text: &str) -> [u8; TEXT_HASH_LEN] {
     *blake3::hash(text.as_bytes()).as_bytes()
+}
+
+/// The text hash a `kind` vector of record `id` carries: for a text vector the hash of the text
+/// the text slot embeds for it, as `store` holds it (base, or a room's view over it); `None`
+/// for a media kind.
+pub(crate) fn media_text_hash_of(
+    vault: &Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    kind: InputKind,
+) -> Result<Option<[u8; TEXT_HASH_LEN]>> {
+    match kind {
+        InputKind::Text => {
+            let Some(text) = super::media::text_document_in(vault, store, txn, id)? else {
+                return Err(Error::InvalidConfig(
+                    "the record holds no text the text slot embeds".into(),
+                ));
+            };
+            Ok(Some(text_hash(&text)))
+        }
+        InputKind::Image | InputKind::Audio => Ok(None),
+    }
 }
 
 fn validate_space_id(id: &str) -> Result<()> {
@@ -477,6 +500,54 @@ pub(crate) fn put_media_vector_in_txn(
         row: encode_vector_row_v1(vector)?,
     };
     MEDIA_VECTOR.put(store, txn, &(space.key(), *id), &row)
+}
+
+/// Stages one media vector into declared space `space_id`, as [`put_media_vector_in_txn`] admits
+/// it there. The session apply's `MediaVector` arm, so a room's vector meets the same space,
+/// slot and width rules a base one does.
+pub(crate) fn stage_media_vector_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space_id: &str,
+    id: &EntityId,
+    kind: InputKind,
+    text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    vector: &[f32],
+) -> Result<()> {
+    if let Some(error) = Error::invalid_vector_component(vector) {
+        return Err(error);
+    }
+    let Some(space) = embedding_space_in_txn(store, txn, space_id)? else {
+        return Err(Error::InvalidConfig(format!(
+            "embedding space {space_id} is not declared"
+        )));
+    };
+    let fills = super::space_move::space_fill_kinds_in_txn(store, txn, &space)?;
+    put_media_vector_in_txn(store, txn, &space, &fills, id, kind, text_hash, vector)
+}
+
+/// Promotion's replay of a media vector a room staged (OF-370): it lands in base when the space
+/// still takes it as the room staged it. A space retired, unbound or of another width since
+/// leaves the row to the backfill, which embeds what base's slots bind; a promotion does not
+/// fail on a binding the room no longer has. A text row whose text changed since keeps the
+/// room's hash, so the backfill finds it stale and embeds the text again.
+pub(crate) fn replay_media_vector_in_txn(
+    store: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    space_id: &str,
+    id: &EntityId,
+    kind: InputKind,
+    text_hash: Option<[u8; TEXT_HASH_LEN]>,
+    vector: &[f32],
+) -> Result<()> {
+    let Some(space) = embedding_space_in_txn(store, txn, space_id)? else {
+        return Ok(());
+    };
+    let fills = super::space_move::space_fill_kinds_in_txn(store, txn, &space)?;
+    if !fills.contains(&kind) || vector.len() != space.dimensions {
+        return Ok(());
+    }
+    put_media_vector_in_txn(store, txn, &space, &fills, id, kind, text_hash, vector)
 }
 
 /// Binds `kind`'s slot to `space_id`, or returns it to its default when `None`: the vault's
@@ -727,42 +798,26 @@ impl Vault {
         kind: InputKind,
         vector: &[f32],
     ) -> Result<()> {
-        if let Some(error) = Error::invalid_vector_component(vector) {
-            return Err(error);
-        }
         let mut wtxn = self.store.env.write_txn()?;
-        let Some(space) = embedding_space_in_txn(&self.store, &wtxn, space_id)? else {
-            return Err(Error::InvalidConfig(format!(
-                "embedding space {space_id} is not declared"
-            )));
-        };
-        if crate::ports::EntityStoreRead::port_entity_record(&self.store, &wtxn, id)?.is_none() {
-            return Err(Error::EntityNotFound);
-        }
-        let text_hash = match kind {
-            InputKind::Text => {
-                let Some(text) = super::media::text_document_in_txn(self, &wtxn, id)? else {
-                    return Err(Error::InvalidConfig(
-                        "the record holds no text the text slot embeds".into(),
-                    ));
-                };
-                Some(text_hash(&text))
-            }
-            InputKind::Image | InputKind::Audio => None,
-        };
-        let fills = super::space_move::space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
-        put_media_vector_in_txn(
-            &self.store,
-            &mut wtxn,
-            &space,
-            &fills,
-            id,
-            kind,
-            text_hash,
-            vector,
-        )?;
+        self.put_base_media_vector_in_txn(&mut wtxn, space_id, id, kind, vector)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// [`Self::put_media_vector`] in the caller's base transaction.
+    pub(crate) fn put_base_media_vector_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        space_id: &str,
+        id: &EntityId,
+        kind: InputKind,
+        vector: &[f32],
+    ) -> Result<()> {
+        if crate::ports::EntityStoreRead::port_entity_record(&self.store, wtxn, id)?.is_none() {
+            return Err(Error::EntityNotFound);
+        }
+        let text_hash = media_text_hash_of(self, &self.store, wtxn, id, kind)?;
+        stage_media_vector_in_txn(&self.store, wtxn, space_id, id, kind, text_hash, vector)
     }
 
     /// Retires a declared space no slot binds and no open version move names: its rows and its
