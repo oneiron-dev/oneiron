@@ -113,6 +113,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/coach/training-offers/undo",
+        summary: "The owner's undo of the stock switch an approved offer bound.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/commitments/reminder-route",
         summary: "Reminder route.",

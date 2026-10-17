@@ -14,9 +14,10 @@
 //!   baseline; only the vault owner's answer on the exact offer settles it.
 //! - A decline is a label for the offer skill, and a postpone comes back
 //!   later as a new offer with fresh numbers that says what changed.
-//! - An approval records an intent to switch or to train; it changes no
-//!   binding. Applying it, and undoing it, is a separate owner-held door, and
-//!   a trained model still needs its own swap choice.
+//! - A switch approval binds the stock model in the owner's own answer
+//!   transaction and keeps the replaced binding for undo (`offer_switch`). A
+//!   train approval records an intent, and a trained model still needs its
+//!   own swap choice.
 //! - Each offer's prediction is checked against later receipts on or after
 //!   its check date, which feeds the offer skill's own record.
 use serde::{Deserialize, Serialize};
@@ -201,8 +202,8 @@ pub enum OfferAnswer {
     Postpone,
 }
 
-/// What an approval asks a later owner-held door to do. Recording it applies
-/// nothing.
+/// What an approval asked for. A switch is bound with the answer; a train
+/// intent waits for its training handoff.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OfferIntent {
@@ -556,12 +557,14 @@ pub fn pending_training_offers(vault: &Vault) -> Result<Vec<TrainingOffer>> {
 }
 
 /// The vault owner's answer to the exact offer they saw. A switch approval
-/// needs a stock candidate and a train approval a recipe; either records an
-/// intent and applies nothing.
+/// needs a stock candidate and binds it to the seat's role in this
+/// transaction, keeping the old binding for undo; a train approval needs a
+/// recipe and records its intent.
 /// # Errors
 /// A caller who is not the vault owner, an unknown offer, a digest for
 /// another snapshot, an answered or repeated offer, an approval of the wrong
-/// kind, or storage errors. An error writes nothing.
+/// kind, a switch the seat's binding or the registry no longer admits, or
+/// storage errors. An error writes nothing.
 pub fn settle_training_offer(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -613,6 +616,9 @@ pub fn settle_training_offer(
             }
             _ => None,
         };
+        if let Some(OfferIntent::Switch { seat, from, to }) = &intent {
+            super::offer_switch::apply_switch_in_txn(vault, txn, actor, offer, seat, from, to, at)?;
+        }
         let record = OfferAnswerRecord {
             offer: *offer,
             answer,

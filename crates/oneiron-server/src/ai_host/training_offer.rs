@@ -21,8 +21,8 @@ use oneiron::llm::registry::ModelRegistryRow;
 use oneiron::skill_optimize::{
     ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
     OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    offer_skill_cell, training_offer, training_offer_checks, training_offer_skill_id,
-    training_offers,
+    model_role_seat, offer_skill_cell, seat_model_role, training_offer, training_offer_checks,
+    training_offer_skill_id, training_offers,
 };
 use oneiron::training_pack::{ComputeChoice, TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
@@ -76,24 +76,6 @@ const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced 
     same work differently.";
 /// The offer skill's file the Coach runs; the seat goes as data.
 const SKILL_FILE: &str = "SKILL.md";
-
-/// The eval seat a model role's offers are for: the named seats for the roles
-/// that serve them, and any other role its own named seat.
-fn eval_seat(role: ModelRole) -> EvalSeat {
-    match role {
-        ModelRole::GenerativeReasoner => EvalSeat::Companion,
-        ModelRole::RetrievalEmbedder => EvalSeat::Embedder,
-        ModelRole::ExtractionEncoder => EvalSeat::ExtractionTagger,
-        role => EvalSeat::Named(role_key(role)),
-    }
-}
-
-/// The model role an offer's seat is, the inverse of [`eval_seat`].
-fn seat_role(seat: &EvalSeat) -> Option<ModelRole> {
-    MODEL_ROLES
-        .into_iter()
-        .find(|role| eval_seat(*role) == *seat)
-}
 
 /// Raises at most one offer for each of the busiest served seats.
 pub(super) fn draft(
@@ -270,7 +252,7 @@ impl Brief {
         record: &serde_json::Value,
         now: u64,
     ) -> oneiron::Result<Option<Self>> {
-        let seat = eval_seat(role);
+        let seat = model_role_seat(role);
         let Some(current) = registry
             .iter()
             .find(|row| row.catalog.model.as_str() == model)
@@ -787,7 +769,7 @@ pub(super) fn check(
     else {
         return Ok(());
     };
-    let (Some(intent), Some(role)) = (answer.intent.as_ref(), seat_role(&offer.seat)) else {
+    let (Some(intent), Some(role)) = (answer.intent.as_ref(), seat_model_role(&offer.seat)) else {
         return Ok(());
     };
     // The model the yes asked for: the stock model, or the custom one bound

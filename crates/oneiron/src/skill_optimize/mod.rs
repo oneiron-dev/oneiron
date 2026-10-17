@@ -143,6 +143,7 @@ mod job;
 mod judge_swap;
 mod labels;
 mod offer;
+mod offer_switch;
 pub(crate) mod policy;
 mod response_pair;
 mod selection;
@@ -202,6 +203,10 @@ pub use self::offer::{
     SeatWorkload, TrainingOffer, TrainingOfferDraft, offer_skill_cell, pending_training_offers,
     record_offer_check, record_training_offer, settle_training_offer, training_offer,
     training_offer_checks, training_offer_skill_id, training_offers,
+};
+pub use self::offer_switch::{
+    OfferSwitchReceipt, OfferSwitchUndo, model_role_seat, seat_model_role, training_offer_switch,
+    undo_training_offer_switch,
 };
 pub use self::response_pair::{ResponsePairPick, pick_response_pair, response_pair_picks};
 pub use self::selection::{
