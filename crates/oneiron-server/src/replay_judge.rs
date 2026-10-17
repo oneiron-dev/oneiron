@@ -504,27 +504,55 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         Ok(state)
     }
 
-    /// Neighbouring receipts' responses, two by two, response only.
+    /// Receipts' responses two by two, response only, never a status or a
+    /// verdict. Answers to the same task pair first, in receipt order; the
+    /// rest pair as they come. Each response rides beside the task it
+    /// answered, so a judge or the owner's pick compares answers to what each
+    /// was asked.
     fn blind_pairs(&self, _task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
-        let bytes = MAX_REPLAY_TEXT / 2;
-        let mut answered = Vec::new();
+        let bytes = MAX_REPLAY_TEXT / 4;
+        let mut answered: Vec<(&str, String, String)> = Vec::new();
         for receipt in receipts {
             if let Some(attempt) = attempt_of(&self.vault, receipt)? {
                 let response = response_text(&self.vault, &attempt);
                 if !response.trim().is_empty() {
-                    answered.push((receipt.as_str(), response));
+                    answered.push((receipt.as_str(), task_text(&attempt), response));
                 }
             }
         }
-        Ok(answered
-            .chunks_exact(2)
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        for (index, (_, task, _)) in answered.iter().enumerate() {
+            match groups
+                .iter_mut()
+                .find(|group| answered[group[0]].1 == *task)
+            {
+                Some(group) => group.push(index),
+                None => groups.push(vec![index]),
+            }
+        }
+        let mut order: Vec<[usize; 2]> = Vec::new();
+        let mut rest: Vec<usize> = Vec::new();
+        for group in &groups {
+            let pairs = group.chunks_exact(2);
+            rest.extend_from_slice(pairs.remainder());
+            order.extend(pairs.map(|pair| [pair[0], pair[1]]));
+        }
+        rest.sort_unstable();
+        order.extend(rest.chunks_exact(2).map(|pair| [pair[0], pair[1]]));
+        Ok(order
+            .into_iter()
             .take(MAX_PAIRS)
-            .map(|pair| SkillReplayPair {
-                pair_ref: format!("{}|{}", pair[0].0, pair[1].0),
-                state: json!({
-                    "first": cut(&pair[0].1, bytes),
-                    "second": cut(&pair[1].1, bytes),
-                }),
+            .map(|[first, second]| {
+                let (first, second) = (&answered[first], &answered[second]);
+                SkillReplayPair {
+                    pair_ref: format!("{}|{}", first.0, second.0),
+                    state: json!({
+                        "first": cut(&first.2, bytes),
+                        "second": cut(&second.2, bytes),
+                        "first_task": cut(&first.1, bytes),
+                        "second_task": cut(&second.1, bytes),
+                    }),
+                }
             })
             .collect())
     }
