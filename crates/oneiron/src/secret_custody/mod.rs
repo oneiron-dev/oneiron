@@ -51,7 +51,10 @@
 //!   [`Vault::resolve_secret_ref`](crate::Vault::resolve_secret_ref), [`Vault::get_secret_metadata`](crate::Vault::get_secret_metadata), and the
 //!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`;
 //! * the owner's registration door,
-//!   [`Vault::register_secret_as_owner`](crate::Vault::register_secret_as_owner).
+//!   [`Vault::register_secret_as_owner`](crate::Vault::register_secret_as_owner);
+//! * reveal by handle (OF-560): an agent's `reveal`, `wait` and `describe`,
+//!   the owner's answer to a reveal's ask, and the owner's own read,
+//!   [`Vault::reveal_secret_as_owner`](crate::Vault::reveal_secret_as_owner).
 //!
 //! Companion [`crate::secret_manifest`] owns the repo-side TOML declaration
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
@@ -62,6 +65,7 @@ mod doors;
 mod floor;
 mod masked_files;
 mod owner_door;
+mod reveal;
 mod transition;
 mod types;
 
@@ -93,6 +97,16 @@ pub(crate) use self::masked_files::{
 };
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
+};
+pub use self::reveal::{
+    HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal, REVEAL_ASK_TTL_SECS,
+    REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RevealTarget, SECRET_REVEAL_REASON_ASKED,
+    SECRET_REVEAL_REASON_OWNER, SecretHandleCard, SecretProvenance, SecretRevealAnswer,
+    SecretRevealAnswered, SecretRevealAsk, SecretRevealDecision, SecretRevealReceipt,
+    SecretRevealState,
+};
+pub(crate) use self::reveal::{
+    RevealAsker, RevealAuthority, parse_secret_handle, reveal_value_in_txn,
 };
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_transitions,

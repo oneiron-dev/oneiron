@@ -19,6 +19,7 @@
 //! overwritten, and the door reads that copy again; only a clean copy mints
 //! custody records.
 
+pub(super) mod admit;
 pub(super) mod side_row;
 
 use std::collections::HashMap;
@@ -67,6 +68,17 @@ pub(crate) struct MaskOrigin {
     /// row outside the entity tables, `side:<table>`, `attempt` or `intake`.
     pub(crate) place: String,
     pub(crate) masked_at: u64,
+}
+
+/// Where a mask on write lifted the secret custody record `id` holds, read
+/// in `txn`; `None` for a record an owner registered. A handle's `describe`
+/// names it (OF-560).
+pub(crate) fn mask_origin_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<MaskOrigin>> {
+    MASK_ORIGIN.get(store, txn, id)
 }
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,

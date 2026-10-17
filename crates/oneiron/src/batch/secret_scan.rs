@@ -9,9 +9,15 @@ use heed::{RoTxn, RwTxn};
 pub(crate) use self::container::{
     is_container, masked_copy, scan_members as scan_container_members,
 };
+pub(crate) use self::mask::admit::{
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
+    scan_document_in_txn,
+};
 pub(super) use self::mask::mask_batch_ops;
+pub(crate) use self::mask::mask_origin_in_txn;
 pub(crate) use self::mask::side_row::{
-    SidePart, admit_side_parts, admit_side_row, admitted_from, from_named_tree, named_tree,
+    SidePart, admit_side_parts, admit_side_row, admit_typed, admitted_from, from_named_tree,
+    named_tree,
 };
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
