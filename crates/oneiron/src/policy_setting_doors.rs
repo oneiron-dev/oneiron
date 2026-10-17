@@ -112,7 +112,8 @@ pub fn inference_defaults_read_action() -> Result<AgentActionCall> {
 }
 
 /// The principal an action call runs as: `actor` itself, reading under its
-/// credential's `key`, as a human view or an agent task by its class.
+/// credential's `key`, as a human view, an agent task or a system job by
+/// its class.
 /// # Errors
 /// A key that does not belong to `actor`.
 pub fn action_principal(
@@ -122,7 +123,8 @@ pub fn action_principal(
     let id = actor.entity_ref().to_hex();
     match actor.actor_class() {
         EdgeActorClass::Agent => LensPrincipalBinding::agent_task(id, key.clone(), vec![key]),
-        _ => LensPrincipalBinding::human_view(id, key.clone(), vec![key]),
+        EdgeActorClass::System => LensPrincipalBinding::system_job(id, key.clone(), vec![key]),
+        EdgeActorClass::Human => LensPrincipalBinding::human_view(id, key.clone(), vec![key]),
     }
 }
 
@@ -144,6 +146,7 @@ fn run_embedded(
             verb_door: None,
             owner,
             live_run: None,
+            planner: None,
         },
     )?;
     Ok(PolicyActionOutcome::from_dispatch(&dispatch)?)

@@ -9,7 +9,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::saved_query::{
     EVIDENCE_HASH_LEN, EvaluationRequest, MatchVerdict, MembershipCause, MembershipEvent,
-    MembershipTransition, QueryScope, SavedQueryEvaluator, membership_events,
+    MembershipTransition, QueryScope, SavedQueryEvaluator, WakeVisit, membership_events,
     next_membership_epoch, read_saved_query,
 };
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -51,7 +51,7 @@ pub struct CampaignEnrollmentEvent {
     pub entity_ref: EntityId,
     /// Owner actor the re-derivation must run under.
     pub owner_actor: EntityId,
-    /// Monotonic per-`(query, entity)` epoch minted at detection.
+    /// Monotonic per-`(query, campaign, entity)` epoch minted at detection.
     pub epoch: u64,
     /// When the transition became true.
     pub valid_at: u64,
@@ -145,55 +145,96 @@ pub async fn detect_enrollment(
     owner_actor: EntityId,
     input: &DetectEnrollment,
 ) -> Result<EnrollmentDetection> {
+    let (mut recorded, _) = detect_enrollments(
+        evaluator,
+        owner_actor,
+        input.query_ref,
+        &[input.campaign_ref],
+        input.entity_ref,
+        input.now,
+    )
+    .await?;
+    Ok(recorded
+        .pop()
+        .map_or(EnrollmentDetection::NoTransition, |event| {
+            EnrollmentDetection::Recorded(Box::new(event))
+        }))
+}
+
+/// [`detect_enrollment`] for every campaign `query_ref` feeds, plus what the
+/// evaluation cost a wake: the audience wake counts its bounds from this.
+///
+/// The entity is evaluated ONCE. Each campaign then reads its own history and
+/// mints its own epoch, so one campaign's entry, settled attempt or failed
+/// attempt never stands in for another's: a campaign already entered on
+/// exactly this evidence records nothing, and every other campaign records
+/// its own event.
+pub(super) async fn detect_enrollments(
+    evaluator: &SavedQueryEvaluator<'_>,
+    owner_actor: EntityId,
+    query_ref: EntityId,
+    campaign_refs: &[EntityId],
+    entity_ref: EntityId,
+    now: u64,
+) -> Result<(Vec<CampaignEnrollmentEvent>, WakeVisit)> {
     let vault = evaluator.vault;
-    let record =
-        read_saved_query(vault, owner_actor, input.query_ref)?.ok_or(Error::EntityNotFound)?;
+    let record = read_saved_query(vault, owner_actor, query_ref)?.ok_or(Error::EntityNotFound)?;
     let scope_digest = effective_scope_digest(&record.definition.scope, evaluator.owner_grants);
     let definition_version = record.definition.definition_version;
-    let cause = derive_cause(vault, input.query_ref, definition_version, &scope_digest)?;
-    let outcome = evaluator
-        .evaluate_entity(&EvaluationRequest {
-            query_ref: input.query_ref,
-            campaign_ref: input.campaign_ref,
-            entity_ref: input.entity_ref,
+    let cause = derive_cause(vault, query_ref, definition_version, &scope_digest)?;
+    let (outcome, visit) = evaluator
+        .evaluate_entity_visit(&EvaluationRequest {
+            query_ref,
+            // One evaluation serves every campaign; the verdict memo is keyed
+            // by query and entity, never by campaign.
+            campaign_ref: campaign_refs.first().copied().unwrap_or(query_ref),
+            entity_ref,
             definition: &record.definition,
             cause,
-            valid_at: input.now,
-            detected_at: input.now,
+            valid_at: now,
+            detected_at: now,
         })
         .await?;
+    let mut recorded = Vec::new();
     if outcome.decision.verdict != MatchVerdict::Match {
-        return Ok(EnrollmentDetection::NoTransition);
+        return Ok((recorded, visit));
     }
-    // A transition is a CHANGE. An entity already entered on exactly this
-    // evidence has nothing to transition into, and minting an epoch for it
-    // would churn the cohort head on every wake.
-    if membership_events(vault, input.query_ref, input.entity_ref)?
-        .last()
-        .is_some_and(|last| {
-            last.transition == MembershipTransition::Entered
-                && last.evidence_hash == outcome.evidence_hash
-        })
-    {
-        return Ok(EnrollmentDetection::NoTransition);
+    let history = membership_events(vault, query_ref, entity_ref)?;
+    for campaign_ref in campaign_refs {
+        // A transition is a CHANGE. An entity already entered in this
+        // campaign on exactly this evidence has nothing to transition into,
+        // and minting an epoch for it would churn the cohort head on every
+        // wake.
+        if history
+            .iter()
+            .rev()
+            .find(|event| event.campaign_ref == *campaign_ref)
+            .is_some_and(|last| {
+                last.transition == MembershipTransition::Entered
+                    && last.evidence_hash == outcome.evidence_hash
+            })
+        {
+            continue;
+        }
+        let event = CampaignEnrollmentEvent {
+            event_ref: vault.store.clock.entity_id()?,
+            query_ref,
+            campaign_ref: *campaign_ref,
+            entity_ref,
+            owner_actor,
+            epoch: next_membership_epoch(vault, query_ref, *campaign_ref, entity_ref)?,
+            valid_at: now,
+            detected_at: now,
+            transition: MembershipTransition::Entered,
+            cause,
+            evidence_hash: outcome.evidence_hash,
+            definition_version,
+            scope_digest,
+        };
+        put_event(vault, &event)?;
+        recorded.push(event);
     }
-    let event = CampaignEnrollmentEvent {
-        event_ref: vault.store.clock.entity_id()?,
-        query_ref: input.query_ref,
-        campaign_ref: input.campaign_ref,
-        entity_ref: input.entity_ref,
-        owner_actor,
-        epoch: next_membership_epoch(vault, input.query_ref, input.entity_ref)?,
-        valid_at: input.now,
-        detected_at: input.now,
-        transition: MembershipTransition::Entered,
-        cause,
-        evidence_hash: outcome.evidence_hash,
-        definition_version,
-        scope_digest,
-    };
-    put_event(vault, &event)?;
-    Ok(EnrollmentDetection::Recorded(Box::new(event)))
+    Ok((recorded, visit))
 }
 
 /// Routes the transition onto ONE of the three closed causes.

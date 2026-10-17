@@ -821,8 +821,8 @@ pub(super) fn queue_trial_ask(vault: &Vault, proposal: &EntityId) -> Result<()> 
 /// once [`EXPLORATION_ASK_CLIMB_HOURS`] have passed `since`, and restarts
 /// that clock. An ask at its chain's top keeps its clock, and lapses once
 /// [`EXPLORATION_ASK_LAPSE_HOURS`] have passed it too: the trial closes as
-/// declined. A later answer to the lapsed ask changes nothing. `true` when
-/// it lapsed.
+/// declined, and the ask is withdrawn from its role's queue in the same
+/// write, so a later answer is refused. `true` when it lapsed.
 fn climb_stale_ask(
     vault: &Vault,
     proposal: &EntityId,
@@ -853,6 +853,7 @@ fn climb_stale_ask(
         }
         if lapsed {
             now.state = TrialState::Closed(ExplorationTrialClose::OverrunLapsed);
+            vault.withdraw_decision_ask_in_txn(txn, seq)?;
         } else if let TrialState::AskPending(held) = &mut now.state {
             held.climbed_at = Some(at);
         }

@@ -5,12 +5,17 @@
 //! first and abstains on a question it holds no row for, so every dial can
 //! start there. The house model's decision read fills the escalation rung when
 //! `[models.decision_read]` binds it and its recipe names the paired question;
-//! the recipe's person question is the ladder's own. The System One seat fills
-//! its rung when `[models.decisions.system_one]` binds it, and the big model
-//! fills the Big rung when `[models.decisions.big]` names its seat
-//! ([`crate::big_rung`]). The local head has no typed provider on this host
-//! yet, so its slot stays empty and the ladder steps past it. The last rung is the vault owner's
-//! ask queue ([`DecisionAsks`]): durable, answered at `/v1/owner/decisions`.
+//! the recipe's person question is the ladder's own. Each of its reads is
+//! admitted as the `/v1/llm/decision_read` probe's are: a
+//! `limits.decision_reads` turn, then a run of its own with its receipts. The
+//! System One seat fills its rung when `[models.decisions.system_one]` binds
+//! it, and the big model fills the Big rung when `[models.decisions.big]`
+//! names its seat
+//! ([`crate::big_rung`]). The Local-vision seat fills the Local rung when
+//! `[models.roles.local_vision]` binds one: it answers Box, Point and image
+//! questions and abstains, unspent, on a call with no image. The last rung is
+//! the vault owner's ask queue ([`DecisionAsks`]): durable, answered at
+//! `/v1/owner/decisions`.
 //!
 //! Every model rung blocks on the server's runtime: run a ladder call on a
 //! blocking thread.
@@ -21,11 +26,12 @@ use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
-    DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadProvider,
-    DecisionRung, HeldLadder, ModelDecisionProvider, PersonThreshold, ProviderCapability,
-    ProviderDecision, ProviderPin, RemoteDecisionSeat, RuleDecisionProvider, SeatPhase,
-    SeatRequest,
+    DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadGate,
+    DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, ModelDecisionProvider,
+    PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin, RemoteDecisionSeat,
+    RuleDecisionProvider, SeatPhase, SeatRequest,
 };
+use oneiron::llm::run_admission::{CallOutcome, HostAccount, PaidConnector, RunReceiptSink};
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
@@ -39,8 +45,8 @@ use oneiron::skill_hub::{ClaimReplayDecisions, UsefulUpstreamDecisions};
 use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::TaskDecisions;
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
-    ModelLocality, Vault,
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ConsolidationDecisions, EntityId,
+    HostingPrivacyPosture, ModelLocality, Vault,
 };
 
 use crate::config::models::{
@@ -78,6 +84,10 @@ const ONE: &str = "1";
 const PERSON_THRESHOLD_VERSION: u32 = 1;
 /// The ThinkThreshold row's version a host's start value takes.
 const THINK_THRESHOLD_VERSION: u32 = 1;
+/// The purpose the host's Local-vision rung budgets its calls under.
+const LOCAL_VISION_PURPOSE: &str = "decision.local_vision";
+/// The run each house read on the ladder is admitted as.
+const HOUSE_READ_RUN: &str = "decision-read:ladder";
 /// How long the person row may trail an accept whose commit sent no change
 /// signal.
 const PERSON_THRESHOLD_SWEEP: std::time::Duration = std::time::Duration::from_secs(60);
@@ -145,13 +155,14 @@ impl DecisionHost {
         }
     }
 
-    /// The house model's decision read on the escalation rung, read on
-    /// `meter`, and its recipe's paired and person questions as the ladder's,
-    /// each with its threshold row. Without a paired question in the recipe
-    /// the rung stays empty.
+    /// The house model's decision read on the escalation rung, each read
+    /// admitted by `admission` as a run on `meter`, and its recipe's paired
+    /// and person questions as the ladder's, each with its threshold row.
+    /// Without a paired question in the recipe the rung stays empty.
     pub(crate) fn with_house_read(
         mut self,
         read: Option<&(DecisionReadDoor, BudgetGuard)>,
+        admission: ReadAdmission,
     ) -> Self {
         self.ladder.escalation = None;
         self.ladder.paired = None;
@@ -214,9 +225,14 @@ impl DecisionHost {
             return self;
         };
         // The read takes the ladder's person question, which it reads apart.
+        let gate = HouseGate {
+            meter: meter.clone(),
+            connector: door.connector().clone(),
+            admission,
+        };
         match HouseRead::new(
             door.reader(),
-            meter.clone(),
+            gate,
             paired,
             self.ladder.person.clone(),
             door.connector().locality == ModelLocality::ThirdParty,
@@ -225,6 +241,37 @@ impl DecisionHost {
             Err(error) => {
                 tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
+        }
+        self
+    }
+
+    /// The Local-vision seat on the Local rung, when
+    /// `[models.roles.local_vision]` binds one, spending on its own meter of
+    /// `default_units` for the server's life. A Box, Point or image question
+    /// reaches it; it abstains on a call with no image before any call, so a
+    /// text question steps past it unspent. A caller with a turn budget still
+    /// seats its own per-call rung in its place.
+    fn with_local_vision(
+        mut self,
+        ai: &crate::ai_host::AiHandle,
+        vault: &Arc<Vault>,
+        default_units: u64,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
+        self.ladder.local = None;
+        let meter = BudgetGuard::new(
+            LOCAL_VISION_PURPOSE,
+            default_units,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let run = ai.undeclared_run(format!("{LOCAL_VISION_PURPOSE}:host"), meter);
+        let Some(seat) = crate::ai_host::LocalVisionModel::new(ai, Arc::clone(vault), run, runtime)
+        else {
+            return self;
+        };
+        match seat.rung() {
+            Ok(rung) => self.ladder.local = Some(Arc::new(rung)),
+            Err(error) => tracing::warn!(%error, "the Local-vision seat cannot fill its rung"),
         }
         self
     }
@@ -720,6 +767,12 @@ impl SyncServer {
                 posture,
                 tokio::runtime::Handle::current(),
             )
+            .with_local_vision(
+                &self.ai,
+                &self.vault,
+                models.raw_budget_units,
+                tokio::runtime::Handle::current(),
+            )
             .with_big(
                 models.decisions.big.as_ref(),
                 self.ai.models(),
@@ -799,13 +852,66 @@ fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {
     }
 }
 
+/// What admits each house read on the ladder as the `/v1/llm/decision_read`
+/// probe admits its own: the server's `limits.decision_reads` pool, its host
+/// account and its run receipts.
+pub(crate) struct ReadAdmission {
+    pub(crate) turns: crate::admission::Admission<()>,
+    pub(crate) host: Arc<HostAccount>,
+    pub(crate) receipts: Arc<dyn RunReceiptSink>,
+}
+
+/// The house read's gate: a `limits.decision_reads` turn, then one run on
+/// the meter per read, admitted and dispatched before the read and settled
+/// once after it.
+struct HouseGate {
+    meter: BudgetGuard,
+    connector: PaidConnector,
+    admission: ReadAdmission,
+}
+
+impl DecisionReadGate for HouseGate {
+    fn read(&self, read: &mut dyn FnMut(&BudgetLease) -> GatedRead) -> oneiron::Result<GatedRead> {
+        let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
+        // The host's own work: its turn comes while no caller waits for one.
+        let _turn = self
+            .admission
+            .turns
+            .admit_background_blocking()
+            .map_err(|_| refused("waited out its turn"))?;
+        let run = crate::models::undeclared_run(
+            HOUSE_READ_RUN,
+            self.meter.clone(),
+            Some(Arc::clone(&self.admission.host)),
+            Arc::clone(&self.admission.receipts),
+        );
+        let permit = run
+            .admit_paid(&self.connector, self.meter.reserve_units())
+            .map_err(|_| refused("refused by the budget"))?;
+        run.dispatch_paid(permit.lease(), &self.connector)
+            .map_err(|_| refused("refused at dispatch"))?;
+        let gated = read(permit.lease());
+        let unread = oneiron::llm::LlmUsage::zero();
+        // A read that went out and failed keeps its reservation as spend.
+        let outcome = match &gated {
+            GatedRead::NotStarted => CallOutcome::Answered(&unread),
+            GatedRead::Read(Ok(answer)) => CallOutcome::Answered(&answer.usage),
+            GatedRead::Read(Err(_)) => CallOutcome::Failed,
+        };
+        if let Err(denied) = permit.settle(outcome) {
+            tracing::error!(%denied, "a house decision read's settlement was refused");
+        }
+        Ok(gated)
+    }
+}
+
 /// The house model's decision read, owned. Each call lends it to the
-/// engine's [`DecisionReadProvider`], which admits and settles one lease per
-/// read on the meter. The reader blocks on the server's runtime.
+/// engine's [`DecisionReadProvider`], which admits and settles each read
+/// through its [`HouseGate`]. The reader blocks on the server's runtime.
 struct HouseRead {
     pin: ProviderPin,
     reader: Arc<dyn LabelReadModel>,
-    guard: BudgetGuard,
+    gate: HouseGate,
     paired: DecisionQuestion,
     person: Option<DecisionQuestion>,
     /// The reader's provider is a third party's.
@@ -815,7 +921,7 @@ struct HouseRead {
 impl HouseRead {
     fn new(
         reader: Arc<dyn LabelReadModel>,
-        guard: BudgetGuard,
+        gate: HouseGate,
         paired: DecisionQuestion,
         person: Option<DecisionQuestion>,
         leaves: bool,
@@ -825,7 +931,7 @@ impl HouseRead {
             paired,
             person,
             reader,
-            guard,
+            gate,
             leaves,
         };
         read.provider()?;
@@ -836,7 +942,7 @@ impl HouseRead {
         DecisionReadProvider::new(
             self.pin.clone(),
             self.reader.as_ref(),
-            &self.guard,
+            &self.gate,
             &self.paired,
             self.person.as_ref(),
         )

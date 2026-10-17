@@ -32,6 +32,7 @@ pub enum ActionArgKind {
     Text,
     Token,
     Entity,
+    Json,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -49,6 +50,9 @@ pub enum ActionArgument {
         #[serde(with = "crate::serialize::entity_ref")]
         id: EntityId,
     },
+    /// A verb-table or run row's whole input, structured, past what one text
+    /// holds: a host's REST write carries its full body here.
+    Json(ActionJson),
 }
 impl ActionArgument {
     fn kind(&self) -> ActionArgKind {
@@ -58,7 +62,17 @@ impl ActionArgument {
             Self::Text(_) => ActionArgKind::Text,
             Self::Token(_) => ActionArgKind::Token,
             Self::Entity { .. } => ActionArgKind::Entity,
+            Self::Json(_) => ActionArgKind::Json,
         }
+    }
+    /// Whether this argument fills a `kind` slot of a verb built by `build`.
+    /// A verb-table or run row's one text is its whole JSON input, so that
+    /// slot takes the input structured too.
+    fn fits(&self, kind: ActionArgKind, build: ActionBuild) -> bool {
+        self.kind() == kind
+            || (matches!(self, Self::Json(_))
+                && kind == ActionArgKind::Text
+                && matches!(build, ActionBuild::Verb(_) | ActionBuild::Run(_)))
     }
     fn from_ui(arg: &LensApprovedActionArg) -> Self {
         match arg {
@@ -70,6 +84,40 @@ impl ActionArgument {
                 id: *reference.target().entity_id(),
             },
         }
+    }
+}
+/// One structured JSON argument, at most [`MAX_ACTION_JSON_BYTES`] encoded:
+/// the most a verb-table row's own facade route reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "serde_json::Value", into = "serde_json::Value")]
+pub struct ActionJson(serde_json::Value);
+/// The most one [`ActionJson`] holds, encoded, in bytes.
+pub const MAX_ACTION_JSON_BYTES: usize = crate::memory::caps::MAX_REMOTE_REQUEST_BYTES;
+impl ActionJson {
+    /// # Errors
+    /// A value that encodes past [`MAX_ACTION_JSON_BYTES`].
+    pub fn new(value: serde_json::Value) -> Result<Self> {
+        let bytes = serde_json::to_vec(&value).map_err(|_| invalid("action JSON encoding"))?;
+        if bytes.len() > MAX_ACTION_JSON_BYTES {
+            return Err(invalid("action JSON argument is too large"));
+        }
+        Ok(Self(value))
+    }
+    /// The structured value.
+    #[must_use]
+    pub const fn value(&self) -> &serde_json::Value {
+        &self.0
+    }
+}
+impl TryFrom<serde_json::Value> for ActionJson {
+    type Error = Error;
+    fn try_from(value: serde_json::Value) -> Result<Self> {
+        Self::new(value)
+    }
+}
+impl From<ActionJson> for serde_json::Value {
+    fn from(json: ActionJson) -> Self {
+        json.0
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +164,10 @@ pub struct ActionHostBinding<'a> {
     /// its lease (`HostSelfDispatcher::task_host_binding`). Read live again
     /// at every call, and before any replay answers.
     pub live_run: Option<crate::task_verb::HostBinding>,
+    /// The host's planner that run reads, lent beside its lease: the
+    /// leader's rows (`self.leader.advice`, `self.leader.pattern`) ask it.
+    /// Unset, they answer `planner_unbound`.
+    pub planner: Option<super::HostPlannerBinding<'a>>,
 }
 #[derive(Debug, Clone, Copy)]
 pub struct ActionBuildContext {
@@ -224,8 +276,9 @@ impl ActionRegistry {
     }
     /// Offers the run rows that act on their caller's live agent run
     /// (`tasks.refuse`, `self.agents.spawn`, `self.team.start`,
-    /// `self.team.record`) under their own names, as the memory rows are
-    /// offered. Each runs only when the host binds the run's lease
+    /// `self.team.record`, and the leader's `self.leader.advice` and
+    /// `self.leader.pattern` on the planner the host lends beside it) under
+    /// their own names, as the memory rows are offered. Each runs only when the host binds the run's lease
     /// ([`ActionHostBinding::live_run`]), read live, so the call is the run's
     /// own: its parent, actor and lease are the run's, never the body's.
     pub fn register_live_run_verbs(&mut self) -> Result<()> {
@@ -359,6 +412,7 @@ impl ActionRegistry {
             verb_door: None,
             owner: Some(owner),
             live_run: None,
+            planner: None,
         };
         self.execute(vault, actor, principal, call, binding)
     }
@@ -374,6 +428,7 @@ impl ActionRegistry {
             verb_door,
             owner,
             live_run,
+            planner,
         } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
         // Unbound, a run row would read past the caller's own read key.
@@ -391,10 +446,10 @@ impl ActionRegistry {
             .as_ref()
             .map(|run| run.leased_record(vault))
             .transpose()?;
-        let expected_kind = if actor.actor_class() == EdgeActorClass::Agent {
-            LensActingPrincipalKind::AgentTask
-        } else {
-            LensActingPrincipalKind::HumanView
+        let expected_kind = match actor.actor_class() {
+            EdgeActorClass::Agent => LensActingPrincipalKind::AgentTask,
+            EdgeActorClass::System => LensActingPrincipalKind::SystemJob,
+            EdgeActorClass::Human => LensActingPrincipalKind::HumanView,
         };
         if principal.principal_ref() != actor.entity_ref().to_hex()
             || principal.kind() != expected_kind
@@ -408,7 +463,7 @@ impl ActionRegistry {
                 .args
                 .iter()
                 .zip(&registered.definition.args_schema)
-                .any(|(arg, kind)| arg.kind() != *kind)
+                .any(|(arg, kind)| !arg.fits(*kind, registered.build))
         {
             return Err(invalid("action arguments do not match declared schema"));
         }
@@ -456,6 +511,14 @@ impl ActionRegistry {
                 .map_err(|_| invalid("action encoding"))?,
         )
         .as_bytes();
+        // A live run's lease, read live again before a replayed answer
+        // returns and before any effect: one that moved on meanwhile does
+        // neither.
+        let lease_holds = || {
+            live_run
+                .as_ref()
+                .map_or(Ok(()), |run| run.leased_record(vault).map(drop))
+        };
         let previous = vault.get_code_run_replay_record(&run_id)?;
         let frozen = previous.as_ref().map_or_else(
             || crate::unix_seconds_now().saturating_mul(1000),
@@ -490,6 +553,7 @@ impl ActionRegistry {
                     "shared action is in flight or needs reconciliation",
                 ));
             }
+            lease_holds()?;
             return record
                 .replay_cursor()
                 .dispatch(call)
@@ -498,6 +562,7 @@ impl ActionRegistry {
                     read_receipt,
                 });
         }
+        lease_holds()?;
         // Reserve the EXISTING replay record before effects. A crash or racing
         // caller sees an incomplete record and fails closed, never re-dispatches.
         let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(frozen, seed));
@@ -514,6 +579,10 @@ impl ActionRegistry {
         };
         let dispatcher = match verb_door {
             Some(door) => dispatcher.with_agent_verb_door(door),
+            None => dispatcher,
+        };
+        let dispatcher = match planner {
+            Some(planner) => dispatcher.with_planner(planner),
             None => dispatcher,
         };
         let result = dispatcher.dispatch_for_executor_run(
@@ -551,23 +620,27 @@ impl ActionRegistry {
     }
 }
 fn build_sdk_verb(verb: AgentVerb, args: &[ActionArgument]) -> Result<SelfCall> {
-    let [ActionArgument::Text(input)] = args else {
-        return Err(invalid(
-            "verb-table action takes its JSON input as one text",
-        ));
+    let input = match args {
+        [ActionArgument::Text(input)] => serde_json::from_str(input.as_str())
+            .map_err(|_| invalid("verb-table action input is not JSON"))?,
+        [ActionArgument::Json(input)] => input.value().clone(),
+        _ => {
+            return Err(invalid(
+                "verb-table action takes its JSON input as one text or JSON",
+            ));
+        }
     };
-    let input = serde_json::from_str(input.as_str())
-        .map_err(|_| invalid("verb-table action input is not JSON"))?;
     Ok(SelfCall::AgentVerb(SelfAgentVerbCall { verb, input }))
 }
 /// A run row's typed call, its defaults on the action's frozen clock in unix
 /// seconds, as a code run's own clock is.
 fn build_run_verb(verb: RunVerb, args: &[ActionArgument], frozen_unix_ms: u64) -> Result<SelfCall> {
-    let [ActionArgument::Text(input)] = args else {
-        return Err(invalid("run-row action takes its JSON input as one text"));
+    let input = match args {
+        [ActionArgument::Text(input)] => serde_json::from_str(input.as_str())
+            .map_err(|_| invalid("run-row action input is not JSON"))?,
+        [ActionArgument::Json(input)] => input.value().clone(),
+        _ => return Err(invalid("run-row action takes its JSON input as one text or JSON")),
     };
-    let input = serde_json::from_str(input.as_str())
-        .map_err(|_| invalid("run-row action input is not JSON"))?;
     super::run_verb_call::run_verb_call(verb, input, frozen_unix_ms / 1000)
 }
 fn build_inference_defaults_read(

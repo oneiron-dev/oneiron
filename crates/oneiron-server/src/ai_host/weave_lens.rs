@@ -8,23 +8,28 @@
 //! the caller's own budget line and the egress decision. The engine keeps
 //! the caller's newest live render, and the one before it settles on the
 //! skill's corrections axis; a digest period's render is the Dreamer's
-//! (`dreamer.weave_lens`).
+//! (`dreamer.weave_lens`). The lens answers as a card, lowered once for the
+//! whole atom kit, and its frame is held for the caller's events on it
+//! before the answer leaves (OF-181, [`crate::lens_frames`]).
 use std::sync::Arc;
 
-use oneiron::claim::{CallerLocality, WeaveLiveLens, WeaveReportRequest};
+use oneiron::claim::{
+    CallerLocality, WEAVE_LENS_PLAN_REPAIRS, WEAVE_LIVE_LENS_REREADS, WeaveLiveLens,
+    WeaveReportRequest,
+};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, live_weave_lens_request,
 };
-use oneiron::lens::GeneratedLens;
+use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{
-    MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory,
-    MemoryError, MemoryResult,
+    MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
+    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use oneiron::{
     BudgetExhaustionPolicy, ContentPart, EdgeActorClass, EntityId, LlmCapability, LlmError,
-    ModelLocality, RetryableLlmError, Vault, WriteActor,
+    LlmMessage, LlmMessageRole, ModelLocality, RetryableLlmError, Vault, WriteActor,
 };
 
 use crate::auth::CoreAuth;
@@ -45,16 +50,20 @@ pub(crate) enum WeaveLensCaller {
     /// The owner route reads the owner lens under a live owner proof.
     Owner {
         owner: AuthenticatedOwner,
-        locality: CallerLocality,
+        auth: CoreAuth,
     },
 }
 
 impl WeaveLensCaller {
-    fn locality(&self) -> CallerLocality {
+    /// The credential that asked, under which its card's frame is held.
+    fn auth(&self) -> &CoreAuth {
         match self {
-            Self::Credential { auth, .. } => auth.locality(),
-            Self::Owner { locality, .. } => *locality,
+            Self::Credential { auth, .. } | Self::Owner { auth, .. } => auth,
         }
+    }
+
+    fn locality(&self) -> CallerLocality {
+        self.auth().locality()
     }
 
     /// Runs `read` on the caller's own handle, reading at `reads_at`. The
@@ -121,7 +130,7 @@ pub(crate) async fn render_live_weave_lens(
     server: &Arc<SyncServer>,
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
-) -> MemoryResult<GeneratedLens> {
+) -> MemoryResult<LensFrameCard> {
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
     // An agent that dreams on its own model reads its own lens on that
@@ -168,31 +177,14 @@ pub(crate) async fn render_live_weave_lens(
     };
     // The report goes to the model and its lens back to the caller: it is
     // read as the farther of the two, on this device only when both are.
-    let reads_at = if caller.locality() == CallerLocality::OnDevice
-        && locality == ModelLocality::OnDevice
-    {
-        CallerLocality::OnDevice
-    } else {
-        CallerLocality::OffDevice
-    };
-    let (live, actor) = {
-        let vault = Arc::clone(&vault);
-        let (caller, request) = (caller.clone(), request.clone());
-        tokio::task::spawn_blocking(move || {
-            caller.read(&vault, reads_at, |memory, owner| {
-                let live = memory.weave_lens_prepare(owner, &request)?;
-                Ok((live, WriteActor::new(memory.actor(), memory.actor_class())))
-            })
-        })
-        .await
-        .map_err(|_| joined())??
-    };
-    let live: WeaveLiveLens = live.ok_or_else(|| {
-        unavailable(format!(
-            "{VERB}: the weave-report skill is retired, unapproved or missing"
-        ))
-    })?;
-    // The caller's own line pays for the step, as a chat turn's does.
+    let reads_at =
+        if caller.locality() == CallerLocality::OnDevice && locality == ModelLocality::OnDevice {
+            CallerLocality::OnDevice
+        } else {
+            CallerLocality::OffDevice
+        };
+    let (first, actor) = prepare_live(&vault, &caller, &request, reads_at).await?;
+    // The caller's own line pays for every step, as a chat turn's does.
     let settings = server.ai.chat_settings();
     let run_id = format!(
         "weave_lens:{}:{}",
@@ -207,38 +199,115 @@ pub(crate) async fn render_live_weave_lens(
         actor,
     )?;
     let run = server.ai.undeclared_run(run_id, meter);
-    let step = live_weave_lens_request(
-        &vault,
-        &live,
-        role,
-        model.clone(),
-        &HostInferenceContext {
-            binding: HostInferenceBinding::Advertised {
-                model: model.clone(),
-                locality,
+    let auth = caller.auth().clone();
+    let mut next = Some(first);
+    for _ in 0..=WEAVE_LIVE_LENS_REREADS {
+        let live = match next.take() {
+            Some(live) => live,
+            None => prepare_live(&vault, &caller, &request, reads_at).await?.0,
+        };
+        let mut step = live_weave_lens_request(
+            &vault,
+            &live,
+            role,
+            model.clone(),
+            &HostInferenceContext {
+                binding: HostInferenceBinding::Advertised {
+                    model: model.clone(),
+                    locality,
+                },
+                extraction_egress: server.extraction_egress.as_deref(),
             },
-            extraction_egress: server.extraction_egress.as_deref(),
-        },
-        ladder.supports(&model, &LlmCapability::Reasoning),
-    )?;
-    let response = ladder
-        .generate(&run, step, None)
+            ladder.supports(&model, &LlmCapability::Reasoning),
+        )?;
+        let mut repairs = 0;
+        let answer = loop {
+            let response = ladder
+                .generate(&run, step.clone(), None)
+                .await
+                .map_err(|error| step_failed(&error))?;
+            let answer: String = response
+                .message
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            // A refused plan goes back to the model with why, while it has
+            // repairs left; the last answer is checked again as it closes.
+            match live.plan_refusal(&answer) {
+                Some(reason) if repairs < WEAVE_LENS_PLAN_REPAIRS => {
+                    repairs += 1;
+                    step.messages.push(response.message);
+                    step.messages.push(LlmMessage {
+                        role: LlmMessageRole::User,
+                        content: vec![ContentPart::Text {
+                            text: live.repair_text(&reason),
+                        }],
+                    });
+                }
+                _ => break answer,
+            }
+        };
+        let hosted = {
+            let (vault, caller, request, model) = (
+                Arc::clone(&vault),
+                caller.clone(),
+                request.clone(),
+                model.clone(),
+            );
+            tokio::task::spawn_blocking(move || {
+                caller.read(&vault, reads_at, |memory, owner| {
+                    memory.weave_lens_finish_framed(owner, &request, live, &answer, model.as_str())
+                })
+            })
+            .await
+            .map_err(|_| joined())??
+        };
+        // The report moved between the reads: the lens renders again from a
+        // fresh read, while rereads are left.
+        let Some(hosted) = hosted else {
+            continue;
+        };
+        let (frame, card) = hosted.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+        server
+            .lens_frames
+            .record(&auth, frame, card.render.clone())?;
+        return Ok(card);
+    }
+    Err(MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        format!("{VERB}: the weave report changed while its lens rendered"),
+        &["Ask for the lens again."],
+    ))
+}
+
+/// The caller's live report keyed for the skill, read at `reads_at`, and
+/// the caller as the step's actor.
+async fn prepare_live(
+    vault: &Arc<Vault>,
+    caller: &WeaveLensCaller,
+    request: &WeaveReportRequest,
+    reads_at: CallerLocality,
+) -> MemoryResult<(WeaveLiveLens, WriteActor)> {
+    let (live, actor) = {
+        let vault = Arc::clone(vault);
+        let (caller, request) = (caller.clone(), request.clone());
+        tokio::task::spawn_blocking(move || {
+            caller.read(&vault, reads_at, |memory, owner| {
+                let live = memory.weave_lens_prepare(owner, &request)?;
+                Ok((live, WriteActor::new(memory.actor(), memory.actor_class())))
+            })
+        })
         .await
-        .map_err(|error| step_failed(&error))?;
-    let answer: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    tokio::task::spawn_blocking(move || {
-        caller.read(&vault, reads_at, |memory, owner| {
-            memory.weave_lens_finish(owner, &request, live, &answer, model.as_str())
-        })
-    })
-    .await
-    .map_err(|_| joined())?
+        .map_err(|_| joined())??
+    };
+    let live = live.ok_or_else(|| {
+        unavailable(format!(
+            "{VERB}: the weave-report skill is retired, unapproved or missing"
+        ))
+    })?;
+    Ok((live, actor))
 }

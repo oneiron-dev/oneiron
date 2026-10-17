@@ -183,7 +183,8 @@ impl Vault {
         hold: Option<PackCandidateReason>,
         at: u64,
     ) -> Result<Vec<EntityId>> {
-        let (skills, skill_sources) = self.import_pack_skills_in_txn(txn, source, hub, at)?;
+        let (skills, skill_sources) =
+            self.import_pack_skills_in_txn(txn, source, hub, hold.is_some(), at)?;
         // One transition owns each bundled skill's admission and final receipt.
         // No intermediate Candidate label can escape this transaction.
         for source in &skill_sources {

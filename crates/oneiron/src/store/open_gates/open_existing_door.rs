@@ -261,11 +261,7 @@ impl Store {
         rekey_short_ids_if_needed_in_txn(&self.core.raw, &self.vault_meta, &mut wtxn)?;
         wtxn.commit()?;
 
-        migrate_temporal_long_intervals_if_needed(
-            &self.env,
-            &self.hnsw_meta,
-            &self.temporal_long_intervals,
-        )?;
+        migrate_temporal_long_intervals_if_needed(self)?;
         self.ensure_receipt_family_indexes_on_open()?;
         self.ensure_gate_claim_index_flag_on_open()?;
         self.ensure_default_policy_manifest_on_open()?;

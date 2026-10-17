@@ -14,8 +14,8 @@ pub(crate) use oneiron::sync::transport::{
     APP_TIER_PROTOCOL_VERSION_VERSION, LEASE_STATUS_GRANTED, LEASE_STATUS_REJECTED,
     LEGACY_FULL_WINDOW_PROTOCOL_VERSION, LEGACY_SELECTOR_PROTOCOL_VERSION, PROTOCOL_VERSION,
     TAG_EPHEMERAL, TAG_LEASE_REQUEST, TAG_LFS_CHUNK_SYNC, TAG_RPC, TAG_SUB, TAG_SYNC_UPDATE,
-    TAG_VERSION_VECTOR, decode_lease_request, decode_protocol_hello, encode_ephemeral,
-    encode_lease_granted, installs_window_replacements, is_owner_window_version,
+    TAG_VERSION_VECTOR, decode_lease_request, decode_protocol_hello, decode_protocol_hello_codecs,
+    encode_ephemeral, encode_lease_granted, installs_window_replacements, is_owner_window_version,
     is_residence_version, takes_window_invalidations,
 };
 #[cfg(test)]

@@ -178,8 +178,14 @@ impl HttpLink {
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
-            .header("x-oneiron-binding", binding)
-            .body(body);
+            .header("x-oneiron-binding", binding);
+        // OF-604: a large body crosses zstd, as the remote SDK's does.
+        let request = match oneiron::sync::transport::encode_http_body(&body) {
+            Some(encoded) => request
+                .header(reqwest::header::CONTENT_ENCODING, "zstd")
+                .body(encoded),
+            None => request.body(body),
+        };
         self.runtime.block_on(async move {
             let deadline = tokio::time::Instant::from_std(bounds.until);
             let mut response = match timeout_at(deadline, request.send()).await {
@@ -284,8 +290,11 @@ enum Opened {
     Failed,
 }
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+/// Speaks the own-link codec frame (ARCH-0081 §7): the server's hello gate
+/// reads the codec list the hello below carries.
+type Socket = oneiron::sync::transport::WireSocket<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+>;
 
 impl SocketLink {
     fn new(base: &str, runtime: Handle) -> anyhow::Result<Self> {
@@ -476,7 +485,10 @@ impl SocketLink {
                 .min(tokio::time::Instant::now() + SOCKET_OPEN_TIMEOUT);
             let connect = tokio_tungstenite::connect_async_with_config(request, Some(config), true);
             let mut socket = match timeout_at(deadline, connect).await {
-                Ok(Ok((socket, _))) => socket,
+                Ok(Ok((socket, _))) => oneiron::sync::transport::WireSocket::to_our_server(
+                    socket,
+                    SOCKET_MAX_INBOUND_FRAME,
+                ),
                 Ok(Err(tungstenite::Error::Http(response)))
                     if response.status().is_client_error()
                         && !matches!(response.status().as_u16(), 408 | 429) =>
@@ -566,7 +578,7 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
     while let Ok(request) = requests.try_recv() {
         let _ = request.chunks.send(Inbound::Unsent);
     }
-    let _ = socket.close(None).await;
+    let _ = socket.close().await;
 }
 
 /// One frame from the server, to the request it answers.

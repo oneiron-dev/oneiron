@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::TasksSection;
 use super::memories::MemoriesSection;
-use super::memories_frame::memory_row_text;
+use super::memories_frame::{memories_section_name, memory_row_text};
 use super::memories_projection::foreign_row;
 use super::memory_pins::pinned_row;
 use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt};
@@ -130,6 +130,40 @@ impl MemoriesSection {
             .map(|pin| pin.block)
             .collect()
     }
+
+    /// What each MEMORIES board section this section renders as shows, by
+    /// that section's name: its rows, and the blocks naming one of them under
+    /// their hook's tag. A keyed `describe` of one world's section delivers
+    /// that share alone.
+    #[must_use]
+    pub fn hook_shares(&self, pins: &[HookPin]) -> BTreeMap<String, HookShare> {
+        let mut shares = BTreeMap::<String, HookShare>::new();
+        for row in &self.rows {
+            let share = shares
+                .entry(memories_section_name(row.world.as_deref()))
+                .or_default();
+            share.rows.extend(EntityId::from_hex(&row.id).ok());
+            share.blocks.extend(
+                pins.iter()
+                    .filter(|pin| {
+                        row.hook.as_deref() == Some(pin.hook.as_str())
+                            && pin.refs.iter().any(|id| id.to_hex() == row.id)
+                    })
+                    .map(|pin| pin.block),
+            );
+        }
+        shares
+    }
+}
+
+/// One MEMORIES board section's share of a delivery
+/// ([`MemoriesSection::hook_shares`]).
+#[derive(Debug, Default)]
+pub struct HookShare {
+    /// The rows the section shows.
+    pub rows: BTreeSet<EntityId>,
+    /// The blocks naming one of those rows.
+    pub blocks: BTreeSet<EntityId>,
 }
 
 impl TasksSection {
