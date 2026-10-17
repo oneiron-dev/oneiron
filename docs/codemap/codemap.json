@@ -18398,6 +18398,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/detectors.rs",
+     "purpose": "The Coach's nightly detector pass (ARCH-0066 §4, OF-298): the tier-1 sweep over Gate receipts plus the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -18496,7 +18506,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 10,
+      "mod": 11,
       "re-export": 4
      }
     },
@@ -38716,7 +38726,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
       "crate-vis": 6,
-      "mod": 7,
+      "mod": 8,
       "re-export": 9
      }
     },
@@ -38827,6 +38837,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/served_signals.rs",
+     "purpose": "The served degradation signals (ARCH-0066 §4, OF-298): every tier-1 tripwire whose facts a serving vault…",
+     "surface": {
+      "const": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "Tier1Sweep"
      ],
@@ -38908,15 +38929,16 @@
       "ConsentStormDetector",
       "DreamerRunFacts",
       "PredicateDriftDetector",
+      "RetrievalRegressionDetector",
       "TripwireBounds"
      ],
      "path": "src/self_heal/tripwires.rs",
      "purpose": "Closed-form T1 projections",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
-      "fn": 7,
-      "struct": 5
+      "crate-vis": 5,
+      "fn": 10,
+      "struct": 6
      }
     },
     {
@@ -51417,7 +51439,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52082,7 +52104,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52420,7 +52442,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3170,
+   "source_files": 3172,
    "test_files": 903
   },
   "oneiron-android": {
