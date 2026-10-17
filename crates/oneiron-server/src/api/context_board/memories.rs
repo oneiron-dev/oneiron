@@ -285,15 +285,7 @@ pub(crate) fn resolve_memories_request(
         .unwrap_or(true)
         .then(|| memories_budget(memories, budget_shape.0, budget_shape.1));
 
-    let pinned_refs = memories
-        .map(|controls| controls.pinned_refs.clone())
-        .unwrap_or_default();
-    if pinned_refs.len() > 128 || pinned_refs.iter().any(|reference| reference.len() > 128) {
-        return Err(ApiError::bad_request(
-            "memory pins exceed the bounded reference list",
-            Some("memories.pinned_refs"),
-        ));
-    }
+    let pinned_refs = bounded_pinned_refs(memories)?.to_vec();
     let companion = resolve_companion_assembly(vault, companion, session_id, auth)?;
 
     Ok(MemoriesRequest {
@@ -306,54 +298,85 @@ pub(crate) fn resolve_memories_request(
     })
 }
 
-/// The MEMORIES section a board that runs no retrieval still owes its hook blocks (OF-579): each
-/// block's rows, read as a context pack reads its pins, under the caller's read narrowed to the
-/// board's room (or the caller alone) and the disclosure clamp of those present. A once answer
-/// waits for a pack assembly, so these rows read under standing clearance alone. `None` when
-/// MEMORIES is turned off or no row is admitted. What goes out under a contact's standing
-/// clearance gets the owner's post-hoc receipt, as a pack's rows do.
-pub(crate) async fn hook_pins_section(
+/// The caller's explicit MEMORIES pins, refused past the bounded reference list.
+fn bounded_pinned_refs(
+    memories: Option<&ContextBoardMemoriesControls>,
+) -> Result<&[String], ApiError> {
+    let pinned_refs = memories.map_or(&[][..], |controls| controls.pinned_refs.as_slice());
+    if pinned_refs.len() > 128 || pinned_refs.iter().any(|reference| reference.len() > 128) {
+        return Err(ApiError::bad_request(
+            "memory pins exceed the bounded reference list",
+            Some("memories.pinned_refs"),
+        ));
+    }
+    Ok(pinned_refs)
+}
+
+/// The MEMORIES section a board that runs no retrieval still owes its pins (OF-579): the
+/// caller's `memories.pinned_refs`, the policy manifest's pins and each hook block's rows, read
+/// as a context pack reads its pins, under the caller's read narrowed to the board's room (or
+/// the caller alone) and the disclosure clamp of those present. A once answer waits for a pack
+/// assembly, so these rows read under standing clearance alone. `None` when MEMORIES is turned
+/// off or no row is admitted. What goes out under a contact's standing clearance gets the
+/// owner's post-hoc receipt, as a pack's rows do.
+pub(crate) async fn board_pins_section(
     server: &crate::server::SyncServer,
     auth: &CoreAuth,
     memories: Option<&ContextBoardMemoriesControls>,
     room_id: Option<oneiron::EntityId>,
-    pins: &[oneiron::context_board::HookPin],
+    hook_pins: &[oneiron::context_board::HookPin],
 ) -> Result<Option<oneiron::MemoriesSection>, ApiError> {
-    if pins.is_empty() || memories.and_then(|controls| controls.enabled) == Some(false) {
+    if memories.and_then(|controls| controls.enabled) == Some(false) {
         return Ok(None);
     }
+    let pins = BoardPinSources {
+        refs: bounded_pinned_refs(memories)?,
+        manifest: true,
+        hooks: hook_pins,
+    };
     let read = super::super::scoped_read_for_core_auth(&server.vault, auth)?;
-    let Some(pinned) = hook_pins_projection(&server.vault, auth, read, room_id, pins)? else {
+    let Some(pinned) = board_pins_projection(&server.vault, auth, read, room_id, &pins)? else {
         return Ok(None);
     };
     pinned.receipt.record(&server.vault).await?;
     Ok(Some(pinned.section))
 }
 
-/// A no-retrieval board's hook-pin rows and the receipt their delivery owes.
-pub(crate) struct HookPinsDelivery {
-    pub(crate) section: oneiron::MemoriesSection,
-    pub(crate) receipt: HookPinsReceipt,
+/// What a board that runs no retrieval pins into MEMORIES, in a pack's order: explicit refs,
+/// then the policy manifest's pins when `manifest`, then hook blocks.
+pub(crate) struct BoardPinSources<'a> {
+    pub(crate) refs: &'a [String],
+    pub(crate) manifest: bool,
+    pub(crate) hooks: &'a [oneiron::context_board::HookPin],
 }
 
-/// The owner's post-hoc receipt for hook-pin rows that go out under a contact's standing
+/// A no-retrieval board's pinned rows and the receipt their delivery owes.
+pub(crate) struct BoardPins {
+    pub(crate) section: oneiron::MemoriesSection,
+    pub(crate) receipt: PinsReceipt,
+}
+
+/// The owner's post-hoc receipt for pinned rows that go out under a contact's standing
 /// clearance, held until the board carrying them is delivered.
-pub(crate) struct HookPinsReceipt {
+pub(crate) struct PinsReceipt {
     delivered: Vec<oneiron::EntityId>,
     interlocutors: Option<oneiron::InterlocutorSet>,
     channels: std::collections::BTreeSet<String>,
 }
 
-/// [`hook_pins_section`]'s rows, read under `read` (the caller's own ceiling) narrowed to the
+/// [`board_pins_section`]'s rows, read under `read` (the caller's own ceiling) narrowed to the
 /// board's room (or the caller alone) and clamped to those present, with the receipt left for
 /// the caller to record once the board is delivered. `None` when no row is admitted.
-pub(crate) fn hook_pins_projection<'a>(
+pub(crate) fn board_pins_projection<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
     read: oneiron::claim::ScopedRead<'a>,
     room_id: Option<oneiron::EntityId>,
-    pins: &[oneiron::context_board::HookPin],
-) -> Result<Option<HookPinsDelivery>, ApiError> {
+    pins: &BoardPinSources<'_>,
+) -> Result<Option<BoardPins>, ApiError> {
+    if pins.refs.is_empty() && !pins.manifest && pins.hooks.is_empty() {
+        return Ok(None);
+    }
     let (room_members, room) = super::super::resolve_core_room(vault, auth, &read, room_id)?;
     let interlocutors =
         super::super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
@@ -372,8 +395,19 @@ pub(crate) fn hook_pins_projection<'a>(
     )?;
     let mut section =
         oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)));
-    let _receipts = section
-        .include_hook_pins(&read, pins, disclosure.as_ref())
+    section
+        .include_pinned_refs_with_disclosure(&read, pins.refs, disclosure.as_ref())
+        .map_err(|error| core_engine_error("memory pin read failed", error))?;
+    if pins.manifest {
+        let automatic = read
+            .manifest_pinned_refs()
+            .map_err(|error| core_engine_error("manifest pin read failed", error))?;
+        section
+            .include_pinned_refs_with_disclosure(&read, &automatic.value, disclosure.as_ref())
+            .map_err(|error| core_engine_error("manifest pin disclosure failed", error))?;
+    }
+    section
+        .include_hook_pins(&read, pins.hooks, disclosure.as_ref())
         .map_err(|error| core_engine_error("hook pin read failed", error))?;
     if section.rows.is_empty() {
         return Ok(None);
@@ -388,9 +422,9 @@ pub(crate) fn hook_pins_projection<'a>(
         .map(|room| oneiron::consent::contact_disclosure_room_channel(&room))
         .into_iter()
         .collect();
-    Ok(Some(HookPinsDelivery {
+    Ok(Some(BoardPins {
         section,
-        receipt: HookPinsReceipt {
+        receipt: PinsReceipt {
             delivered,
             interlocutors,
             channels,
@@ -398,7 +432,7 @@ pub(crate) fn hook_pins_projection<'a>(
     }))
 }
 
-impl HookPinsReceipt {
+impl PinsReceipt {
     /// The rows this receipt covers.
     pub(crate) fn delivered(&self) -> &[oneiron::EntityId] {
         &self.delivered

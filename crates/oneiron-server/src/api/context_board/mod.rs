@@ -360,11 +360,12 @@ pub(crate) async fn context_board_hydrate(
                 run_context_pack(&server, &auth, retrieval, Some(memories)).await?;
             (Some(pack), memories, cursor)
         }
-        // OF-579: a board that runs no retrieval still carries its hook
-        // blocks' rows, read under the clamp a pack reads its pins under.
+        // OF-579: a board that runs no retrieval still carries its pins
+        // (explicit, the manifest's and its hook blocks' rows), read under
+        // the clamp a pack reads its pins under.
         None => (
             None,
-            hook_pins_section(
+            board_pins_section(
                 &server,
                 &auth,
                 req.memories.as_ref(),

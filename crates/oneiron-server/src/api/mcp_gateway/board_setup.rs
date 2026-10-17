@@ -302,13 +302,13 @@ impl McpBoardOmissions {
 }
 
 /// The hook blocks one rendered board carries (ARCH-0080 §11, OF-579): the
-/// blocks whose rows it shows, and the receipt its hook-pinned MEMORIES rows
-/// owe. A board rendered for its epoch alone spends neither; setup's page one
+/// blocks whose rows it shows, and the receipt its pinned MEMORIES rows owe.
+/// A board rendered for its epoch alone spends neither; setup's page one
 /// records the receipt before it goes out and spends the blocks once it has.
 #[derive(Default)]
 struct McpBoardHooks {
     blocks: std::collections::BTreeSet<oneiron::EntityId>,
-    receipt: Option<crate::api::context_board::HookPinsReceipt>,
+    receipt: Option<crate::api::context_board::PinsReceipt>,
 }
 
 impl McpBoardHooks {
@@ -369,24 +369,29 @@ fn mcp_hook_pins(
     Ok(pins)
 }
 
-/// A keyframe's MEMORIES, which runs no retrieval: the rows its hook blocks
-/// pin, read as the HTTP board reads them
-/// ([`crate::api::context_board::hook_pins_projection`]) under this
-/// credential, with no room. `None` when no pin reaches a row.
-fn mcp_hook_memories(
+/// A keyframe's MEMORIES, which runs no retrieval: the policy manifest's pins
+/// and the rows its hook blocks pin, read as the HTTP board reads them
+/// ([`crate::api::context_board::board_pins_projection`]) under this
+/// credential, with no room. The credential's read is not narrowed to its
+/// world or facet, so a narrowed or record-restricted connector reads no
+/// manifest pin, and only the hook rows [`mcp_hook_pins`] kept. `None` when no
+/// pin reaches a row.
+fn mcp_pinned_memories(
     server: &SyncServer,
     actor: &McpResolvedActor,
-    pins: &[oneiron::context_board::HookPin],
-) -> Result<Option<crate::api::context_board::HookPinsDelivery>, McpGatewayError> {
-    if pins.is_empty() {
-        return Ok(None);
-    }
+    hook_pins: &[oneiron::context_board::HookPin],
+) -> Result<Option<crate::api::context_board::BoardPins>, McpGatewayError> {
+    let pins = crate::api::context_board::BoardPinSources {
+        refs: &[],
+        manifest: !actor.scope.is_narrow() && actor.has_unrestricted_record_scope(),
+        hooks: hook_pins,
+    };
     let read = mcp_scoped_read(&server.vault, actor)?;
     let auth = actor
         .auth
         .as_ref()
         .expect("a scoped read holds the connector's proof");
-    crate::api::context_board::hook_pins_projection(&server.vault, auth, read, None, pins)
+    crate::api::context_board::board_pins_projection(&server.vault, auth, read, None, &pins)
         .map_err(super::mcp_api_error)
 }
 
@@ -409,7 +414,7 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 /// the renderer, so a board a narrow connector reads is never the actor-wide
 /// board. The pinned VERBS section restates the generated grammar
 /// as board state. `pins` tag the TASKS rows they name and pin their other
-/// rows into MEMORIES.
+/// rows into MEMORIES, beside the policy manifest's pins.
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
@@ -483,7 +488,7 @@ fn mcp_board_sections(
     let tasks_section = oneiron::context_board::assemble_tasks_section(&tasks, Vec::new())
         .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];
-    if let Some(memories) = mcp_hook_memories(server, actor, pins)? {
+    if let Some(memories) = mcp_pinned_memories(server, actor, pins)? {
         hooks
             .blocks
             .extend(memories.section.hook_blocks_delivered(pins));
