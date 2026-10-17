@@ -351,7 +351,9 @@ impl Vault {
         // here; its vectors are recomputed after the commit, never before.
         let embedding_setup =
             super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &document)?;
+        let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup_rows);
         Ok(WholeVaultImportReceipt {
             authority,
             inserted_entities,

@@ -19,13 +19,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/status.rs` | src | s | 3 enum · 7 fn | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
 | `src/code_run.rs` | src | s | 1 mod | — | Shared vocabulary of the code-run vault-read contract |
 | `src/code_run/vault_read.rs` | src | s | 4 re-export | — | The vault-read contract table, the method vocabulary it generates, the request shapes and the error taxonomy… |
-| `src/code_run/vault_read/context_pack.rs` | src | s | 5 struct · 1 enum · 1 fn | ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery, ContextPackRetrievalBudgetControls, CoreContextPackRequest, MediaQueryKind | The vault-read context-pack request and its depth / budget controls |
+| `src/code_run/vault_read/context_pack.rs` | src | s | 6 struct · 1 enum · 1 fn | ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery, ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackRequest, MediaQueryKind | The vault-read context-pack request and its depth / budget controls |
 | `src/code_run/vault_read/contract.rs` | src | s | 1 struct · 4 enum · 8 fn · 4 const | VaultReadAdapterKind, VaultReadAvailability, VaultReadMethod, VaultReadMethodMapping, VaultReadWireOp | The vault-read contract table and the method vocabulary generated from it |
 | `src/code_run/vault_read/error.rs` | src | s | 1 enum · 1 type | VaultReadError | The vault-read error vocabulary |
 | `src/code_run/vault_read/types.rs` | src | s | 7 struct · 2 enum · 3 fn | AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest, CountMode +1 | Vault-read request shapes and the view / count-mode knobs they carry |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 18 fn · 3 const · 2 mod | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | s | 42 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | s | 44 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
 | `src/error/artifact.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | ArtifactError, LiveDeckRefusal | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
@@ -52,10 +52,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |
 | `src/registry/families.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | TypeByteFamily, TypeByteFamilyEntry | Byte-space v3.1 family allocation, independent of kind behavior |
-| `src/registry/mod.rs` | src | s | 11 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
+| `src/registry/mod.rs` | src | s | 12 re-export | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `src/registry/namespaces.rs` | src | s | 2 struct · 1 enum · 1 fn · 2 const | IdNamespaceRegistryEntry, IdNamespaceTarget, StructuralKindRegistration | Presentation-id namespaces for entity kinds and vaults |
 | `src/registry/registry_table.rs` | src | m | 1 struct · 6 fn · 1 const | EntityTypeRegistryEntry | Registry rows: the `ENTITY_TYPE_REGISTRY` table and its lookups |
-| `src/registry/type_bytes.rs` | src | s | 49 const | — | Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant |
+| `src/registry/type_bytes.rs` | src | s | 50 const | — | Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant |
 | `src/registry/validation.rs` | src | s | 3 fn | — | Static validation of entity type bytes, including public-write gates |
 | `src/registry/zones.rs` | src | s | 2 enum · 1 fn · 9 const | EntityClassification, TypeByteZone | Type-byte zones: classification, zone map, and the `zone_of` table |
 | `src/retrieval_quality.rs` | src | s | 3 struct · 3 enum · 4 fn · 4 const | ConfidenceAdjustment, PprCacheOutcome, RetrievalDegradation, RetrievalDiagnostics, RetrievalQuality, RetrievalQualityReport | Shared retrieval execution quality, independent of result counts and ranking |

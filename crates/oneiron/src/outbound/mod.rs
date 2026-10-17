@@ -15,6 +15,7 @@ mod executor;
 mod intent;
 mod manifests;
 mod receipt_fields;
+mod reply_content;
 mod retry_audit;
 mod served_sink;
 mod window_door;
@@ -52,7 +53,8 @@ pub use self::intent::{
     MentionProvenance, OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft,
     OutboundIntentSource, OutboundIntentTrigger,
 };
-pub use self::served_sink::ServedChannelSink;
+pub use self::reply_content::{CONNECTOR_REPLY_BODY_PREFIX, ConnectorReplyBody};
+pub use self::served_sink::{OwnedServedChannelSink, ServedChannelSink};
 
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,

@@ -375,6 +375,7 @@ pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use super::sdk_connector::*;
+pub use super::sdk_connector_call::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;
@@ -382,6 +383,8 @@ pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_record_erase::*;
+pub use super::sdk_scratchpad::*;
+pub use super::sdk_secret::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;
 pub use super::sdk_shared::*;
@@ -574,7 +577,12 @@ pub fn code_mode_declarations() -> &'static str {
                 }
                 (root, _) => {
                     let kind = declaration_type(node, 0);
-                    out.push_str(&format!("declare const {root}: {kind};\n"));
+                    let tools = if root == "connector" && node.children.contains_key("call") {
+                        CONNECTOR_TOOLS_DECLARATION
+                    } else {
+                        ""
+                    };
+                    out.push_str(&format!("declare const {root}: {tools}{kind};\n"));
                 }
             }
         }
@@ -582,6 +590,11 @@ pub fn code_mode_declarations() -> &'static str {
     });
     &DECLARATIONS
 }
+
+/// `connector.<name>.<tool>(args)`: any tool of any catalogued connector,
+/// beside the root's fixed members. The guest's proxy sends it as
+/// `connector.call` (ONE-2510), so it holds no authority that row lacks.
+const CONNECTOR_TOOLS_DECLARATION: &str = "{ readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<unknown> } } & ";
 
 /// One path segment of the verb tree. A segment can be a verb and hold verbs
 /// at once (`self.memory.diary` and `self.memory.diary.query`), so a verb is

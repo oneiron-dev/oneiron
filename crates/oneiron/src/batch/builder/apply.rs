@@ -118,6 +118,10 @@ impl BatchBuilder<'_> {
         if changes_claims {
             super::vad_postcommit::queue_proactivity_change(vault, wtxn);
         }
+        // OF-533: a delegated TASK's terminal result reaches its parked runs here.
+        for task in &tasks {
+            crate::task_verb::deliver_task_result_in_txn(vault, wtxn, *task)?;
+        }
         super::vad_postcommit::queue_task_updates(vault, wtxn, tasks);
         super::vad_postcommit::queue_committed_rows(vault, wtxn, rows);
         Ok(())

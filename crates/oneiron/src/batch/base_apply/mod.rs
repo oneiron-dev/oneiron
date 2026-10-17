@@ -657,6 +657,20 @@ pub(super) fn apply_ops_with_origin(
                     &mut text_manifest_checked,
                 )?;
             }
+            // OF-370: only promotion replays a room's media vector; it lands
+            // when base's bindings still take it, else the backfill fills it.
+            BatchOp::MediaVector {
+                space,
+                id,
+                kind,
+                text_hash,
+                vector,
+            } => {
+                let vector = Zeroizing::new(vector);
+                crate::embed::replay_media_vector_in_txn(
+                    store, wtxn, &space, &id, kind, text_hash, &vector,
+                )?;
+            }
             BatchOp::Phonetic { id, codes } => {
                 if !crate::vault::entity_revision::defer_phonetic(store, wtxn, &id, &codes)? {
                     apply_phonetic(store, wtxn, id, &codes)?;
