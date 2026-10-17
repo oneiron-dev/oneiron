@@ -2290,6 +2290,22 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuthorityHistoryFetch",
+      "AuthorityHistoryPage",
+      "AuthorityHistoryVerificationCoverage"
+     ],
+     "path": "src/authority/history_fetch.rs",
+     "purpose": "Exact-hash authority history fetch, and the coverage an asker verifies itself (OF-469)",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -2550,7 +2566,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 31
+      "re-export": 32
      }
     },
     {
@@ -44403,7 +44419,7 @@
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
       "const": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -51332,7 +51348,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52776,7 +52792,7 @@
    },
    "over_bar": 157,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3195,
+   "source_files": 3196,
    "test_files": 903
   },
   "oneiron-android": {
