@@ -46913,12 +46913,14 @@
      "kind": "src",
      "notable": [
       "SonioxAsrClient",
-      "SonioxTransport"
+      "SonioxTransport",
+      "SonioxUpdate"
      ],
      "path": "src/voice_cascade/soniox.rs",
      "purpose": "Soniox streaming ASR wire client",
      "surface": {
-      "fn": 3,
+      "enum": 1,
+      "fn": 6,
       "struct": 1,
       "trait": 1
      }
@@ -65257,6 +65259,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LiveAsrOptions",
       "MediaSeatConfig",
       "MediaSettings"
      ],
@@ -65264,7 +65267,7 @@
      "purpose": "`[models.media]`: the media seats (ODM-004: image, video and the rest are seats outside the tiers)",
      "surface": {
       "crate-vis": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -67194,7 +67197,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 14,
       "struct": 3
      }
@@ -67209,7 +67212,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 18,
       "re-export": 13,
       "struct": 2
@@ -67343,6 +67346,16 @@
      "purpose": "Which model actually answered: the receipt field a ladder fills in",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/soniox.rs",
+     "purpose": "Soniox's real-time speech-to-text socket (OF-410): a live `[models.media.transcribe]` rung",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -68437,7 +68450,7 @@
      "path": "src/voice_host/media_bridge.rs",
      "purpose": "The host's own speech and hearing on the media seats (OF-410)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 20,
       "enum": 1,
       "struct": 1
      }
@@ -69144,7 +69157,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69265,7 +69278,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 531,
+   "source_files": 532,
    "test_files": 182
   },
   "oneiron-spawn": {
