@@ -1,8 +1,9 @@
 //! Images and audio clips a typed decision reads. The receipt keeps each one's evidence
 //! ref and body version; the pixels and samples ride only on the wire to the seat.
 
-use super::EvidenceVersion;
+use super::{EvidenceVersion, ImagePin, ProviderPin};
 use crate::llm::image::ImageBytes;
+use crate::memory::PixelRegion;
 use crate::{FatalLlmError, LlmResult};
 use base64::Engine as _;
 use serde_json::Value;
@@ -28,6 +29,9 @@ pub struct DecisionImage {
     pub evidence: EvidenceVersion,
     /// PNG or JPEG bytes.
     pub image: ImageBytes,
+    /// Where these pixels sit in the image `evidence` is, when they are a crop of it;
+    /// none is the whole image.
+    pub frame: Option<PixelRegion>,
 }
 
 impl DecisionImage {
@@ -59,10 +63,10 @@ impl DecisionImage {
     }
 
     /// A call's images against its state: valid, none filling a field the state already
-    /// has, and at least one when the call asks a Box question.
-    pub fn check_call(images: &[Self], state: &Value, asks_box: bool) -> LlmResult<()> {
+    /// has, and at least one when the call asks a Box or Point question (`locates`).
+    pub fn check_call(images: &[Self], state: &Value, locates: bool) -> LlmResult<()> {
         Self::validate_all(images)?;
-        if (asks_box && images.is_empty())
+        if (locates && images.is_empty())
             || images.iter().any(|image| state.get(&image.name).is_some())
         {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -79,9 +83,9 @@ impl DecisionImage {
         }
     }
 
-    /// The image with its long edge at most `max_edge` pixels, in its own format. A box
-    /// is in fractions of the image, so it reads the same on the smaller copy; small
-    /// text may still need a crop before the call.
+    /// The image with its long edge at most `max_edge` pixels, in its own format, at
+    /// [`fitted_size`]. A box is in fractions of the image, so it reads the same on the
+    /// smaller copy; small text may still need a crop before the call.
     pub fn fitted(&self, max_edge: u32) -> LlmResult<ImageBytes> {
         let format = match self.format() {
             Some("png") => image::ImageFormat::Png,
@@ -90,14 +94,11 @@ impl DecisionImage {
         };
         let decoded = image::load_from_memory_with_format(&self.image.bytes, format)
             .map_err(|_| FatalLlmError::InvalidRequest)?;
-        if decoded.width().max(decoded.height()) <= max_edge.max(1) {
+        let (width, height) = fitted_size(decoded.width(), decoded.height(), max_edge);
+        if (width, height) == (decoded.width(), decoded.height()) {
             return Ok(self.image.clone());
         }
-        let smaller = decoded.resize(
-            max_edge.max(1),
-            max_edge.max(1),
-            image::imageops::FilterType::Triangle,
-        );
+        let smaller = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
         let mut bytes = std::io::Cursor::new(Vec::new());
         smaller
             .write_to(&mut bytes, format)
@@ -112,6 +113,37 @@ impl DecisionImage {
     pub fn base64(image: &ImageBytes) -> String {
         base64::engine::general_purpose::STANDARD.encode(&image.bytes)
     }
+
+    /// What `provider`, fitting to `edge`, was sent of this image: the receipt's pin.
+    pub fn pin(&self, provider: ProviderPin, edge: Option<u32>) -> LlmResult<ImagePin> {
+        let (width, height) = super::media_ref::dimensions(&self.image)?;
+        let (sent_width, sent_height) =
+            edge.map_or((width, height), |edge| fitted_size(width, height, edge));
+        Ok(ImagePin {
+            provider,
+            name: self.name.clone(),
+            evidence: self.evidence.clone(),
+            width,
+            height,
+            frame: self.frame,
+            edge,
+            sent_width,
+            sent_height,
+        })
+    }
+}
+
+/// The size [`DecisionImage::fitted`] sends a `width` by `height` image at under
+/// `max_edge`: unchanged when its long edge fits, else scaled to fit with its aspect
+/// kept, each side rounded and at least one pixel.
+pub fn fitted_size(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
+    let edge = max_edge.max(1);
+    if width.max(height) <= edge {
+        return (width, height);
+    }
+    let ratio = f64::from(edge) / f64::from(width.max(height));
+    let side = |length: u32| ((f64::from(length) * ratio).round() as u32).clamp(1, edge);
+    (side(width), side(height))
 }
 
 /// Audio clips one call may carry.

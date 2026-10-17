@@ -202,6 +202,150 @@ impl PackFitPolicy for QualifiedPackFitPolicy<'_> {
     }
 }
 
+/// One hook's replay in its pack's test.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PackHookReplay {
+    pub hook: String,
+    pub entries: Vec<crate::runtime_hooks::HookReplayEntry>,
+}
+
+/// What a Candidate hook pack's test found, and where the pack stands after.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackHookQualification {
+    pub disposition: super::PackInstallDisposition,
+    pub replays: Vec<PackHookReplay>,
+}
+
+impl Vault {
+    /// The test a Candidate hub pack's hooks wait for (ARCH-0080 §9): each
+    /// hook body replays over past entries and lands nothing. The replay
+    /// reads with the owner's reach, since only the owner sees what it
+    /// returns; live, the hook reads at its publisher's Grant. With no entry
+    /// failed, refused or out of time, the pack installs in one writer, and
+    /// an install over a bound pack follows the hook update rule. Otherwise it
+    /// stays Candidate, and the replays say why. A verb hook has no replay
+    /// yet, so its pack waits.
+    pub fn qualify_pack_hooks(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+        source_id: crate::EntityId,
+    ) -> Result<PackHookQualification> {
+        use super::admission::{PACK_CANDIDATE, PackCommit};
+        use super::{
+            HookAuthor, HookPhase, PackCandidateReason, PackHookBinding, PackInstallDisposition,
+        };
+        let source = self
+            .get_pack_source(&source_id)?
+            .ok_or_else(|| invalid("pack source missing"))?;
+        let candidate = self
+            .candidate_pack(&source)?
+            .ok_or_else(|| invalid("the pack is not a Candidate"))?;
+        if candidate.candidate_reason != Some(PackCandidateReason::CodeAutoInstallOff)
+            || source.hooks().is_empty()
+            || source.manifest().kind == PackKind::Connector
+            || matches!(source.manifest().adapter, Some(PackAdapter::Script(_)))
+        {
+            return Err(invalid(
+                "only a hook pack waiting on its code qualifies by replay",
+            ));
+        }
+        let (owner_id, author) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                owner.revalidate_in_txn(self, &txn)?,
+                self.hook_author_in_txn(&txn, &candidate)?,
+            )
+        };
+        let pack = source.manifest().name.as_str();
+        let mut replays = Vec::new();
+        let mut passed = true;
+        for hook in source.hooks() {
+            if hook.selector.phase != HookPhase::Fact {
+                return Err(invalid("a verb hook has no replay to qualify it yet"));
+            }
+            let (id, row) =
+                PackHookBinding::for_hook(pack, source_id, owner_id, HookAuthor::Owner, hook, true)?;
+            let entries = self.hooks_replay_binding(runtime, id, &row, None, None, usize::MAX)?;
+            passed &= entries.iter().all(|entry| {
+                !matches!(
+                    &entry.result,
+                    crate::runtime_hooks::HookReplayResult::Ran { outcome, .. }
+                        if outcome == "failed" || outcome == "refused"
+                )
+            });
+            replays.push(PackHookReplay {
+                hook: hook.name.clone(),
+                entries,
+            });
+        }
+        if !passed {
+            return Ok(PackHookQualification {
+                disposition: PackInstallDisposition::Candidate(Box::new(candidate)),
+                replays,
+            });
+        }
+        let hub = crate::skill_hub::HubRef::new(
+            crate::EntityId::from_hex(&candidate.hub_id)?,
+            candidate.hub_ref.clone(),
+            super::hub_pin(&candidate.pin_type, &candidate.pin_value)?,
+        )?;
+        let publisher = match &author {
+            HookAuthor::ForeignActor {
+                identity,
+                hub,
+                grant,
+                ..
+            } => Some(crate::skill_hub::ForeignSkillPublisher {
+                identity: identity.clone(),
+                hub: *hub,
+                grant_ref: grant.clone(),
+            }),
+            HookAuthor::Owner => None,
+        };
+        let disposition = self.with_write_txn_grouped(|txn| {
+            if PACK_CANDIDATE.get(&self.store, txn, &candidate.content_hash)?.as_ref()
+                != Some(&candidate)
+            {
+                return Err(invalid("the Candidate changed during its test"));
+            }
+            if let Some(publisher) = &publisher {
+                self.check_publisher_in_txn(txn, publisher)?;
+            }
+            if let Some(reason) =
+                self.screen_pack_in_txn(txn, &source, &[], &candidate.publisher)?
+            {
+                return Ok(PackInstallDisposition::Blocked { reason });
+            }
+            let disposition = self.commit_pack_install_in_txn(
+                txn,
+                &source,
+                &PackCommit {
+                    source_id,
+                    hub: &hub,
+                    publisher: &candidate.publisher,
+                    foreign: publisher.as_ref(),
+                    verdict: PackFitVerdict {
+                        fits: true,
+                        rules_hit: false,
+                        code_auto_install: true,
+                    },
+                    permissions: &candidate.permissions,
+                    qualification: None,
+                },
+            )?;
+            if let PackInstallDisposition::Installed(receipt) = &disposition {
+                self.follow_pack_hook_update_in_txn(txn, owner, receipt, source_id, &source)?;
+            }
+            Ok(disposition)
+        })?;
+        Ok(PackHookQualification {
+            disposition,
+            replays,
+        })
+    }
+}
+
 pub(super) fn validate_qualification(
     source: &PackSource,
     result: &PackQualification,

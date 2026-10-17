@@ -262,6 +262,7 @@ fn refresh_with(
                         paired: proposal.paired.clone(),
                         person: Vec::new(),
                         time: None,
+                        images: Vec::new(),
                     },
                     human_ask: None,
                 },
