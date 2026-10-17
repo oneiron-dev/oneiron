@@ -1,4 +1,5 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
+//! A regular digest also carries the cleanup cron's after-notice (OF-449).
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -25,6 +26,11 @@ pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.poli
 pub const DIGEST_NOTIFICATION_PRODUCER: &str = "dreamer.digest";
 /// The derived group pending training offers (OF-577) render under.
 pub const TRAINING_OFFER_GROUP: &str = "coach.training_offer";
+/// The derived group the cleanup line (ARCH-0073, OF-449) renders under.
+pub const CLEANUP_GROUP: &str = "dreamer.cleanup";
+/// The cleanup line's view: the owner cleanup surface, where every archive
+/// restores.
+pub const CLEANUP_VIEW: &str = "/v1/owner/cleanup";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -121,6 +127,39 @@ pub struct DigestOffer {
     pub digest: String,
     pub summary: String,
 }
+/// The cleanup cron's after-notice (ARCH-0073 §5): what it archived since
+/// the last digest that carried it, and the proposals that wait for the
+/// owner. Counts come from recorded decisions, never from the archive's size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DigestCleanup {
+    /// The cleanup decisions this line reports, by id.
+    pub decisions: Vec<String>,
+    pub archived: u64,
+    /// Candidates the accept or the run re-checked and left alone.
+    pub skipped: u64,
+    /// The open proposals this line reports, by id.
+    pub proposals: Vec<String>,
+    /// Records those proposals would archive.
+    pub proposed: u64,
+    pub view: String,
+}
+impl DigestCleanup {
+    /// The rendered items: "archived N", then what waits for review.
+    fn summaries(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.decisions.is_empty() {
+            out.push(format!("{CLEANUP_GROUP}: archived {}", self.archived));
+        }
+        if !self.proposals.is_empty() {
+            out.push(format!(
+                "{CLEANUP_GROUP}: {} to archive wait for review",
+                self.proposed
+            ));
+        }
+        out
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityDigest {
@@ -136,6 +175,9 @@ pub struct ProactivityDigest {
     /// Pending training offers not carried by an earlier digest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offers: Vec<DigestOffer>,
+    /// The cleanup line, on a regular digest with cleanup news.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<DigestCleanup>,
     pub rendered: String,
     pub voice_style: String,
 }
@@ -149,6 +191,9 @@ struct DigestState {
     /// its id is enough.
     #[serde(default)]
     offers_seen: std::collections::BTreeSet<String>,
+    /// Cleanup decisions and proposals a digest already carried.
+    #[serde(default)]
+    cleanup_seen: std::collections::BTreeSet<String>,
 }
 impl Vault {
     pub fn set_proactivity_cadence(
@@ -245,6 +290,7 @@ impl Vault {
         }
         if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty()
             && unseen_offers(&offers, &state).is_empty()
+            && unseen_cleanup(self, &txn, &state)?.is_none()
         {
             return Ok(None);
         }
@@ -373,7 +419,14 @@ impl Vault {
             } else {
                 Vec::new()
             };
-            if groups.is_empty() && judge_asks.is_empty() && offers.is_empty() {
+            // So does the cleanup after-notice: it is never urgent.
+            let cleanup = if due {
+                unseen_cleanup(self, &*txn, &state)?
+            } else {
+                None
+            };
+            if groups.is_empty() && judge_asks.is_empty() && offers.is_empty() && cleanup.is_none()
+            {
                 return Ok(None);
             }
             let mut rendered = String::new();
@@ -408,6 +461,23 @@ impl Vault {
                     state.offers_seen.insert(offer.offer.to_hex());
                 }
             }
+            if let Some(line) = &cleanup {
+                let group = presentation
+                    .group_aliases
+                    .get(CLEANUP_GROUP)
+                    .map_or(CLEANUP_GROUP, String::as_str);
+                rendered.push_str(&presentation.group_template.replace("{group}", group));
+                for summary in line.summaries() {
+                    rendered.push_str(
+                        &presentation
+                            .item_template
+                            .replace("{summary}", &summary)
+                            .replace("{ref}", &line.view),
+                    );
+                }
+                state.cleanup_seen.extend(line.decisions.iter().cloned());
+                state.cleanup_seen.extend(line.proposals.iter().cloned());
+            }
             let is_urgent = !due && breakthrough && !groups.is_empty();
             let identity = serde_json::to_vec(&(
                 now,
@@ -415,6 +485,7 @@ impl Vault {
                 &groups,
                 &judge_asks,
                 &offers,
+                &cleanup,
                 is_urgent,
                 &rendered,
                 &presentation.voice_style,
@@ -428,6 +499,7 @@ impl Vault {
                 groups,
                 judge_asks,
                 offers,
+                cleanup,
                 rendered,
                 voice_style: presentation.voice_style,
             };
@@ -461,7 +533,7 @@ impl Vault {
             }
             // The vault state and board pointer follow the shared proposals;
             // an asks-only digest is the recipient's and moves only its mark.
-            if !digest.groups.is_empty() || !digest.offers.is_empty() {
+            if !digest.groups.is_empty() || !digest.offers.is_empty() || digest.cleanup.is_some() {
                 if due {
                     state.last_regular = Some(now);
                 }
@@ -518,6 +590,7 @@ impl Vault {
                     &digest.groups,
                     &digest.judge_asks,
                     &digest.offers,
+                    &digest.cleanup,
                     digest.urgent,
                     &digest.rendered,
                     &digest.voice_style,
@@ -551,6 +624,42 @@ fn unseen_offers(
             ),
         })
         .collect()
+}
+/// The cleanup decisions and open proposals no digest carried yet, as one
+/// line; `None` when there are none.
+fn unseen_cleanup(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    state: &DigestState,
+) -> Result<Option<DigestCleanup>> {
+    let mut line = DigestCleanup {
+        decisions: Vec::new(),
+        archived: 0,
+        skipped: 0,
+        proposals: Vec::new(),
+        proposed: 0,
+        view: CLEANUP_VIEW.to_owned(),
+    };
+    for decision in crate::vault_cleanup::cleanup_digests_in_txn(vault, txn)? {
+        let id = decision.id.to_hex();
+        if state.cleanup_seen.contains(&id) {
+            continue;
+        }
+        line.archived = line.archived.saturating_add(decision.archived.len() as u64);
+        line.skipped = line.skipped.saturating_add(decision.skipped.len() as u64);
+        line.decisions.push(id);
+    }
+    for proposal in crate::vault_cleanup::cleanup_proposals_in_txn(vault, txn)? {
+        let id = proposal.id.to_hex();
+        if state.cleanup_seen.contains(&id) {
+            continue;
+        }
+        line.proposed = line
+            .proposed
+            .saturating_add(proposal.candidates.len() as u64);
+        line.proposals.push(id);
+    }
+    Ok((!line.decisions.is_empty() || !line.proposals.is_empty()).then_some(line))
 }
 fn load_cadence(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityCadence> {
     let row: ProactivityCadence = match CADENCE.get(&vault.store, txn, &())? {

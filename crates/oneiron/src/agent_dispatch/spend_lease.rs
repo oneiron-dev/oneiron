@@ -301,6 +301,15 @@ impl AgentDispatcher<'_> {
         self.available_from_in_txn(&txn, &target)
     }
 
+    /// `scope` as a spend would report it, without spending: what is left
+    /// under the binding cap and the wrap-up or cap signal in force
+    /// (OF-541's budget hold reads it before work starts).
+    pub fn spend_read(&self, scope: &SpendScopeId) -> Result<SpendRead> {
+        let txn = self.vault.store.env.read_txn()?;
+        let target = self.effective_scope_in_txn(&txn, scope)?;
+        self.spend_read_in_txn(&txn, &target)
+    }
+
     /// [`Self::available_units`] in the caller's snapshot.
     pub(crate) fn available_units_in_txn(
         &self,
