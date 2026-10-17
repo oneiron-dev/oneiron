@@ -2087,6 +2087,74 @@ async fn vault_settings_learning_clear(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_widen_proposals(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.widen_proposals")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.widen_proposals", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.widen_proposals", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_widen_proposals(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_widen_proposals_approve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.widen_proposals.approve")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.widen_proposals.approve", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.widen_proposals.approve", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_widen_proposals_approve(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_widen_proposals_decline(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.widen_proposals.decline")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.widen_proposals.decline", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.widen_proposals.decline", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_widen_proposals_decline(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_settings_wake_policy_set(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4725,6 +4793,9 @@ pub(crate) async fn call_verb(
         "vault.settings.learning" => vault_settings_learning(server, call, input).await,
         "vault.settings.learning.put" => vault_settings_learning_put(server, call, input).await,
         "vault.settings.learning.clear" => vault_settings_learning_clear(server, call, input).await,
+        "vault.widen_proposals" => vault_widen_proposals(server, call, input).await,
+        "vault.widen_proposals.approve" => vault_widen_proposals_approve(server, call, input).await,
+        "vault.widen_proposals.decline" => vault_widen_proposals_decline(server, call, input).await,
         "vault.settings.wake_policy.set" => {
             vault_settings_wake_policy_set(server, call, input).await
         }
