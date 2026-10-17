@@ -105,6 +105,8 @@ pub(crate) fn mark_removed_carriers_first(
     carriers: &[(EntityId, Vec<u8>)],
 ) -> Result<()> {
     crate::task_authority::mark_removed_carriers(vault, carriers)?;
+    // A peer's record of a removed carrier leaves with it.
+    crate::sync::ingest::forget_peer_rows(vault, carriers)?;
     #[cfg(test)]
     fail_after_carrier_mark(path)?;
     Ok(())
