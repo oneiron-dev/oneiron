@@ -694,7 +694,9 @@ A candidate is an instruction your publisher ships and you install and pin. The 
 each failure in the vault with the candidate added to the failing agent's instructions, and only
 the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
 fetches or installs it. A file that no longer matches its pin stops the server at start. At most
-8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
+8 candidates, 16 KiB each. A newly pinned candidate is also tried once on each past failure that
+still stands: after the server starts, the Coach works through its earlier code-fix work a few
+failures at a time.
 `GET /v1/owner/coach/code-fixes?limit=<n>` lists the Coach's code-fix work, newest first: each
 failure case's heal route (`case`), or a blocked report's when the agent's run has no failed case
 (`blocked_report`), its class, the invented example's verdict and each candidate's fixed or
