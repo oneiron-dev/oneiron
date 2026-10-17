@@ -219,21 +219,24 @@ async fn admit_connector(
 }
 
 /// The model call the body asks for, before the memory goes in. Only a
-/// model `[models]` configures is served, by its id or by an alias the
-/// owner names in `[models.aliases]`; no body field picks a route.
+/// model this host serves is served: one `[models]` configures, by its id
+/// or by an alias the owner names in `[models.aliases]`, or one a mesh
+/// catalog refresh discovered, by its id. No body field picks a route.
 fn model_request(
     server: &SyncServer,
     chat: &ChatCompletionRequest,
 ) -> Result<LlmRequest, Response> {
-    let aliased = server
-        .ai
-        .model_runtime()
-        .router()
+    let router = server.ai.model_runtime().router();
+    let aliased = router
+        .as_ref()
         .and_then(|router| router.aliased(&chat.model).cloned());
+    // A model the mesh discovered on the owner's other nodes is served as
+    // the raw routes serve it: its own-server row vouches for it at
+    // admission (FIX 3229).
     let (model, served_at) = aliased
         .or_else(|| chat.model.parse::<ModelId>().ok())
         .and_then(|model| {
-            let served_at = server.ai.model_locality(&model)?;
+            let (served_at, _) = router.as_ref()?.served(&model)?;
             Some((model, served_at))
         })
         .ok_or_else(|| {
@@ -242,7 +245,7 @@ fn model_request(
                 "invalid_request_error",
                 "model_not_found",
                 format!(
-                    "no model this vault configures has the id or alias {:?}",
+                    "no model this vault serves has the id or alias {:?}",
                     chat.model
                 ),
             )
