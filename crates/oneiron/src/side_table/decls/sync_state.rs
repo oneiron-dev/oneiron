@@ -221,6 +221,9 @@ side_tables! {
     /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire
     /// model).
     MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named;
+    /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
+    /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
+    SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
@@ -289,6 +292,13 @@ side_tables! {
     /// The last home arrival number this machine took sealed packets in through (u64be).
     /// Key: ().
     SYNC_RESIDENCE_SEALED_TAKEN: SyncState b"rst" Raw;
+    /// A sealed packet the home stages from parts until its last one (OF-534 G7): u64be vault
+    /// second of its latest part ‖ the window label its sender named, and beside it each part's
+    /// bytes. Key: hex64 (blake3 of the whole packet), then ":" hex16 (offset) per part.
+    SYNC_RESIDENCE_SEALED_STAGE: SyncState b"rsu:" Raw;
+    /// The machines that asked the home for a replacement of one sealed window, lacking an
+    /// update's base (OF-534 G7), 16 bytes each. Key: window label.
+    SYNC_RESIDENCE_SEALED_WANT: SyncState b"rsw:" Raw;
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw;

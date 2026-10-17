@@ -33,7 +33,7 @@ use super::types::{
     CoreShortIdHydrateOutcome, View, search_fetch_limit, search_total,
 };
 use super::validate::{
-    non_empty_query, parse_short_ref, parse_short_ref_request, parse_timeline_anchor,
+    non_empty_query, parse_short_ref, parse_short_ref_request, parse_timeline_anchor, query_affect,
 };
 
 /// Embedded-host adapter. It stores an actor-keyed [`ScopedRead`] binding,
@@ -169,15 +169,17 @@ impl<'v> InProcessVaultReadAdapter<'v> {
 
     /// Host media seeds, the one-space preset's text-slot seed among them,
     /// are each one more ranked list beside the text and vector seeds, as on
-    /// the accepted route's `run_core_query`.
+    /// the accepted route's `run_core_query`. A query asked in an affect
+    /// rides the seeded search, the one that takes it.
     fn run_query(
         &self,
         query: Option<&str>,
         vector: Option<&[f32]>,
         media: &[EmbeddedMediaSeed],
         limit: usize,
+        affect: Option<crate::affect::Vad>,
     ) -> VaultReadResult<crate::claim::ScopedReadResult<Vec<ScoredEntity>>> {
-        let results = if media.is_empty() {
+        let results = if media.is_empty() && affect.is_none() {
             match (query, vector) {
                 (Some(query), Some(vector)) => self.scoped_read.search(query, vector, limit, None),
                 (Some(query), None) => self.scoped_read.search_text(query, limit, None),
@@ -202,7 +204,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 })
                 .collect();
             self.scoped_read
-                .search_seeded(query, vector, &media, limit, None)
+                .search_seeded(query, vector, &media, limit, None, affect)
         };
         results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
     }
@@ -217,11 +219,13 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         if self.media.is_none() && request.media.is_some() {
             return Err(media_unavailable(METHOD));
         }
+        let affect = query_affect(request)?;
         let admitted = self.run_query(
             non_empty_query(request.query.as_deref()),
             request.query_vector.as_deref(),
             self.media.unwrap_or_default(),
             fetch_limit,
+            affect,
         )?;
         if let Some(producers) = self.producers {
             producers.list(admitted.value.iter().map(|result| result.id));

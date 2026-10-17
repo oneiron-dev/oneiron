@@ -279,15 +279,36 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
         return Ok(fold);
     }
     // A miss resumes from the last committed generation's fold where it can.
-    let continuation = store.authority_fold_cache.lock().ok().and_then(|cache| {
-        cache
-            .as_ref()
-            .and_then(|cached| cached.continuation.clone())
-    });
+    let continuation = resumable_continuation(store, key.generation);
     let (view, next_deadline_secs, continuation) =
         fold_view_for_key(store, posture, txn, key, continuation.as_deref())?;
     cache_fold_if_committed(store, key, next_deadline_secs, &view, continuation);
     Ok(view)
+}
+
+/// The cached continuation a fold at `generation` may resume from: only one
+/// folded at that generation or an earlier one. A snapshot older than the
+/// cached fold lacks rows that fold read, and would be refused as missing
+/// history it never lost.
+fn resumable_continuation(store: &Store, generation: u64) -> Option<Arc<AuthorityContinuation>> {
+    store.authority_fold_cache.lock().ok().and_then(|cache| {
+        cache
+            .as_ref()
+            .filter(|cached| cached.key.generation <= generation)
+            .and_then(|cached| cached.continuation.clone())
+    })
+}
+
+/// The rows the continuation a fold in `txn` would resume from has folded:
+/// a fold refuses as missing history any of them `txn` does not hold.
+pub(super) fn resumed_hashes_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<AuthorityEntryHash>> {
+    let generation = authority_cache_generation(store, txn)?;
+    Ok(resumable_continuation(store, generation)
+        .map(|continuation| continuation.ids.values().copied().collect())
+        .unwrap_or_default())
 }
 
 /// This vault's own log folded as an install pinned to `pin` would fold it,
@@ -310,6 +331,8 @@ pub(super) fn authority_view_under_pin_for_store_in_txn(
 /// The full fold behind `key`, resumed past `baseline` where it can be, the
 /// next stale-roster deadline it holds, and what the next generation
 /// resumes from. History the vault no longer holds fails closed: no fold.
+/// The refusal drops the fold's request, but nothing is lost to repair:
+/// [`Vault::authority_history_request`] names every hash it named.
 fn fold_view_for_key(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -330,10 +353,17 @@ fn fold_view_for_key(
             next_deadline_secs,
             continuation,
         } => Ok((view, next_deadline_secs, continuation)),
-        AuthorityTailFold::NeedHistory(_) => {
-            Err(Error::CorruptedIndex("authority history incomplete"))
-        }
+        AuthorityTailFold::NeedHistory(_) => Err(Error::CorruptedIndex(HISTORY_INCOMPLETE)),
     }
+}
+
+/// What a fold refuses with when it needs history this vault does not hold.
+const HISTORY_INCOMPLETE: &str = "authority history incomplete";
+
+/// Whether `error` is a fold's refusal for history this vault does not hold,
+/// which an import of that history may close, rather than a fault.
+pub(super) fn is_history_incomplete(error: &Error) -> bool {
+    matches!(error, Error::CorruptedIndex(reason) if *reason == HISTORY_INCOMPLETE)
 }
 
 /// The stored log's fold behind `key` past `baseline` (OF-469). The rows the

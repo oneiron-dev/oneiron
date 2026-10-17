@@ -161,6 +161,19 @@ impl Vault {
             &HexId(receipt.receipt_id),
             &encode_rotation_receipt_body(&receipt)?,
         )?;
+        // A key a mask found is answered by its rotation (OF-560's notice).
+        crate::secret_custody::settle_found_key_in_txn(
+            &self.store,
+            wtxn,
+            &id,
+            crate::secret_custody::FoundKeySettled {
+                action: crate::secret_custody::FoundKeyAction::Rotate,
+                by: None,
+                at,
+                receipt: format!("rotation:{}", receipt.receipt_id.to_hex()),
+                grant_ref: None,
+            },
+        )?;
         Ok(receipt)
     }
 }

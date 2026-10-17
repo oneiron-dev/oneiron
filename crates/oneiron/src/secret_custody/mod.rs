@@ -55,6 +55,10 @@
 //! * reveal by handle (OF-560): an agent's `reveal`, `wait` and `describe`,
 //!   the owner's answer to a reveal's ask, and the owner's own read,
 //!   [`Vault::reveal_secret_as_owner`](crate::Vault::reveal_secret_as_owner).
+//! * use by handle (OF-560): an agent hands a secret to one trusted
+//!   operation and gets its result back, never the value, under the custody
+//!   binding alone; the owner adds that binding with
+//!   [`Vault::bind_secret_as_owner`](crate::Vault::bind_secret_as_owner).
 //!
 //! Companion [`crate::secret_manifest`] owns the repo-side TOML declaration
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
@@ -63,11 +67,13 @@
 mod codec;
 mod doors;
 mod floor;
+mod found_keys;
 mod masked_files;
 mod owner_door;
 mod reveal;
 mod transition;
 mod types;
+mod use_handle;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {
@@ -90,6 +96,14 @@ pub(crate) use self::doors::{
     restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub use self::found_keys::{
+    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled,
+    NOTIFICATION_PRODUCER_FOUND_KEY,
+};
+pub(crate) use self::found_keys::{
+    FoundNote, KeptValues, note_found_keys_in_txn, raise_found_key_notices_in_txn,
+    settle_found_key_in_txn,
+};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys, MemberStep, filled,
@@ -117,6 +131,12 @@ pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
     SECRET_NAME_INDEX_PREFIX, SECRET_NAME_MAX_BYTES, SECRET_SCOPE_READ, SecretBinding,
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
+};
+pub(crate) use self::use_handle::SecretUser;
+pub use self::use_handle::{
+    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_OPERATIONS, SECRET_USE_REASON,
+    SecretBindRequest, SecretBound, SecretUseDecision, SecretUseOperation, SecretUseOutcome,
+    SecretUseReceipt, SecretUseSend,
 };
 
 #[cfg(test)]

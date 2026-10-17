@@ -140,6 +140,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.fanout.launch",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutLaunchRequest,
+                >(),
+            ),
+            (
+                "vault.fanout.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutResumeRequest,
+                >(),
+            ),
+            (
+                "vault.fanout.ack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutAckRequest,
+                >(),
+            ),
+            (
                 "tasks.update",
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
@@ -529,6 +547,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.secrets.lift_history",
+                crate::code_run::vault_read::request_schema::<crate::policy_model::SecretLiftRequest>(
+                ),
+            ),
+            (
                 "vault.widen_proposals",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -603,6 +626,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "reveal.describe",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RevealDescribeRequest,
+                >(),
+            ),
+            (
+                "self.use",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretUseRequest,
                 >(),
             ),
             (
@@ -1750,12 +1779,37 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.fanout.launch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.ack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "tasks.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
-            &["task_ref"]
+            &["spec", "task_ref"]
         }
         "vault.witness" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -2232,6 +2286,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.secrets.lift_history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.widen_proposals" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2325,6 +2386,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "reveal.describe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.use" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3438,6 +3506,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.wave" => {
             let _input: crate::task_verb::sdk::TaskWaveRequest = decode(value.clone())?;
         }
+        "vault.fanout.launch" => {
+            let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
+        }
+        "vault.fanout.resume" => {
+            let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
+        }
+        "vault.fanout.ack" => {
+            let _input: crate::task_verb::sdk::FanoutAckRequest = decode(value.clone())?;
+        }
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
         }
@@ -3686,6 +3763,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::learning_setting_doors::LearningSettingClear =
                 decode(value.clone())?;
         }
+        "vault.secrets.lift_history" => {
+            let _input: crate::policy_model::SecretLiftRequest = decode(value.clone())?;
+        }
         "vault.widen_proposals" => {
             let _input: crate::agent_dispatch::widen_doors::WidenProposalsRequest =
                 decode(value.clone())?;
@@ -3734,6 +3814,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "reveal.describe" => {
             let _input: crate::task_verb::sdk::RevealDescribeRequest = decode(value.clone())?;
+        }
+        "self.use" => {
+            let _input: crate::task_verb::sdk::SecretUseRequest = decode(value.clone())?;
         }
         "vault.shares.create" => {
             let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
@@ -4340,6 +4423,9 @@ pub fn invoke(
         "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
+        "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
+        "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
+        "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
@@ -4469,6 +4555,7 @@ pub fn invoke(
         "vault.settings.learning.clear" => {
             encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
+        "vault.secrets.lift_history" => encode(vault_secrets_lift_history(memory, decode(value)?)?),
         "vault.widen_proposals" => encode(vault_widen_proposals(memory, decode(value)?)?),
         "vault.widen_proposals.approve" => {
             encode(vault_widen_proposals_approve(memory, decode(value)?)?)
@@ -4494,6 +4581,7 @@ pub fn invoke(
         "reveal" => encode(reveal(memory, decode(value)?)?),
         "reveal.wait" => encode(reveal_wait(memory, decode(value)?)?),
         "reveal.describe" => encode(reveal_describe(memory, decode(value)?)?),
+        "self.use" => encode(self_use(memory, decode(value)?)?),
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
@@ -5091,6 +5179,24 @@ pub fn tasks_wave(
     input: crate::task_verb::sdk::TaskWaveRequest,
 ) -> MemoryResult<crate::task_verb::sdk::TaskWaveReceipt> {
     crate::task_verb::sdk::host_only(memory, "tasks.wave", &input)
+}
+pub fn vault_fanout_launch(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutLaunchRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::FanoutLaunchView>> {
+    crate::task_verb::sdk::read_fanout_launch(memory, input)
+}
+pub fn vault_fanout_resume(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutResumeRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
+}
+pub fn vault_fanout_ack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutAckRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
@@ -5748,6 +5854,17 @@ pub fn vault_settings_learning_clear(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_secrets_lift_history(
+    memory: &Memory<'_>,
+    input: crate::policy_model::SecretLiftRequest,
+) -> MemoryResult<crate::policy_model::SecretLiftStatus> {
+    crate::policy_model::secret_lift_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.lift_history")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_widen_proposals(
     memory: &Memory<'_>,
     input: crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -5826,7 +5943,7 @@ pub fn vault_lenses_list(
 pub fn vault_lenses_default(
     memory: &Memory<'_>,
     input: crate::lens::LensDefaultRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::LensFrameCard>> {
     memory.lenses_default(input)
 }
 pub fn vault_disclosure_offer(
@@ -5852,6 +5969,12 @@ pub fn reveal_describe(
     input: crate::task_verb::sdk::RevealDescribeRequest,
 ) -> MemoryResult<crate::task_verb::sdk::RevealHandleCard> {
     crate::task_verb::sdk::describe_secret_as_caller(memory, input)
+}
+pub fn self_use(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretUseRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretUseAnswer> {
+    crate::task_verb::sdk::use_secret_as_caller(memory, input)
 }
 pub fn vault_shares_create(
     memory: &Memory<'_>,

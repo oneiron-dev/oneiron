@@ -48,9 +48,11 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         let pending = self.pending_dreamer_vad_approval_in_txn(&wtxn, id, body.approval)?;
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
         let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
         // Canonical consolidation opens its own writer only after durable
@@ -178,6 +180,7 @@ impl Vault {
         // covered by the one check because both arrive through this door.
         crate::batch::reject_family_owned_candidate(&candidate)?;
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         landing(&wtxn)?;
         self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
         crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
@@ -206,6 +209,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
         )?;
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
         Ok(())
@@ -234,6 +238,7 @@ impl Vault {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         landing(&wtxn)?;
         self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
         // The write-verb guard runs BEFORE the gate checks, because those
@@ -337,6 +342,7 @@ impl Vault {
             ApplyOpsGateMode::new(false, false),
         )?;
         super::supersession_diff::store_in_txn(self, &mut wtxn, *old_id, *new_id, revisions)?;
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         Ok(())
     }

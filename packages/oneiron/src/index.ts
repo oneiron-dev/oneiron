@@ -205,6 +205,8 @@ export class Oneiron {
       /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
       ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
     },
+    /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
+    use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
     skills: {
       /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
       save: (input: Facade.SkillSaveRequest): Facade.SkillAuthoringReceipt => this.#call(() => this.#client.selfSkillsSave(input) as Facade.SkillAuthoringReceipt),
@@ -231,6 +233,14 @@ export class Oneiron {
       plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
       /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
+    },
+    fanout: {
+      /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none. */
+      launch: (input: Facade.FanoutLaunchRequest): Facade.FanoutLaunchView | null => this.#call(() => this.#client.vaultFanoutLaunch(input) as Facade.FanoutLaunchView | null),
+      /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
+      resume: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResume(input) as Facade.FanoutLaunchView),
+      /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
+      ack: (input: Facade.FanoutAckRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.FanoutLaunchView),
     },
     /**
    * Witnesses one conversational turn.
@@ -448,6 +458,10 @@ export class Oneiron {
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
     },
+    secrets: {
+      /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+      lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
+    },
     /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
     widen_proposals: Object.assign((input: Facade.WidenProposalsRequest): Facade.WidenProposalsView => this.#call(() => this.#client.vaultWidenProposals(input) as Facade.WidenProposalsView), {
       /** The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued. */
@@ -464,8 +478,8 @@ export class Oneiron {
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
       /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
-      /** Composes the default vault lens from the named sources, read under the caller's own scope. */
-      default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.GeneratedLens> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.GeneratedLens>),
+      /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
+      default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.LensFrameCard> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.LensFrameCard>),
     },
     disclosure: {
       /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
@@ -758,7 +772,7 @@ export class Oneiron {
     create: (input: Facade.TaskCreateRequest): Facade.TaskCreateReceipt => this.#call(() => this.#client.tasksCreate(input) as Facade.TaskCreateReceipt),
     /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
     wave: (input: Facade.TaskWaveRequest): Facade.TaskWaveReceipt => this.#call(() => this.#client.tasksWave(input) as Facade.TaskWaveReceipt),
-    /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
+    /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
