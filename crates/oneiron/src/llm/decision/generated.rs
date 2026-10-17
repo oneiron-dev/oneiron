@@ -201,7 +201,15 @@ impl DecisionLadder<'_> {
                     .map(Some),
             );
         }
-        let decisions = self.close(&pack, first, readings)?;
+        // The escalation past the first read asks the host's synchronous seats,
+        // which block on the host's runtime; a thread driving this future (the
+        // Dreamer's) cannot enter it, so the close runs on its own thread.
+        let decisions = std::thread::scope(|scope| {
+            scope
+                .spawn(move || self.close(&pack, first, readings))
+                .join()
+        })
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
         Ok(GeneratedDecisions::Decided {
             decisions,
             steps: spent.clone(),
