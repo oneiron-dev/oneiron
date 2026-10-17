@@ -26,7 +26,8 @@ use oneiron::authority::VerifiedSlip;
 use oneiron::claim::CallerLocality;
 use oneiron::embed::InputKind;
 use oneiron::memory::{
-    Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult, ProducerRows,
+    Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryPack, MemoryResult, ProducerRows,
     RecallEffort,
 };
 use oneiron::retrieval_depth::RecallQueryVectors;
@@ -34,7 +35,13 @@ use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::core::SyncServer;
+use crate::api::DecodedMediaQuery;
 use crate::embedder::EmbedQueryRefusal;
+
+/// Whether a light recall (call mode included) embeds a request's `media`
+/// (OF-370). Light makes no model call (ARCH-0044 S6), so it refuses media
+/// rather than recall without it.
+const LIGHT_RECALL_EMBEDS_MEDIA: bool = false;
 
 impl SyncServer {
     /// Runs `recall` for `memory` with the server's execution inputs.
@@ -51,12 +58,94 @@ impl SyncServer {
     ) -> MemoryResult<MemoryPack> {
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
-        let embed = self.recall_embed(input.effort);
+        let media = self.recall_media(&input)?;
+        let refused = Mutex::new(None);
+        let embed = self.recall_embed_media(input.effort, media, &refused);
         let door = RecallDoor {
             rerank: rerank.engine(),
             ..RecallDoor::now()
         };
-        oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door)
+        let pack = oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door);
+        media_refused(refused)?;
+        pack
+    }
+
+    /// A recall's `media` (OF-370), decoded before any work, as the context
+    /// pack decodes its own: the space, the tower its MIME picks and the
+    /// bytes. Light effort refuses it ([`LIGHT_RECALL_EMBEDS_MEDIA`]), as does
+    /// a `kinds` filter, which recall's per-space list does not read.
+    fn recall_media(&self, input: &RecallRequest) -> MemoryResult<Option<DecodedMediaQuery>> {
+        let Some(media) = input.media.as_ref() else {
+            return Ok(None);
+        };
+        if input.effort.map_or(Effort::Medium, RecallEffort::level) == Effort::Light
+            && !LIGHT_RECALL_EMBEDS_MEDIA
+        {
+            return Err(MemoryError::bad_request_with(
+                "vault.recall: media needs an ai.embed call, which light effort and call mode never make",
+                &["Recall media at medium effort or above."],
+            ));
+        }
+        if !media.kinds.is_empty() {
+            return Err(MemoryError::bad_request_with(
+                "vault.recall: media.kinds is not read here; a recall's media list keeps every kind its space holds",
+                &["Leave out media.kinds, or narrow with scope.kinds."],
+            ));
+        }
+        crate::api::ContextPackMediaQuery::from(media.clone())
+            .decode(self.config.limits.retrieval_query_bytes)
+            .map(Some)
+            .map_err(media_refusal)
+    }
+
+    /// [`Self::recall_embed`] plus the request's decoded `media`, embedded
+    /// into its declared space through the context pack's shared seed
+    /// embedding once the request is admitted, as the query is. A refused
+    /// embedding is kept in `refused` for the door to answer with: the recall
+    /// never answers without its media.
+    fn recall_embed_media<'a>(
+        &'a self,
+        effort: Option<RecallEffort>,
+        media: Option<DecodedMediaQuery>,
+        refused: &'a Mutex<Option<MemoryError>>,
+    ) -> impl FnOnce(&str) -> RecallQueryVectors + 'a {
+        let embed = self.recall_embed(effort);
+        move |query| {
+            let mut vectors = embed(query);
+            if let Some(media) = media {
+                match self.recall_media_vectors(media) {
+                    Ok(seeds) => vectors.media.extend(seeds),
+                    Err(refusal) => {
+                        if let Ok(mut slot) = refused.lock() {
+                            *slot = Some(refusal);
+                        }
+                    }
+                }
+            }
+            vectors
+        }
+    }
+
+    /// The media's vectors in its declared space, driven on the runtime this
+    /// blocking thread belongs to.
+    fn recall_media_vectors(
+        &self,
+        media: DecodedMediaQuery,
+    ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>)>> {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return Err(MemoryError::new(
+                MEMORY_CODE_MODEL_UNAVAILABLE,
+                "vault.recall: no runtime drives the media embedder",
+                &["Recall media through the server's async doors."],
+            ));
+        };
+        let seeds = runtime
+            .block_on(crate::api::embed_media_seeds(self, Some(media), None))
+            .map_err(media_refusal)?;
+        Ok(seeds
+            .into_iter()
+            .map(|seed| (seed.space, seed.kind, seed.vector))
+            .collect())
     }
 
     /// The query embedder recall runs with. Light is pure retrieval with no
@@ -170,6 +259,7 @@ impl SyncServer {
                 self.vault.call_mode_deadline(),
             )?;
             let rerank = self.door_rerank(effort, actor, class)?;
+            let media = self.recall_media(&input)?;
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);
@@ -183,15 +273,18 @@ impl SyncServer {
                 let memory = reader(&server.vault, actor, class, proof.as_ref())
                     .at(locality)
                     .listing_producers(&listing);
-                let embed = server.recall_embed(input.effort);
-                match room {
+                let refused = Mutex::new(None);
+                let embed = server.recall_embed_media(input.effort, media, &refused);
+                let answer = match room {
                     Some(room) => memory
                         .for_room_turn(room)?
                         .recall_at_door_seeded(input, embed, &door),
                     None => {
                         oneiron::task_verb::sdk::recall_at_door_seeded(&memory, input, embed, &door)
                     }
-                }
+                };
+                media_refused(refused)?;
+                answer
             });
             let joined = match budget {
                 None => task.await,
@@ -251,7 +344,8 @@ impl SyncServer {
             input.deadline_ms,
             self.vault.call_mode_deadline(),
         )?;
-        let Some(budget) = budget.filter(|_| effort == Effort::Light) else {
+        // A recall naming media takes the embedding door, which answers it.
+        let Some(budget) = budget.filter(|_| effort == Effort::Light && input.media.is_none()) else {
             let memory = reader(&self.vault, actor, class, proof.as_ref())
                 .at(locality)
                 .listing_producers(producers);
@@ -302,6 +396,27 @@ impl SyncServer {
             }
         }
     }
+}
+
+/// The refusal a recall's media embedding kept, which the door answers with
+/// in place of the pack.
+fn media_refused(refused: Mutex<Option<MemoryError>>) -> MemoryResult<()> {
+    refused.into_inner().ok().flatten().map_or(Ok(()), Err)
+}
+
+/// A media query's refusal in the facade's vocabulary: the caller's mistake
+/// is `BAD_REQUEST`, a policy refusal `FORBIDDEN`, a space no rung serves
+/// `MODEL_UNAVAILABLE`.
+fn media_refusal(error: crate::error::ApiError) -> MemoryError {
+    use crate::error::ErrorCode;
+    let code = match error.code() {
+        ErrorCode::BadRequest => MEMORY_CODE_BAD_REQUEST,
+        ErrorCode::Forbidden => MEMORY_CODE_FORBIDDEN,
+        ErrorCode::EmbedderUnavailable => MEMORY_CODE_MODEL_UNAVAILABLE,
+        _ => MEMORY_CODE_INTERNAL,
+    };
+    let suggestions: Vec<&str> = error.suggestions().iter().map(String::as_str).collect();
+    MemoryError::new(code, format!("vault.recall: {}", error.message()), &suggestions)
 }
 
 /// `actor`'s memory facade, reading under the slip it presented.

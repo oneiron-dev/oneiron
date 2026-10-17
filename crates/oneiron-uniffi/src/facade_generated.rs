@@ -113,11 +113,12 @@ export_facade! {
     let output = client.vault_claims_upsert(&claim)?;
     Lift::lift(output)
 };
-"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>) -> MemoryPack = |client| {
+"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>) -> MemoryPack = |client| {
     let effort: oneiron::memory::RecallEffort = effort.lower()?;
     let scope: oneiron::memory::RecallScope = scope.lower()?;
     let limit: usize = limit.lower()?;
-    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms)?;
+    let media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media.lower()?;
+    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media)?;
     Lift::lift(output)
 };
 "vault.export" => fn vault_export(&self, format: Option<String>) -> MemoryExport = |client| {

@@ -382,7 +382,7 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None))]
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -396,6 +396,7 @@ impl NativeClient {
         format: Option<String>,
         as_of: Option<u64>,
         deadline_ms: Option<u64>,
+        media_json: Option<&str>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -404,6 +405,9 @@ impl NativeClient {
         };
         let limit = limit.unwrap_or(10);
 
+        let media_json: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media_json
+            .map(|value| decode(value, "recall media"))
+            .transpose()?;
         let inner = &slf.inner;
         let py = slf.py();
         let output = py
@@ -416,6 +420,7 @@ impl NativeClient {
                     format.as_deref(),
                     as_of,
                     deadline_ms,
+                    media_json,
                 )
             })
             .map_err(raise)?;

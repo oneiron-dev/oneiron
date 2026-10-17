@@ -278,6 +278,7 @@ impl ActorScopedVault {
             format,
             as_of: None,
             deadline_ms,
+            media: None,
         };
         let memory = self.facade()?;
         let pack = typed_row(&memory, "vault.recall", request, |request| {

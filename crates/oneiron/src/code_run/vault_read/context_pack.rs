@@ -6,9 +6,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use oneiron_contracts::code_run::vault_read::{
-    ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls,
-    CoreContextPackRequest,
+    ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery,
+    ContextPackRetrievalBudgetControls, CoreContextPackRequest, MediaQueryKind,
 };
+
+/// A media query's kind is the engine's input kind of the same name.
+impl From<MediaQueryKind> for crate::embed::InputKind {
+    fn from(kind: MediaQueryKind) -> Self {
+        match kind {
+            MediaQueryKind::Text => Self::Text,
+            MediaQueryKind::Image => Self::Image,
+            MediaQueryKind::Audio => Self::Audio,
+        }
+    }
+}
 
 /// Local serialization of every public `ContextEntity` field.
 ///

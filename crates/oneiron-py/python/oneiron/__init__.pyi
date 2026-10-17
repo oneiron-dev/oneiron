@@ -66,6 +66,13 @@ class RecallScope(TypedDict):
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
 
+class RecallMedia(TypedDict):
+    """A recall's media query (OF-370): bytes the server embeds into one declared space."""
+    space: str
+    mime: str
+    bytes_b64: str
+    kinds: NotRequired[list[Literal["text", "image", "audio"]]]
+
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -324,7 +331,7 @@ class Oneiron:
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None) -> MemoryPack: ...
         def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs": ...

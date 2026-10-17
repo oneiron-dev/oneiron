@@ -27,7 +27,7 @@ use crate::dto::{
     FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
     MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QuoteSpan, ReadReceipt, ReadScope,
-    RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
+    RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
     SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson, WitnessAuthor,
     WitnessMessage, WitnessReceipt, WitnessTurn,
 };
@@ -884,6 +884,27 @@ impl Lower<engine::RecallEffort> for Effort {
             Self::Xhigh => engine::RecallEffort::Xhigh,
             Self::Max => engine::RecallEffort::Max,
             Self::Call => engine::RecallEffort::Call,
+        })
+    }
+}
+
+/// A recall's media query crosses as the engine's wire type, kind for kind.
+impl Lower<oneiron::code_run::vault_read::ContextPackMediaQuery> for RecallMedia {
+    fn lower(self) -> Result<oneiron::code_run::vault_read::ContextPackMediaQuery, OneironError> {
+        use oneiron::code_run::vault_read::MediaQueryKind;
+        Ok(oneiron::code_run::vault_read::ContextPackMediaQuery {
+            space: self.space,
+            mime: self.mime,
+            bytes_b64: self.bytes_b64,
+            kinds: self
+                .kinds
+                .into_iter()
+                .map(|kind| match kind {
+                    crate::InputKind::Text => MediaQueryKind::Text,
+                    crate::InputKind::Image => MediaQueryKind::Image,
+                    crate::InputKind::Audio => MediaQueryKind::Audio,
+                })
+                .collect(),
         })
     }
 }

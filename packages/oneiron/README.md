@@ -262,8 +262,10 @@ declarations ship in `@oneiron/client` and, as TypedDicts, in the Python stubs.
 `vault.recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default
 `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `asOf` (Unix seconds
-the query's time words resolve against; default now) and `deadlineMs` (1 to
-60000). `kinds` lists the registry kinds to return; unset returns every kind but
+the query's time words resolve against; default now), `deadlineMs` (1 to
+60000) and `media` (`{ space, mime, bytesB64, kinds? }`: bytes the server embeds
+into that declared space and searches beside the query, at medium effort or
+above; an embedded client returns `MODEL_UNAVAILABLE`). `kinds` lists the registry kinds to return; unset returns every kind but
 conversations, sessions, facets and worlds. `high`, `xhigh` and `max` need
 a budget lease this package never mints: an embedded client returns `LEASE_REQUIRED`;
 a remote one gets what the server serves (reranked on its `[models]` reranker, or

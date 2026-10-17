@@ -69,9 +69,11 @@ impl ContextPackFieldNames for CoreContextPackRequest {
 fn validate_context_pack_request(request: &CoreContextPackRequest) -> VaultReadResult<()> {
     const METHOD: VaultReadMethod = VaultReadMethod::ContextPack;
 
+    // A media query seeds the pack on its own, as on the accepted route; a
+    // vector beside it is still checked.
     validate_query_seeds(
         METHOD,
-        request.query.as_deref(),
+        non_empty_query(request.query.as_deref()).or(request.media.as_ref().map(|_| "media")),
         request.query_vector.as_deref(),
     )?;
     let depth = request.resolved_depth();
