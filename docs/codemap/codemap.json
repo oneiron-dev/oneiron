@@ -1003,7 +1003,7 @@
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
       "crate-vis": 12,
-      "fn": 15
+      "fn": 16
      }
     },
     {
@@ -10252,7 +10252,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -15923,9 +15923,9 @@
      "path": "src/conversation/attendee.rs",
      "purpose": "An attendee's first entry into a chat or room (OF-365, ILDF2 P5)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -15982,8 +15982,22 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputMark"
+     ],
+     "path": "src/conversation/output_guard.rs",
+     "purpose": "The container output guard (OF-365 P5, FIX 1389): the fence between an attendee's first entry into a…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -18904,6 +18918,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CoachAttributionAudits"
+     ],
+     "path": "src/dreamer_runner/maintenance/attribution_audits.rs",
+     "purpose": "The attribution judge's held-out audits, run (ARCH-0053 \"The attribution judge gets a defect-injection…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/calibration_asks.rs",
      "purpose": "Calibration asks (OF-420; ARCH-0053 #the-judge, ARCH-0042's judge re-pin protocol): \"On uncertainty…",
@@ -18921,7 +18948,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 23,
+      "const": 24,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -18950,9 +18977,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/coach_learning.rs",
-     "purpose": "The Coach's own record (ARCH-0066 #coach: \"calibration, meta-learning\"; ARCH-0053 #training-offers): each…",
+     "purpose": "The Coach's own record (ARCH-0066 #coach: \"calibration, meta-learning\"): each anchored outcome of the…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 1,
       "fn": 1
      }
@@ -19131,7 +19158,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 14,
+      "mod": 15,
       "re-export": 7
      }
     },
@@ -26658,7 +26685,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Interlocutor",
@@ -26673,7 +26700,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)",
      "surface": {
       "enum": 3,
-      "fn": 27,
+      "fn": 29,
       "struct": 4
      }
     },
@@ -28103,7 +28130,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 37,
+      "const": 38,
       "fn": 1,
       "struct": 1
      }
@@ -28984,7 +29011,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 2,
-      "fn": 19,
+      "fn": 21,
       "struct": 2
      }
     },
@@ -29037,15 +29064,17 @@
       "OfferRouteError",
       "PaidConnector",
       "Payer",
+      "PayerAccount",
+      "PayerPerson",
       "UnitRate"
      ],
      "path": "src/llm/run_admission/host.rs",
      "purpose": "What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's…",
      "surface": {
       "crate-vis": 7,
-      "enum": 5,
-      "fn": 8,
-      "struct": 8
+      "enum": 6,
+      "fn": 9,
+      "struct": 9
      }
     },
     {
@@ -30440,7 +30469,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/affiliated.rs",
@@ -31084,6 +31113,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "WitnessAssertions",
       "WitnessAuthor",
       "WitnessMessage",
       "WitnessReceipt",
@@ -31094,7 +31124,7 @@
      "surface": {
       "enum": 1,
       "fn": 2,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -42822,8 +42852,9 @@
      "path": "src/skill_optimize/offer.rs",
      "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
      "surface": {
+      "const": 1,
       "enum": 4,
-      "fn": 7,
+      "fn": 9,
       "struct": 10
      }
     },
@@ -49814,22 +49845,24 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AsrUpdate",
       "AudienceRefresh",
       "SafeguardUpdate",
       "VoiceCascadeSession",
+      "VoiceContainerBinding",
       "VoiceSessionConfig"
      ],
      "path": "src/voice_cascade/session.rs",
      "purpose": "Session transitions only",
      "surface": {
+      "const": 1,
       "enum": 1,
-      "fn": 21,
+      "fn": 23,
       "re-export": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -53039,7 +53072,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53151,7 +53184,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53384,7 +53417,7 @@
     "interlocutor": {
      "files": 2,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
@@ -54159,9 +54192,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 181,
+   "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3288,
+   "source_files": 3290,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61671,7 +61704,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -64726,6 +64759,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_host/attribution_audits.rs",
+     "purpose": "The attribution judge's held-out audits on the host's ladder (ARCH-0053, OF-542)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_host/seal_checks.rs",
      "purpose": "The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession…",
      "surface": {
@@ -64882,10 +64925,20 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 22,
       "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/payer_funding.rs",
+     "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -64925,7 +64978,7 @@
      "path": "src/ai_host/skill_discovery.rs",
      "purpose": "The Coach's skill discovery (ARCH-0056 §5, ARCH-0066 #coach, OF-420): the standing attribution classifier…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -71360,7 +71413,7 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 10,
-      "fn": 19,
+      "fn": 20,
       "re-export": 14,
       "struct": 2
      }
@@ -71415,7 +71468,7 @@
      "path": "src/models/raw.rs",
      "purpose": "The raw `/v1/llm` routes' models and their own meter",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -72725,6 +72778,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/voice_host/entry_barrier.rs",
+     "purpose": "The newcomer barrier on a live reply (OF-365 P5, FIX 1389)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/voice_host/extraction.rs",
      "purpose": "—",
      "surface": {
@@ -72760,7 +72823,7 @@
      "path": "src/voice_host/mod.rs",
      "purpose": "Private voice request adapter, not an audio/provider scheduler",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "re-export": 5,
@@ -73245,7 +73308,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 36,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73616,7 +73679,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73653,7 +73716,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 618,
+   "source_files": 621,
    "test_files": 182
   },
   "oneiron-spawn": {
