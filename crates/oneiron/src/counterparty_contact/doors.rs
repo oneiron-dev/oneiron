@@ -387,57 +387,6 @@ impl Vault {
         )
     }
 
-    /// Every live contact, from claims (OF-272): the read
-    /// [`Self::counterparty_contacts_from_claims_in_txn`] makes in its own
-    /// snapshot.
-    pub fn counterparty_contacts_from_claims(
-        &self,
-    ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
-        let rtxn = self.store.env.read_txn()?;
-        self.counterparty_contacts_from_claims_in_txn(&rtxn)
-    }
-
-    /// Every live contact in the caller's snapshot, in id order, from claims
-    /// (OF-272): the subjects of the live `counterparty_contact.counterparty`
-    /// heads, each answered as [`Self::get_counterparty_contact_in_txn`]
-    /// answers it (own heads, the party's STOP folded in). No type-132 row is
-    /// read, so a dropped cache row hides no contact; a deleted contact, or
-    /// one a batch delete detached from its heads, is none of them. An id
-    /// whose row is another kind is skipped, not an error.
-    pub(crate) fn counterparty_contacts_from_claims_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
-        let mut subjects = std::collections::BTreeSet::new();
-        self.for_each_claim_with_predicate_in_txn(
-            rtxn,
-            PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
-            |_, body| {
-                if body.lifecycle == ClaimLifecycleStatus::Active
-                    && !body.stale
-                    && let ClaimSubject::Entity(contact) = body.subject
-                {
-                    subjects.insert(contact);
-                }
-                Ok(())
-            },
-        )?;
-        let mut contacts = Vec::with_capacity(subjects.len());
-        for id in subjects {
-            if self
-                .store
-                .port_entity_record(rtxn, &id)?
-                .is_some_and(|raw| raw.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT)
-            {
-                continue;
-            }
-            if let Some(record) = counterparty_contact_in_claims_in_txn(self, rtxn, &id)? {
-                contacts.push((id, record));
-            }
-        }
-        Ok(contacts)
-    }
-
     /// Whether another live contact already holds `record`'s
     /// `(identity, counterparty)` pair, by the contacts' claims (OF-272). The
     /// cache's own index uniqueness stays its writer's check.

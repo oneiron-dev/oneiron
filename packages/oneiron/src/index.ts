@@ -226,8 +226,10 @@ export class Oneiron {
    * saying so). `effort: "call"` is call mode for live calls: light
    * effort under a hard deadline (`deadlineMs`, or the vault's call-mode
    * deadline), answering with the best results ready, marked `partial`.
+   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server
+   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */
@@ -402,6 +404,13 @@ export class Oneiron {
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
     },
+    /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
+    widen_proposals: Object.assign((input: Facade.WidenProposalsRequest): Facade.WidenProposalsView => this.#call(() => this.#client.vaultWidenProposals(input) as Facade.WidenProposalsView), {
+      /** The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued. */
+      approve: (input: Facade.WidenProposalAnswer): Facade.WidenProposalView => this.#call(() => this.#client.vaultWidenProposalsApprove(input) as Facade.WidenProposalView),
+      /** The owner, as the board above, declines one context-widen proposal for good; the decline stays on record. */
+      decline: (input: Facade.WidenProposalAnswer): Facade.WidenProposalView => this.#call(() => this.#client.vaultWidenProposalsDecline(input) as Facade.WidenProposalView),
+    }),
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),

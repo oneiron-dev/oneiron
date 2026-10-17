@@ -66,6 +66,13 @@ class RecallScope(TypedDict):
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
 
+class RecallMedia(TypedDict):
+    """A recall's media query (OF-370): bytes the server embeds into one declared space."""
+    space: str
+    mime: str
+    bytes_b64: str
+    kinds: NotRequired[list[Literal["text", "image", "audio"]]]
+
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -324,7 +331,7 @@ class Oneiron:
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None) -> MemoryPack: ...
         def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs": ...
@@ -352,6 +359,8 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
+        @property
+        def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs": ...
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs": ...
         @property
@@ -586,6 +595,13 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultWidenProposalsVerbs:
+        def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
+            """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
+        def approve(self, spec: Facade.WidenProposalAnswer) -> Facade.WidenProposalView:
+            """The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."""
+        def decline(self, spec: Facade.WidenProposalAnswer) -> Facade.WidenProposalView:
+            """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""

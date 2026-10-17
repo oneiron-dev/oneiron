@@ -194,17 +194,14 @@ fn selection_input(
         }
     }
     let count = candidate.evidence.count();
-    let signals = StrengthSignals {
-        type_prior: config
-            .type_priors
-            .get(&facts.predicate)
-            .copied()
-            .unwrap_or(config.default_type_prior),
-        frequency: (count as f64 / config.frequency_scale as f64).min(1.0),
-        recency: 1.0
-            - (now.saturating_sub(latest) as f64 / config.recency_window_ms as f64).min(1.0),
-        diversity: (sessions.len() as f64 / config.diversity_scale as f64).min(1.0),
-    };
+    let signals = StrengthSignals::from_evidence(
+        &facts.predicate,
+        count,
+        latest,
+        sessions.len(),
+        now,
+        config,
+    );
     Ok(SelectionCandidate {
         claim_id: candidate.claim_id,
         first_seen_ms: earliest.unwrap_or(candidate.learned_at),
