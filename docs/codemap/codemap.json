@@ -31141,7 +31141,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 11,
       "struct": 2
      }
