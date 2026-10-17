@@ -786,7 +786,8 @@ impl Vault {
 
     /// Seals the held vault data key to `recipient` as escrow wrap `label`, in
     /// the caller's transaction, replacing a wrap of that label. `None` when
-    /// this handle does not hold the key.
+    /// the vault has no data key; refused when it has one this handle does
+    /// not hold, so the old wrap never outlives the change.
     pub(crate) fn put_vault_key_escrow_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -795,6 +796,9 @@ impl Vault {
     ) -> Result<Option<VaultKeyWrapInfo>> {
         check_name(label)?;
         let Some(key) = self.held_vault_key() else {
+            if STATE.get(&self.store, txn, &())?.is_some() {
+                return Err(refused("unlock the vault key first"));
+            }
             return Ok(None);
         };
         let vault_id = *self.vault_id().as_bytes();
