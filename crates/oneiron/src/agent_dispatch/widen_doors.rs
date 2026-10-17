@@ -10,14 +10,23 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::codec::{agent_dispatch_actor, record_dispatch_input};
 use super::AgentDispatcher;
 use super::widen_record::{
     PROPOSAL_INDEX, WIDEN, WidenLanding, WidenRecord, WidenTarget, invalid, validate_proposal_id,
 };
-use crate::attempt_queue::AttemptId;
+use crate::agent_inbox_lens::{
+    AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
+};
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
+
+/// Where a waiting proposal sorts in its owner's INBOX, on the concern-card
+/// scale (struggling 100, off course 150, concern 200): an agent is held
+/// until the board answers.
+pub const WIDEN_INBOX_IMPACT: u16 = 150;
 
 /// Where a proposal stands: waiting on the board, approved (its child
 /// enqueued), or declined (final).
@@ -134,6 +143,62 @@ pub fn decline_widen_proposal_as_owner(
     let proposal = stored(vault, &answer.proposal_id)?.request.proposal()?;
     AgentDispatcher::new(vault).decline_context_widen(owner, &proposal)?;
     view(&stored(vault, &answer.proposal_id)?)
+}
+
+/// Each pending proposal as an INBOX row for the owner of its board's TASK
+/// (kind ApprovalRequired, so "Waiting on you"), naming the agent that asked
+/// and carrying the proposal id to answer with. A proposal with no provable
+/// board, or whose board TASK has no owner proof, has no one to ask and makes
+/// no row. Never folded into a thread.
+pub(crate) fn widen_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let queue = AttemptQueue::new(vault);
+    let mut items = Vec::new();
+    for (_, record) in WIDEN.scan(&vault.store, &rtxn)? {
+        if record.landed.is_some() || record.declined.is_some() {
+            continue;
+        }
+        let Some(board) = record.request.board else {
+            continue;
+        };
+        let owner = queue
+            .get_in_txn(&rtxn, board)?
+            .and_then(|row| row.task_ref)
+            .and_then(|task| EntityId::from_hex(&task).ok())
+            .map(|task| vault.task_authority_state_in(&rtxn, task))
+            .transpose()?
+            .flatten()
+            .filter(|standing| !standing.cancelled)
+            .map(|standing| standing.owner_ref);
+        let Some(owner) = owner else {
+            continue;
+        };
+        let agent = queue
+            .get_in_txn(&rtxn, record.request.intent.parent)?
+            .as_ref()
+            .and_then(record_dispatch_input)
+            .and_then(|input| agent_dispatch_actor(&input).ok())
+            .map_or(owner, |actor| actor.entity_ref());
+        let proposal_id = record.request.id()?;
+        items.push(AgentInboxLensItem {
+            item_id: format!("widen:{proposal_id}"),
+            kind: AgentInboxItemKind::ApprovalRequired,
+            thread_ref: None,
+            identity_ref: agent,
+            actor_ref: agent,
+            facet_ref: None,
+            participants: vec![AgentInboxParticipant {
+                identity_ref: owner,
+                actor_ref: owner,
+            }],
+            impact: InboxImpact(WIDEN_INBOX_IMPACT),
+            occurred_at: record.recorded_at,
+            receipt_ref: None,
+            payload_ref: Some(proposal_id),
+            concern: None,
+        });
+    }
+    Ok(items)
 }
 
 /// The stored record a proposal id names, in its own snapshot. The doors it
