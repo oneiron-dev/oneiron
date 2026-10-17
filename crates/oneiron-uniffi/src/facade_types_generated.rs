@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 203 facade rows, 571 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 163.
+// UniFFI census: 209 facade rows, 579 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 169.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -3136,6 +3136,8 @@ pub struct SharedInvitation {
     pub expires_at: u64,
     #[serde(rename = "state")]
     pub state: SharedInvitationState,
+    #[serde(rename = "founding")]
+    pub founding: bool,
 }
 
 /// `oneiron::task_verb::sdk_shared_members::SharedInvitationRequest`.
@@ -4011,6 +4013,114 @@ pub struct LearningSettingClear {
     pub project: Option<String>,
     #[serde(rename = "task_type", default, skip_serializing_if = "Option::is_none")]
     pub task_type: Option<String>,
+}
+
+/// `oneiron::agent_dispatch::widen_doors::WidenProposalState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WidenProposalState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "declined")]
+    Declined,
+}
+
+/// `oneiron::agent_dispatch::widen_doors::WidenProposalsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WidenProposalsRequest {
+    #[serde(rename = "state", default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<WidenProposalState>,
+}
+
+/// `oneiron::agent_dispatch::widen_doors::WidenProposalView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WidenProposalView {
+    #[serde(rename = "proposal_id")]
+    pub proposal_id: String,
+    #[serde(rename = "state")]
+    pub state: WidenProposalState,
+    #[serde(rename = "parent_attempt")]
+    pub parent_attempt: String,
+    #[serde(
+        rename = "board_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub board_attempt: Option<String>,
+    #[serde(rename = "target_kind")]
+    pub target_kind: String,
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(rename = "parent_context")]
+    pub parent_context: crate::WireJson,
+    #[serde(rename = "requested_context")]
+    pub requested_context: crate::WireJson,
+    #[serde(rename = "widened_parent_context")]
+    pub widened_parent_context: crate::WireJson,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+    #[serde(
+        rename = "landed_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub landed_attempt: Option<String>,
+    #[serde(
+        rename = "declined_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub declined_by: Option<String>,
+    #[serde(
+        rename = "declined_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub declined_at: Option<u64>,
+}
+
+/// `oneiron::agent_dispatch::widen_doors::WidenProposalsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WidenProposalsView {
+    #[serde(rename = "proposals")]
+    pub proposals: Vec<WidenProposalView>,
+}
+
+/// `oneiron::agent_dispatch::widen_doors::WidenProposalAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WidenProposalAnswer {
+    #[serde(rename = "proposal_id")]
+    pub proposal_id: String,
+}
+
+/// `oneiron::policy_setting_doors::WakePolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WakePolicySetRequest {
+    #[serde(rename = "policy")]
+    pub policy: crate::WireJson,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::policy_setting_doors::PolicyActionOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PolicyActionOutcome {
+    #[serde(rename = "outcome")]
+    pub outcome: crate::WireJson,
+}
+
+/// `oneiron::policy_setting_doors::InferenceDefaultsReplaceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InferenceDefaultsReplaceRequest {
+    #[serde(rename = "defaults")]
+    pub defaults: crate::WireJson,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
 }
 
 /// `oneiron::lens::proposal::LensSlot`.
@@ -8529,8 +8639,10 @@ pub enum HostingPrivacyPosture {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionMedia {
-    #[serde(rename = "images")]
-    pub images: bool,
+    #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<bool>,
+    #[serde(rename = "audio", default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<bool>,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionDefinition`.

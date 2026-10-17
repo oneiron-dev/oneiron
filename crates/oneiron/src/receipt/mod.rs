@@ -40,6 +40,7 @@ pub use self::authority_audit::{
 pub use self::call::{
     CALL_RECEIPT_REF_PREFIX, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
     CallTransport, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
+    call_refusal_digest,
 };
 pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};

@@ -21,7 +21,6 @@
 //! row's verb hooks fire once around it.
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::Duration;
 
 use oneiron::board_verb::BoardVerbCall;
 use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
@@ -40,9 +39,8 @@ use oneiron::memory::{
     MemoryResult, ProducerRows,
 };
 use oneiron::receipt::{
-    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest,
+    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
@@ -367,11 +365,10 @@ fn host_row(
             let dial = server
                 .decision_host()
                 .dial(request.ceiling.unwrap_or(DecisionRung::Big));
-            let budget = Duration::from_millis(
-                request
-                    .unit_deadline_ms
-                    .unwrap_or(GRAPH_ASK_UNIT_DEADLINE_MS),
-            );
+            let budget = oneiron::llm::decision::questions::question_call_budget(
+                server.vault(),
+                request.unit_deadline_ms,
+            )?;
             let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?;
             encode(
                 match run_graph_ask_receipted(

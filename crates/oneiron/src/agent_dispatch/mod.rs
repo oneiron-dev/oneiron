@@ -54,6 +54,7 @@ mod team_stamp;
 mod types;
 mod widen;
 mod widen_record;
+pub mod widen_doors;
 mod workflow;
 mod workflow_host;
 mod workflow_pump;
@@ -65,8 +66,7 @@ pub use workflow_record::{WorkflowDispatchStatus, WorkflowProgress, WorkflowStep
 mod workflow_tests;
 
 pub use self::widen_record::ContextWidenProposal;
-#[allow(unused_imports)] // The Coach's widen_denial_findings switches to the window.
-pub(crate) use self::widen_record::{unlanded_widens_by_parent, unlanded_widens_by_parent_since};
+pub(crate) use self::widen_record::unlanded_widens_by_parent_since;
 
 pub use self::fanout_statement::{
     ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass,
