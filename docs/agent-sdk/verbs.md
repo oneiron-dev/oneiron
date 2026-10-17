@@ -120,6 +120,7 @@ both bindings and their export-census tests in one change.
 - `reveal`
 - `reveal.wait`
 - `reveal.describe`
+- `self.use`
 - `vault.shares.create`
 - `vault.shares.revoke`
 - `vault.shares.view`
@@ -198,6 +199,7 @@ both bindings and their export-census tests in one change.
 - `vault.questions.create`
 - `vault.questions.edit`
 - `vault.questions.pause`
+- `vault.questions.backfill`
 - `vault.questions.read`
 - `vault.questions.answers`
 - `vault.decisions.asks.answer`
