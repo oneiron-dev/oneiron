@@ -1125,6 +1125,13 @@ pub enum ShapeTarget {
         #[serde(rename = "name")]
         name: String,
     },
+    #[serde(rename = "facet")]
+    Facet {
+        #[serde(rename = "person")]
+        person: String,
+        #[serde(rename = "name")]
+        name: String,
+    },
     #[serde(rename = "pack")]
     Pack {
         #[serde(rename = "name")]
@@ -1151,6 +1158,11 @@ pub enum ShapeTarget {
     Grant {
         #[serde(rename = "grant_ref")]
         grant_ref: String,
+    },
+    #[serde(rename = "manifest")]
+    Manifest {
+        #[serde(rename = "manifest_ref")]
+        manifest_ref: String,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -1179,6 +1191,13 @@ pub enum ShapeRow {
     },
     #[serde(rename = "world")]
     World {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "facet")]
+    Facet {
+        #[serde(rename = "person")]
+        person: String,
         #[serde(rename = "name")]
         name: String,
     },
@@ -1222,6 +1241,13 @@ pub enum ShapeRow {
         grant_ref: Option<String>,
         #[serde(rename = "bound", default, skip_serializing_if = "Option::is_none")]
         bound: Option<ShapeGrantBound>,
+    },
+    #[serde(rename = "manifest")]
+    Manifest {
+        #[serde(rename = "manifest_ref")]
+        manifest_ref: String,
+        #[serde(rename = "body")]
+        body: String,
     },
     #[serde(rename = "sync")]
     Sync {
