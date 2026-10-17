@@ -18,6 +18,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
@@ -209,7 +210,7 @@ pub(super) fn fence_released_asset(
     asset: &EntityId,
 ) -> Result<()> {
     let key = HexId(*asset);
-    if crate::deletion::ROW_DELETION_FENCE.contains(store, txn, &key)? {
+    if store.port_deletion_marked(txn, DeletionMarker::RowFence, asset)? {
         return Ok(());
     }
     crate::deletion::ROW_DELETION_FENCE.put(store, txn, &key, &RELEASE_FENCE.to_vec())
@@ -225,7 +226,7 @@ pub(crate) fn readmit_held_asset_in_txn(
     asset: &EntityId,
     body: &[u8],
 ) -> Result<()> {
-    if !crate::deletion::ROW_DELETION_FENCE.contains(store, txn, &HexId(*asset))? {
+    if !store.port_deletion_marked(txn, DeletionMarker::RowFence, asset)? {
         return Ok(());
     }
     let hash: ContentHash = *blake3::hash(body).as_bytes();
@@ -244,11 +245,10 @@ pub(crate) fn release_fenced_only(
     txn: &RoTxn<'_>,
     asset: &EntityId,
 ) -> Result<bool> {
-    let key = HexId(*asset);
-    Ok(crate::deletion::ROW_DELETION_FENCE
-        .get(store, txn, &key)?
+    Ok(store
+        .port_deletion_marker(txn, DeletionMarker::RowFence, asset)?
         .is_some_and(|value| value == RELEASE_FENCE)
-        && !crate::deletion::HARD_DELETE_MARKER.contains(store, txn, &key)?)
+        && !store.port_deletion_marked(txn, DeletionMarker::HardDelete, asset)?)
 }
 
 /// Drops the fence a release left on `asset`. A fence an explicit delete left, and a hard-delete
