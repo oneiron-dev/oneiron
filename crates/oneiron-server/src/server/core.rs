@@ -112,6 +112,9 @@ pub struct SyncServer {
     /// Runs the reader children code runs spawn, on the code host once one
     /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
     pub(crate) reader_runner: Arc<super::ReaderRunner>,
+    /// The live agent runs a harness may act for over HTTP (OF-181): each
+    /// runner's lease proof, its attached credential and its guard.
+    pub(crate) live_runs: Arc<super::LiveRuns>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -400,6 +403,7 @@ impl SyncServer {
             mcp_registry,
             mcp_code_host: None,
             reader_runner,
+            live_runs: Arc::default(),
             browser_guest: None,
             desktop_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
@@ -578,8 +582,18 @@ impl SyncServer {
         self.decisions = self
             .decisions
             .clone()
-            .with_house_read(self.decision_read.as_ref());
+            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
         self
+    }
+
+    /// What admits the ladder's house reads: this server's decision-read
+    /// pool, host account and run receipts.
+    fn house_read_admission(&self) -> crate::decision_host::ReadAdmission {
+        crate::decision_host::ReadAdmission {
+            turns: self.decision_reads.clone(),
+            host: self.host_account(),
+            receipts: self.run_receipts(),
+        }
     }
 
     /// The live allocation shared by all this vault's served runs. The
@@ -646,7 +660,7 @@ impl SyncServer {
         self.decisions = self
             .decisions
             .clone()
-            .with_house_read(self.decision_read.as_ref());
+            .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
         self.ai = ai;
         self
     }
