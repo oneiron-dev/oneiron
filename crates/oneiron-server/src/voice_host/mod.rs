@@ -144,6 +144,7 @@ impl VoiceHost {
             return Err(HostError::Stopped);
         }
         let extractor = TinyExtractor::new(
+            Arc::clone(&vault),
             runtime,
             bindings.backend,
             bindings.budget,

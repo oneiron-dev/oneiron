@@ -124,6 +124,8 @@ pub(crate) mod memory_reason;
 mod openai_proxy;
 mod openapi;
 mod openapi_registry;
+// OF-163: the host operator's own acts, behind the host's root credential.
+mod operator_routes;
 // OF-559/OF-202/OF-211/OF-296: the owner's own actions — backups, the secret
 // scan switch, whole-batch import consent and whole-run agent consent.
 mod owner_origin;
@@ -425,6 +427,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::facade::action_routes::routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
+        .merge(self::operator_routes::routes())
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())

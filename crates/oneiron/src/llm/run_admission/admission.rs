@@ -583,6 +583,11 @@ impl RunInner {
         admitted_under.unwrap_or_else(|| self.lock_declaration().revision)
     }
 
+    /// `host.budget.hit` through the run's sink, once `guard` refused.
+    pub(super) fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
+        self.receipts.budget_hit(seat, guard, denied);
+    }
+
     fn receipt_for(
         &self,
         revision: u32,
@@ -620,6 +625,9 @@ impl RunInner {
                         reason: reason.clone(),
                     },
                 );
+                if let RunDenied::Budget { denied } = &reason {
+                    self.budget_hit(subject, &self.guard, denied);
+                }
                 Err(reason)
             }
         }
