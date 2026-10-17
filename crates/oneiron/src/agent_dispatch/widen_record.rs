@@ -81,6 +81,10 @@ pub(super) struct WidenIntent {
     /// The spawn's explicit team-run stamp (OF-540); absent inherits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<super::TeamRunStamp>,
+    /// The planner receipt the spawn was planned under (OF-541), frozen at
+    /// approval like the rest of the spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<super::SpawnPlanReceipt>,
 }
 
 impl WidenIntent {
@@ -106,6 +110,7 @@ impl WidenIntent {
             budget: spawn.budget,
             room: spawn.room,
             team: spawn.team.clone(),
+            plan: spawn.plan.clone(),
         })
     }
 
@@ -154,6 +159,7 @@ impl WidenIntent {
                 origin_conversation: None,
                 room: self.room,
                 team: self.team.clone(),
+                plan: self.plan.clone(),
             },
         ))
     }

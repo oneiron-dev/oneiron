@@ -289,6 +289,15 @@ run per night. Approve a curator run and its next pass applies each demotion
 whose target is unchanged since grading; a retune proposal is advice only and
 changes nothing.
 
+The vault cleanup pass proposes archives and archives nothing until you
+accept (`/v1/owner/cleanup`); automatic archiving stays off until ARCH-0066's
+teeth #5 and #9 close. The next regular proactivity digest
+(`/v1/owner/proactivity/digest`) carries one `dreamer.cleanup` line: what
+cleanup archived since the last digest, and how many records wait in open
+proposals, with the cleanup view to restore any of them. Each proposal and
+your accept or reject count in the healer oversight receipts
+(`/v1/owner/healer/oversight`).
+
 The Coach's nightly tripwire sweep (`coach.tripwires`) runs the tier-1
 detectors (refused Dreamer consolidations, consent storms and denials,
 per-actor write drift) over the last day of Gate receipts, and the read-side
@@ -1023,8 +1032,13 @@ that runs out of wait ends with the provider's own failure, not
 `rate_limited`.
 
 When an offer's rest ends it is on probation: a failure rests it again with
-one more strike. A stable recovery is three answers in a row over at least
-30 s. It clears the strikes, and the memory work the outage stopped resumes:
+one more strike. On probation it takes one request at a time. The call that
+sends it holds the offer's probation slot until the request ends: a stream's
+last event, or a media job's end. A call that comes meanwhile passes that rung
+to the next one. If no rung is left, it waits for the probation request to end,
+within its wait budget, and is never refused for it. A stable recovery is three
+answers in a row over at least 30 s. It clears the strikes, and the memory
+work the outage stopped resumes:
 
 - the attempts this server's Dreamer parked on an executor error are
   requeued, as a restart requeues them;
@@ -1033,6 +1047,22 @@ one more strike. A stable recovery is three answers in a row over at least
 
 Work parked on a signal (a budget or consent trap, a wait) is never resumed
 by a recovery.
+
+`GET /v1/ai/status` shows each offer's live health. Each built rung under
+`models.seats[].rungs[]` carries `health`:
+
+- `state`: `healthy`, `down` (resting until `until`), or `recovering` (on
+  probation);
+- `strikes`, `successes`, and `probing` (its one probation request is out);
+- any limit `hold` (`until`, `reset`, `spent`), shown apart, since a hold is
+  not an outage.
+
+A seat's `state` follows its rungs:
+
+- `ready` while a healthy rung that no limit holds can serve;
+- otherwise `recovering` while a free rung is on probation;
+- `down` when every built rung rests for its health;
+- `unavailable` when no rung could be built.
 
 On raw `/v1/llm/stream`, a stream that fails after it has started ends with
 one last line carrying the same typed body as a refusal before it:
@@ -1174,6 +1204,38 @@ The engine's one-off graph ask and saved graph recipes take the same
 answerer and keep the same receipts. There, a unit's outgoing neighbours join
 its state, and an image or audio asset among them is read as such. No door serves
 a one-off ask yet.
+
+### Typed questions over files
+
+The same ladder answers a typed question over parts of a file. Each unit is
+one call, read from the file version the ask pinned:
+
+| Unit | What the call reads | Where the answer lands |
+|----|----|----|
+| A sheet row | The row's cells across the asked range, plus an optional header row | A cell in the answer column: yes/no as a boolean, a pick as text, a score as a number |
+| A paragraph | The paragraph's text | A Word comment quoting it, in your display words |
+| A slide or shape | Its text, and its rendered image as an image | A modern comment with a severity band |
+| A file in a folder | An office file's text, a text file, or a PNG or JPEG as an image | One cell per file in a column of a result workbook |
+
+**Images.** Images are read at the Local-vision rung when
+`[models.roles.local_vision]` is bound and the dial spans the Local rung.
+Without that seat, a slide is read as its text alone, and an image file in a
+folder abstains.
+
+**Proposals.** The answers become one proposal on a copy. Keep or Discard
+settles it once (`vault.artifacts.keep`/`discard`). A unit with nothing to
+read abstains and writes nothing; an abstention is never a no. If every unit
+abstains, no proposal is made.
+
+**Receipts.** Every answer, abstentions included, keeps the ladder's full
+receipt and the file version it read. Keep's receipt carries the sheet
+answers and paragraph judgments next to the slide judgments.
+
+**Stale answers.** A folder column refuses Keep when a file it read has
+changed since; ask again. Answers never go to the owner's queue: the slide
+door holds its ceiling at Big. On a server the engine's
+`Memory::artifacts_ask_through` answers these asks. Until its door is in the
+SDK table, `vault.artifacts.review_slides` is the only door that serves one.
 
 ## 14. Tagger tiers and the teacher's handoff
 
