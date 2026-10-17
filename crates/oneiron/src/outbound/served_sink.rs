@@ -8,6 +8,11 @@
 //! attempt as not started, so the ledger's retry rule decides what happens
 //! next. The text a send carries comes from a typed content loader, never from
 //! the agent at send time.
+//!
+//! LINE (OF-519): a send that answers an inbound LINE event replies with the
+//! event's own reply token while the token is fresh, and otherwise pushes to
+//! the sender. A push is counted against the account's monthly allowance
+//! first; past it the send asks whether everything is okay and still goes.
 
 use std::io::Read;
 use std::time::Duration;
@@ -15,8 +20,12 @@ use std::time::Duration;
 use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
-use crate::Vault;
+use super::intent::OutboundIntentSource;
+use crate::channel_identity_provider::{DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL};
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
+use crate::surface_event::SurfaceConnectorPayload;
+use crate::{EntityId, Vault};
 
 const SLACK_POST_MESSAGE: &str = "https://slack.com/api/chat.postMessage";
 /// The built-in Slack pack connection whose checked credential posts.
@@ -27,6 +36,28 @@ const MAX_REPLY_BYTES: u64 = 64 * 1024;
 const SLACK_MAX_TEXT_CHARS: usize = 40_000;
 /// The execution field a provider's own cool-down travels on.
 const RETRY_AFTER_FIELD: &str = "retry_after";
+
+const LINE_REPLY_MESSAGE: &str = "https://api.line.me/v2/bot/message/reply";
+const LINE_PUSH_MESSAGE: &str = "https://api.line.me/v2/bot/message/push";
+const LINE_QUOTA_CONSUMPTION: &str = "https://api.line.me/v2/bot/message/quota/consumption";
+/// The built-in LINE pack connection whose checked credential sends.
+const LINE_PACK: &str = "oneiron.line";
+const LINE_CONNECTION: &str = "line-channel";
+/// LINE refuses a text message longer than this many characters (UTF-16
+/// code units).
+const LINE_MAX_TEXT_UNITS: usize = 5_000;
+/// How old an inbound LINE event may be, in seconds from its own
+/// `timestamp`, and still be answered with its reply token. LINE documents a
+/// token as good for one minute after its webhook; past this the send pushes.
+const LINE_REPLY_TOKEN_FRESH_SECS: u64 = 45;
+/// The prefix the LINE adapter stamps on a sender's provider user id.
+const LINE_USER_TARGET_PREFIX: &str = "line:user:";
+/// LINE's answer to a reply token that is used or expired.
+const LINE_INVALID_REPLY_TOKEN: &str = "Invalid reply token";
+/// LINE's answer once the account has no messages left this month.
+const LINE_MONTHLY_LIMIT: &str = "monthly limit";
+/// How long the month-usage read before a push may take.
+const LINE_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Vault {
     /// The plain text an outbound content ref sends, when this engine has a
@@ -41,6 +72,24 @@ impl Vault {
 pub struct ServedChannelSink<'a> {
     vault: &'a Vault,
     client: reqwest::blocking::Client,
+    /// The LINE account plan's monthly push allowance.
+    line_push_allowance: u32,
+}
+
+/// How a LINE send may go out: by the answered event's reply token, by a
+/// push to the sender, or by the token while it is fresh and a push after.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineMode {
+    Reply,
+    Push,
+    ReplyOrPush,
+}
+
+/// What one LINE call came to: a final outcome, or a reply token LINE said
+/// is used or expired, which nothing was delivered on.
+enum LineAnswer {
+    Done(OutboundExecutionOutcome),
+    TokenInvalid,
 }
 
 impl<'a> ServedChannelSink<'a> {
@@ -57,7 +106,19 @@ impl<'a> ServedChannelSink<'a> {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|_| Error::InvalidConfig("served send client unavailable".to_owned()))?;
-        Ok(Self { vault, client })
+        Ok(Self {
+            vault,
+            client,
+            line_push_allowance: DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
+        })
+    }
+
+    /// The LINE account plan's monthly push allowance, LINE's free plan
+    /// allowance unless the host names its plan.
+    #[must_use]
+    pub fn with_line_push_allowance(mut self, allowance: u32) -> Self {
+        self.line_push_allowance = allowance;
+        self
     }
 
     fn text(&self, request: &OutboundExecutionRequest<'_>) -> Option<String> {
@@ -162,6 +223,295 @@ impl<'a> ServedChannelSink<'a> {
             .unwrap_or("unknown");
         OutboundExecutionOutcome::failed(format!("slack_{error}"))
     }
+
+    fn line_send(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+        mode: LineMode,
+    ) -> OutboundExecutionOutcome {
+        let Some(text) = self.text(request) else {
+            return OutboundExecutionOutcome::failed("content_unresolvable");
+        };
+        let text = line_text(&text);
+        let secret = match self
+            .vault
+            .verified_pack_connection_secret(LINE_PACK, LINE_CONNECTION)
+        {
+            Ok(secret) => secret,
+            Err(_) => return OutboundExecutionOutcome::failed("line_connection_unchecked"),
+        };
+        // Read before the door opens: the door holds the vault's writer.
+        let reply_token = match mode {
+            LineMode::Push => None,
+            LineMode::Reply | LineMode::ReplyOrPush => self.line_reply_token(request),
+        };
+        if mode == LineMode::Reply && reply_token.is_none() {
+            return OutboundExecutionOutcome::failed("line_reply_token_unavailable");
+        }
+        let mut outcome = None;
+        let _door = self.vault.inject_secret_at_door(
+            &secret.name,
+            &secret.effector,
+            &mut |value: &[u8]| {
+                let token = std::str::from_utf8(value)
+                    .map_err(|_| Error::InvalidClaimBody("the stored credential is not text"))?;
+                outcome = Some(self.line_deliver(
+                    token.trim(),
+                    request,
+                    &text,
+                    reply_token.as_deref(),
+                    mode,
+                ));
+                Ok(())
+            },
+        );
+        // Once a call ran, what LINE said is the delivery fact, whatever the
+        // door reports after it.
+        outcome.unwrap_or_else(|| OutboundExecutionOutcome::failed("line_credential_unavailable"))
+    }
+
+    fn line_deliver(
+        &self,
+        token: &str,
+        request: &OutboundExecutionRequest<'_>,
+        text: &str,
+        reply_token: Option<&str>,
+        mode: LineMode,
+    ) -> OutboundExecutionOutcome {
+        let messages = serde_json::json!([{ "type": "text", "text": text }]);
+        if let Some(reply_token) = reply_token {
+            let body = serde_json::json!({ "replyToken": reply_token, "messages": messages });
+            match self.line_call(LINE_REPLY_MESSAGE, token, &body, None, "reply") {
+                LineAnswer::Done(outcome) => return outcome,
+                // A used or expired token delivered nothing, so a send may
+                // still push in the same attempt.
+                LineAnswer::TokenInvalid if mode == LineMode::ReplyOrPush => {}
+                LineAnswer::TokenInvalid => {
+                    return OutboundExecutionOutcome::failed("line_reply_token_invalid");
+                }
+            }
+        }
+        let target = request.intent.target.as_str();
+        let to = target
+            .strip_prefix(LINE_USER_TARGET_PREFIX)
+            .unwrap_or(target);
+        if to.is_empty() || to.contains(':') {
+            return OutboundExecutionOutcome::failed("line_target_unrecognized");
+        }
+        self.line_count_push(token);
+        let retry_key = line_retry_key(
+            request
+                .idempotency_key
+                .or(request.intent.idempotency_key.as_deref())
+                .unwrap_or(request.intent_ref),
+        );
+        let body = serde_json::json!({ "to": to, "messages": messages });
+        match self.line_call(LINE_PUSH_MESSAGE, token, &body, Some(&retry_key), "push") {
+            LineAnswer::Done(outcome) => outcome,
+            LineAnswer::TokenInvalid => OutboundExecutionOutcome::failed("line_http_400"),
+        }
+    }
+
+    /// The fresh reply token of the inbound LINE event this send answers:
+    /// the intent's trigger names the connector event, its frozen origin
+    /// names the archived provider event, and the archive keeps the token.
+    /// `None` when the send answers no LINE event, the event is not this
+    /// send's sender's, or it is older than [`LINE_REPLY_TOKEN_FRESH_SECS`].
+    fn line_reply_token(&self, request: &OutboundExecutionRequest<'_>) -> Option<String> {
+        let intent = request.intent;
+        if intent.intent_source != OutboundIntentSource::AgentImmediate.as_str() {
+            return None;
+        }
+        let agent = EntityId::from_hex(&intent.actor).ok()?;
+        let event = match self.vault.connector_event_woken(agent, &intent.trigger_ref) {
+            Ok(event) => event?,
+            Err(error) => {
+                tracing::info!(%error, "the answered LINE event is unreadable; the send pushes");
+                return None;
+            }
+        };
+        let origin = SurfaceConnectorPayload::from_connector_event(&event).ok()?;
+        if origin.channel != LINE_CHANNEL || origin.source.user_ref != intent.target {
+            return None;
+        }
+        let body = match self
+            .vault
+            .read_provider_event(origin.payload_ref.as_deref()?)
+        {
+            Ok(body) => body?,
+            Err(error) => {
+                tracing::info!(%error, "the archived LINE event is unreadable; the send pushes");
+                return None;
+            }
+        };
+        fresh_line_reply_token(&body, crate::unix_seconds_now())
+    }
+
+    /// Tells the OF-520 port when this push takes the account past its plan's
+    /// monthly allowance. The push goes either way, and an unreadable count
+    /// never holds it.
+    fn line_count_push(&self, token: &str) {
+        let Some(used) = self.line_month_usage(token) else {
+            tracing::info!("LINE month usage unreadable; the push goes uncounted");
+            return;
+        };
+        let bound = u64::from(self.line_push_allowance);
+        let with_this = used.saturating_add(1);
+        if with_this > bound {
+            self.vault
+                .limit_watch()
+                .crossed(EngineLimit::LinePushMonthly, bound, with_this);
+        }
+    }
+
+    /// The messages LINE counts as sent this month (`totalUsage`).
+    fn line_month_usage(&self, token: &str) -> Option<u64> {
+        let response = self
+            .client
+            .get(LINE_QUOTA_CONSUMPTION)
+            .bearer_auth(token)
+            .timeout(LINE_USAGE_TIMEOUT)
+            .send()
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let mut body = Vec::new();
+        response.take(MAX_REPLY_BYTES).read_to_end(&mut body).ok()?;
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()?
+            .get("totalUsage")?
+            .as_u64()
+    }
+
+    /// One LINE send call, mapped the way Slack's is: a refused connection
+    /// never reached LINE; anything later may have, unless the call carried
+    /// a retry key LINE dedupes on.
+    fn line_call(
+        &self,
+        url: &str,
+        token: &str,
+        body: &serde_json::Value,
+        retry_key: Option<&str>,
+        kind: &str,
+    ) -> LineAnswer {
+        let mut call = self.client.post(url).bearer_auth(token).json(body);
+        if let Some(retry_key) = retry_key {
+            call = call.header("X-Line-Retry-Key", retry_key);
+        }
+        let response = match call.send() {
+            Ok(response) => response,
+            Err(error) if error.is_connect() => {
+                return LineAnswer::Done(OutboundExecutionOutcome::failed("line_unreachable"));
+            }
+            Err(_) => {
+                return LineAnswer::Done(
+                    OutboundExecutionOutcome::failed("line_no_reply").with_possible_delivery(),
+                );
+            }
+        };
+        let status = response.status().as_u16();
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        };
+        let retry_after = header(reqwest::header::RETRY_AFTER.as_str());
+        let request_id = header("x-line-request-id");
+        let accepted_id = header("x-line-accepted-request-id");
+        // The status is the delivery fact; the body only names the message
+        // and the refusal.
+        let mut reply = Vec::new();
+        let _ = response.take(MAX_REPLY_BYTES).read_to_end(&mut reply);
+        let reply: Option<serde_json::Value> = serde_json::from_slice(&reply).ok();
+        let message = reply
+            .as_ref()
+            .and_then(|reply| reply.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let outcome = match status {
+            200..=299 => {
+                let sent = reply
+                    .as_ref()
+                    .and_then(|reply| reply.pointer("/sentMessages/0/id"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                OutboundExecutionOutcome::delivered_to_channel(format!(
+                    "line:{kind}:{}",
+                    sent.or(request_id).unwrap_or_else(|| "unknown".to_owned())
+                ))
+            }
+            // LINE already accepted a push with this retry key.
+            409 if retry_key.is_some() => OutboundExecutionOutcome::delivered_to_channel(format!(
+                "line:{kind}:{}",
+                accepted_id.unwrap_or_else(|| "unknown".to_owned())
+            )),
+            400 if message == LINE_INVALID_REPLY_TOKEN => return LineAnswer::TokenInvalid,
+            429 if message.contains(LINE_MONTHLY_LIMIT) => {
+                OutboundExecutionOutcome::failed("line_monthly_limit")
+            }
+            429 => {
+                let failed = OutboundExecutionOutcome::failed("line_rate_limited");
+                match retry_after {
+                    Some(secs) => failed.with_receipt_field(RETRY_AFTER_FIELD, secs),
+                    None => failed,
+                }
+            }
+            // A server fault may have landed a call LINE cannot dedupe.
+            500..=599 if retry_key.is_none() => {
+                OutboundExecutionOutcome::failed(format!("line_http_{status}"))
+                    .with_possible_delivery()
+            }
+            _ => OutboundExecutionOutcome::failed(format!("line_http_{status}")),
+        };
+        LineAnswer::Done(outcome)
+    }
+}
+
+/// A send's text cut to LINE's text-message limit, whole characters only.
+fn line_text(text: &str) -> String {
+    let mut units = 0;
+    text.chars()
+        .take_while(|c| {
+            units += c.len_utf16();
+            units <= LINE_MAX_TEXT_UNITS
+        })
+        .collect()
+}
+
+/// The reply token an archived LINE event carries, while the event is
+/// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
+fn fresh_line_reply_token(body: &[u8], now: u64) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let token = value.pointer("/event/replyToken")?.as_str()?.trim();
+    let at = value.pointer("/event/timestamp")?.as_u64()? / 1000;
+    (!token.is_empty() && now.saturating_sub(at) < LINE_REPLY_TOKEN_FRESH_SECS)
+        .then(|| token.to_owned())
+}
+
+/// LINE's retry key for one logical send: a UUID derived from its stable
+/// idempotency key, so a retried push carries the same key and LINE sends
+/// it once.
+fn line_retry_key(idempotency_key: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron.line-retry-key.v1\0");
+    hasher.update(idempotency_key.as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    // An RFC 4122 version-4 shape: LINE takes any UUID in hex form.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 impl OutboundExecutionSink for ServedChannelSink<'_> {
@@ -171,6 +521,9 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             request.intent.verb.as_str(),
         ) {
             ("slack", "send") => self.slack_post(request),
+            (LINE_CHANNEL, "send") => self.line_send(request, LineMode::ReplyOrPush),
+            (LINE_CHANNEL, "reply") => self.line_send(request, LineMode::Reply),
+            (LINE_CHANNEL, "push") => self.line_send(request, LineMode::Push),
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
     }
