@@ -25,17 +25,22 @@
 //! from the asset its payload names (the caller's [`Assets`] supply the
 //! bytes, which must hash to the reference), a table or chart through the
 //! native writer, and a connector glued to the nodes its ends name once they
-//! are bound on its slide. Until [`Gate::is_open`], blob versions remain
-//! authoritative and exports are proposal artifacts.
+//! are bound on its slide. A bound node whose preset or payload the live
+//! model changed is written over its retained element: its preset, its glue,
+//! new media, a table's changed cells, a chart's changed series sequences.
+//! Until [`Gate::is_open`], blob versions remain authoritative and exports
+//! are proposal artifacts.
 
 use super::LiveError;
+use super::held;
 use super::pptx::{
     ChartKind, ConnectorEnd, DeckNode, LiveDeck, NodeBinding, NodeId, NodeKind, NodePayload,
     PreflightReport, RelationshipChange, RenderPair, RenderSide, SlideRender, TextBody,
-    geometry_of, slide_of, text_body,
+    WRITTEN_CHART, WRITTEN_TABLE, geometry_of, slide_of, text_body,
 };
 use crate::deck::{DeckView, ShapeView};
 use crate::design_plan::{AssetKind, Cell, Column, ColumnKind, Dataset, Rect};
+use crate::edit::geometry::{glue_of, preset_of};
 use crate::edit::transaction::StepAssetKind;
 use crate::edit::xml::next_part;
 use crate::edit::{
@@ -44,13 +49,15 @@ use crate::edit::{
     ValueEdit, Xfrm, edit, structure_patch,
 };
 use crate::graphic::{AssetRecord, GraphicLimits};
-use crate::native_patch::{ChartFamily, Frame, NativeEdit, native_patch};
+use crate::native_patch::{
+    ChartFamily, Frame, NativeEdit, Target as Sequence, chart_data, native_patch,
+};
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/3";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/4";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -232,13 +239,12 @@ pub struct HeldAssets {
 }
 
 impl HeldAssets {
-    /// Every asset a live-born picture in `decks` names, through `from`. One
-    /// that does not resolve stays out, and its export refuses.
+    /// Every asset a picture payload in `decks` names, through `from`. One
+    /// that does not resolve stays out, and an export that writes it refuses.
     pub fn resolve(from: &dyn Assets, decks: &[&LiveDeck]) -> Self {
         let mut held: Vec<(AssetRef, AssetRecord, Vec<u8>)> = Vec::new();
         for node in decks.iter().flat_map(|deck| deck.nodes.values()) {
-            if node.binding.is_none()
-                && let Some(NodePayload::Picture { image }) = &node.payload
+            if let Some(NodePayload::Picture { image }) = &node.payload
                 && !held.iter().any(|(asset, ..)| asset == image)
                 && let Some((record, bytes)) = from.resolve(image)
             {
@@ -640,6 +646,9 @@ pub fn project(
             }
             project_marks(&mut work, *id, &part, native, body)?;
         }
+        if node.binding.is_some() {
+            project_payload(&mut work, deck, *id, &part, native, assets)?;
+        }
     }
 
     // The bindings, opaque hashes and allocation history of the output.
@@ -741,18 +750,7 @@ fn born(
             })?
         }
         (NodeKind::Picture, Some(NodePayload::Picture { image })) => {
-            let (record, bytes) = assets.resolve(image).ok_or(LiveError::Invalid(
-                "a live-born picture's asset does not resolve",
-            ))?;
-            if Digest::of(&bytes) != image.hash
-                || record.content_hash != image.hash.0
-                || record.artifact != image.artifact
-                || record.version != image.version
-            {
-                return Err(LiveError::Invalid(
-                    "a live-born picture's asset bytes do not match its reference",
-                ));
-            }
+            let (record, bytes) = resolved(image, assets)?;
             let name = named("Picture");
             work.structure(&StructureEdit::AddPicture {
                 slide: part,
@@ -761,10 +759,7 @@ fn born(
                     picture: Picture {
                         record: &record,
                         bytes: &bytes,
-                        requested: match image.kind {
-                            StepAssetKind::Factual => AssetKind::Factual,
-                            StepAssetKind::Illustration => AssetKind::Illustration,
-                        },
+                        requested: requested(image),
                         limits: GraphicLimits::default(),
                     },
                     offset,
@@ -837,6 +832,237 @@ fn born(
             _ => None,
         })
         .ok_or(LiveError::Invalid("the shape verb added no shape"))
+}
+
+/// The asset a picture payload names, resolved through `assets`; its bytes
+/// must hash to the reference and its record name the same version.
+fn resolved(image: &AssetRef, assets: &dyn Assets) -> Result<(AssetRecord, Vec<u8>), LiveError> {
+    let (record, bytes) = assets
+        .resolve(image)
+        .ok_or(LiveError::Invalid("a picture's asset does not resolve"))?;
+    if Digest::of(&bytes) != image.hash
+        || record.content_hash != image.hash.0
+        || record.artifact != image.artifact
+        || record.version != image.version
+    {
+        return Err(LiveError::Invalid(
+            "a picture's asset bytes do not match its reference",
+        ));
+    }
+    Ok((record, bytes))
+}
+
+fn requested(image: &AssetRef) -> AssetKind {
+    match image.kind {
+        StepAssetKind::Factual => AssetKind::Factual,
+        StepAssetKind::Illustration => AssetKind::Illustration,
+    }
+}
+
+/// Refuse a picture whose asset does not resolve through `assets`, or whose
+/// bytes do not match its reference: what an operation's writer checks when
+/// the operation is made, ahead of the export that writes it.
+pub fn check_picture(image: &AssetRef, assets: &dyn Assets) -> Result<(), LiveError> {
+    resolved(image, assets).map(|_| ())
+}
+
+/// Write what a bound node's preset or payload changed over its retained
+/// element: a shape's or connector's preset, a connector's glue (to nodes
+/// bound on its slide), new media for a picture, a table's changed cells,
+/// and a chart's changed series names, categories and values. Each write is
+/// one checked verb; a node whose retained element already reads as the
+/// live model writes nothing.
+fn project_payload(
+    work: &mut Work,
+    deck: &LiveDeck,
+    id: NodeId,
+    part: &str,
+    native: u32,
+    assets: &dyn Assets,
+) -> Result<(), LiveError> {
+    let node = &deck.nodes[&id];
+    let view = work.view()?;
+    let at = shape_at(&view, part, native)
+        .ok_or(LiveError::UnknownNode)?
+        .node
+        .index;
+    let tree = held::slide_tree(&work.next, part)?;
+    let preset = match (&node.payload, node.preset) {
+        (Some(NodePayload::Connector { preset, .. }), _) => Some(preset.name()),
+        (_, Some(preset)) if node.kind == NodeKind::Shape => Some(preset.name()),
+        _ => None,
+    };
+    if let Some(preset) = preset
+        && preset_of(&tree, at) != Some(preset)
+    {
+        let (_, _, expected) = work.target(id)?;
+        work.value(&ValueEdit::SetPreset {
+            target: Target {
+                slide: part,
+                shape: native,
+                expected,
+            },
+            preset,
+        })?;
+    }
+    match &node.payload {
+        Some(NodePayload::Connector { start, end, .. }) => {
+            let glue = |end: &Option<ConnectorEnd>| {
+                let end = (*end)?;
+                let kind = deck.nodes.get(&end.node)?.kind;
+                let (at, native) = work.at.get(&end.node)?;
+                (at == part && !matches!(kind, NodeKind::Slide | NodeKind::Group))
+                    .then_some((*native, end.site))
+            };
+            let wanted = (glue(start), glue(end));
+            if glue_of(&tree, at) != wanted {
+                let (_, _, expected) = work.target(id)?;
+                work.value(&ValueEdit::SetGlue {
+                    target: Target {
+                        slide: part,
+                        shape: native,
+                        expected,
+                    },
+                    start: wanted.0,
+                    end: wanted.1,
+                })?;
+            }
+        }
+        Some(NodePayload::Picture { image }) => {
+            if held::picture_media(&work.next, part, &tree, at) != Some(image.hash) {
+                let (record, bytes) = resolved(image, assets)?;
+                let (_, _, expected) = work.target(id)?;
+                work.value(&ValueEdit::SetPicture {
+                    target: Target {
+                        slide: part,
+                        shape: native,
+                        expected,
+                    },
+                    picture: Picture {
+                        record: &record,
+                        bytes: &bytes,
+                        requested: requested(image),
+                        limits: GraphicLimits::default(),
+                    },
+                })?;
+            }
+        }
+        Some(NodePayload::Table { header, rows }) => {
+            let have = held::table_cells(&tree, at).ok_or(LiveError::Invalid(WRITTEN_TABLE))?;
+            let wanted: Vec<Vec<String>> = std::iter::once(header.clone())
+                .chain(rows.iter().map(|row| {
+                    row.iter()
+                        .map(|cell| cell.clone().unwrap_or_default())
+                        .collect()
+                }))
+                .collect();
+            if have.len() != wanted.len()
+                || have
+                    .iter()
+                    .zip(&wanted)
+                    .any(|(was, now)| was.len() != now.len())
+            {
+                return Err(LiveError::Invalid(WRITTEN_TABLE));
+            }
+            for (row, (was, now)) in have.iter().zip(&wanted).enumerate() {
+                for (col, (was, now)) in was.iter().zip(now).enumerate() {
+                    if was == now {
+                        continue;
+                    }
+                    let report = native_patch(
+                        &mut work.next,
+                        &NativeEdit::SetTableCell {
+                            slide: part,
+                            table: native,
+                            row,
+                            col,
+                            expected: was,
+                            value: now,
+                        },
+                    )?;
+                    work.changed.extend(report.changed_parts);
+                }
+            }
+        }
+        Some(NodePayload::Chart {
+            family,
+            categories,
+            series,
+        }) => {
+            let chart = held::chart_part(&work.next, part, &tree, at)
+                .ok_or(LiveError::Invalid(WRITTEN_CHART))?;
+            if held::chart_family(&work.next, &chart) != Some(*family)
+                || chart_data(&work.next, &chart)?.series.len() != series.len()
+            {
+                return Err(LiveError::Invalid(WRITTEN_CHART));
+            }
+            for (index, line) in series.iter().enumerate() {
+                for target in [Sequence::Name, Sequence::Categories, Sequence::Values] {
+                    // Re-read before each write: a range two series share
+                    // moves both caches.
+                    let data = chart_data(&work.next, &chart)?;
+                    let sequence = data.series.get(index).and_then(|data| match target {
+                        Sequence::Name => data.name.as_ref(),
+                        Sequence::Categories => data.categories.as_ref(),
+                        Sequence::Values => data.values.as_ref(),
+                    });
+                    let cache = sequence.map_or(&[][..], |sequence| sequence.cache.as_slice());
+                    let wanted: Vec<Cell> = match target {
+                        Sequence::Name => {
+                            if cache.first().map(held::label).as_deref() == Some(line.name.as_str())
+                            {
+                                continue;
+                            }
+                            vec![Cell::Text(line.name.clone())]
+                        }
+                        Sequence::Categories => {
+                            if cache.iter().map(held::label).eq(categories.iter().cloned()) {
+                                continue;
+                            }
+                            // A number category stays a number.
+                            categories
+                                .iter()
+                                .enumerate()
+                                .map(|(point, category)| match cache.get(point) {
+                                    Some(Cell::Number(_)) => category.parse().map_or_else(
+                                        |_| Cell::Text(category.clone()),
+                                        Cell::Number,
+                                    ),
+                                    _ => Cell::Text(category.clone()),
+                                })
+                                .collect()
+                        }
+                        Sequence::Values => {
+                            let values: Vec<Cell> = (0..categories.len())
+                                .map(|point| {
+                                    line.values
+                                        .get(point)
+                                        .and_then(|value| value.as_ref()?.as_f64())
+                                        .map_or(Cell::Missing, Cell::Number)
+                                })
+                                .collect();
+                            if cache == values.as_slice() {
+                                continue;
+                            }
+                            values
+                        }
+                    };
+                    let report = native_patch(
+                        &mut work.next,
+                        &NativeEdit::SetSeries {
+                            chart: &chart,
+                            series: index,
+                            target,
+                            values: &wanted,
+                        },
+                    )?;
+                    work.changed.extend(report.changed_parts);
+                }
+            }
+        }
+        None => {}
+    }
+    Ok(())
 }
 
 /// A connector's frame from its ends' centres, when both name top-level

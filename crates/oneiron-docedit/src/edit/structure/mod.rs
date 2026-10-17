@@ -194,6 +194,19 @@ impl Preset {
             Self::RightArrow => "rightArrow",
         }
     }
+
+    /// The preset `prst` names, when it is in the written set.
+    pub fn from_name(prst: &str) -> Option<Self> {
+        [
+            Self::Rect,
+            Self::RoundRect,
+            Self::Ellipse,
+            Self::Triangle,
+            Self::RightArrow,
+        ]
+        .into_iter()
+        .find(|preset| preset.name() == prst)
+    }
 }
 
 /// The closed connector geometry set `add_connector` writes.
@@ -212,6 +225,13 @@ impl ConnectorPreset {
             Self::Elbow => "bentConnector3",
             Self::Curved => "curvedConnector3",
         }
+    }
+
+    /// The connector geometry `prst` names, when it is in the written set.
+    pub fn from_name(prst: &str) -> Option<Self> {
+        [Self::Straight, Self::Elbow, Self::Curved]
+            .into_iter()
+            .find(|preset| preset.name() == prst)
     }
 }
 

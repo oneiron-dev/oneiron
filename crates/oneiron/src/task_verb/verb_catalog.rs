@@ -3393,7 +3393,7 @@ impl AgentVerb {
                 "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses."
             }
             Self::VaultArtifactsBodyDeckExport => {
-                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands."
+                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep."
             }
             Self::VaultArtifactsBodyDeckGate => {
                 "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector."
