@@ -24,7 +24,7 @@ pub use self::driver::EngineNativeExecutor;
 use self::record::step_state_hash;
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, is_result_output_path,
-    result_handle_json,
+    result_handle_json, store_result_output_path,
 };
 pub use self::types::{
     ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
@@ -33,7 +33,7 @@ pub use self::types::{
     EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
     JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
     JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse,
-    guest_response_with_budget,
+    StoreReceiptInput, StoreReceiptTree, guest_response_with_budget,
 };
 
 #[cfg(test)]
