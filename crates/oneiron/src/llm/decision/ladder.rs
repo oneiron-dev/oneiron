@@ -969,7 +969,7 @@ impl DecisionLadder<'_> {
         while rung <= dial.ceiling && rung != DecisionRung::Human {
             if self
                 .slot(rung)
-                .is_some_and(|provider| takes(provider, question, images))
+                .is_some_and(|provider| takes(provider, question, images, &[]))
             {
                 return Some(rung);
             }
