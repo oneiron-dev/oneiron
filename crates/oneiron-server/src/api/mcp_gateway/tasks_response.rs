@@ -1585,6 +1585,12 @@ async fn execute_agent_verb_listing(
         Some(origin) => memory.with_host_origin(origin),
         None => memory,
     };
+    // OF-063: the off-record session the request named; inside an anonymous
+    // one a reference refusal writes no receipt (Engine ruling 10-17).
+    let memory = match actor.off_record_session.as_deref() {
+        Some(session) => memory.in_off_record_session(session),
+        None => memory,
+    };
     let hooks = crate::api::facade::row_hooks_pre(
         server,
         actor.actor_ref,

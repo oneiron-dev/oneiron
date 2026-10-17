@@ -106,11 +106,11 @@ mod maintain;
 pub use maintain::maintain;
 mod owner;
 pub use owner::legal_holds;
-pub use owner::{guests, revoke_secret};
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, restore, runs,
     secret_scan, secrets, vault_key, whoami,
 };
+pub use owner::{guests, revoke_secret};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
 mod seat;
