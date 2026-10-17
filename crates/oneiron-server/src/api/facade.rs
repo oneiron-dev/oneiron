@@ -63,6 +63,7 @@ pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::connector_call_as;
 pub(crate) use dispatch::call_verb;
+pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;

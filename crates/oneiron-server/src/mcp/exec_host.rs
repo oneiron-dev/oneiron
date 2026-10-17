@@ -590,6 +590,33 @@ impl From<String> for EngineRunError {
     }
 }
 
+/// The meter one entry of a run that spends under a scope makes its model
+/// calls on (OF-533): a guard that scope bounds, opened by the entry's host so
+/// the run's other calls (its `ai.speech`, FIX 3194) spend on the same one,
+/// and the payer a room-paid scope bills (OF-531).
+pub(crate) struct ScopeMeter<'a> {
+    pub(crate) scope: &'a SpendScopeId,
+    pub(crate) guard: BudgetGuard,
+    pub(crate) payer: Option<PayerPerson>,
+}
+
+impl<'a> ScopeMeter<'a> {
+    /// Opens `scope`'s meter for one entry: its guard's limit is what the
+    /// scope may still spend.
+    pub(crate) fn open(vault: &Vault, scope: &'a SpendScopeId) -> Result<Self, EngineRunError> {
+        // A room-paid scope's calls bill its root payer (OF-531), else it holds.
+        let payer = scope_funding(vault, Some(scope), false).map_err(EngineRunError::Payer)?;
+        let guard = AgentDispatcher::new(vault)
+            .guard_for_scope(scope)
+            .map_err(|error| EngineRunError::Binding(error.to_string()))?;
+        Ok(Self {
+            scope,
+            guard,
+            payer,
+        })
+    }
+}
+
 /// One entry of an engine-native run through `bound`, the write door its
 /// host bound: `execute_code`'s credential-gated door, or a leased attempt's
 /// own dispatcher. A manifest-backed run runs on `seat`, the model seat its
@@ -597,9 +624,9 @@ impl From<String> for EngineRunError {
 /// model.
 ///
 /// A run that spends under a scope (`spend`: a pumped agent run's, OF-533)
-/// makes its model calls on a meter that scope bounds, and what they used is
-/// booked on the scope once the entry ends, whatever it answered. With none,
-/// the calls run on the provider's own meter.
+/// makes its model calls on the meter its host opened for the entry, and
+/// what that meter used is booked on the scope once the entry ends, whatever
+/// it answered. With none, the calls run on the provider's own meter.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -608,11 +635,15 @@ pub(crate) fn enter_engine_native_run(
     config: &EngineExecutorConfig,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
-    spend: Option<&SpendScopeId>,
+    spend: Option<ScopeMeter<'_>>,
     seat: Option<&ModelSeat>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
-    let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
-    let Some(scope) = spend else {
+    let Some(ScopeMeter {
+        scope,
+        guard,
+        payer,
+    }) = spend
+    else {
         return enter_on(
             vault,
             provider,
@@ -624,10 +655,6 @@ pub(crate) fn enter_engine_native_run(
             seat,
         );
     };
-    // A room-paid scope's calls bill its root payer (OF-531), else it holds.
-    let payer = scope_funding(vault, Some(scope), false).map_err(EngineRunError::Payer)?;
-    let dispatcher = AgentDispatcher::new(vault);
-    let guard = dispatcher.guard_for_scope(scope).map_err(binding)?;
     // The backend a reader child's calls take, on this scope's guard.
     let backend = provider.reader_backend(guard.clone(), payer);
     let backend = backend.ok_or_else(|| {
@@ -643,9 +670,9 @@ pub(crate) fn enter_engine_native_run(
         reactor,
         seat,
     );
-    dispatcher
+    AgentDispatcher::new(vault)
         .record_guard_spend(scope, guard.read().used_units)
-        .map_err(binding)?;
+        .map_err(|error| EngineRunError::Binding(error.to_string()))?;
     entered
 }
 

@@ -71,10 +71,7 @@ pub(crate) fn caller_options(
             } else {
                 media_left
             };
-            let cost = ModelId::new(row.model.clone())
-                .ok()
-                .and_then(|model| server.vault.model_registry_row(&model).ok().flatten())
-                .and_then(|registered| registered.catalog.cost);
+            let cost = registered_cost(server, &row);
             OptionRow {
                 row,
                 cost,
@@ -86,6 +83,48 @@ pub(crate) fn caller_options(
         options,
         media_units_left: media_left,
     }
+}
+
+/// The rows a pumped agent run could call now (FIX 3194): its `ai.speech`
+/// door alone admits it, on the run's own line, so it lists each live
+/// speech row over `inputs` the vault's inference policy admits, with what
+/// that line has left (`run_left`). Any other operation lists none.
+pub(crate) fn run_options(
+    server: &SyncServer,
+    run_left: Option<u64>,
+    operation: Option<AiOperation>,
+    inputs: &BTreeSet<Modality>,
+) -> CallerOptions {
+    if operation.is_some_and(|wanted| wanted != AiOperation::Speech) {
+        return CallerOptions {
+            options: Vec::new(),
+            media_units_left: None,
+        };
+    }
+    let options = server
+        .ai
+        .model_runtime()
+        .ai_options(Some(AiOperation::Speech), inputs)
+        .into_iter()
+        .filter(|row| policy_admits(server, row))
+        .map(|row| OptionRow {
+            cost: registered_cost(server, &row),
+            row,
+            units_left: run_left,
+        })
+        .collect();
+    CallerOptions {
+        options,
+        media_units_left: run_left,
+    }
+}
+
+/// `row`'s price as the vault's model registry holds it.
+fn registered_cost(server: &SyncServer, row: &MediaRow) -> Option<LlmCatalogCost> {
+    ModelId::new(row.model.clone())
+        .ok()
+        .and_then(|model| server.vault.model_registry_row(&model).ok().flatten())
+        .and_then(|registered| registered.catalog.cost)
 }
 
 /// Whether the vault's inference policy admits a plain call of `row`'s

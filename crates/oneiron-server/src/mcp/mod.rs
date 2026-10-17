@@ -58,7 +58,7 @@ pub use self::exec_host::{
     bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
-    EngineRunError, engine_run_seat, enter_engine_native_run, run_seat,
+    EngineRunError, ScopeMeter, engine_run_seat, enter_engine_native_run, run_seat,
 };
 pub use self::paging::{
     MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource,
