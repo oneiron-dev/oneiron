@@ -37,6 +37,7 @@ pub mod connection;
 #[cfg(test)]
 mod convergence_props_internal;
 pub(crate) mod custody;
+pub mod home_proof;
 pub mod documents;
 pub mod federation_burst;
 mod ingest;

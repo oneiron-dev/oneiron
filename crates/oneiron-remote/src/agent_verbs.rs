@@ -59,6 +59,9 @@ impl OneironClient {
                 "self.inbox.concern.outcome" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::maintenance::agent_health::ConcernCardSummary,
                 >(client, verb, &input),
+                "self.inbox.concern.move" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome,
+                >(client, verb, &input),
                 "vault.people.list" => {
                     remote_agent_verb_output::<oneiron::memory::PeoplePage>(client, verb, &input)
                 }
@@ -676,6 +679,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.inbox.concern.outcome", value)
+    }
+    pub fn self_inbox_concern_move(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+    ) -> Result<oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.concern.move", value)
     }
     pub fn vault_people_list(
         &self,
