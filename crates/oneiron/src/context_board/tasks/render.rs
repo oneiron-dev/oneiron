@@ -141,7 +141,7 @@ pub(crate) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
 /// [`TASK_LABEL_MAX_BYTES`] cut at a character boundary and ended with an
 /// ellipsis. Only the row is cut; the stored label stays whole, and the task's
 /// id reads it in full.
-fn label_preview(label: &str) -> String {
+pub(crate) fn label_preview(label: &str) -> String {
     const ELLIPSIS: char = '\u{2026}';
     let mut token = one_line_token(label);
     if token.len() > TASK_LABEL_MAX_BYTES {

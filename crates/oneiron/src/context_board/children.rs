@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::one_line_token;
 use super::people::PeopleView;
-use super::tasks::TaskIntentPresence;
+use super::tasks::{TaskIntentPresence, label_preview};
 use crate::agent_run_status::{AgentRunStatus, project_agent_run_status_with_park};
 use crate::attempt_queue::AttemptRecord;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -216,7 +216,8 @@ pub fn fork_states_for_actor(
 }
 
 /// The `you:` line: each fork with where it runs and what it does, or `None`
-/// when the agent has no fork. A fork's task is named by its board label.
+/// when the agent has no fork. A fork's task is named by its board label, in
+/// the bounded preview its TASKS row shows.
 #[must_use]
 pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> Option<String> {
     if forks.is_empty() {
@@ -227,7 +228,7 @@ pub fn render_you_line(forks: &[ForkState], intents: &[TaskIntentPresence]) -> O
             .iter()
             .find(|intent| intent.id == task)
             .and_then(|intent| intent.label.as_deref())
-            .map(one_line_token)
+            .map(label_preview)
     };
     let parts: Vec<String> = forks
         .iter()
