@@ -1,7 +1,8 @@
 //! The host Coach's code fixes (DEC-0005 FIX6, OF-380). For each
 //! `coach.code_fix` attempt the Coach's heal worker leases, the generative
 //! seat drafts the invented example and the candidate fix, and replays the
-//! failing agent with no tools. The engine asks every judgment on the
+//! failing agent with no tools, under the Coach's fix and under each of the
+//! publisher's pinned candidates. The engine asks every judgment on the
 //! decision ladder and decides what may leave. The Coach pays for the calls,
 //! on one budget per case.
 use std::collections::BTreeMap;
@@ -10,7 +11,7 @@ use std::time::Duration;
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach_heal::HealRoute;
 use oneiron::dreamer_runner::maintenance::code_fix::{
-    CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob,
+    CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, PublisherCandidate,
 };
 use oneiron::failure_signals::{InventedMessage, InventedRole};
 use oneiron::llm::decision::DecisionRung;
@@ -53,6 +54,7 @@ pub(super) fn run(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     principal: EntityId,
+    publisher: &[PublisherCandidate],
     now: u64,
 ) -> oneiron::Result<()> {
     let vault = server.vault();
@@ -68,14 +70,41 @@ pub(super) fn run(
         "coach-code-fix:{}",
         EntityId::from_bytes(*admitted.status.attempt.id.as_bytes())?.to_hex()
     );
-    let models = HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?;
+    let models = CodeFixModels {
+        models: HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?,
+        publisher,
+    };
     let settled = vault.run_coach_code_fix(admitted, &decisions, &models, now)?;
     tracing::debug!(
         example = ?settled.example,
-        candidate = ?settled.candidate.as_ref().map(|run| run.outcome),
+        candidates = ?settled.candidates.iter().map(|run| run.outcome).collect::<Vec<_>>(),
         "the Coach's code-fix run settled"
     );
     Ok(())
+}
+
+/// The seat, with the publisher's pinned candidates beside the Coach's own.
+struct CodeFixModels<'a> {
+    models: HostModels<'a>,
+    publisher: &'a [PublisherCandidate],
+}
+
+impl CodeFixHost for CodeFixModels<'_> {
+    fn draft(&self, job: &CodeFixJob) -> oneiron::Result<Option<CodeFixDraft>> {
+        self.models.draft(job)
+    }
+
+    fn reply(
+        &self,
+        system: &str,
+        conversation: &[InventedMessage],
+    ) -> oneiron::Result<Option<String>> {
+        self.models.reply(system, conversation)
+    }
+
+    fn publisher_candidates(&self) -> &[PublisherCandidate] {
+        self.publisher
+    }
 }
 
 /// The generative seat, for the Coach's drafts and the failing agent's
