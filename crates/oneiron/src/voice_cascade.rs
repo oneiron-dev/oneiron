@@ -75,7 +75,8 @@ pub use protocol::*;
 pub use retrieval::{PartialRetrieval, SpeculativeRetrievalBridge, UtteranceHandle};
 pub use safeguard::{SafeguardRequest, SentenceEnforcement, SentenceWork};
 pub use session::{
-    AsrUpdate, PreparedAsr, SafeguardUpdate, VoiceCascadeSession, VoiceSessionConfig,
+    AsrUpdate, AudienceRefresh, PreparedAsr, SafeguardUpdate, VoiceCascadeSession,
+    VoiceSessionConfig,
 };
 
 #[cfg(test)]

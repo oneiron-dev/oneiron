@@ -20,6 +20,20 @@ pub(super) fn require_non_empty(value: &str, what: &str) -> Result<()> {
     Ok(())
 }
 
+/// Longest session or speaker key, the attendee ask's own bound.
+const MAX_SESSION_KEY_BYTES: usize = 128;
+
+/// A session or speaker key: non-empty, with no surrounding whitespace, at
+/// most 128 bytes.
+pub(super) fn require_session_key(value: &str, what: &str) -> Result<()> {
+    if value.trim().is_empty() || value.trim() != value || value.len() > MAX_SESSION_KEY_BYTES {
+        return Err(invalid_voice(&format!(
+            "{what} must be non-empty, trimmed and at most 128 bytes"
+        )));
+    }
+    Ok(())
+}
+
 pub(super) fn require_sha256_hex(value: &str) -> Result<()> {
     if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
         Ok(())
