@@ -263,6 +263,11 @@ pub(super) async fn serve_with_config(
         &sync_server,
         crate::server::admit_every_pass(),
     ));
+    // Queued campaign enrollments land on the campaign's home node (ARCH-0059).
+    workers.push(crate::campaign_enrollment::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(
         &sync_server,

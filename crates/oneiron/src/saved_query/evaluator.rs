@@ -725,3 +725,35 @@ fn no_match(why: &str) -> MatchDecision {
         why: why.to_owned(),
     }
 }
+
+/// What visiting one candidate cost a wake: what a wake loop outside this
+/// module (the campaign enrollment wake) counts against the query's
+/// `max_entities_per_wake` and `max_judges_per_wake`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct WakeVisit {
+    /// The verdict came from the memo.
+    pub(crate) memo_hit: bool,
+    /// A stage-2 judge actually ran.
+    pub(crate) judge_ran: bool,
+}
+
+impl SavedQueryEvaluator<'_> {
+    /// [`Self::evaluate_entity`], plus what the evaluation cost a wake, so a
+    /// wake built outside this module counts judges that ran rather than
+    /// inferring them from the verdict.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_entity`].
+    pub(crate) async fn evaluate_entity_visit(
+        &self,
+        request: &EvaluationRequest<'_>,
+    ) -> Result<(EvaluationOutcome, WakeVisit)> {
+        let staged = self.evaluate_staged(request).await?;
+        let visit = WakeVisit {
+            memo_hit: staged.outcome.memo_hit,
+            judge_ran: staged.judge_ran,
+        };
+        Ok((staged.outcome, visit))
+    }
+}

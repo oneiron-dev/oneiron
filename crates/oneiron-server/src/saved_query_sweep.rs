@@ -251,7 +251,9 @@ fn evaluate(
             owner_grants: grants,
             judge: None,
         };
-        return block_on(evaluator.evaluate_wake_batch(record.query_ref, page, now));
+        return block_on(crate::campaign_enrollment::wake(
+            &evaluator, record, page, now,
+        ));
     };
     let model = ModelId::new(model_id.clone()).map_err(|_| {
         oneiron::Error::InvalidConfig("the saved query names no valid model".into())
@@ -318,7 +320,9 @@ fn evaluate(
             decisions: &decisions,
         }),
     };
-    let report = block_on(evaluator.evaluate_wake_batch(record.query_ref, page, now));
+    let report = block_on(crate::campaign_enrollment::wake(
+        &evaluator, record, page, now,
+    ));
     let _ = carrier.abort(&lease);
     report
 }
