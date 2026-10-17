@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3237 | 902 | 169 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3237 | 902 | 170 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 2 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -420,8 +420,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `ooxml` | file | 1 | m | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `retained_opc` | dir | 7 | L | Bounded, retained OPC archives |
 | `xlfn` | file | 1 | s | Excel's storage qualifiers for post-2007 worksheet functions |
-| `xlsx_body` | file | 1 | L | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
-| `xlsx_shift` | file | 1 | s | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
+| `xlsx_body` | file | 1 | XL | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
+| `xlsx_shift` | file | 1 | m | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
 
 ## oneiron-driver
 
