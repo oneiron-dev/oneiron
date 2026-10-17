@@ -330,6 +330,9 @@
       "description": "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named.",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
+      "outputs_by_input": {
+        "fold": "crate::compaction::FoldReply<crate::compaction::FoldDescription>"
+      },
       "mcp_served": "input.task_ref.as_deref().and_then(|id| oneiron::EntityId::from_hex(id).ok())",
       "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else if input.key.is_some() { Err(MemoryError::bad_request(\"describe(card key) expands a board card, which only a live board session holds\"))? } else if input.fold.is_some() { Err(MemoryError::bad_request(\"describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
@@ -410,6 +413,9 @@
       "refs": ["/task_ref"],
       "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
+      "outputs_by_input": {
+        "resultRef": "crate::code_run::ReaderReportReceipt"
+      },
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
       "call": "memory.tasks_update_request(&input)?",
       "scope": "Write",
@@ -2467,6 +2473,17 @@
       "input": "crate::workspace_roster::ProjectCardConfirmRequest",
       "output": "crate::workspace_roster::ProjectMintReceipt",
       "call": "memory.projects_confirm(&input)?",
+      "scope": "Write",
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.projects.roster.write",
+      "description": "Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent.",
+      "input": "crate::workspace_roster::ProjectRosterWriteRequest",
+      "output": "crate::workspace_roster::ProjectRosterWriteOutcome",
+      "call": "memory.projects_write_roster(input.project, &input.record)?",
       "scope": "Write",
       "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",

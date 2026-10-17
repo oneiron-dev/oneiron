@@ -7,6 +7,7 @@ Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
 - `report`
+- `self.focus.scratchpad.recall`
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
@@ -29,6 +30,7 @@ both bindings and their export-census tests in one change.
 - `steer`
 - `describe`
 - `tasks.create`
+- `tasks.wave`
 - `tasks.update`
 - `vault.witness`
 - `vault.claims.upsert`
@@ -61,6 +63,7 @@ both bindings and their export-census tests in one change.
 - `vault.shared.outcomes`
 - `vault.shared.deletion`
 - `vault.members.add`
+- `vault.members.invitation_slip`
 - `vault.members.change`
 - `vault.members.remove`
 - `vault.members.leave`
@@ -77,6 +80,8 @@ both bindings and their export-census tests in one change.
 - `vault.shared.close_erase_ask`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
+- `vault.records.erase_preview`
+- `vault.records.erase_confirm`
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.legal_holds.place`
@@ -123,6 +128,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.view`
 - `vault.code.diff`
 - `vault.code.blame`
+- `vault.code.proposal_view`
+- `vault.code.repo_diff`
 - `vault.artifacts.export`
 - `vault.artifacts.born_from`
 - `vault.artifacts.proposals`
@@ -159,6 +166,8 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.consent`
 - `vault.rooms.offer`
 - `vault.rooms.offer.answer`
+- `vault.rooms.offer.vote`
+- `vault.rooms.offer.reopen`
 - `vault.rooms.offers`
 - `vault.projects.goal.revisions`
 - `vault.projects.goal.dismiss`
@@ -197,6 +206,8 @@ both bindings and their export-census tests in one change.
 - `self.decisions.asks`
 - `connector.list`
 - `connector.status`
+- `connector.call`
+- `connector.schema`
 - `vault.commit`
 - `vault.remember`
 - `vault.claims.retract`
@@ -215,6 +226,10 @@ both bindings and their export-census tests in one change.
 - `vault.habits.checkin`
 - `vault.claims.admit`
 - `vault.artifacts.create`
+- `vault.conversations.create`
+- `vault.conversations.turns.create`
+- `vault.conversations.records.append`
+- `vault.batch`
 - `vault.artifacts.put`
 - `vault.artifacts.append`
 - `vault.artifacts.read`

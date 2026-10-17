@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 248 facade rows, 725 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 208.
+// UniFFI census: 249 facade rows, 728 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 209.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
@@ -8034,87 +8034,21 @@ pub struct ProjectMintReceipt {
     pub grant_ref: String,
 }
 
-/// `oneiron::task_verb::sdk::ProjectRefRequest`.
+/// `oneiron::workspace_roster::project::roster::ProjectRosterWriteRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct ProjectRefRequest {
-    #[serde(rename = "project_ref")]
-    pub project_ref: String,
-}
-
-/// `oneiron::workspace_roster::project::goal::GoalPreference`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct GoalPreference {
-    #[serde(rename = "prefer")]
-    pub prefer: String,
-    #[serde(rename = "over")]
-    pub over: String,
-    #[serde(rename = "reason")]
-    pub reason: String,
-}
-
-/// `oneiron::skill_optimize::gate::project_goal::ProjectGoalRevisionProposal`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalRevisionProposal {
+pub struct ProjectRosterWriteRequest {
     #[serde(rename = "project")]
     pub project: String,
-    #[serde(rename = "goal_claim")]
-    pub goal_claim: String,
-    #[serde(rename = "preference")]
-    pub preference: GoalPreference,
-    #[serde(rename = "question_digest")]
-    pub question_digest: String,
-    #[serde(rename = "picked_by")]
-    pub picked_by: String,
-    #[serde(rename = "at")]
-    pub at: u64,
-}
-
-/// `oneiron::workspace_roster::project::goal::context::ProjectGoalInterviewContext`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalInterviewContext {
-    #[serde(
-        rename = "goal_claim",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub goal_claim: Option<String>,
-    #[serde(rename = "generation")]
-    pub generation: u64,
-    #[serde(rename = "card_seed", default, skip_serializing_if = "Option::is_none")]
-    pub card_seed: Option<ProjectGoalDraft>,
-    #[serde(rename = "revision_proposals")]
-    pub revision_proposals: Vec<ProjectGoalRevisionProposal>,
-}
-
-/// `oneiron::workspace_roster::join_consent::JoinRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct JoinRequest {
-    #[serde(rename = "room")]
-    pub room: String,
-    #[serde(rename = "branch", default, skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-    #[serde(rename = "subject")]
-    pub subject: JoinSubject,
-    #[serde(rename = "paid")]
-    pub paid: bool,
-    #[serde(
-        rename = "spend_scope",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub spend_scope: Option<String>,
-    #[serde(rename = "intent_key")]
-    pub intent_key: String,
+    #[serde(rename = "record")]
+    pub record: crate::WireJson,
 }
 
 /// `oneiron::workspace_roster::join_consent::ConsentPart`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConsentPart {
+    #[serde(rename = "subject")]
+    Subject,
     #[serde(rename = "spend")]
     Spend,
     #[serde(rename = "membership")]
@@ -8126,6 +8060,8 @@ pub enum ConsentPart {
 /// `oneiron::workspace_roster::join_consent::RequiredParty`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RequiredParty {
+    #[serde(rename = "subject")]
+    Subject(JoinSubject),
     #[serde(rename = "payer")]
     Payer(String),
     #[serde(rename = "payer_unknown")]
@@ -8199,6 +8135,27 @@ pub enum JoinDecision {
     Refuse(JoinRefusal),
 }
 
+/// `oneiron::workspace_roster::join_consent::ConsentDenial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentDenial {
+    #[serde(rename = "party")]
+    pub party: String,
+    #[serde(rename = "answer_ref")]
+    pub answer_ref: String,
+}
+
+/// `oneiron::workspace_roster::join_consent::ConsentState` with `T` = `EntityId`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConsentStateEntityId {
+    #[serde(rename = "missing")]
+    Missing(ConsentNeed),
+    #[serde(rename = "granted")]
+    Granted(String),
+    #[serde(rename = "denied")]
+    Denied(ConsentDenial),
+}
+
 /// `oneiron::workspace_roster::join_consent::SpendConsent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SpendConsent {
@@ -8219,16 +8176,6 @@ pub enum SpendConsent {
     },
     #[serde(rename = "no_paid_work")]
     NoPaidWork,
-}
-
-/// `oneiron::workspace_roster::join_consent::ConsentDenial`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ConsentDenial {
-    #[serde(rename = "party")]
-    pub party: String,
-    #[serde(rename = "answer_ref")]
-    pub answer_ref: String,
 }
 
 /// `oneiron::workspace_roster::join_consent::ConsentState` with `T` = `SpendConsent`.
@@ -8343,6 +8290,8 @@ pub enum ConsentStateAdmissionConsent {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentSet {
+    #[serde(rename = "subject")]
+    pub subject: ConsentStateEntityId,
     #[serde(rename = "spend")]
     pub spend: ConsentStateSpendConsent,
     #[serde(rename = "membership")]
@@ -8396,6 +8345,93 @@ pub struct JoinOutcome {
         skip_serializing_if = "Option::is_none"
     )]
     pub receipt_ref: Option<String>,
+}
+
+/// `oneiron::workspace_roster::project::roster::ProjectRosterWriteOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProjectRosterWriteOutcome {
+    #[serde(rename = "installed")]
+    pub installed: bool,
+    #[serde(rename = "invitations")]
+    pub invitations: Vec<JoinOutcome>,
+}
+
+/// `oneiron::task_verb::sdk::ProjectRefRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectRefRequest {
+    #[serde(rename = "project_ref")]
+    pub project_ref: String,
+}
+
+/// `oneiron::workspace_roster::project::goal::GoalPreference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GoalPreference {
+    #[serde(rename = "prefer")]
+    pub prefer: String,
+    #[serde(rename = "over")]
+    pub over: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+}
+
+/// `oneiron::skill_optimize::gate::project_goal::ProjectGoalRevisionProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGoalRevisionProposal {
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "goal_claim")]
+    pub goal_claim: String,
+    #[serde(rename = "preference")]
+    pub preference: GoalPreference,
+    #[serde(rename = "question_digest")]
+    pub question_digest: String,
+    #[serde(rename = "picked_by")]
+    pub picked_by: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::workspace_roster::project::goal::context::ProjectGoalInterviewContext`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectGoalInterviewContext {
+    #[serde(
+        rename = "goal_claim",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal_claim: Option<String>,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "card_seed", default, skip_serializing_if = "Option::is_none")]
+    pub card_seed: Option<ProjectGoalDraft>,
+    #[serde(rename = "revision_proposals")]
+    pub revision_proposals: Vec<ProjectGoalRevisionProposal>,
+}
+
+/// `oneiron::workspace_roster::join_consent::JoinRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct JoinRequest {
+    #[serde(rename = "room")]
+    pub room: String,
+    #[serde(rename = "branch", default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(rename = "subject")]
+    pub subject: JoinSubject,
+    #[serde(rename = "paid")]
+    pub paid: bool,
+    #[serde(
+        rename = "spend_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spend_scope: Option<String>,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
 }
 
 /// `oneiron::workspace_roster::join_door::ConsentAnswer`.

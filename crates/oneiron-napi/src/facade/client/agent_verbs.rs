@@ -1568,6 +1568,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_projects_roster_write(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.projects.roster.write", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_projects_goal_intake(
         &self,
         input: serde_json::Value,
