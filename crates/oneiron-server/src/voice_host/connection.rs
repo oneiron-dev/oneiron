@@ -253,6 +253,54 @@ impl VoiceHost {
                         WireOut::Control(Some(ControlOut::Event(event))) => control_response(event),
                         WireOut::Playout(None) | WireOut::Control(None) => continue,
                     },
+                    // The bridge before wire input: it drives the live hearing's
+                    // socket, and steady microphone frames must not starve it.
+                    event = async {
+                        match bridge.as_deref_mut() {
+                            Some(bridge) => bridge.next().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let Some(bridge) = bridge.as_deref_mut() else { continue };
+                        match event {
+                            MediaEvent::Stopped => break,
+                            MediaEvent::In(input) => self.media_in(input, bridge, outputs),
+                            MediaEvent::Brain(out) => self.brain_out(out, bridge, outputs).await?,
+                            MediaEvent::Verdict(verdict) => self.verdict(verdict, bridge, outputs),
+                            MediaEvent::Tick => self.speech_tick(bridge, outputs).await?,
+                            // Spoken audio plays only for the session's current generation.
+                            MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
+                                self.spoken(frame, bridge).await?;
+                            }
+                            // A sentence that was not spoken stops its generation.
+                            MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
+                                tracing::warn!("voice media: a sentence was not spoken");
+                                self.output_failed(generation, bridge, outputs);
+                            }
+                            MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
+                                // A heard final replaces any enrichment in flight, as a wire final does.
+                                if let Some((handle, work)) = self.heard(bridge, event) {
+                                    pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
+                                    pending_final = true;
+                                }
+                            }
+                            MediaEvent::Live(Ok(updates)) => {
+                                // A live hypothesis replaces partial work in flight, never a final's.
+                                if let Some(heard) = self.live_heard(bridge, updates, pending_final) {
+                                    pending_final = heard.final_text;
+                                    pending = Some(heard_pending(heard));
+                                }
+                            }
+                            MediaEvent::Live(Err(error)) => {
+                                tracing::warn!(%error, "voice media: the live hearing failed");
+                                self.live_failed(bridge);
+                                match LIVE_ASR_FAILURE {
+                                    LiveAsrFailure::EndCall => return Err(io::Error::other("voice live hearing failed")),
+                                }
+                            }
+                        }
+                        continue;
+                    }
                     bytes = frame.read(&mut reader) => {
                         let Some(bytes) = bytes? else { break };
                         let request = serde_json::from_slice::<Request>(&bytes);
@@ -314,52 +362,6 @@ impl VoiceHost {
                             },
                             Err(_) => Response::Error { code: "invalid_request" },
                         }
-                    }
-                    event = async {
-                        match bridge.as_deref_mut() {
-                            Some(bridge) => bridge.next().await,
-                            None => std::future::pending().await,
-                        }
-                    } => {
-                        let Some(bridge) = bridge.as_deref_mut() else { continue };
-                        match event {
-                            MediaEvent::Stopped => break,
-                            MediaEvent::In(input) => self.media_in(input, bridge, outputs),
-                            MediaEvent::Brain(out) => self.brain_out(out, bridge, outputs).await?,
-                            MediaEvent::Verdict(verdict) => self.verdict(verdict, bridge, outputs),
-                            MediaEvent::Tick => self.speech_tick(bridge, outputs).await?,
-                            // Spoken audio plays only for the session's current generation.
-                            MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
-                                self.spoken(frame, bridge).await?;
-                            }
-                            // A sentence that was not spoken stops its generation.
-                            MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
-                                tracing::warn!("voice media: a sentence was not spoken");
-                                self.output_failed(generation, bridge, outputs);
-                            }
-                            MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
-                                // A heard final replaces any enrichment in flight, as a wire final does.
-                                if let Some((handle, work)) = self.heard(bridge, event) {
-                                    pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
-                                    pending_final = true;
-                                }
-                            }
-                            MediaEvent::Live(Ok(updates)) => {
-                                // A live hypothesis replaces partial work in flight, never a final's.
-                                if let Some(heard) = self.live_heard(bridge, updates, pending_final) {
-                                    pending_final = heard.final_text;
-                                    pending = Some(heard_pending(heard));
-                                }
-                            }
-                            MediaEvent::Live(Err(error)) => {
-                                tracing::warn!(%error, "voice media: the live hearing failed");
-                                self.live_failed(bridge);
-                                match LIVE_ASR_FAILURE {
-                                    LiveAsrFailure::EndCall => return Err(io::Error::other("voice live hearing failed")),
-                                }
-                            }
-                        }
-                        continue;
                     }
                     result = async { pending.as_mut().expect("guarded pending work").await }, if pending.is_some() => {
                         pending = None;
