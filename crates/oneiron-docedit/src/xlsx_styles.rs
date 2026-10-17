@@ -324,6 +324,17 @@ pub(crate) fn write_formats(
             xf.set("applyFont", 1);
         }
         if let Some(fill) = &format.fill {
+            // Excel reads fills 0 and 1 as none and gray125 whatever a list
+            // holds there, so a new list starts with them.
+            if fills.entries.is_empty() {
+                for reserved in ["none", "gray125"] {
+                    let mut pattern = Element::new("patternFill");
+                    pattern.set("patternType", reserved);
+                    let mut element = Element::new("fill");
+                    element.children.push(pattern);
+                    fills.entries.push(element);
+                }
+            }
             let mut pattern = Element::new("patternFill");
             pattern.set("patternType", &fill.pattern);
             pattern

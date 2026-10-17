@@ -42,7 +42,9 @@ pub use consent::{
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub use oneiron_docedit::live::LandingReceipt;
-pub use oneiron_docedit::xlsx_body::{XlsxArea, XlsxBook, XlsxLock, XlsxStyle, XlsxValue};
+pub use oneiron_docedit::xlsx_body::{
+    XlsxArea, XlsxBook, XlsxLock, XlsxStyle, XlsxTable, XlsxValue,
+};
 pub(crate) use pptx::live_refused;
 pub use pptx::{
     DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
