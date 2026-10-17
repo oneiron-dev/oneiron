@@ -225,6 +225,7 @@ mod recall_door;
 pub mod sdk;
 mod sdk_catalog_fragment;
 mod sdk_connector;
+mod sdk_connector_call;
 mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_embedding_space;
@@ -232,6 +233,8 @@ mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_record_erase;
+mod sdk_scratchpad;
+mod sdk_secret;
 mod sdk_self;
 mod sdk_share;
 mod sdk_shared;
@@ -244,6 +247,7 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
     ack_option_void_generation, has_option_link_void, option_void_generation,
 };
@@ -256,6 +260,7 @@ pub(crate) use ask_record::{
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
+pub(crate) use lifecycle_facade::deliver_task_result_in_txn;
 
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 

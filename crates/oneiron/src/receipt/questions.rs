@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::llm::decision::questions::{
-    AnswerRecord, GraphAskFailure, GraphAskReceipts, QuestionDefinition,
+    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
+    QuestionDefinition,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
@@ -65,6 +66,23 @@ pub struct GraphAskRequest {
     /// ask's: an ask over n units can run up to n times this.
     #[serde(default)]
     pub unit_deadline_ms: Option<u64>,
+    /// Where this ask's unit text may go: `managed`, `relay` or `self-host`;
+    /// the vault's own posture when absent. It only narrows, as a standing
+    /// question's `posture` does: one stricter than the vault's answers
+    /// without the rungs that send unit text off the host where it forbids
+    /// that, and one as loose as the vault's or looser asks under the
+    /// vault's.
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    pub posture: Option<crate::config::HostingPrivacyPosture>,
+    /// The lines each unit is judged by, as a standing question's
+    /// `criteria`: `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each
+    /// at most 16 nonempty lines of at most 512 bytes. A yes/no question's
+    /// rungs read them as its rubric; another contract's call carries them
+    /// in its state. None when absent.
+    #[serde(default)]
+    #[schemars(with = "Option<serde_json::Value>")]
+    pub criteria: Option<QuestionCriteria>,
 }
 
 /// A graph ask's type selection: the engine's by-type entry
@@ -124,6 +142,16 @@ impl GraphAskRequest {
             return Err(MemoryError::bad_request_with(
                 format!("select.limit must be between 1 and {GRAPH_ASK_MAX_UNITS}"),
                 &["Select fewer units at once."],
+            ));
+        }
+        if self
+            .criteria
+            .as_ref()
+            .is_some_and(|criteria| criteria.validate().is_err())
+        {
+            return Err(MemoryError::bad_request_with(
+                "the criteria are not valid",
+                &["Give each list at most 16 nonempty lines of at most 512 bytes."],
             ));
         }
         self.question.validate().map_err(|_| {
@@ -281,4 +309,29 @@ pub struct QuestionReadRequest {
 #[serde(deny_unknown_fields)]
 pub struct QuestionAnswersRequest {
     pub id: EntityId,
+}
+
+/// One entry of `vault.questions.answers`, tagged by `kind`: a graph
+/// question's answer receipt, or a standing artifact question's last ask of
+/// one artifact, whose answers wait as a proposal for Keep
+/// (`vault.artifacts.keep` / `vault.artifacts.discard`) rather than as
+/// claims.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QuestionAnswer {
+    Graph(AnswerRecord),
+    Artifact(ArtifactAskRecord),
+}
+
+impl QuestionAnswer {
+    /// The answers door's one shape: every graph answer receipt in the
+    /// engine's order, then every artifact ask in artifact order.
+    #[must_use]
+    pub fn union(graph: Vec<AnswerRecord>, asks: Vec<ArtifactAskRecord>) -> Vec<Self> {
+        graph
+            .into_iter()
+            .map(Self::Graph)
+            .chain(asks.into_iter().map(Self::Artifact))
+            .collect()
+    }
 }
