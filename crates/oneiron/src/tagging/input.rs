@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::conversation_dag::{
-    keeps_dag_topology, record_has_dag_topology, record_kind, retained_parent,
+    is_thread_record, keeps_dag_topology, record_has_dag_topology, record_kind, retained_parent,
 };
 use crate::edge::EdgeKind;
 use crate::error::Result;
@@ -532,9 +532,11 @@ pub(super) fn sent_text_offset_in_txn(
 /// earlier second. A DAG record with no parent, or any turn of a conversation that
 /// adopted the DAG, is a root and reads alone, as is a turn whose `ChildOf`
 /// owner is not one live conversation, or one of whose turns carries DAG
-/// topology of its own (a received `Parent`, say). Only a conversation that
-/// never adopted it is ordered by time: its `ChildOf` turns that occurred in
-/// an earlier second than `turn`. A turn of the same second is left out,
+/// topology of its own (a received `Parent`, say). A quoted room thread
+/// reply, born a DAG thread record (OF-460), hangs off the room's trunk and
+/// is only passed over. Only a conversation that never adopted it is ordered
+/// by time: its `ChildOf` turns that occurred in an earlier second than
+/// `turn`. A turn of the same second is left out,
 /// since nothing orders the two: a turn's id may be its caller's choice, and
 /// its time has one-second precision. That read takes each turn's row
 /// header, never its body, keeps only the nearest `limit`, and reads alone
@@ -630,8 +632,13 @@ pub(super) fn earlier_turns_in_txn(
         };
         // A turn of the room with DAG topology of its own, a received one
         // before this replica adopts the DAG among them, means time does not
-        // order the room: the turn reads alone.
+        // order the room: the turn reads alone. A quoted thread reply is
+        // born a thread record (OF-460): it hangs off the trunk, which time
+        // still orders, so the window passes it over.
         if record_has_dag_topology(vault, txn, &id).unwrap_or(true) {
+            if is_thread_record(store, txn, &id).unwrap_or(false) {
+                continue;
+            }
             return Ok(Vec::new());
         }
         // Only a strictly earlier second proves a turn came first.

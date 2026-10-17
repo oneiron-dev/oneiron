@@ -85,6 +85,18 @@ pub(crate) async fn self_decisions_asks(
     .map_err(|_| internal(VERB))?
 }
 
+/// Where the owner's credential does what `verb` does for a role holder: a
+/// held launch resumes through `vault.fanout.resume`, and an ask is answered
+/// through the owner's decision routes.
+fn owner_path(verb: &str) -> &'static str {
+    match verb {
+        "vault.fanout.resume_as" => {
+            "The owner's credential resumes a held launch through vault.fanout.resume."
+        }
+        _ => "The owner's credential answers through /v1/owner/decisions/asks.",
+    }
+}
+
 /// The role holder `verb` acts as: the slip's principal with its declared
 /// class, a person (`human`) or a bound agent (`agent`). The writer is made
 /// here, never read from the request.
@@ -95,7 +107,7 @@ pub(super) fn holder(auth: &CoreAuth, verb: &str) -> MemoryResult<WriteActor> {
             format!("{verb} acts for a person or a bound agent that holds a role"),
             &[
                 "Present a slip that names its principal with actor class human or agent.",
-                "The owner's credential answers through /v1/owner/decisions/asks.",
+                owner_path(verb),
             ],
         )
     };
