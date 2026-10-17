@@ -446,6 +446,16 @@ fn settle(
     let status = &claimed.status;
     let attempt = &status.attempt;
     let now = unix_now();
+    // OF-540: the run's execution context, bound while its lease holds; one
+    // that cannot bind leaves the run to close unattributed.
+    if let Err(error) = oneiron::skill_attribution::bind_agent_run_attribution(
+        vault,
+        attempt.id,
+        LEASE_OWNER,
+        decisions.ladder(),
+    ) {
+        tracing::warn!(%error, attempt = ?attempt.id, "an agent run's pack attribution did not bind");
+    }
     let reason = match ran {
         Ok(outcome) => match outcome.status {
             EngineExecutorStatus::Complete => {
