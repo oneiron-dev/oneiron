@@ -222,14 +222,32 @@ pub enum MembershipStanding {
         role: FederationGrantRole,
     },
     /// A live ask-scoped guest grant naming the person. It is not roster
-    /// standing and never becomes one.
+    /// standing and never becomes one. For first-party admission
+    /// (`Vault::authenticated_grant_membership_in_txn`) a live vault grant
+    /// whose role is outside `FIRST_PARTY_MEMBER_ROLES` reads as this too:
+    /// it keeps guest grading.
     ScopedGuest { grant: crate::EntityId },
 }
+
+/// The roles whose live grant over this shared vault makes its holder a
+/// member for first-party admission (FIX 360): ARCH-0043's member
+/// federation names Member, Viewer or Delegate on the roster, with Owner and
+/// Admin above them. Auditor and Guest keep guest grading.
+pub(crate) const FIRST_PARTY_MEMBER_ROLES: [FederationGrantRole; 5] = [
+    FederationGrantRole::Owner,
+    FederationGrantRole::Admin,
+    FederationGrantRole::Member,
+    FederationGrantRole::Viewer,
+    FederationGrantRole::Delegate,
+];
 
 impl Vault {
     /// `person`'s standing in shared vault `vault_id` in the caller's
     /// snapshot. A delegate grant is an attenuated read, not membership, and
-    /// is skipped; a deleted vault holds no standing. `None`: no live grant.
+    /// is skipped; a deleted vault holds no standing. A guest grant is
+    /// ask-scoped and names no vault, so it is evidence only for the shared
+    /// vault whose store holds it: asked about another `vault_id`, it gives
+    /// no standing (FIX 1014). `None`: no live grant.
     pub(crate) fn membership_standing_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -243,6 +261,9 @@ impl Vault {
         if fold.vault_root_is_conflicted() {
             return Err(denied());
         }
+        let guest_vault = self
+            .shared_vault_creation_in_txn(txn)?
+            .map(|creation| creation.vault_id);
         let mut guest = None;
         for entry in self
             .store
@@ -289,12 +310,81 @@ impl Vault {
                         role: grant.role,
                     }));
                 }
-                FederationGrantRole::Guest => {
+                FederationGrantRole::Guest if guest_vault == Some(vault_id) => {
                     guest.get_or_insert(MembershipStanding::ScopedGuest { grant: id });
                 }
                 _ => {}
             }
         }
         Ok(guest)
+    }
+
+    /// The standing ONE authenticated grant gives `principal` here, for
+    /// first-party admission (FIX 360). Only `grant_id` is read, never
+    /// another grant the person holds: it must be live, name `principal`,
+    /// carry `scope`, be unexpired and not inactive under its pact. A vault
+    /// scope must be this shared vault's own id. A role in
+    /// [`FIRST_PARTY_MEMBER_ROLES`] is a `Member`; any other live grant is a
+    /// `ScopedGuest`. `None` (no such live grant, a personal or deleted
+    /// vault) is a refusal, never a member. Proving the transport stays the
+    /// caller's.
+    pub(crate) fn authenticated_grant_membership_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        scope: FederationGrantScope,
+        principal: crate::EntityId,
+        grant_id: crate::EntityId,
+    ) -> Result<Option<MembershipStanding>> {
+        if self.shared_vault_deletion_in_txn(txn)?.is_some() {
+            return Ok(None);
+        }
+        let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
+            return Ok(None);
+        };
+        if let FederationGrantScope::Vault { vault_id } = scope
+            && (vault_id == 0 || vault_id != creation.vault_id)
+        {
+            return Ok(None);
+        }
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_root_is_conflicted() {
+            return Err(denied());
+        }
+        let Some(record) = self.store.port_entity_record(txn, &grant_id)? else {
+            return Ok(None);
+        };
+        let raw = record.encode();
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
+            || raw.len() == ENTITY_METADATA_HEADER_LEN
+            || !crate::vault::live_entity_row_in_txn(&self.store, txn, &grant_id)?.is_live()
+        {
+            return Ok(None);
+        }
+        let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if grant.member_ref != principal
+            || grant.scope != scope
+            || grant
+                .expires_at
+                .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
+            || matches!(
+                federation_grant_activation(&fold, &grant_id),
+                FederationGrantActivation::Inactive(_)
+            )
+        {
+            return Ok(None);
+        }
+        Ok(Some(
+            if matches!(grant.scope, FederationGrantScope::Vault { .. })
+                && FIRST_PARTY_MEMBER_ROLES.contains(&grant.role)
+            {
+                MembershipStanding::Member {
+                    grant: grant_id,
+                    role: grant.role,
+                }
+            } else {
+                MembershipStanding::ScopedGuest { grant: grant_id }
+            },
+        ))
     }
 }

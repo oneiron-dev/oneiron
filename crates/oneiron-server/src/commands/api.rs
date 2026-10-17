@@ -28,6 +28,8 @@ use std::path::PathBuf;
 use std::process::{Child, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use oneiron::task_verb::sdk::AgentVerb;
+
 use crate::cli::{ApiArgs, ApiCommand};
 
 /// `--silent` drops the progress meter, `--show-error` keeps the diagnostic,
@@ -163,10 +165,12 @@ pub(crate) fn request_for_command(
         }),
         // A shaped verb call is JSON by definition: the route it names accepts
         // nothing else, so the media type is this module's, not the caller's.
+        // An SDK facade row posts to its facade route (OF-158, OF-493); any
+        // other name is a core memory verb.
         ApiCommand::Call { verb, data } => Ok(CurlRequest {
             method: "POST".to_owned(),
-            url: if verb == oneiron::feedback::REPORT_VERB {
-                format!("{base}/v1/core/facade/report")
+            url: if AgentVerb::from_name(&verb).is_some_and(AgentVerb::is_facade) {
+                format!("{base}/v1/core/facade/{}", percent_encoded(&verb))
             } else {
                 format!("{base}/v1/core/memory/verbs/{}", percent_encoded(&verb))
             },

@@ -14,6 +14,9 @@ impl WholeVaultDocument {
     /// its name: an ASSET's file body is validated against them (OF-222).
     pub(super) fn validate(&self, vault: &Vault, files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
         self.manifest.validate()?;
+        for floor in &self.epoch_floors {
+            parse_id(&floor.session)?;
+        }
         let mut ids = BTreeSet::new();
         for row in self.entities() {
             let id = parse_id(&row.id)?;

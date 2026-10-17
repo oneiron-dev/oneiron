@@ -32,14 +32,19 @@ struct Candidate {
 
 /// Open disagreements, newest swap first, then the incumbent's retest flips,
 /// newest first; each case once, leaving out the cases a label already
-/// settled. Within a swap, the receipt's order.
+/// settled, a pick on the incumbent's retest flip of a swap case among them.
+/// Within a swap, the receipt's order.
 fn candidates(vault: &Vault) -> Result<Vec<Candidate>> {
     let mut receipts = skill_optimize::judge_swap_receipts(vault)?;
     receipts.sort_by_key(|receipt| std::cmp::Reverse(receipt.at));
     let mut asks = Vec::new();
     for receipt in &receipts {
         for case in &receipt.disagreements {
-            if case.settled_by != JudgeSwapSettledBy::Open {
+            // A pick on the incumbent's retest flip of the same case already
+            // sides with one answer; the next swap pass settles it by that.
+            if case.settled_by != JudgeSwapSettledBy::Open
+                || skill_optimize::swap_case_retest_picked(vault, case)?
+            {
                 continue;
             }
             if let Some(ask) = skill_optimize::swap_case_ask(receipt, case) {

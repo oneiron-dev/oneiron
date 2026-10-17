@@ -32,6 +32,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.focus.scratchpad.append",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ScratchpadAppendRequest,
+                >(),
+            ),
+            (
+                "self.focus.scratchpad.seal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ScratchpadSealRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary",
                 crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
             ),
@@ -198,6 +210,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
             ),
             (
+                "vault.explain.memory",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ExplainMemoryRequest,
+                >(),
+            ),
+            (
+                "vault.explain.gate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ExplainGateRequest,
+                >(),
+            ),
+            (
                 "vault.kv.get",
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueAddress>(),
             ),
@@ -313,6 +337,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.authority.audit",
                 crate::code_run::vault_read::request_schema::<crate::receipt::AuthorityAuditQuery>(
                 ),
+            ),
+            (
+                "vault.mesh.path_receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MeshPathReceiptsRequest,
+                >(),
             ),
             (
                 "vault.inspection.resolve",
@@ -513,6 +543,26 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.legal_holds.lift_and_erase",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+                >(),
+            ),
+            (
+                "vault.courtesy_delete.send",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CourtesyDeleteSendRequest,
+                >(),
+            ),
+            (
+                "vault.courtesy_delete.sent",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.courtesy_delete.incoming",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.courtesy_delete.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CourtesyDeleteAnswerRequest,
                 >(),
             ),
             (
@@ -780,6 +830,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.artifacts.review_slides",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::SlideReviewSubmit,
+                >(),
+            ),
+            (
+                "vault.artifacts.ask",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactAskSubmit,
+                >(),
+            ),
+            (
+                "vault.critic.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::critic::review::CriticReviewSubmit,
                 >(),
             ),
             (
@@ -1101,6 +1163,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.questions.answers",
                 crate::code_run::vault_read::request_schema::<crate::receipt::QuestionAnswersRequest>(
+                ),
+            ),
+            (
+                "vault.questions.refresh",
+                crate::code_run::vault_read::request_schema::<crate::receipt::QuestionRefreshRequest>(
                 ),
             ),
             (
@@ -1679,6 +1746,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.focus.scratchpad.append" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.focus.scratchpad.seal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.memory.diary" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -1953,6 +2034,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.explain.memory" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.explain.gate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.kv.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2129,6 +2224,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.authority.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.path_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2350,6 +2452,22 @@ pub fn mcp_arguments_schema_from_input(
         "vault.legal_holds.list" => &[],
         "vault.legal_holds.log" => &[],
         "vault.legal_holds.lift_and_erase" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.courtesy_delete.send" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.courtesy_delete.sent" => &[],
+        "vault.courtesy_delete.incoming" => &[],
+        "vault.courtesy_delete.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2668,6 +2786,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.review_slides" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.critic.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3171,6 +3303,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.questions.refresh" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.decisions.asks.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3622,6 +3761,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.focus.scratchpad.recall" => {
             let _input: crate::task_verb::sdk::ScratchpadRecallRequest = decode(value.clone())?;
         }
+        "self.focus.scratchpad.append" => {
+            let _input: crate::task_verb::sdk::ScratchpadAppendRequest = decode(value.clone())?;
+        }
+        "self.focus.scratchpad.seal" => {
+            let _input: crate::task_verb::sdk::ScratchpadSealRequest = decode(value.clone())?;
+        }
         "self.memory.diary" => {
             let _input: DiaryEntryRequest = decode(value.clone())?;
         }
@@ -3748,6 +3893,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.receipts.get" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
         }
+        "vault.explain.memory" => {
+            let _input: crate::task_verb::sdk::ExplainMemoryRequest = decode(value.clone())?;
+        }
+        "vault.explain.gate" => {
+            let _input: crate::task_verb::sdk::ExplainGateRequest = decode(value.clone())?;
+        }
         "vault.kv.get" => {
             let _input: crate::memory::KeyValueAddress = decode(value.clone())?;
         }
@@ -3829,6 +3980,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.authority.audit" => {
             let _input: crate::receipt::AuthorityAuditQuery = decode(value.clone())?;
+        }
+        "vault.mesh.path_receipts" => {
+            let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
         }
         "vault.inspection.resolve" => {
             let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
@@ -3936,6 +4090,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.legal_holds.lift_and_erase" => {
             let _input: crate::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 decode(value.clone())?;
+        }
+        "vault.courtesy_delete.send" => {
+            let _input: crate::task_verb::sdk::CourtesyDeleteSendRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.sent" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.incoming" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.courtesy_delete.answer" => {
+            let _input: crate::task_verb::sdk::CourtesyDeleteAnswerRequest = decode(value.clone())?;
         }
         "vault.embedding_spaces.list" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -4094,6 +4260,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.review_slides" => {
             let _input: crate::blob_artifact::SlideReviewSubmit = decode(value.clone())?;
+        }
+        "vault.artifacts.ask" => {
+            let _input: crate::blob_artifact::ArtifactAskSubmit = decode(value.clone())?;
+        }
+        "vault.critic.review" => {
+            let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
         }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
@@ -4298,6 +4470,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.questions.answers" => {
             let _input: crate::receipt::QuestionAnswersRequest = decode(value.clone())?;
+        }
+        "vault.questions.refresh" => {
+            let _input: crate::receipt::QuestionRefreshRequest = decode(value.clone())?;
         }
         "vault.decisions.asks.answer" => {
             let _input: crate::receipt::DecisionAskAnswerRequest = decode(value.clone())?;
@@ -4641,6 +4816,10 @@ pub fn invoke(
         "self.focus.scratchpad.recall" => {
             encode(self_focus_scratchpad_recall(memory, decode(value)?)?)
         }
+        "self.focus.scratchpad.append" => {
+            encode(self_focus_scratchpad_append(memory, decode(value)?)?)
+        }
+        "self.focus.scratchpad.seal" => encode(self_focus_scratchpad_seal(memory, decode(value)?)?),
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
@@ -4676,6 +4855,8 @@ pub fn invoke(
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
+        "vault.explain.memory" => encode(vault_explain_memory(memory, decode(value)?)?),
+        "vault.explain.gate" => encode(vault_explain_gate(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
         "vault.kv.put" => encode(vault_kv_put(memory, decode(value)?)?),
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
@@ -4721,6 +4902,7 @@ pub fn invoke(
         "vault.packs.setup.answer" => encode(vault_packs_setup_answer(memory, decode(value)?)?),
         "vault.packs.setup.verify" => encode(vault_packs_setup_verify(memory, decode(value)?)?),
         "vault.authority.audit" => encode(vault_authority_audit(memory, decode(value)?)?),
+        "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
@@ -4779,6 +4961,14 @@ pub fn invoke(
         "vault.legal_holds.log" => encode(vault_legal_holds_log(memory, decode(value)?)?),
         "vault.legal_holds.lift_and_erase" => {
             encode(vault_legal_holds_lift_and_erase(memory, decode(value)?)?)
+        }
+        "vault.courtesy_delete.send" => encode(vault_courtesy_delete_send(memory, decode(value)?)?),
+        "vault.courtesy_delete.sent" => encode(vault_courtesy_delete_sent(memory, decode(value)?)?),
+        "vault.courtesy_delete.incoming" => {
+            encode(vault_courtesy_delete_incoming(memory, decode(value)?)?)
+        }
+        "vault.courtesy_delete.answer" => {
+            encode(vault_courtesy_delete_answer(memory, decode(value)?)?)
         }
         "vault.embedding_spaces.list" => {
             encode(vault_embedding_spaces_list(memory, decode(value)?)?)
@@ -4873,6 +5063,8 @@ pub fn invoke(
         "vault.artifacts.review_slides" => {
             encode(vault_artifacts_review_slides(memory, decode(value)?)?)
         }
+        "vault.artifacts.ask" => encode(vault_artifacts_ask(memory, decode(value)?)?),
+        "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -4966,6 +5158,7 @@ pub fn invoke(
         "vault.questions.backfill" => encode(vault_questions_backfill(memory, decode(value)?)?),
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
+        "vault.questions.refresh" => encode(vault_questions_refresh(memory, decode(value)?)?),
         "vault.decisions.asks.answer" => {
             encode(vault_decisions_asks_answer(memory, decode(value)?)?)
         }
@@ -5285,6 +5478,18 @@ pub fn self_focus_scratchpad_recall(
 ) -> MemoryResult<crate::task_verb::sdk::ScratchpadRecallReply> {
     crate::task_verb::sdk::scratchpad_recall_reply(memory, &input)
 }
+pub fn self_focus_scratchpad_append(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ScratchpadAppendRequest,
+) -> MemoryResult<crate::task_verb::sdk::ScratchpadWriteReply> {
+    crate::task_verb::sdk::scratchpad_append_reply(memory, &input)
+}
+pub fn self_focus_scratchpad_seal(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ScratchpadSealRequest,
+) -> MemoryResult<crate::task_verb::sdk::ScratchpadWriteReply> {
+    crate::task_verb::sdk::scratchpad_seal_reply(memory, &input)
+}
 pub fn self_memory_diary(
     memory: &Memory<'_>,
     input: DiaryEntryRequest,
@@ -5568,6 +5773,18 @@ pub fn vault_receipts_get(
 ) -> MemoryResult<Option<crate::receipt::CallReceipt>> {
     memory.call_receipt(&input.receipt_ref)
 }
+pub fn vault_explain_memory(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ExplainMemoryRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::ExplainMemoryReply>> {
+    crate::task_verb::sdk::host_only(memory, "vault.explain.memory", &input)
+}
+pub fn vault_explain_gate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ExplainGateRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::ExplainGateReply>> {
+    crate::task_verb::sdk::host_only(memory, "vault.explain.gate", &input)
+}
 pub fn vault_kv_get(
     memory: &Memory<'_>,
     input: crate::memory::KeyValueAddress,
@@ -5738,6 +5955,12 @@ pub fn vault_authority_audit(
     input: crate::receipt::AuthorityAuditQuery,
 ) -> MemoryResult<crate::receipt::AuthorityAuditPage> {
     crate::receipt::authority_audit_embedded(memory, input)
+}
+pub fn vault_mesh_path_receipts(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshPathReceiptsRequest,
+) -> MemoryResult<Vec<crate::sync::mesh_path::MeshPathReceipt>> {
+    crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)
 }
 pub fn vault_inspection_resolve(
     memory: &Memory<'_>,
@@ -6062,6 +6285,38 @@ pub fn vault_legal_holds_lift_and_erase(
         &memory.embedded_owner("vault.legal_holds.lift_and_erase")?,
         input,
     )
+}
+pub fn vault_courtesy_delete_send(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CourtesyDeleteSendRequest,
+) -> MemoryResult<crate::task_verb::sdk::CourtesyDeleteSent> {
+    crate::task_verb::sdk::courtesy_delete_host_only(memory, "vault.courtesy_delete.send", &input)
+}
+pub fn vault_courtesy_delete_sent(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteSent>> {
+    crate::task_verb::sdk::courtesy_delete_host_only(
+        memory,
+        "vault.courtesy_delete.sent",
+        &EmptyRequest {},
+    )
+}
+pub fn vault_courtesy_delete_incoming(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>> {
+    crate::task_verb::sdk::courtesy_delete_host_only(
+        memory,
+        "vault.courtesy_delete.incoming",
+        &EmptyRequest {},
+    )
+}
+pub fn vault_courtesy_delete_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CourtesyDeleteAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::CourtesyDeleteIncoming> {
+    crate::task_verb::sdk::courtesy_delete_host_only(memory, "vault.courtesy_delete.answer", &input)
 }
 pub fn vault_embedding_spaces_list(
     memory: &Memory<'_>,
@@ -6432,6 +6687,18 @@ pub fn vault_artifacts_review_slides(
     input: crate::blob_artifact::SlideReviewSubmit,
 ) -> MemoryResult<crate::blob_artifact::SlideReviewOutcome> {
     memory.artifacts_review_slides(&input)
+}
+pub fn vault_artifacts_ask(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactAskSubmit,
+) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
+    memory.artifacts_ask(&input)
+}
+pub fn vault_critic_review(
+    memory: &Memory<'_>,
+    input: crate::critic::review::CriticReviewSubmit,
+) -> MemoryResult<crate::critic::review::CriticReviewOutcome> {
+    crate::task_verb::sdk::host_only(memory, "vault.critic.review", &input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,
@@ -6965,6 +7232,12 @@ pub fn vault_questions_answers(
     input: crate::receipt::QuestionAnswersRequest,
 ) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
+}
+pub fn vault_questions_refresh(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionRefreshRequest,
+) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.refresh", &input)
 }
 pub fn vault_decisions_asks_answer(
     memory: &Memory<'_>,

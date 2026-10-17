@@ -6,6 +6,8 @@ pub enum AgentVerb {
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
     SelfFocusScratchpadRecall,
+    SelfFocusScratchpadAppend,
+    SelfFocusScratchpadSeal,
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
@@ -41,6 +43,8 @@ pub enum AgentVerb {
     VaultReceipts,
     VaultImagesView,
     VaultReceiptsGet,
+    VaultExplainMemory,
+    VaultExplainGate,
     VaultKvGet,
     VaultKvPut,
     VaultKvDelete,
@@ -67,6 +71,7 @@ pub enum AgentVerb {
     VaultPacksSetupAnswer,
     VaultPacksSetupVerify,
     VaultAuthorityAudit,
+    VaultMeshPathReceipts,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
@@ -102,6 +107,10 @@ pub enum AgentVerb {
     VaultLegalHoldsList,
     VaultLegalHoldsLog,
     VaultLegalHoldsLiftAndErase,
+    VaultCourtesyDeleteSend,
+    VaultCourtesyDeleteSent,
+    VaultCourtesyDeleteIncoming,
+    VaultCourtesyDeleteAnswer,
     VaultEmbeddingSpacesList,
     VaultEmbeddingSpacesDeclare,
     VaultEmbeddingSpacesBind,
@@ -150,6 +159,8 @@ pub enum AgentVerb {
     VaultArtifactsWaits,
     VaultArtifactsReleaseWait,
     VaultArtifactsReviewSlides,
+    VaultArtifactsAsk,
+    VaultCriticReview,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -217,6 +228,7 @@ pub enum AgentVerb {
     VaultQuestionsBackfill,
     VaultQuestionsRead,
     VaultQuestionsAnswers,
+    VaultQuestionsRefresh,
     VaultDecisionsAsksAnswer,
     VaultDecisionsAsksClimb,
     SelfDecisionsAsks,
@@ -323,6 +335,8 @@ impl AgentVerb {
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
         Self::SelfFocusScratchpadRecall,
+        Self::SelfFocusScratchpadAppend,
+        Self::SelfFocusScratchpadSeal,
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
@@ -358,6 +372,8 @@ impl AgentVerb {
         Self::VaultReceipts,
         Self::VaultImagesView,
         Self::VaultReceiptsGet,
+        Self::VaultExplainMemory,
+        Self::VaultExplainGate,
         Self::VaultKvGet,
         Self::VaultKvPut,
         Self::VaultKvDelete,
@@ -384,6 +400,7 @@ impl AgentVerb {
         Self::VaultPacksSetupAnswer,
         Self::VaultPacksSetupVerify,
         Self::VaultAuthorityAudit,
+        Self::VaultMeshPathReceipts,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
@@ -419,6 +436,10 @@ impl AgentVerb {
         Self::VaultLegalHoldsList,
         Self::VaultLegalHoldsLog,
         Self::VaultLegalHoldsLiftAndErase,
+        Self::VaultCourtesyDeleteSend,
+        Self::VaultCourtesyDeleteSent,
+        Self::VaultCourtesyDeleteIncoming,
+        Self::VaultCourtesyDeleteAnswer,
         Self::VaultEmbeddingSpacesList,
         Self::VaultEmbeddingSpacesDeclare,
         Self::VaultEmbeddingSpacesBind,
@@ -467,6 +488,8 @@ impl AgentVerb {
         Self::VaultArtifactsWaits,
         Self::VaultArtifactsReleaseWait,
         Self::VaultArtifactsReviewSlides,
+        Self::VaultArtifactsAsk,
+        Self::VaultCriticReview,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -534,6 +557,7 @@ impl AgentVerb {
         Self::VaultQuestionsBackfill,
         Self::VaultQuestionsRead,
         Self::VaultQuestionsAnswers,
+        Self::VaultQuestionsRefresh,
         Self::VaultDecisionsAsksAnswer,
         Self::VaultDecisionsAsksClimb,
         Self::SelfDecisionsAsks,
@@ -643,6 +667,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
             Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
+            Self::SelfFocusScratchpadAppend => "self.focus.scratchpad.append",
+            Self::SelfFocusScratchpadSeal => "self.focus.scratchpad.seal",
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
@@ -678,6 +704,8 @@ impl AgentVerb {
             Self::VaultReceipts => "vault.receipts",
             Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
+            Self::VaultExplainMemory => "vault.explain.memory",
+            Self::VaultExplainGate => "vault.explain.gate",
             Self::VaultKvGet => "vault.kv.get",
             Self::VaultKvPut => "vault.kv.put",
             Self::VaultKvDelete => "vault.kv.delete",
@@ -704,6 +732,7 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => "vault.packs.setup.answer",
             Self::VaultPacksSetupVerify => "vault.packs.setup.verify",
             Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
@@ -741,6 +770,10 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
             Self::VaultLegalHoldsLog => "vault.legal_holds.log",
             Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
+            Self::VaultCourtesyDeleteSend => "vault.courtesy_delete.send",
+            Self::VaultCourtesyDeleteSent => "vault.courtesy_delete.sent",
+            Self::VaultCourtesyDeleteIncoming => "vault.courtesy_delete.incoming",
+            Self::VaultCourtesyDeleteAnswer => "vault.courtesy_delete.answer",
             Self::VaultEmbeddingSpacesList => "vault.embedding_spaces.list",
             Self::VaultEmbeddingSpacesDeclare => "vault.embedding_spaces.declare",
             Self::VaultEmbeddingSpacesBind => "vault.embedding_spaces.bind",
@@ -791,6 +824,8 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
+            Self::VaultArtifactsAsk => "vault.artifacts.ask",
+            Self::VaultCriticReview => "vault.critic.review",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -858,6 +893,7 @@ impl AgentVerb {
             Self::VaultQuestionsBackfill => "vault.questions.backfill",
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
+            Self::VaultQuestionsRefresh => "vault.questions.refresh",
             Self::VaultDecisionsAsksAnswer => "vault.decisions.asks.answer",
             Self::VaultDecisionsAsksClimb => "vault.decisions.asks.climb",
             Self::SelfDecisionsAsks => "self.decisions.asks",
@@ -963,6 +999,8 @@ impl AgentVerb {
             self,
             Self::Report
                 | Self::SelfFocusScratchpadRecall
+                | Self::SelfFocusScratchpadAppend
+                | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -998,6 +1036,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::VaultExplainMemory
+                | Self::VaultExplainGate
                 | Self::VaultKvGet
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -1024,6 +1064,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -1059,6 +1100,10 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesList
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
@@ -1107,6 +1152,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultArtifactsAsk
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -1174,6 +1221,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultQuestionsRefresh
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::SelfDecisionsAsks
@@ -1287,6 +1335,8 @@ impl AgentVerb {
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
                 | Self::SelfFocusScratchpadRecall
+                | Self::SelfFocusScratchpadAppend
+                | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -1322,6 +1372,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::VaultExplainMemory
+                | Self::VaultExplainGate
                 | Self::VaultKvGet
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -1348,6 +1400,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -1383,6 +1436,10 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesList
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
@@ -1431,6 +1488,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultArtifactsAsk
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -1498,6 +1557,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultQuestionsRefresh
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::SelfDecisionsAsks
@@ -1585,6 +1645,7 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultMeshPathReceipts
                 | Self::VaultSharedOutcomes
                 | Self::VaultMembersInvitations
                 | Self::VaultSharedStarted
@@ -1593,6 +1654,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -1609,6 +1672,7 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::VaultQuestionsAnswers
+                | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::VaultCommit
@@ -1642,6 +1706,8 @@ impl AgentVerb {
         matches!(
             self,
             Self::SelfFocusScratchpadRecall
+                | Self::SelfFocusScratchpadAppend
+                | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
@@ -1671,6 +1737,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::VaultExplainMemory
+                | Self::VaultExplainGate
                 | Self::VaultKvGet
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -1697,6 +1765,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -1732,6 +1801,10 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteSent
+                | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesList
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
@@ -1780,6 +1853,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsWaits
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultArtifactsAsk
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -1847,6 +1922,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
+                | Self::VaultQuestionsRefresh
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::SelfDecisionsAsks
@@ -1945,7 +2021,9 @@ impl AgentVerb {
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::SelfMemoryDiary
+            Self::SelfFocusScratchpadAppend
+                | Self::SelfFocusScratchpadSeal
+                | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
@@ -2005,6 +2083,8 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultCourtesyDeleteSend
+                | Self::VaultCourtesyDeleteAnswer
                 | Self::VaultEmbeddingSpacesDeclare
                 | Self::VaultEmbeddingSpacesBind
                 | Self::VaultEmbeddingSpacesOneSpace
@@ -2033,6 +2113,8 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
+                | Self::VaultArtifactsAsk
+                | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2075,6 +2157,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
+                | Self::VaultQuestionsRefresh
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::ConnectorCall
@@ -2156,6 +2239,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
             Self::SelfFocusScratchpadRecall => &["spec"],
+            Self::SelfFocusScratchpadAppend => &["spec"],
+            Self::SelfFocusScratchpadSeal => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -2198,6 +2283,8 @@ impl AgentVerb {
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
+            Self::VaultExplainMemory => &["spec"],
+            Self::VaultExplainGate => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
             Self::VaultKvDelete => &["spec"],
@@ -2224,6 +2311,7 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -2259,6 +2347,10 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultCourtesyDeleteSend => &["spec"],
+            Self::VaultCourtesyDeleteSent => &[],
+            Self::VaultCourtesyDeleteIncoming => &[],
+            Self::VaultCourtesyDeleteAnswer => &["spec"],
             Self::VaultEmbeddingSpacesList => &[],
             Self::VaultEmbeddingSpacesDeclare => &["spec"],
             Self::VaultEmbeddingSpacesBind => &["spec"],
@@ -2307,6 +2399,8 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
+            Self::VaultArtifactsAsk => &["spec"],
+            Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -2374,6 +2468,7 @@ impl AgentVerb {
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
+            Self::VaultQuestionsRefresh => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
@@ -2481,6 +2576,8 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
             Self::SelfFocusScratchpadRecall => &["spec"],
+            Self::SelfFocusScratchpadAppend => &["spec"],
+            Self::SelfFocusScratchpadSeal => &["spec"],
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
@@ -2516,6 +2613,8 @@ impl AgentVerb {
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
+            Self::VaultExplainMemory => &["spec"],
+            Self::VaultExplainGate => &["spec"],
             Self::VaultKvGet => &["spec"],
             Self::VaultKvPut => &["spec"],
             Self::VaultKvDelete => &["spec"],
@@ -2542,6 +2641,7 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -2577,6 +2677,10 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultCourtesyDeleteSend => &["spec"],
+            Self::VaultCourtesyDeleteSent => &[],
+            Self::VaultCourtesyDeleteIncoming => &[],
+            Self::VaultCourtesyDeleteAnswer => &["spec"],
             Self::VaultEmbeddingSpacesList => &[],
             Self::VaultEmbeddingSpacesDeclare => &["spec"],
             Self::VaultEmbeddingSpacesBind => &["spec"],
@@ -2625,6 +2729,8 @@ impl AgentVerb {
             Self::VaultArtifactsWaits => &["spec"],
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
+            Self::VaultArtifactsAsk => &["spec"],
+            Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -2692,6 +2798,7 @@ impl AgentVerb {
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
+            Self::VaultQuestionsRefresh => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
@@ -2808,6 +2915,12 @@ impl AgentVerb {
             Self::SelfFocusScratchpadRecall => {
                 "Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."
             }
+            Self::SelfFocusScratchpadAppend => {
+                "Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."
+            }
+            Self::SelfFocusScratchpadSeal => {
+                "Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."
+            }
             Self::SelfMemoryDiary => {
                 "Writes one private entry in the bound actor's own diary, as an actor-private NOTE."
             }
@@ -2903,6 +3016,12 @@ impl AgentVerb {
             Self::VaultReceiptsGet => {
                 "One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."
             }
+            Self::VaultExplainMemory => {
+                "Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it."
+            }
+            Self::VaultExplainGate => {
+                "Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it."
+            }
             Self::VaultKvGet => {
                 "Exact key lookup in the bound actor's worldless key-value namespace; never recall."
             }
@@ -2978,6 +3097,9 @@ impl AgentVerb {
             }
             Self::VaultAuthorityAudit => {
                 "One page of the dated authority log audit: grants, revokes and confirms, for the owner."
+            }
+            Self::VaultMeshPathReceipts => {
+                "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
             }
             Self::VaultInspectionResolve => {
                 "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."
@@ -3071,6 +3193,18 @@ impl AgentVerb {
             Self::VaultLegalHoldsLog => "The owner-visible legal hold log, oldest first.",
             Self::VaultLegalHoldsLiftAndErase => {
                 "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."
+            }
+            Self::VaultCourtesyDeleteSend => {
+                "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery."
+            }
+            Self::VaultCourtesyDeleteSent => {
+                "Every courtesy delete ask this vault sent, with its delivery status, for the owner."
+            }
+            Self::VaultCourtesyDeleteIncoming => {
+                "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer."
+            }
+            Self::VaultCourtesyDeleteAnswer => {
+                "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where."
             }
             Self::VaultEmbeddingSpacesList => {
                 "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."
@@ -3208,6 +3342,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => {
                 "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard."
             }
+            Self::VaultArtifactsAsk => {
+                "Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."
+            }
+            Self::VaultCriticReview => {
+                "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
+            }
             Self::VaultArtifactsProposeDeck => {
                 "Runs one native deck transaction over an artifact's head and holds the proposal for Keep."
             }
@@ -3257,7 +3397,7 @@ impl AgentVerb {
                 "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."
             }
             Self::VaultRoomsSpeak => {
-                "Speaks one turn into the current room turn's room, through the normal witness gate."
+                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."
             }
             Self::VaultProjectsPropose => {
                 "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."
@@ -3375,6 +3515,9 @@ impl AgentVerb {
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsAnswers => "",
+            Self::VaultQuestionsRefresh => {
+                "Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."
+            }
             Self::VaultDecisionsAsksAnswer => "",
             Self::VaultDecisionsAsksClimb => "",
             Self::SelfDecisionsAsks => "",

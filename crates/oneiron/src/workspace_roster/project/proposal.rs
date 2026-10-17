@@ -210,7 +210,12 @@ pub(crate) fn stage_project_detection_in_txn(
     };
     let thread = if ROOM_PROJECT.contains(&vault.store, txn, &conversation)? {
         match rooms::TURNS.get(&vault.store, txn, &turn)? {
-            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => Some(turn),
+            // A reply's card converts its whole thread: record the root.
+            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => Some(
+                rooms::room_thread_turns_in_txn(vault, txn, conversation, turn)?
+                    .and_then(|selection| selection.root)
+                    .ok_or_else(invalid)?,
+            ),
             _ => return Ok(()),
         }
     } else {

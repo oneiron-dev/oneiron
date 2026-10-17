@@ -69,7 +69,7 @@ oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
 # The System One seat on the host's decision ladder (decision_host.rs).
 oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
 # The paired-machine mesh listener (OF-535), behind the `mesh` feature.
-oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh"] }
+oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh", "sync"] }
 # The model route on the mesh listener (OF-575), with it.
 oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 loro = "1.10"
