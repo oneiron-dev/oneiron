@@ -299,6 +299,9 @@ side_tables! {
     /// The serve skill judge (OF-495): its typed-decision journal, and person-time on receipts.
     /// Key: "decision:" hex32 (row id) | "minutes:" string (receipt id) "|" hex32 (row id).
     SKILL_JUDGE: SyncState b"skill:judge:v1:" Named;
+    /// The Coach's tradeoff router (FIX-LIST 817): each route call it handed a project's leader.
+    /// Key: string (proposal hex32 ":" project hex32 ":" question digest).
+    SKILL_TRADEOFF_ROUTE: SyncState b"skill:tradeoff:route:v1:" Named;
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
     /// notice's receipt id).

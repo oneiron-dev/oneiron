@@ -140,6 +140,28 @@ export class Oneiron {
     return this.#client.lastReceiptRef() ?? null
   }
 
+  /**
+   * Resends the call a `PENDING_ASK` refusal answered, under the invocation
+   * its `hook` names (ARCH-0080 §3): pass the caught `OneironError`, the
+   * verb's SDK name (`vault.claims.upsert`) and the same input. While the ask
+   * is open it throws the same `PENDING_ASK`; once the ask is answered
+   * proceed, the saved call runs once and this returns its result. Any other
+   * refusal is refused before a call is made. Run one retry of a pending call
+   * at a time.
+   *
+   * The reply is the verb's shared wire JSON, not the typed projection the
+   * verb's own method returns.
+   */
+  retry(pending: OneironError, verb: string, input: unknown): unknown {
+    const refusal = {
+      code: pending.code,
+      message: pending.message,
+      suggestions: [...pending.suggestions],
+      ...(pending.hook ? {hook: pending.hook} : {}),
+    }
+    return this.#call(() => this.#client.retry(refusal, verb, input))
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
@@ -488,6 +510,34 @@ export class Oneiron {
       create: (input: Facade.ArtifactCreateRequest): Facade.ArtifactView | null => this.#call(() => this.#client.vaultArtifactsCreate(input) as Facade.ArtifactView | null),
       /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
       put: (input: Facade.BlobArtifactInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultArtifactsPut(input) as Facade.EntityRefReceipt),
+      body: {
+        /** Imports one office version as the artifact's live body. */
+        import: (request: Facade.OfficeBodyImportRequest): Facade.OfficeBodyHead => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyImport(keyedJson(request))) as Facade.OfficeBodyHead; return result }),
+        /** An artifact's live body head, or null. */
+        head: (request: Facade.OfficeBodyArtifactRequest): Facade.OfficeBodyHead | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyHead(keyedJson(request))) as Facade.OfficeBodyHead | null; return result === null ? null : result }),
+        /** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */
+        read: (request: Facade.OfficeBodyReadRequest): Facade.OfficeBodyView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyRead(keyedJson(request))) as Facade.OfficeBodyView; return result }),
+        /** Every commit receipt of a live body, in commit order. */
+        commits: (request: Facade.OfficeBodyArtifactRequest): Facade.TextCommitReceipt[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.TextCommitReceipt[]; return result.map(item => item) }),
+        /** A person's typed operations on the live body. */
+        edit: (request: Facade.OfficeBodyEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
+        fork: {
+          /** Opens a fork of the live body for machine work. */
+          open: (request: Facade.OfficeBodyForkOpenRequest): Facade.OfficeBodyFork => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkOpen(keyedJson(request))) as Facade.OfficeBodyFork; return result }),
+          /** The opener's typed operations on its fork. */
+          edit: (request: Facade.OfficeBodyForkEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
+          /** A fork's three-way diff against the live head. */
+          diff: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiff(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
+          /** A person lands a reviewed fork. */
+          merge: (request: Facade.OfficeBodyForkMergeRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkMerge(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
+          /** Abandons an open fork's unlanded work. */
+          discard: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyFork => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiscard(keyedJson(request))) as Facade.OfficeBodyFork; return result }),
+        },
+        /** Exports the live body as the artifact's next version. */
+        export: (request: Facade.OfficeBodyExportVerbRequest): Facade.OfficeBodyExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyExport(keyedJson(request))) as Facade.OfficeBodyExportView; return result }),
+        /** The workbook an XLSX export would land now, recalculated. */
+        preview: (request: Facade.OfficeBodyArtifactRequest): Facade.XlsxPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyPreview(keyedJson(request))) as Facade.XlsxPreview; return result }),
+      },
       /** Appends one version of bytes to a blob artifact's append-only chain. */
       append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
       /** Reads one version of a blob artifact's bytes. */
@@ -558,6 +608,10 @@ export class Oneiron {
       dismiss_card: (input: Facade.ProjectCardRequest): Facade.ProjectCardDismissal => this.#call(() => this.#client.vaultProjectsDismissCard(input) as Facade.ProjectCardDismissal),
       /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */
       confirm: (input: Facade.ProjectCardConfirmRequest): Facade.ProjectMintReceipt => this.#call(() => this.#client.vaultProjectsConfirm(input) as Facade.ProjectMintReceipt),
+      roster: {
+        /** Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent. */
+        write: (input: Facade.ProjectRosterWriteRequest): Facade.ProjectRosterWriteOutcome => this.#call(() => this.#client.vaultProjectsRosterWrite(input) as Facade.ProjectRosterWriteOutcome),
+      },
       goal: {
         /** What a project's goal-intake interview starts from, for a member of its home room. */
         intake: (input: Facade.ProjectRefRequest): Facade.ProjectGoalInterviewContext => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as Facade.ProjectGoalInterviewContext),
@@ -614,6 +668,7 @@ export class Oneiron {
       create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
+      backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
     },
@@ -674,6 +729,10 @@ export class Oneiron {
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
       edit: (input: Facade.EditNoteRequest): Facade.NoteEditOutcome => this.#call(() => this.#client.vaultNotesEdit(input) as Facade.NoteEditOutcome),
+      /** Seals one NOTE: its document freezes, and a later edit opens a fork. */
+      seal: (request: Facade.NoteRefRequest): Facade.NoteSeal => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSeal(keyedJson(request))) as Facade.NoteSeal; return result }),
+      /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal. */
+      lifecycle: (request: Facade.NoteRefRequest): Facade.NoteLifecycleView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesLifecycle(keyedJson(request))) as Facade.NoteLifecycleView; return result }),
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
@@ -758,6 +817,7 @@ export class Oneiron {
 }
 
 export { OneironError }
+export type { HookStop } from "./error.js"
 export type * from "./types.js"
 export type * as Facade from "./facade-types.js"
 

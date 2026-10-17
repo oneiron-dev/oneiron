@@ -14,6 +14,35 @@
 // are top-level in the bundle's closure, never globals, and use no method a
 // program could patch.
 
+// Primordials, taken when the bundle loads, before any program runs. The
+// helpers here and in diff.js (bundled after) call built-ins only through
+// these, and walk arrays by index, never by iterator, spread or a species
+// method (`filter`, `map`, `slice`), so a program that patches a built-in
+// changes none of their steps.
+const call = Function.prototype.call;
+const apply = call.bind(Function.prototype.apply);
+const parse = JSON.parse;
+const create = Object.create, freeze = Object.freeze;
+const min = Math.min, max = Math.max, floor = Math.floor;
+const isArray = Array.isArray, isInteger = Number.isInteger;
+const Int32 = Int32Array;
+const push = call.bind(Array.prototype.push);
+const reverse = call.bind(Array.prototype.reverse);
+const sort = call.bind(Array.prototype.sort);
+const charCodeAt = call.bind(String.prototype.charCodeAt);
+const indexOf = call.bind(String.prototype.indexOf);
+const strSlice = call.bind(String.prototype.slice);
+const startsWith = call.bind(String.prototype.startsWith);
+const endsWith = call.bind(String.prototype.endsWith);
+const toRadix = call.bind(Number.prototype.toString);
+const exec = call.bind(RegExp.prototype.exec);
+// `items[from..to)`, copied.
+function copyOf(items, from = 0, to = items.length) {
+  const out = [];
+  for (let i = from; i < to; ++i) out[out.length] = items[i];
+  return out;
+}
+
 // Host calls one phase of a helper spends in a step: the sandbox allows 256,
 // and the rest is left for the program around it. diff.js, bundled after
 // this file, spends by the same bound.
@@ -35,8 +64,12 @@ const READ_ALL_DEFAULT_EFFORT = "medium";
 const READ_ALL_EMPTY_RESULT = '{"answer":null,"findings":0,"note":"no finding was made"}';
 // The fold ends once a stage leaves this many summaries.
 const READ_ALL_FOLD_TO = 1;
-// Why a read ends refused when a chunk page is withheld.
+// Why a read ends refused when a chunk page, a summary or its member is
+// withheld.
 const READ_ALL_WITHHELD_REASON = "tainted";
+// What a host call throws once the run has parked: the wait's reply holds
+// no output (wasmtime_runtime/typed.rs). Any other throw is the call's own.
+const READ_ALL_PARKED = "missing_host_response_field";
 
 // What `readAll` chunks by when the caller names no `by`: `tokens` a chunk,
 // at most the memory one child may hold.
@@ -53,14 +86,14 @@ function readAllWaitUntil(child) {
 // How many children the wait ends on: the caller's `n_of`, at most the
 // children; none (all of them) without one.
 function readAllWaitCount(nOf, children) {
-  return Number.isInteger(nOf) ? Math.min(nOf, children) : undefined;
+  return isInteger(nOf) ? min(nOf, children) : undefined;
 }
 
 // The chunk size, in tokens: half the child window, which `window` may only
 // lower.
 function readAllChunkTokens(windowTokens, window) {
-  const half = Math.floor(windowTokens / 2);
-  return Number.isInteger(window) && window > 0 && window < half ? window : half;
+  const half = floor(windowTokens / 2);
+  return isInteger(window) && window > 0 && window < half ? window : half;
 }
 
 // One summary group's byte cap: the window's tokens as bytes, about half the
@@ -74,10 +107,10 @@ function readAllDefaultKey(ref, ask) {
   const text = ref + "\n" + ask;
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; ++i) {
-    h ^= text.charCodeAt(i);
+    h ^= charCodeAt(text, i);
     h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
   }
-  return "k" + h.toString(16);
+  return "k" + toRadix(h, 16);
 }
 
 // One chunk's spawn key, and the step key of one of the read's waits.
@@ -91,10 +124,10 @@ function readAllStepKey(key, stage) {
 // Cites as sorted, merged byte ranges; anything else in them is dropped.
 function readAllNormaliseCites(cites) {
   const spans = [];
-  if (!Array.isArray(cites)) return spans;
+  if (!isArray(cites)) return spans;
   for (let i = 0; i < cites.length; ++i) {
     const c = cites[i];
-    if (!Array.isArray(c) || !Number.isInteger(c[0]) || !Number.isInteger(c[1]) || c[0] >= c[1]) continue;
+    if (!isArray(c) || !isInteger(c[0]) || !isInteger(c[1]) || c[0] >= c[1]) continue;
     let at = spans.length;
     while (at > 0 && (spans[at - 1][0] > c[0] || spans[at - 1][0] === c[0] && spans[at - 1][1] > c[1])) {
       spans[at] = spans[at - 1];
@@ -105,20 +138,22 @@ function readAllNormaliseCites(cites) {
   const merged = [];
   for (let i = 0; i < spans.length; ++i) {
     const last = merged[merged.length - 1];
-    if (last && spans[i][0] <= last[1]) last[1] = Math.max(last[1], spans[i][1]);
+    if (last && spans[i][0] <= last[1]) last[1] = max(last[1], spans[i][1]);
     else merged[merged.length] = spans[i];
   }
   return merged;
 }
 
 // The fold's code-first pass: findings that cite the same ranges are one,
-// the first in chunk order kept; findings with no cites all stay.
+// the first in chunk order kept; findings with no cites all stay. A cite
+// list's id is its pairs' numbers, read without JSON (no `toJSON`).
 function readAllDedupe(findings) {
-  const seen = Object.create(null), kept = [];
+  const seen = create(null), kept = [];
   for (let i = 0; i < findings.length; ++i) {
     const f = findings[i];
     if (f.cites && f.cites.length) {
-      const id = JSON.stringify(f.cites);
+      let id = "";
+      for (let j = 0; j < f.cites.length; ++j) id += f.cites[j][0] + "-" + f.cites[j][1] + ",";
       if (seen[id]) continue;
       seen[id] = true;
     }
@@ -147,7 +182,7 @@ function readAllPack(items, cap) {
 
 // A group whose summary was too big for its window, split: its halves.
 function readAllSplit(refs) {
-  const half = Math.floor(refs.length / 2), a = [], b = [];
+  const half = floor(refs.length / 2), a = [], b = [];
   for (let i = 0; i < refs.length; ++i) {
     const part = i < half ? a : b;
     part[part.length] = refs[i];
@@ -158,33 +193,36 @@ function readAllSplit(refs) {
 function makeReaderForks(api) {
   "use strict";
   const {slice, chunks, store, spawn, wait, can, summarize, describe} = api;
-  // Primordials, taken before any program runs.
-  const call = Function.prototype.call;
-  const parse = JSON.parse;
-  const min = Math.min;
-  const isArray = Array.isArray, isInteger = Number.isInteger;
-  const push = call.bind(Array.prototype.push);
-  const sort = call.bind(Array.prototype.sort);
-  const startsWith = call.bind(String.prototype.startsWith);
-  const test = call.bind(RegExp.prototype.test);
-  const freeze = Object.freeze;
 
   const refOf = r => {
     const ref = typeof r === "string" ? r : (r?.ref ?? r?.handle ?? r?.name);
     if (typeof ref !== "string") throw new TypeError("result ref must be a name, handle or card");
     return ref;
   };
-  // What a refused call threw: the host's code when it named one.
+  // What a refused call threw: the host's code when it named one, a failed
+  // reply's `error` when it carries one.
   const reasonOf = error => {
     const text = typeof error === "string" ? error : error?.message;
     if (typeof text === "string") {
       try {
         const value = parse(text);
-        if (value && typeof value === "object") return value.denied ?? (value.failed ? "failed" : text);
+        if (value && typeof value === "object") return value.denied ?? (value.failed ? value.error ?? "failed" : text);
       } catch (_) { /* plain text */ }
       return text;
     }
     return "refused";
+  };
+
+  // A wait's settled children with a finding: its ready, then its partial.
+  const finished = settled => {
+    const out = copyOf(settled.ready ?? []), partial = settled.partial ?? [];
+    for (let i = 0; i < partial.length; ++i) push(out, partial[i]);
+    return out;
+  };
+  // The entry of `list` for `task`, if any.
+  const entryFor = (list, task) => {
+    for (let i = 0; i < list.length; ++i) if (list[i].task === task) return list[i];
+    return undefined;
   };
 
   return async function readAll(r, options = {}) {
@@ -192,11 +230,11 @@ function makeReaderForks(api) {
     const ask = options.ask;
     if (typeof ask !== "string" || !ask) throw new TypeError("readAll takes {ask}");
     const key = options.key ?? readAllDefaultKey(source, ask);
-    if (typeof key !== "string" || !test(READ_ALL_KEY_PATTERN, key)) throw new TypeError("readAll key must be 1-40 of [A-Za-z0-9_]");
+    if (typeof key !== "string" || exec(READ_ALL_KEY_PATTERN, key) === null) throw new TypeError("readAll key must be 1-40 of [A-Za-z0-9_]");
     const resultName = READ_ALL_RESULT_PREFIX + key;
     const stateName = resultName + READ_ALL_STATE_SUFFIX;
     let calls = 0;
-    const host = async (f, ...args) => { ++calls; return await f(...args); };
+    const host = async (f, ...args) => { ++calls; return await apply(f, undefined, args); };
     const spent = () => calls >= HOST_CALLS_PER_STEP;
 
     // The state as the last call left it, or a fresh one.
@@ -247,7 +285,10 @@ function makeReaderForks(api) {
         if (spent()) return await pause();
         const page = await host(pages.page, state.cursor ?? undefined);
         if (page.withheld) return freeze({done: true, refused: READ_ALL_WITHHELD_REASON, detail: page});
-        for (const c of page.chunks) push(state.chunks, {ref: c.ref, start: c.start, end: c.end});
+        for (let i = 0; i < page.chunks.length; ++i) {
+          const c = page.chunks[i];
+          push(state.chunks, {ref: c.ref, start: c.start, end: c.end});
+        }
         if (page.done || !page.next) { state.phase = "spawn"; state.tasks = []; }
         else state.cursor = page.next;
       }
@@ -279,17 +320,19 @@ function makeReaderForks(api) {
       let settled;
       try {
         settled = await host(wait, request);
-      } catch (_) {
+      } catch (error) {
+        if (error !== READ_ALL_PARKED) throw error;
         // Parked: the run resumes once the wait settles, and the next call
         // goes on from here.
         await save();
         return freeze({done: false, phase: "wait", waiting: true, progress: progress()});
       }
-      const byTask = Object.create(null);
-      state.chunks.forEach((c, i) => { if (i < state.tasks.length) byTask[state.tasks[i]] = i; });
+      const byTask = create(null);
+      for (let i = 0; i < state.chunks.length && i < state.tasks.length; ++i) byTask[state.tasks[i]] = i;
       state.ready = [];
-      for (const found of [...(settled.ready ?? []), ...(settled.partial ?? [])])
-        push(state.ready, {task: found.task, ref: found.ref, bytes: found.bytes, at: byTask[found.task] ?? 0, reason: found.reason});
+      const found = finished(settled);
+      for (let i = 0; i < found.length; ++i)
+        push(state.ready, {task: found[i].task, ref: found[i].ref, bytes: found[i].bytes, at: byTask[found[i].task] ?? 0, reason: found[i].reason});
       sort(state.ready, (x, y) => x.at - y.at);
       state.read = 0;
       state.phase = "read";
@@ -323,36 +366,44 @@ function makeReaderForks(api) {
     // Each stage summarizes its groups in parallel, waits for all of them,
     // and packs their summaries into the next stage until one is left.
     while (state.phase === "summarize") {
-      for (const group of state.groups) {
+      for (let i = 0; i < state.groups.length; ++i) {
+        const group = state.groups[i];
         if (group.result || group.task || group.failed) continue;
         if (spent()) return await pause();
-        const [first, ...rest] = group.refs;
         try {
-          const reply = await host(summarize, first, {group: rest, effort: options.effort, defer: true});
+          const reply = await host(summarize, group.refs[0], {group: copyOf(group.refs, 1), effort: options.effort, defer: true});
+          if (reply.withheld) return freeze({done: true, refused: READ_ALL_WITHHELD_REASON, detail: reply});
           if (typeof reply.handle === "string") group.result = {ref: reply.handle, bytes: reply.bytes};
           else group.task = reply.task;
         } catch (error) {
           group.failed = reasonOf(error);
         }
       }
-      const pending = state.groups.filter(g => g.task && !g.result && !g.failed);
+      const pending = [];
+      for (let i = 0; i < state.groups.length; ++i) {
+        const g = state.groups[i];
+        if (g.task && !g.result && !g.failed) push(pending, g.task);
+      }
       if (pending.length) {
         if (spent()) return await pause();
         let settled;
         try {
-          settled = await host(wait, {tasks: pending.map(g => g.task), step_key: readAllStepKey(key, "sum" + state.level + "_" + state.round)});
-        } catch (_) {
+          settled = await host(wait, {tasks: pending, step_key: readAllStepKey(key, "sum" + state.level + "_" + state.round)});
+        } catch (error) {
+          if (error !== READ_ALL_PARKED) throw error;
           await save();
           return freeze({done: false, phase: "summarize", waiting: true, progress: progress()});
         }
-        const groups = [];
-        for (const group of state.groups) {
-          const done = [...(settled.ready ?? []), ...(settled.partial ?? [])].find(f => f.task === group.task);
-          const failed = (settled.failed ?? []).find(f => f.task === group.task);
+        const found = finished(settled), failures = settled.failed ?? [], groups = [];
+        for (let i = 0; i < state.groups.length; ++i) {
+          const group = state.groups[i];
+          const done = entryFor(found, group.task);
+          const failed = entryFor(failures, group.task);
           if (done) { group.result = {ref: done.ref, bytes: done.bytes}; delete group.task; push(groups, group); }
           else if (failed && startsWith(failed.reason, READ_ALL_SPLIT_REASON) && group.refs.length > 1) {
             // Split, and each part summarized on its own.
-            for (const part of readAllSplit(group.refs)) push(groups, part);
+            const parts = readAllSplit(group.refs);
+            push(groups, parts[0], parts[1]);
           } else if (failed) { group.failed = failed.reason; delete group.task; push(groups, group); }
           else push(groups, group);
         }
@@ -360,16 +411,21 @@ function makeReaderForks(api) {
         ++state.round;
         continue;
       }
-      const made = state.groups.filter(g => g.result);
-      for (const g of made) push(state.tree, {summary: g.result.ref, inputs: g.refs});
+      const made = [];
+      for (let i = 0; i < state.groups.length; ++i) {
+        const g = state.groups[i];
+        if (!g.result) continue;
+        push(made, g.result);
+        push(state.tree, {summary: g.result.ref, inputs: g.refs});
+      }
       if (made.length <= READ_ALL_FOLD_TO) {
-        state.final = made.length ? made[0].result.ref : null;
+        state.final = made.length ? made[0].ref : null;
         state.phase = "store";
         break;
       }
       ++state.level;
       state.round = 0;
-      state.groups = readAllPack(made.map(g => g.result), readAllGroupBytes(state.window_tokens));
+      state.groups = readAllPack(made, readAllGroupBytes(state.window_tokens));
     }
 
     if (state.phase === "store") {
@@ -379,6 +435,7 @@ function makeReaderForks(api) {
         while (!done) {
           if (spent()) return await pause();
           const piece = await host(slice, state.final, next);
+          if (piece.withheld) return freeze({done: true, refused: READ_ALL_WITHHELD_REASON, detail: piece});
           text += piece.text ?? "";
           done = piece.done || !piece.next;
           next = piece.next;

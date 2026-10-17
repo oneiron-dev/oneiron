@@ -6,6 +6,10 @@
 //! minted. The owner's switch, read in the writer's transaction, turns it
 //! off as it turns off the batch door.
 //!
+//! It mints through the side-row wall's one core
+//! ([`admit_seeded_parts`]), with each part's own record and place on its
+//! custody origin.
+//!
 //! A document whose stored history is its receipt ledger cannot take a
 //! handle in place of what an operation wrote; [`scan_document_in_txn`]
 //! refuses a hit there instead.
@@ -15,11 +19,11 @@ use std::collections::HashMap;
 use heed::{RoTxn, RwTxn};
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
-use super::{Masker, secret_spans};
+use super::secret_spans;
+use super::side_row::{SidePart, admit_seeded_parts};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::secret_custody::CustodyWrite;
+use crate::error::{Error, Result};
 use crate::side_table::SideTableDbs;
 
 /// What a stream's admitted text keeps in place of a secret it may still be
@@ -32,22 +36,13 @@ const WITHHELD: &str = "[secret redacted]";
 /// the handle an earlier checkpoint minted. What one transaction adds is kept
 /// only once that transaction commits.
 #[derive(Clone, Default)]
-pub(crate) struct Lifted(HashMap<Vec<u8>, String>);
+pub(crate) struct Lifted(pub(super) HashMap<Vec<u8>, String>);
 
 /// One part of a record a writer stores outside a batch: text, read as the
 /// batch door reads a text field, or a body, read as it reads a put.
 pub(crate) enum Part<'a> {
     Text(&'a mut String),
     Body(&'a mut Vec<u8>),
-}
-
-impl Part<'_> {
-    fn bytes(&self) -> &[u8] {
-        match self {
-            Part::Text(text) => text.as_bytes(),
-            Part::Body(data) => data,
-        }
-    }
 }
 
 /// Admits the `parts` of `record`, each under its place (`text:<field>`,
@@ -65,10 +60,32 @@ pub(crate) fn admit_parts_in_txn(
     parts: &mut [(&str, Part<'_>)],
     lifted: &mut Lifted,
 ) -> Result<bool> {
-    if secret_scan_mode_in_txn(&vault.store, wtxn)? == SecretScanMode::Off {
+    let origins = parts
+        .iter()
+        .map(|(place, _)| (record, *place))
+        .collect::<Vec<_>>();
+    let mut admitted = parts
+        .iter()
+        .map(|(_, part)| match part {
+            Part::Text(text) => SidePart::Text((**text).clone()),
+            Part::Body(data) => SidePart::Body((**data).clone()),
+        })
+        .collect::<Vec<_>>();
+    if !admit_seeded_parts(vault, wtxn, &origins, &mut admitted, lifted, |_| true)? {
         return Ok(false);
     }
-    admit(vault, wtxn, record, parts, lifted)
+    for ((_, part), admitted) in parts.iter_mut().zip(admitted) {
+        match (part, admitted) {
+            (Part::Text(text), SidePart::Text(masked)) => **text = masked,
+            (Part::Body(data), SidePart::Body(masked)) => **data = masked,
+            _ => {
+                return Err(Error::InvariantViolation(
+                    "an admitted part is no longer what it was",
+                ));
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// [`admit_parts_in_txn`] for a stream's text, read again whole at each
@@ -97,7 +114,7 @@ pub(crate) fn admit_stream_text_in_txn(
         Some(start) => [&text[..start], WITHHELD].concat(),
         None => text.to_owned(),
     };
-    admit(
+    admit_parts_in_txn(
         vault,
         wtxn,
         record,
@@ -142,65 +159,4 @@ pub(crate) fn scan_document_in_txn(
         Some(before) if scan_payload(&before).is_err() => Ok(()),
         _ => Err(refusal),
     }
-}
-
-/// [`admit_parts_in_txn`] once the switch reads on.
-fn admit(
-    vault: &Vault,
-    wtxn: &mut RwTxn<'_>,
-    record: EntityId,
-    parts: &mut [(&str, Part<'_>)],
-    lifted: &mut Lifted,
-) -> Result<bool> {
-    if parts
-        .iter()
-        .all(|(_, part)| scan_payload(part.bytes()).is_ok())
-    {
-        return Ok(false);
-    }
-    let mut plan = Masker {
-        handles: lifted.0.clone(),
-        mints: true,
-        ..Masker::default()
-    };
-    for (place, part) in parts.iter() {
-        plan.at = Some((record, (*place).to_owned()));
-        let copy = match part {
-            Part::Text(text) => plan.mask_text(text)?.map(String::into_bytes),
-            Part::Body(data) => plan.mask_body(data)?,
-        };
-        // A hit no span places is still in the copy, and refuses as before.
-        let _secrets_nulled = scan_payload(copy.as_deref().unwrap_or(part.bytes()))?;
-    }
-    let at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let minted = plan.mint(&CustodyWrite::of(vault), wtxn, at)?;
-    lifted.0.extend(
-        minted
-            .into_iter()
-            .map(|(value, (handle, _))| (value, handle)),
-    );
-    let mut pass = Masker {
-        handles: lifted.0.clone(),
-        minted: true,
-        ..Masker::default()
-    };
-    let mut changed = false;
-    for (place, part) in parts.iter_mut() {
-        pass.at = Some((record, (*place).to_owned()));
-        match part {
-            Part::Text(text) => {
-                if let Some(masked) = pass.mask_text(text)? {
-                    **text = masked;
-                    changed = true;
-                }
-            }
-            Part::Body(data) => {
-                if let Some(masked) = pass.mask_body(data)? {
-                    **data = masked;
-                    changed = true;
-                }
-            }
-        }
-    }
-    Ok(changed)
 }

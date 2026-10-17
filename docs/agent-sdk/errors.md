@@ -19,7 +19,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `OWNER_BINDING_REQUIRED` | An owner device must bind this human actor in the authority log. Scope changes do not grant ownership. |
 | `VAULT_LOCKED_SINGLE_WRITER` | Connect to the process that owns this vault. Do not remove lock files or open a second writer. |
 | `WRONG_ROOT` | The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries. |
-| `PENDING_ASK` | A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. |
+| `PENDING_ASK` | A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation. |
 | `INVENTED_REFERENCE` | Name only records this writer can read, by the ref the engine issued. The write was refused and receipted. |
 
 Remote server-specific codes and HTTP schemas are also indexed by

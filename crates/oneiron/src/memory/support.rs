@@ -432,6 +432,9 @@ pub struct Memory<'v> {
     /// (`with_transport_invocation`). Only the host sets it, and nothing
     /// clears it: a surface without it is the in-process host's own.
     pub(super) transport_invocation: bool,
+    /// The ask guest's grant a host admitted for this surface's actor
+    /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
+    pub(super) task_grant: Option<crate::authority::AdmittedTaskGrant>,
     /// The conversation whose request this surface's work answers, when a
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.
@@ -533,6 +536,7 @@ impl Vault {
             invocation: None,
             invocation_slip: None,
             transport_invocation: false,
+            task_grant: None,
             origin_conversation: None,
             task_host: None,
             off_record_session: None,
@@ -575,6 +579,7 @@ impl Vault {
             invocation: None,
             invocation_slip: None,
             transport_invocation: false,
+            task_grant: None,
             origin_conversation: None,
             task_host: None,
             off_record_session: None,
@@ -626,6 +631,7 @@ impl<'v> Memory<'v> {
                 invocation: self.invocation,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
+                task_grant: self.task_grant,
                 origin_conversation: self.origin_conversation,
                 task_host: self.task_host.clone(),
                 off_record_session: self.off_record_session.clone(),
@@ -712,9 +718,25 @@ impl Memory<'_> {
     }
 
     /// Whether the in-process host itself holds this surface: no transport
-    /// reached it and no credential is bound to it.
+    /// reached it and no credential (slip, read proof or task grant) is
+    /// bound to it.
     pub(crate) fn native_invocation(&self) -> bool {
-        !self.transport_invocation && self.invocation_slip.is_none() && self.read_proof.is_none()
+        !self.transport_invocation
+            && self.invocation_slip.is_none()
+            && self.read_proof.is_none()
+            && self.task_grant.is_none()
+    }
+
+    /// Binds the ask guest's grant a host admitted for this surface's actor
+    /// ([`Vault::admit_ask_guest_grant`]). Its task verbs then prove the
+    /// actor by that grant, checked again on every verb, so a withdrawn or
+    /// lapsed grant stops them; a grant whose member is not the bound actor
+    /// proves nothing. Like a slip it is a credential: the surface is no
+    /// longer the host's own, and room turns and clones keep it.
+    #[must_use]
+    pub fn with_task_grant(mut self, grant: &crate::authority::AdmittedTaskGrant) -> Self {
+        self.task_grant = Some(*grant);
+        self
     }
 
     /// Binds the conversation whose request started this surface's work
