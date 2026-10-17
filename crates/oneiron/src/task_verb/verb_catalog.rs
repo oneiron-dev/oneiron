@@ -2976,7 +2976,7 @@ impl AgentVerb {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
-                "Composes the default vault lens from the named sources, read under the caller's own scope."
+                "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."
             }
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
@@ -3393,7 +3393,7 @@ impl AgentVerb {
                 "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses."
             }
             Self::VaultArtifactsBodyDeckExport => {
-                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands."
+                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep."
             }
             Self::VaultArtifactsBodyDeckGate => {
                 "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector."

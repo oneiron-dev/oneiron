@@ -227,8 +227,12 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 /// The live custody state of the vault at `vault_dir`, read without opening
 /// it as a vault, through the read-only door (`read_existing_vault_meta`): a
 /// vault another process serves reads beside it, and one this process holds,
-/// under any name, is refused. A missing or unreadable vault refuses.
-pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<LiveCustody> {
+/// under any name, is refused. A sealed vault reads with `page_seal`. A
+/// missing or unreadable vault refuses.
+pub(crate) fn read_live_custody(
+    vault_dir: &Path,
+    page_seal: Option<&crate::world_keys::VaultPageSeal>,
+) -> Result<LiveCustody> {
     // A shared directory on the source's path is no reason to refuse: the
     // vault opens, reads and writes there as it is, so whoever could move it
     // could change it already. The source reports it instead.
@@ -237,7 +241,9 @@ pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<LiveCustody> {
     if let Some(callback) = BEFORE_LIVE_CUSTODY_READ.with(|slot| slot.borrow_mut().take()) {
         callback();
     }
-    let read = read_existing_vault_meta(vault_dir, &live_custody_prefixes())?;
+    let read = crate::world_keys::read_sealed(vault_dir, page_seal, || {
+        read_existing_vault_meta(vault_dir, &live_custody_prefixes())
+    })?;
     LiveCustody::from_rows(&read.root, read.rows)
 }
 
@@ -308,6 +314,9 @@ pub(crate) struct MadeDestination {
     #[cfg(unix)]
     identity: FileIdentity,
     lease: Option<VaultWriterLease>,
+    /// The page-seal mirror a sealed copy's open writes beside it (OF-570),
+    /// removed with the copy.
+    mirror: Option<PathBuf>,
     kept: bool,
 }
 
@@ -338,6 +347,7 @@ impl MadeDestination {
             #[cfg(unix)]
             made,
             lease: None,
+            mirror: None,
             kept: false,
         };
         #[cfg(test)]
@@ -354,6 +364,21 @@ impl MadeDestination {
         let lease = VaultWriterLease::acquire(&destination.canonicalize()?)?;
         guard.lease = Some(lease);
         Ok(guard)
+    }
+
+    /// Takes the page-seal mirror beside the copy as this restore's, for a
+    /// copy made sealed: none may be there yet, since a mirror with no vault
+    /// is another vault's custody, and a refusal removes the one the copy's
+    /// open writes.
+    pub(crate) fn owns_page_seal_mirror(&mut self) -> Result<()> {
+        let mirror = crate::world_keys::page_seal_custody_path(&self.destination)?;
+        if std::fs::symlink_metadata(&mirror).is_ok() {
+            return Err(Error::InvalidConfig(
+                "a page-seal mirror is already beside a restore's copy".into(),
+            ));
+        }
+        self.mirror = Some(mirror);
+        Ok(())
     }
 
     /// The copy's writer lease, for each open of it.
@@ -409,6 +434,13 @@ impl Drop for MadeDestination {
         });
         if !removed {
             tracing::warn!("a refused restore left the copy it made in place");
+            return;
+        }
+        if let Some(mirror) = self.mirror.take()
+            && let Err(error) = std::fs::remove_file(&mirror)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!("a refused restore left the page-seal mirror it wrote in place");
         }
     }
 }
