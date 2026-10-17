@@ -578,7 +578,9 @@ fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
 /// ready byte, and the ready byte is what tells the supervisor any of it
 /// happened.
 pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Result<()> {
-    let config = managed.serve_config(args);
+    let mut config = managed.serve_config(args);
+    // The supervisor's models table, read and checked before anything opens.
+    config.models = managed.models()?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     init_managed_tracing(&config.log_level);
     tracing::info!(
