@@ -8,12 +8,16 @@ use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
-    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_append_for,
-    authority_checkpoint_part_for, authority_range_for, authority_tail_for, authority_wanted,
-    home_search_candidates, index_selection_revision, promotion_snapshot_with, sealed_shelf_after,
-    sealed_shelf_packet_part, selected_item_blob_with, shelve_sealed_window,
-    shelve_staged_sealed_window, stage_sealed_part, want_sealed_replacement,
-    wanted_sealed_replacements, window_index_page, window_index_projection_with,
+    INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, SealedBundleEntry, SealedBundleObject,
+    SealedBundleStage, WindowIndexEntry, authority_append_for, authority_checkpoint_part_for,
+    authority_range_for, authority_tail_for, authority_wanted, commit_sealed_bundle,
+    home_search_candidates, index_selection_revision, promotion_snapshot_with,
+    replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    sealed_shelf_after, sealed_shelf_packet_part, selected_item_blob_with, shelve_sealed_window,
+    shelve_staged_sealed_window, stage_sealed_bundle_part, stage_sealed_part,
+    want_sealed_replacement, wanted_sealed_replacements, window_index_page,
+    window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
@@ -154,6 +158,53 @@ struct SealedWantRequest {
 #[serde(deny_unknown_fields)]
 struct SealedWantsRequest {}
 
+/// One part of an upload of the vault's sealed bundle or its pad object
+/// (FIX 922): `digest` is the blake3 of the whole object in hex, `offset` the
+/// bytes staged before.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BundlePutRequest {
+    generation: String,
+    object: String,
+    total: u64,
+    digest: String,
+    offset: u64,
+    part: String,
+}
+
+/// The end of an upload: the home commits the generation whole while its
+/// newest is still `parent`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BundleCommitRequest {
+    generation: String,
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundleListRequest {}
+
+/// One slice of a kept generation's object; no generation names the newest.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BundleGetRequest {
+    #[serde(default)]
+    generation: Option<String>,
+    object: String,
+    offset: u64,
+}
+
+/// Erase's rewrite of a kept generation's pad object, staged whole:
+/// `replaces` is the digest of the object it was made from.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BundlePadsReplaceRequest {
+    generation: String,
+    replaces: String,
+}
+
 /// The authority entries a machine holds, as concatenated 32-byte hashes in
 /// base64, and how many missing entries it takes in one page (OF-469).
 #[derive(Deserialize)]
@@ -251,6 +302,13 @@ pub(super) fn run(
             "residence.sealed.read" => sealed_read(server, peer, request.params),
             "residence.sealed.want" => sealed_want(server, auth, peer, request.params),
             "residence.sealed.wants" => sealed_wants(server, peer, request.params),
+            "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
+            "residence.bundle.commit" => bundle_commit(server, auth, peer, request.params),
+            "residence.bundle.list" => bundle_list(server, peer, request.params),
+            "residence.bundle.get" => bundle_get(server, peer, request.params),
+            "residence.bundle.pads.replace" => {
+                bundle_pads_replace(server, auth, peer, request.params)
+            }
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
@@ -926,6 +984,144 @@ fn sealed_wants(server: &SyncServer, peer: PeerMachine, params: Value) -> Result
         .map(|window| window.as_str().to_owned())
         .collect();
     Ok((json!({"windows": windows}), Some(Vec::new())))
+}
+
+fn bundle_generation(hex: &str) -> Result<oneiron::world_keys::SealedBundleGeneration, AppError> {
+    sealed_generation_from_hex(hex).ok_or_else(AppError::invalid_params)
+}
+
+fn bundle_object(name: &str) -> Result<SealedBundleObject, AppError> {
+    SealedBundleObject::from_name(name).ok_or_else(AppError::invalid_params)
+}
+
+fn bundle_entry(entry: &SealedBundleEntry) -> Value {
+    json!({
+        "generation": sealed_generation_hex(&entry.generation),
+        "bundleLength": entry.bundle_len,
+        "bundleDigest": sealed_digest_hex(&entry.bundle_digest),
+        "padsLength": entry.pads_len,
+        "padsDigest": sealed_digest_hex(&entry.pads_digest),
+    })
+}
+
+/// Stages one part of an upload of the vault's sealed bundle or its pad object
+/// (FIX 922), from a machine of the owner's whose proof stands here. A stage
+/// whose rest would cross the disk's free-space floor is refused before its
+/// bytes are kept. A refused machine or part looks missing.
+fn bundle_put(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    auth.require(CoreScope::Write)?;
+    let input: BundlePutRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let stage = SealedBundleStage {
+        generation: bundle_generation(&input.generation)?,
+        object: bundle_object(&input.object)?,
+        total: input.total,
+        digest: sealed_digest_from_hex(&input.digest).ok_or_else(AppError::invalid_params)?,
+    };
+    if !server
+        .transfers
+        .disk
+        .has_room_for(input.total.saturating_sub(input.offset))
+    {
+        return Err(AppError::new(
+            "DISK_FLOOR",
+            "the home's disk keeps its free-space floor",
+            ["Retry once the home has room."],
+        ));
+    }
+    let part = base64::engine::general_purpose::STANDARD
+        .decode(input.part)
+        .map_err(|_| AppError::invalid_params())?;
+    let staged = stage_sealed_bundle_part(&server.vault, peer, &stage, input.offset, &part)
+        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    Ok((json!({"staged": staged}), Some(Vec::new())))
+}
+
+/// Commits the generation the machine staged whole as the vault's newest,
+/// while the newest is still the parent it names (FIX 922): one generation per
+/// slot. A refused machine, parent or upload looks missing.
+fn bundle_commit(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    auth.require(CoreScope::Write)?;
+    let input: BundleCommitRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let generation = bundle_generation(&input.generation)?;
+    let parent = input.parent.as_deref().map(bundle_generation).transpose()?;
+    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent)
+        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    Ok((bundle_entry(&entry), Some(Vec::new())))
+}
+
+/// The generations the home keeps, newest first, for a machine of the
+/// owner's (FIX 922). It names no world.
+fn bundle_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let BundleListRequest {} =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let generations: Vec<Value> = sealed_bundle_generations(&server.vault, peer)
+        .map_err(|_| AppError::not_found("sealed bundle", None))?
+        .iter()
+        .map(bundle_entry)
+        .collect();
+    Ok((json!({"generations": generations}), Some(Vec::new())))
+}
+
+/// One slice of a kept generation's bundle or pad object from `offset`, with
+/// its whole length and digest, for a machine of the owner's (FIX 922). The
+/// home serves the whole vault's object and never learns which worlds the
+/// machine reads.
+fn bundle_get(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: BundleGetRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let generation = input
+        .generation
+        .as_deref()
+        .map(bundle_generation)
+        .transpose()?;
+    let object = bundle_object(&input.object)?;
+    let (entry, part) = sealed_bundle_part(&server.vault, peer, generation, object, input.offset)
+        .map_err(|_| AppError::not_found("sealed bundle", None))?
+        .ok_or_else(|| AppError::not_found("sealed bundle", None))?;
+    let (total, digest) = entry.object(object);
+    Ok((
+        json!({
+            "generation": sealed_generation_hex(&entry.generation),
+            "object": object.name(),
+            "total": total,
+            "digest": sealed_digest_hex(&digest),
+            "offset": input.offset,
+            "last": input.offset.saturating_add(part.len() as u64) == total,
+            "part": base64::engine::general_purpose::STANDARD.encode(part),
+        }),
+        Some(Vec::new()),
+    ))
+}
+
+/// Replaces a kept generation's pad object with erase's rewrite the machine
+/// staged whole (FIX 922): same generation, same length. The old object is
+/// deleted. A refused machine, a moved object or a bad stage looks missing.
+fn bundle_pads_replace(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    auth.require(CoreScope::Write)?;
+    let input: BundlePadsReplaceRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let generation = bundle_generation(&input.generation)?;
+    let replaces = sealed_digest_from_hex(&input.replaces).ok_or_else(AppError::invalid_params)?;
+    let entry = replace_sealed_bundle_pads(&server.vault, peer, generation, &replaces)
+        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    Ok((bundle_entry(&entry), Some(Vec::new())))
 }
 
 /// The signed authority entries the proved machine lacks, parents first

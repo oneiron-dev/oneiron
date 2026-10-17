@@ -11,15 +11,18 @@
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use oneiron::authority::EditOrigin;
 use oneiron::recovery::{
     CodeKeeping, KitCoverage, KitError, KitIssue, KitMachine, KitPassphrase, KitPiece,
     KitSecretKind, PassphraseCost, PieceHome, restore_kit,
 };
+use oneiron::sync::WindowManager;
+use oneiron::sync::bridge::Materializer;
 use oneiron::world_keys::{
-    IssuedWorldKit, KitConfirmation, RecoveryRootId, RecoveryRootSeed, VaultKeyStatus,
-    WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
+    IssuedWorldKit, KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads,
+    SealedVaultBundle, VaultKeyStatus, WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
 };
 use serde::Serialize;
 use zeroize::Zeroizing;
@@ -38,6 +41,9 @@ use crate::owner::vault_key::{WrapView, hex, secret32};
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.
 const PIECE_LIMIT: usize = 1024;
+
+/// The window manager's user for a bundle restore, as the server names its own.
+const RESTORE_USER_ID: &str = "server";
 
 /// What to do instead while a server holds the vault.
 const INSTEAD: &str = "or read the kits at `/v1/owner/recovery-kit`";
@@ -398,6 +404,9 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
         }
         None => args.confirm_unverified.then_some(KitConfirmation::Owner),
     };
+    if let Some(bundle) = &args.sealed_bundle {
+        return restore_from_bundle(&args, bundle, confirm);
+    }
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let vault = open(&args.serve)?;
     let owner = local_owner(&vault)?;
@@ -410,6 +419,99 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
         confirm,
     )?;
     emit(&Restored::from(restored))
+}
+
+/// What a kit restore from the sealed cloud bundle did: the keys, as a kit
+/// restore reports them, and what the bundle brought in.
+#[derive(Serialize)]
+struct BundleRestored {
+    #[serde(flatten)]
+    keys: Restored,
+    /// Signed authority entries the bundle's base section carried.
+    authority: usize,
+    /// Base windows installed here.
+    windows: usize,
+    /// Base windows that did not install.
+    windows_skipped: usize,
+    /// Pads stored from the pad object.
+    pads: usize,
+    /// World sections the kit opened.
+    sections: usize,
+    /// Their windows merged and materialized here.
+    merged: usize,
+    /// Their windows that brought nothing new.
+    unchanged: usize,
+    /// Sections or windows not taken: a world this machine may not read
+    /// waits for its re-home.
+    skipped: usize,
+}
+
+/// `recovery-kit restore --sealed-bundle`: the kit alone restores the vault on
+/// an install that holds no copy of it yet, from the sealed cloud bundle and
+/// its pad object in owner-given files. The pieces rebuild the kit's seed for
+/// the vault `--vault-id` names, never one read from the bundle.
+fn restore_from_bundle(
+    args: &RecoveryKitRestoreArgs,
+    bundle: &Path,
+    confirm: Option<KitConfirmation>,
+) -> anyhow::Result<()> {
+    let vault_id = args.vault_id.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("--sealed-bundle names the vault the kit is bound to: --vault-id")
+    })?;
+    let vault_id = secret32(vault_id.as_bytes(), "a vault id")?;
+    let pads = args.sealed_pads.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("--sealed-bundle reads the bundle's pad object: --sealed-pads")
+    })?;
+    let bundle = SealedVaultBundle::from_bytes(&read_sealed(bundle)?)?;
+    let pads = SealedKeyPads::from_bytes(&read_sealed(pads)?)?;
+    let (pieces, passphrase) = read_kit_args(&args.kit)?;
+    let pieces: Vec<&KitPiece> = pieces.iter().collect();
+    let kit = pieces
+        .first()
+        .map(|piece| piece.kit_id())
+        .ok_or_else(|| anyhow::anyhow!("a kit restore reads the kit's pieces: --piece"))?;
+    let secret = restore_kit(
+        *vault_id,
+        KitSecretKind::RecoveryRoot,
+        &pieces,
+        passphrase.as_ref(),
+    )
+    .map_err(|error| anyhow::anyhow!("the kit does not open: {error}"))?;
+    let reissue_advised = secret.reissue_advised();
+    let seed = RecoveryRootSeed::from_restored_kit(secret)?;
+    let root = seed.public(&vault_id)?.id;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = Arc::new(open_stopped_vault(&config, INSTEAD)?);
+    let owner = local_owner(&vault)?;
+    let manager = Arc::new(WindowManager::new(
+        Arc::clone(&vault),
+        Arc::new(Materializer::with_lease_vault_id(config.lease_vault_id)),
+        RESTORE_USER_ID,
+    ));
+    let restored = manager
+        .restore_sealed_bundle_with_kit(&owner, &vault_id, &bundle, &pads, &seed, confirm)?;
+    let take = restored.take;
+    emit(&BundleRestored {
+        keys: Restored::from(WorldKitRestore {
+            kit,
+            root,
+            keys: restored.keys,
+            reissue_advised,
+        }),
+        authority: restored.authority,
+        windows: restored.windows,
+        windows_skipped: restored.windows_skipped,
+        pads: restored.pads,
+        sections: take.sections,
+        merged: take.merged,
+        unchanged: take.unchanged,
+        skipped: take.skipped,
+    })
+}
+
+/// A sealed bundle or pad object from the owner's file, read whole.
+fn read_sealed(path: &Path) -> anyhow::Result<Vec<u8>> {
+    std::fs::read(path).map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))
 }
 
 /// `oneiron restore --unlock kit`: the pieces rebuild the kit's seed, and its
