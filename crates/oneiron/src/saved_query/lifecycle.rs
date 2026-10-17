@@ -72,6 +72,20 @@ pub fn read_saved_query(
         .filter(|record| record.definition.owner_actor == authenticated_principal))
 }
 
+/// Reads a saved query whoever owns it, for an engine door that checks an
+/// owner relation itself (a campaign program's audience must share the
+/// campaign's owner) rather than a caller's ownership.
+///
+/// # Errors
+///
+/// Storage or decode errors propagate unchanged.
+pub(crate) fn load_saved_query(
+    vault: &Vault,
+    query_ref: EntityId,
+) -> Result<Option<SavedQueryRecord>> {
+    load_record(vault, query_ref)
+}
+
 /// Replaces a saved query's definition under a version CAS.
 ///
 /// The compare and the write share ONE write transaction. LMDB's single-writer
