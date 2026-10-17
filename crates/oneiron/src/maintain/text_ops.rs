@@ -1,7 +1,7 @@
 //! Text-index clear, PPR cleanup, and postings compaction.
 
 use crate::error::Result;
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, IndexRows, RetrievalIndexInventory};
 use crate::ppr;
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::write_text_index_manifest;
@@ -27,19 +27,29 @@ pub(super) struct ClearTextIndexCounts {
 pub(super) fn clear_text_index(vault: &Vault, reindex: bool) -> Result<ClearTextIndexCounts> {
     let mut wtxn = vault.store.env.write_txn()?;
 
-    let postings = vault.store.text_postings.len(&wtxn)?;
+    let postings = vault
+        .store
+        .port_index_row_count(&wtxn, IndexRows::TextPostings)?;
     vault.store.text_postings.clear(&mut wtxn)?;
 
-    let meta = vault.store.text_meta.len(&wtxn)?;
+    let meta = vault
+        .store
+        .port_index_row_count(&wtxn, IndexRows::TextMeta)?;
     vault.store.text_meta.clear(&mut wtxn)?;
 
-    let forward = vault.store.text_forward.len(&wtxn)?;
+    let forward = vault
+        .store
+        .port_index_row_count(&wtxn, IndexRows::TextForward)?;
     vault.store.text_forward.clear(&mut wtxn)?;
 
-    let doc_field_lengths = vault.store.text_doc_field_lengths.len(&wtxn)?;
+    let doc_field_lengths = vault
+        .store
+        .port_index_row_count(&wtxn, IndexRows::TextDocFieldLengths)?;
     vault.store.text_doc_field_lengths.clear(&mut wtxn)?;
 
-    let field_stats = vault.store.text_bm25_field_stats.len(&wtxn)?;
+    let field_stats = vault
+        .store
+        .port_index_row_count(&wtxn, IndexRows::TextBm25FieldStats)?;
     vault.store.text_bm25_field_stats.clear(&mut wtxn)?;
 
     write_text_index_manifest(&vault.store, &mut wtxn, &vault.analyzer)?;

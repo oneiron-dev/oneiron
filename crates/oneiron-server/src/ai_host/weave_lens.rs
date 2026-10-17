@@ -168,13 +168,12 @@ pub(crate) async fn render_live_weave_lens(
     };
     // The report goes to the model and its lens back to the caller: it is
     // read as the farther of the two, on this device only when both are.
-    let reads_at = if caller.locality() == CallerLocality::OnDevice
-        && locality == ModelLocality::OnDevice
-    {
-        CallerLocality::OnDevice
-    } else {
-        CallerLocality::OffDevice
-    };
+    let reads_at =
+        if caller.locality() == CallerLocality::OnDevice && locality == ModelLocality::OnDevice {
+            CallerLocality::OnDevice
+        } else {
+            CallerLocality::OffDevice
+        };
     let (live, actor) = {
         let vault = Arc::clone(&vault);
         let (caller, request) = (caller.clone(), request.clone());

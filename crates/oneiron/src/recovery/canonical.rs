@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, seal_recovery_artifact};
-use crate::deletion::PENDING_TOMBSTONE;
 use crate::error::{ArtifactError, Error, Result};
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{
+    DeletionMarker, EntityStoreRead, TombstoneStoreRead, WindowAddress, WindowDeletionRows,
+};
 use crate::{EntityId, Vault};
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
@@ -471,9 +472,11 @@ fn mark_deleted_carriers_first(
         snapshot.tombstones.iter().map(|row| row.id).collect();
     {
         let txn = vault.store.env.read_txn()?;
-        let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
-        for row in PENDING_TOMBSTONE.iter_from(&vault.store, &txn, &window_prefix)? {
-            deleted.insert(*row?.0.id.as_bytes());
+        for row in vault
+            .store
+            .port_pending_tombstones_in_window(&txn, WindowAddress::new(window))?
+        {
+            deleted.insert(*row?.id.as_bytes());
         }
         for row in &snapshot.entity_blobs {
             if vault
@@ -628,10 +631,13 @@ pub(crate) fn capture_canonical_window_within(
     mark_deleted_carriers_first(vault, window, &snapshot)?;
     let txn = vault.store.env.read_txn()?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.
-    let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
-    for row in PENDING_TOMBSTONE.iter_from(&vault.store, &txn, &window_prefix)? {
-        let (key, value) = row?;
-        let entity = *key.id.as_bytes();
+    for row in vault
+        .store
+        .port_pending_tombstones_in_window(&txn, WindowAddress::new(window))?
+    {
+        let row = row?;
+        let entity = *row.id.as_bytes();
+        let value = row.raw;
         if let Some(previous) = snapshot.tombstones.iter_mut().find(|row| row.id == entity) {
             if crate::deletion::decode_tombstone_value(&previous.value).is_hard()
                 && !crate::deletion::decode_tombstone_value(&value).is_hard()

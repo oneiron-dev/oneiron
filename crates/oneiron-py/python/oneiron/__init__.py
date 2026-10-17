@@ -407,6 +407,9 @@ class Oneiron:
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs":
             return Oneiron._VaultShapeVerbs(self._client)
+        @property
+        def fanout(self) -> "Oneiron._VaultFanoutVerbs":
+            return Oneiron._VaultFanoutVerbs(self._client)
         def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
             """Witnesses one conversational turn.
 
@@ -478,6 +481,9 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
+        @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs":
+            return Oneiron._VaultSecretsVerbs(self._client)
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
@@ -592,6 +598,18 @@ class Oneiron:
         def apply(self, spec):
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
             return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
+    class _VaultFanoutVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def launch(self, spec):
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_launch(json.dumps(spec))))
+        def resume(self, spec):
+            """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_resume(json.dumps(spec))))
+        def ack(self, spec):
+            """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_ack(json.dumps(spec))))
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -911,6 +929,12 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def lift_history(self, spec):
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
     class _VaultWidenProposalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1393,7 +1417,7 @@ class Oneiron:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
             return json.loads(_translate(lambda: self._client.tasks_wave(json.dumps(spec))))
         def update(self, spec):
-            """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""

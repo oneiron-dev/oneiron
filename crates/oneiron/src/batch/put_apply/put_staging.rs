@@ -7,7 +7,7 @@ use super::{ENTITY_METADATA_HEADER_LEN, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::{EdgeStoreStaging, EntityStoreStaging};
+use crate::ports::{EdgeStoreStaging, EntityStoreStaging, RetrievalIndexInventory};
 use crate::side_table::StagedRow;
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -355,7 +355,7 @@ pub(super) fn stage_post_put_embeddings(
     let mut had_vector_mutation = false;
     if is_lexical_query_hint_claim {
         cleared_pending_embedding = store.clear_pending_embedding(wtxn, id)?;
-        let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
+        let had_hnsw = store.port_hnsw_node_present(wtxn, id)?;
         had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
         crate::embed::record_embedding_device_in_txn(store, wtxn, id, None)?;
         crate::hnsw::hnsw_deindex(store, wtxn, id)?;
@@ -366,7 +366,7 @@ pub(super) fn stage_post_put_embeddings(
             // pending. The worker skips these revisions; old completions must
             // still observe that their token no longer owns the current body.
             let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, id)?;
-            let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
+            let has_vector = store.port_vector_with_raw(wtxn, id, |_| Ok(()))?.is_some();
             if !body_changed && has_vector && !has_current_pending {
                 None
             } else {

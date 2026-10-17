@@ -50,19 +50,24 @@ const LEASE_OWNER_DOMAIN: &[u8] = b"oneiron.tasks.lease_owner.v1";
 impl Memory<'_> {
     /// The one task-domain door. The actor is this surface's, verified per
     /// call exactly as every facade verifies it; `via` carries a host's
-    /// lease, which the actor alone cannot prove.
+    /// lease, which the actor alone cannot prove. Its surface questions go
+    /// through the decision path a host bound
+    /// ([`Memory::with_task_decisions`]), if any.
     pub fn tasks_highway(&self, via: TaskVia, call: TaskCall) -> MemoryResult<TaskCallReceipt> {
-        self.tasks_highway_with_decisions(via, call, None)
+        self.tasks_highway_with_decisions(via, call, self.task_decisions())
     }
 
-    /// [`Self::tasks_highway`] under a host's decision path. With `None`,
-    /// every surface question asks up, so a person is asked.
+    /// [`Self::tasks_highway`] under a host's decision path. An explicit
+    /// path overrides the one bound on this surface; with `None` the bound
+    /// one is used, and only when neither exists does every surface question
+    /// ask up, so a person is asked.
     pub fn tasks_highway_with_decisions(
         &self,
         via: TaskVia,
         call: TaskCall,
         decisions: Option<&TaskDecisions<'_>>,
     ) -> MemoryResult<TaskCallReceipt> {
+        let decisions = decisions.or_else(|| self.task_decisions());
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         match call {
             TaskCall::Post(post) => self.highway_post(&via, post, decisions),
@@ -95,8 +100,9 @@ impl Memory<'_> {
     /// Proves this surface's actor may run `verb` on `task`, in the caller's
     /// snapshot, through L02's rule (OF-220), and answers the TASK's
     /// standing. The proof is the actor's live binding of its own class;
-    /// else the slip its request presented, whose refusal stands; else, for
-    /// the in-process host's own caller, its store truth; else a binding,
+    /// else the slip its request presented, whose refusal stands; else the
+    /// ask guest grant its host admitted, whose refusal stands too; else,
+    /// for the in-process host's own caller, its store truth; else a binding,
     /// which it then lacks. A TASK the actor is no party to is not found; a
     /// party the verb does not admit is told why, with `suggestion`.
     pub(super) fn highway_task_actor_in(
@@ -133,6 +139,11 @@ impl Memory<'_> {
             TaskActorProof::Slip {
                 actor: self.actor(),
                 slip,
+            }
+        } else if let Some(grant) = self.presented_task_grant() {
+            TaskActorProof::Grant {
+                actor: self.actor(),
+                grant,
             }
         } else if self.native_invocation() {
             TaskActorProof::Native(&writer)

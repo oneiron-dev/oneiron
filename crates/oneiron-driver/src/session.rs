@@ -41,7 +41,7 @@ use oneiron::session_lifecycle::{SessionActivityPeriod, SessionHintTimestamp, Se
 use oneiron::{EndedSession, EntityId, Result, SessionClosePredicate, SessionMintOutcome, Vault};
 
 use crate::tick::{
-    NowMillis, SessionHintCarrier, SessionHintStamp, Tick, TickSource, sleep_until_due,
+    ArmedLane, NowMillis, SessionHintCarrier, SessionHintStamp, Tick, TickSource, sleep_until_due,
 };
 
 /// The ticket-pinned default idle floor: 20 minutes without activity ends
@@ -586,6 +586,7 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                     None
                 }
             };
+            self.inner.note_armed(ArmedLane::Session, expiry);
 
             // Preserve the inner source's ready deadline/wake priority over
             // applied hint surfacing. Pending polls are safe to abandon: the
@@ -676,6 +677,10 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                 }
             }
         }
+    }
+
+    fn note_armed(&mut self, lane: ArmedLane, at_ms: Option<u64>) {
+        self.inner.note_armed(lane, at_ms);
     }
 }
 
