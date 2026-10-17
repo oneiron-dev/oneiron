@@ -40,11 +40,6 @@ const PREFIX: &str = "models:offer-cooldown:v1:";
 /// in the same table: this deployment's routing state too.
 const QUESTION_PREFIX: &str = "models:offer-cooldown:v1:ask:";
 
-/// The owner's standing fallbacks, one per offer they answered
-/// `use_fallback` for: the engine id of the model its calls go to while it
-/// is parked.
-const FALLBACK_PREFIX: &str = "models:offer-cooldown:v1:fallback:";
-
 /// A down provider's first health rest, in seconds; each failure in a row
 /// doubles it.
 const HEALTH_REST_SECS: u64 = 5;
@@ -204,8 +199,9 @@ pub struct QuotaFallback {
     pub model: String,
 }
 
-/// A configured chat model, as the runtime built it, that the owner may
-/// name as a parked offer's fallback.
+/// A configured model, as the runtime built it, that the owner may name as
+/// a parked offer's fallback: a chat model by its own id, or one rung of a
+/// media seat.
 pub(super) struct FallbackRung {
     pub(super) provider: String,
     pub(super) model: ModelId,
@@ -239,13 +235,11 @@ impl QuotaChoice {
 }
 
 /// Where a parked offer is, for its question: the rung that met the
-/// refusal, and whether it is a media rung (whose calls no chat model
-/// takes).
+/// refusal.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Asked<'a> {
     pub(super) provider: &'a str,
     pub(super) wire_model: &'a str,
-    pub(super) media: bool,
 }
 
 /// Where a ladder keeps its offers' rests, and asks whether a call's world
@@ -253,7 +247,7 @@ pub(super) struct Asked<'a> {
 /// hands its call on, and the next call starts fresh.
 pub struct OfferCooldowns {
     vault: Option<Arc<Vault>>,
-    /// The configured chat models a parked offer may fall back to.
+    /// The configured models a parked offer may fall back to.
     fallbacks: RwLock<Vec<FallbackRung>>,
     /// Each offer whose provider was down and has not stably recovered,
     /// by its row's key. In memory: a restart starts every offer healthy.
@@ -638,7 +632,7 @@ impl OfferCooldowns {
         self.recovered.subscribe()
     }
 
-    /// The configured chat models a parked offer may fall back to, as the
+    /// The configured models a parked offer may fall back to, as the
     /// runtime built them.
     pub(super) fn offer_fallbacks(&self, rungs: Vec<FallbackRung>) {
         *self
@@ -650,11 +644,20 @@ impl OfferCooldowns {
     /// The owner's question about the offer `asked` names, parked on a spent
     /// window or spent credit (`rest`), asked once every rung of the call
     /// that met it has parked: which offer, what was spent, when it is back,
-    /// and the choices, `use_fallback` among them while a chat model on a
-    /// provider outside the call's ladder (`own`) has usage left. A question
-    /// already open stays as it was asked. Nothing when the rest spent
-    /// nothing or no vault keeps rests.
-    pub(super) fn ask(&self, offer: &OfferBinding, rest: Rest, asked: Asked<'_>, own: &[&str]) {
+    /// and the choices. `use_fallback` is among them while a model on a
+    /// provider outside the call's ladder (`own`) has usage left and `fits`
+    /// the call: it speaks the seat's wire, keeps a role's work on the device
+    /// when it must stay there, and accepts the request. A question already
+    /// open stays as it was asked. Nothing when the rest spent nothing or no
+    /// vault keeps rests.
+    pub(super) fn ask(
+        &self,
+        offer: &OfferBinding,
+        rest: Rest,
+        asked: Asked<'_>,
+        own: &[&str],
+        fits: &dyn Fn(&OfferLadder) -> bool,
+    ) {
         let (Some(vault), Some(spent)) = (self.vault.as_ref(), rest.spent) else {
             return;
         };
@@ -664,11 +667,7 @@ impl OfferCooldowns {
         if matches!(vault.sync_state_get(&question_key(&id)), Ok(Some(_))) {
             return;
         }
-        let fallbacks = if asked.media {
-            Vec::new()
-        } else {
-            self.usage_left(own)
-        };
+        let fallbacks = self.usage_left(own, fits);
         let mut choices = match spent {
             SpentKind::Window => vec![
                 QuotaChoice::Wait,
@@ -702,9 +701,9 @@ impl OfferCooldowns {
         }
     }
 
-    /// The chat models on providers other than `own` whose offers are in
-    /// rotation now.
-    fn usage_left(&self, own: &[&str]) -> Vec<QuotaFallback> {
+    /// The models on providers other than `own` whose offers are in rotation
+    /// now and that `fits` the parked call.
+    fn usage_left(&self, own: &[&str], fits: &dyn Fn(&OfferLadder) -> bool) -> Vec<QuotaFallback> {
         self.fallbacks
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -713,7 +712,7 @@ impl OfferCooldowns {
             .filter(|rung| {
                 rung.ladder
                     .upgrade()
-                    .is_some_and(|ladder| !ladder.rests_now())
+                    .is_some_and(|ladder| !ladder.rests_now() && fits(ladder.as_ref()))
             })
             .map(|rung| QuotaFallback {
                 provider: rung.provider.clone(),
@@ -731,15 +730,14 @@ impl OfferCooldowns {
     ) -> Option<Arc<OfferLadder>> {
         let vault = self.vault.as_ref()?;
         let key = key(offer, wire_model);
-        let bytes = vault
-            .sync_state_get(&fallback_key(key.trim_start_matches(PREFIX)))
+        let model = vault
+            .model_fallback(key.trim_start_matches(PREFIX))
             .ok()??;
-        let model = std::str::from_utf8(&bytes).ok()?;
         self.fallbacks
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .find(|rung| rung.model.as_str() == model)?
+            .find(|rung| rung.model.as_str() == model.as_str())?
             .ladder
             .upgrade()
     }
@@ -795,7 +793,7 @@ impl OfferCooldowns {
             }) else {
                 return Ok(false);
             };
-            vault.sync_state_put(&fallback_key(&question.id), model.as_bytes())?;
+            vault.set_model_fallback(&question.id, model)?;
         }
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
@@ -908,10 +906,6 @@ fn question_key(id: &str) -> String {
 
 /// Where the owner's fallback for the offer question `id` asked about is
 /// kept.
-fn fallback_key(id: &str) -> String {
-    format!("{FALLBACK_PREFIX}{id}")
-}
-
 /// One row per deployment: the adapter and origin it goes out on, whose key
 /// pays, and the model it is asked for.
 fn key(offer: &OfferBinding, wire_model: &str) -> String {

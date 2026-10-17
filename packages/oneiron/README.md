@@ -248,6 +248,16 @@ you want to act as instead.
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
 | `handle.vault.receipts(limit?)` | `FacadeReceipt[]` |
 
+Every other verb in the SDK verb table sits at its SDK path on the handle
+(`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).
+Its input and result are typed by `Facade`, the wire declarations
+`scripts/sdk/generate.py` reads from the Rust types each row names, and its
+JSDoc is the row's own description. The keys are the engine's wire spelling
+(snake_case). Of the table's 153 facade rows, 131 inputs and 127 results are
+fully typed; the rest are typed down to a leaf that is opaque JSON by design (a
+claim's `value`, an entity `body`), and none is left untyped. The same
+declarations ship in `@oneiron/client` and, as TypedDicts, in the Python stubs.
+
 `vault.recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default
 `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `asOf` (Unix seconds

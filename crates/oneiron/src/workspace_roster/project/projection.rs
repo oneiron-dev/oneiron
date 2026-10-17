@@ -229,7 +229,7 @@ pub(crate) fn normalize_project_body(
     let mut tasks = crate::scan_check::ScanCount::start(
         store,
         txn,
-        crate::scan_check::EngineScan::TaskBoardRows,
+        crate::scan_check::EngineScan::ProjectTaskRows,
         id.as_bytes(),
     )?;
     tasks.rows(body.tasks.len());

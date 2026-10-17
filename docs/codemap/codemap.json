@@ -4248,9 +4248,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/facet_identity.rs",
-     "purpose": "FACET overwrite checks for immutable substrate identity and retired privacy axes",
+     "purpose": "FACET write checks: the local identity-body refusal, immutable substrate identity and retired privacy axes",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -4318,7 +4318,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 1,
       "re-export": 3
      }
@@ -9655,7 +9655,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -12617,11 +12617,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/companion/keys.rs",
-     "purpose": "Retired register discriminator and durable companion task payload keys",
+     "purpose": "Durable companion task payload keys",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
-      "re-export": 1
+      "crate-vis": 8
      }
     },
     {
@@ -12631,7 +12630,7 @@
      "path": "src/companion/mod.rs",
      "purpose": "Companion task queue and PERSON/FACET persona compilation",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 4
      }
     },
@@ -21363,7 +21362,7 @@
      "purpose": "Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -26686,7 +26685,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "StandingAnswer"
@@ -26694,7 +26693,7 @@
      "path": "src/llm/decision/questions/standing.rs",
      "purpose": "Explicit graph-unit backfill with same-snapshot authority and source pins",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
      }
@@ -36853,7 +36852,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as an…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -37979,6 +37978,16 @@
       "enum": 4,
       "fn": 19,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/settings/models.rs",
+     "purpose": "The owner's model settings (OF-305): the standing quota fallbacks",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -41040,7 +41049,7 @@
      "path": "src/store/structural_kind_registry/registry.rs",
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -41432,9 +41441,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/companion_identity.rs",
-     "purpose": "Retired identity-carrier scrub, identity topology ingest, and edge key/value helpers",
+     "purpose": "Identity topology ingest, endpoint hydration, and edge key/value helpers",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -41481,7 +41490,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "re-export": 4
      }
     },
@@ -41927,13 +41936,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/custody.rs",
      "purpose": "OF-422: owner-signed custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -42528,7 +42537,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 6,
-      "fn": 12,
+      "fn": 13,
       "re-export": 6,
       "struct": 2
      }
@@ -42660,7 +42669,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 2
      }
@@ -42752,7 +42761,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 5
      }
     },
@@ -42902,7 +42911,7 @@
      "path": "src/sync/window/admission.rs",
      "purpose": "Full-window UPDATE locality admission without live document side effects",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -43014,7 +43023,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 6,
       "mod": 1,
       "re-export": 8,
@@ -43056,13 +43065,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/reverse.rs",
      "purpose": "Reverse rematerialization plus skip/policy predicates and carrier removal",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -44742,7 +44751,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 14
+      "fn": 15
      }
     },
     {
@@ -47887,7 +47896,7 @@
      "purpose": "The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing…",
      "surface": {
       "crate-vis": 4,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -49974,7 +49983,7 @@
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "settings": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -50277,7 +50286,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3036,
+   "source_files": 3037,
    "test_files": 903
   },
   "oneiron-android": {
@@ -53032,16 +53041,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/companion.rs",
-     "purpose": "The retired companion-register identity, reserved in the type registry",
-     "surface": {
-      "const": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "EdgeActorClass"
      ],
@@ -53328,7 +53327,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 23,
+      "mod": 22,
       "re-export": 2
      }
     },
@@ -53681,13 +53680,6 @@
      "layout": "file+dir",
      "purpose": "Shared vocabulary of the code-run vault-read contract"
     },
-    "companion": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "The retired companion-register identity, reserved in the type registry"
-    },
     "edge": {
      "files": 1,
      "impl_vault": false,
@@ -53817,7 +53809,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 56,
+   "source_files": 55,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -56330,6 +56322,20 @@
      "path": "src/apple.rs",
      "purpose": "Apple: the data-protection keychain, one generic-password item per slot",
      "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecureEnclaveKeychain"
+     ],
+     "path": "src/apple_enclave.rs",
+     "purpose": "Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES…",
+     "surface": {
       "fn": 1,
       "struct": 1
      }
@@ -56352,6 +56358,7 @@
      "kind": "src",
      "notable": [
       "DeviceKeystore",
+      "KeystoreAssurance",
       "KeystoreError",
       "KeystoreLocality",
       "KeystoreSlot",
@@ -56361,9 +56368,9 @@
      "purpose": "This-device-only key slots for one install",
      "surface": {
       "const": 1,
-      "enum": 3,
-      "fn": 5,
-      "re-export": 3,
+      "enum": 4,
+      "fn": 7,
+      "re-export": 5,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -56381,6 +56388,19 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowsDpapiKeystore"
+     ],
+     "path": "src/windows.rs",
+     "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
     }
    ],
    "modules": {
@@ -56390,6 +56410,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Apple: the data-protection keychain, one generic-password item per slot"
+    },
+    "apple_enclave": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES…"
     },
     "file": {
      "files": 1,
@@ -56404,11 +56431,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here"
+    },
+    "windows": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine…"
     }
    },
    "over_bar": 0,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 4,
+   "source_files": 6,
    "test_files": 0
   },
   "oneiron-linear": {
@@ -65804,7 +65838,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "OfferLadder"
@@ -65812,7 +65846,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "fn": 7,
       "struct": 1
      }
@@ -65828,7 +65862,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 14,
       "struct": 3
      }
@@ -67685,7 +67719,7 @@
     "models": {
      "files": 33,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out"
     },
