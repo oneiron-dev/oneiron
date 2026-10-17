@@ -584,6 +584,8 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "sync")]
+            home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
             result_body_pins: Default::default(),

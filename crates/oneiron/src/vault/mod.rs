@@ -137,6 +137,11 @@ pub struct Vault {
     /// sweep safety and must defer.
     #[cfg(feature = "sync")]
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
+    /// This device's home search, lent by its own sync connection
+    /// ([`crate::sync::HomeSearch`], OF-534). A `Weak`, so a dropped
+    /// connection routes nothing.
+    #[cfg(feature = "sync")]
+    pub(crate) home_search: std::sync::Mutex<std::sync::Weak<crate::sync::HomeSearch>>,
     /// The speculative passes running on threads of their own (call mode on
     /// ASR partials), capped against the reader slots.
     pub(crate) speculative_passes: crate::speculative::SpeculativePasses,

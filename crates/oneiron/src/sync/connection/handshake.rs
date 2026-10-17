@@ -96,6 +96,7 @@ impl SyncConnection {
                 super::topology::watch_topology(
                     Arc::clone(self.manager.vault()),
                     source,
+                    self.config.client_config.residence_home_route.clone(),
                     event_tx.clone(),
                 )
             })

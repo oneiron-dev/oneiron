@@ -57,6 +57,7 @@ pub(super) fn search_page(
     Ok(ScopedSearchResponse {
         response: PaginatedResponse::new(response.value, None, meta),
         narrowing,
+        residence: None,
     })
 }
 
@@ -83,6 +84,7 @@ fn unread_page(count_mode: CountMode) -> ScopedSearchResponse {
     ScopedSearchResponse {
         response: PaginatedResponse::new(Vec::new(), None, meta),
         narrowing: Vec::new(),
+        residence: None,
     }
 }
 
