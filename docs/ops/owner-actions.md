@@ -910,7 +910,8 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   leaves a short note in the inbox.
 - `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
   full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
-  `.../move/abandon` ends an open move without one.
+  `.../move/abandon` ends an open move without one. An undo works for 30 days after the swap.
+  Then the incumbent retires (its rows and declaration go) unless a slot binds it again.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
   one.

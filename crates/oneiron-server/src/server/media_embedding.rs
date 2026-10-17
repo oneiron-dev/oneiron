@@ -248,11 +248,20 @@ impl SyncServer {
     /// one-space preset included, and each open version move's candidate;
     /// then the moves' probes are topped up ([`Self::author_space_probes`])
     /// and each full candidate is checked ([`Self::check_space_moves`]).
+    /// First, each swapped-in incumbent past its undo window retires.
     /// Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
     ) -> Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)> {
+        match self.vault.retire_swapped_incumbents() {
+            Ok(retired) => {
+                for space in retired {
+                    tracing::info!(%space, "embedding space retired: its move's undo window passed");
+                }
+            }
+            Err(error) => tracing::warn!(%error, "swapped-in embedding spaces not retired"),
+        }
         let (bindings, moves) = match (self.vault.kind_slot_bindings(), self.vault.space_moves()) {
             (Ok(bindings), Ok(moves)) => (bindings, moves),
             (Err(error), _) | (_, Err(error)) => return vec![(String::new(), Err(error.into()))],

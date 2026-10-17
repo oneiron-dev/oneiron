@@ -30,7 +30,7 @@ use oneiron::Vault;
 use oneiron::embed::{EmbeddingSpace, InputKind, SpaceMoveState};
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct EmbeddingConfig {
     /// Spaces declared at start when the vault holds none by that id.
@@ -41,6 +41,10 @@ pub struct EmbeddingConfig {
     /// slot yet.
     pub one_space: Option<String>,
 }
+
+// A space's floors are finite ([`EmbeddingSpace::validate`]), so equal is
+// total here.
+impl Eq for EmbeddingConfig {}
 
 /// Kind to declared space id. An unbound text slot reads the vault's own
 /// text index.
