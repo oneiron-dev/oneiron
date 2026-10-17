@@ -901,9 +901,12 @@ The verbs, each the owner's and checked against the vault's inference policy:
   `{"kind": "image" | "audio", "media_type": ..., "data": "<base64>"}`. The
   answer is `{"model", "parts", "usage"}`.
 - `POST /v1/ai/video` answers `202` with a job ticket; `GET
-  /v1/ai/video/{job}` polls it (a finished job answers with its clip, once)
-  and `DELETE` stops it. A job's permit is held while it renders and settled
-  when it ends.
+  /v1/ai/video/{job}` polls it, and `DELETE` stops it or drops it once it
+  ended. A job's permit is held while it renders and settled when it ends.
+  The server keeps each job in the vault: a restart loses none (the next
+  poll takes a running job up again on a fresh permit, and sends nothing
+  again), and a finished job answers with its clip on every poll, a lost
+  reply's included, until it is deleted.
 
 Seats show in `GET /v1/ai/status` as `media.<operation>`.
 
