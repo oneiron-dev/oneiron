@@ -1167,7 +1167,7 @@ system job's. The whole body rides as one structured argument, so every size the
 runs as an action. It runs the verb's own door instead when the request names a room turn, or
 comes from a credential that binds no principal or read key. The route picks the path before it
 writes. A refusal answers with the code, words and suggestions the verb's own route refused
-with (a replay of a refused key keeps the code). A TURN write wakes the Dreamer once on either
+with, and a retry under a refused key answers with the same words. A TURN write wakes the Dreamer once on either
 path.
 
 ## Live agent runs
