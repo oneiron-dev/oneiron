@@ -18,6 +18,7 @@
 mod apply;
 mod card;
 mod channel;
+mod connector_reach;
 mod grant;
 mod group;
 mod live;
