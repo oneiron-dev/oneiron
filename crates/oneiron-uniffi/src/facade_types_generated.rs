@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 261 facade rows, 834 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 220.
+// UniFFI census: 262 facade rows, 837 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 221.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
@@ -10616,6 +10616,14 @@ pub struct DecisionReceipt {
     pub time: Option<DecisionTime>,
     #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<ImagePin>>,
+    #[serde(rename = "think_row", default, skip_serializing_if = "Option::is_none")]
+    pub think_row: Option<u32>,
+    #[serde(
+        rename = "person_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_row: Option<u32>,
 }
 
 /// `oneiron::llm::decision::types::HumanAskReason`.
@@ -13436,6 +13444,48 @@ pub struct DeckGateView {
 pub struct DeckOracleRequest {
     #[serde(rename = "receipt")]
     pub receipt: OracleReceipt,
+}
+
+/// `oneiron::office_body::pptx::preview::DeckPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckPreviewRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "slides")]
+    pub slides: Vec<u64>,
+}
+
+/// `oneiron::office_body::pptx::preview::DeckPreviewSlide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPreviewSlide {
+    #[serde(rename = "slide")]
+    pub slide: u64,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "image_hash")]
+    pub image_hash: String,
+    #[serde(rename = "content_base64")]
+    pub content_base64: String,
+}
+
+/// `oneiron::office_body::pptx::preview::DeckPreview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPreview {
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "profile")]
+    pub profile: String,
+    #[serde(rename = "projector")]
+    pub projector: String,
+    #[serde(rename = "export_key")]
+    pub export_key: String,
+    #[serde(rename = "renderer")]
+    pub renderer: String,
+    #[serde(rename = "provisional")]
+    pub provisional: bool,
+    #[serde(rename = "slides")]
+    pub slides: Vec<DeckPreviewSlide>,
 }
 
 /// `oneiron::task_verb::sdk_memory::CreateNoteRequest`.

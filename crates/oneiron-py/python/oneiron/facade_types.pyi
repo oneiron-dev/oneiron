@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 261 facade rows, 992 declarations.
-Inputs: 217 of 261 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 211 of 261 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
+Census: 262 facade rows, 995 declarations.
+Inputs: 218 of 262 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 212 of 262 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
@@ -3969,6 +3969,8 @@ class DecisionReceipt(TypedDict):
     person: NotRequired[list[PairedReading]]
     time: NotRequired[DecisionTime | None]
     images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
@@ -5076,6 +5078,22 @@ class DeckGateView(TypedDict):
     receipt: NotRequired[OracleReceipt | None]
 class DeckOracleRequest(TypedDict):
     receipt: OracleReceipt
+class DeckPreviewRequest(TypedDict):
+    artifact_ref: str
+    slides: list[int]
+class DeckPreviewSlide(TypedDict):
+    slide: int
+    media_type: str
+    image_hash: str
+    content_base64: str
+class DeckPreview(TypedDict):
+    frontier: list[int]
+    profile: str
+    projector: str
+    export_key: str
+    renderer: str
+    provisional: bool
+    slides: list[DeckPreviewSlide]
 class AppendBlobVersionRequest(TypedDict):
     artifact_ref: str
     content_base64: str
