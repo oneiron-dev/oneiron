@@ -319,6 +319,7 @@ pub(crate) fn witness_turn(
             order: 0,
         }],
         occurred_at: at,
+        assertions: Default::default(),
     }
 }
 

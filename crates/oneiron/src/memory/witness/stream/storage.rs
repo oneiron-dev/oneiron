@@ -3,7 +3,7 @@
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::side_table::{self, Named, SideTable};
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,9 @@ pub(super) struct Seed {
     /// base. Empty in a resident stream's state, whose `pending` is the live
     /// copy; only the stored row carries it.
     pub saved: String,
+    /// The reply's typed assertions (OF-063), witnessed with its final text.
+    /// A continuation's are empty.
+    pub assertions: WitnessAssertions,
 }
 impl Seed {
     pub(super) fn class(&self) -> Result<EdgeActorClass> {
@@ -65,6 +68,7 @@ impl Seed {
             thread_audience: None,
             messages: vec![self.message(content)],
             occurred_at: self.occurred_at,
+            assertions: self.assertions.clone(),
         }
     }
 }

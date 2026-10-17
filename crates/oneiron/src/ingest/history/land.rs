@@ -556,6 +556,7 @@ impl Import<'_> {
             thread_audience: None,
             messages,
             occurred_at: occurred[0],
+            assertions: Default::default(),
         };
         let stamp = ImportedTurnStamp {
             source: source.source_id(),

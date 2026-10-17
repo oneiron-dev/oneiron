@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 282 facade rows, 1076 declarations.
+Census: 282 facade rows, 1077 declarations.
 Inputs: 236 of 282 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 230 of 282 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
@@ -1185,6 +1185,9 @@ class WitnessMessage(TypedDict):
     metadata: NotRequired[Any | None]
     is_visible: bool
     order: int
+class WitnessAssertions(TypedDict):
+    cited: list[RecordRef]
+    created: list[RecordRef]
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
@@ -1192,6 +1195,7 @@ class WitnessTurn(TypedDict):
     thread_audience: NotRequired[list[EntityId] | None]
     messages: list[WitnessMessage]
     occurred_at: int
+    assertions: NotRequired[WitnessAssertions]
 class ClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str

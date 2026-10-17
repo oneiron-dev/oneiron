@@ -178,7 +178,7 @@ pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn,
 };
-pub use witness::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};

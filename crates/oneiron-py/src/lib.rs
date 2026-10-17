@@ -84,6 +84,7 @@ impl WitnessTurnInput {
             thread_audience: self.thread_audience,
             messages,
             occurred_at,
+            assertions: Default::default(),
         })
     }
 }
