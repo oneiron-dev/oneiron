@@ -60,6 +60,7 @@ pub enum AgentVerb {
     VaultSharedOutcomes,
     VaultSharedDeletion,
     VaultMembersAdd,
+    VaultMembersInvitationSlip,
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
@@ -324,6 +325,7 @@ impl AgentVerb {
         Self::VaultSharedOutcomes,
         Self::VaultSharedDeletion,
         Self::VaultMembersAdd,
+        Self::VaultMembersInvitationSlip,
         Self::VaultMembersChange,
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
@@ -591,6 +593,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => "vault.shared.outcomes",
             Self::VaultSharedDeletion => "vault.shared.deletion",
             Self::VaultMembersAdd => "vault.members.add",
+            Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
             Self::VaultMembersChange => "vault.members.change",
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
@@ -858,6 +861,7 @@ impl AgentVerb {
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -1129,6 +1133,7 @@ impl AgentVerb {
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -1425,6 +1430,7 @@ impl AgentVerb {
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -1656,6 +1662,7 @@ impl AgentVerb {
                 | Self::VaultSharedProposeRemoveOwner
                 | Self::VaultSharedExecute
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -1855,6 +1862,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
             Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
@@ -2120,6 +2128,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
             Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
@@ -2483,6 +2492,9 @@ impl AgentVerb {
             Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
             Self::VaultMembersAdd => {
                 "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
+            }
+            Self::VaultMembersInvitationSlip => {
+                "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."
             }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."

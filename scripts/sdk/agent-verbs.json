@@ -1017,6 +1017,17 @@
       "section": false
     },
     {
+      "name": "vault.members.invitation_slip",
+      "description": "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost.",
+      "input": "crate::task_verb::sdk::InvitationSlipRequest",
+      "output": "crate::task_verb::sdk::InvitationSlip",
+      "call": "crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.members.change",
       "description": "An Admin assigns another non-root role to a member who is not an Owner.",
       "input": "crate::task_verb::sdk::SharedMemberRoleRequest",

@@ -536,6 +536,8 @@ class Oneiron:
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
+        def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
+            """An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:

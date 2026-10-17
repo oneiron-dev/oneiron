@@ -664,6 +664,18 @@ struct HeldErase {
     hashes: Vec<[u8; 32]>,
 }
 
+impl crate::Vault {
+    /// The record a held `erase` act names, read from its payload; `None`
+    /// for any other act or payload.
+    pub(crate) fn held_erase_record(&self, act: &PendingAuthorityAct) -> Option<EntityId> {
+        (act.act == ERASE_ACT)
+            .then(|| serde_json::from_slice::<HeldErase>(&act.payload).ok())
+            .flatten()
+            .filter(|held| held.v == 1)
+            .and_then(|held| EntityId::from_bytes(held.record).ok())
+    }
+}
+
 #[cfg(all(test, feature = "sync"))]
 thread_local! {
     static FAIL_NEXT_MATCH_AFTER_TOMBSTONE: std::cell::Cell<bool> =
