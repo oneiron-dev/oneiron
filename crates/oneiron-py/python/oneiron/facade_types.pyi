@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 261 facade rows, 988 declarations.
+Census: 261 facade rows, 989 declarations.
 Inputs: 217 of 261 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 210 of 261 fully typed, 41 typed down to an opaque serde_json::Value leaf, 10 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
@@ -1704,12 +1704,19 @@ class GeneratedLens(TypedDict):
     kit_version: int
     apps_contract_version: int
     root: LensNode
+class WeaveLensRefusal(TypedDict):
+    reason: str
+    skill_ref: str
+    skill_version: str
+    model: str
+    refused_at: int
 class WeaveDigestView(TypedDict):
     scheduled_for: int
     rendered_at: int
     sections: list[WeaveSectionView]
     narrowing: ScopedReadReceipt
     lens: NotRequired[GeneratedLens | None]
+    lens_refused: NotRequired[WeaveLensRefusal | None]
 GeneratedUiCatalog = Literal["lens_atom_kit"]
 GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
 GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]

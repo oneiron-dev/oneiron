@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 319 code-mode rows (301 host rows, 18 run rows), 1092 declarations.
+// Census: 319 code-mode rows (301 host rows, 18 run rows), 1093 declarations.
 // Replies: 258 fully typed, 47 typed down to an opaque serde_json::Value leaf, 13 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -340,7 +340,8 @@ declare namespace Sdk {
   type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty };
   type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
   type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
-  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null };
+  type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
+  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null; lens_refused?: WeaveLensRefusal | null };
   type GeneratedUiCatalog = "lens_atom_kit";
   type GeneratedUiNode = { id: string; parent?: string | null; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; childRefs?: string[] };
   type GeneratedUiActionTier = "local" | "deterministic_tool" | "model_round_trip";
