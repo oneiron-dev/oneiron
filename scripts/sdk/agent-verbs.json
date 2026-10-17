@@ -1406,6 +1406,39 @@
       "section": false
     },
     {
+      "name": "vault.widen_proposals",
+      "description": "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined.",
+      "input": "crate::agent_dispatch::widen_doors::WidenProposalsRequest",
+      "output": "crate::agent_dispatch::widen_doors::WidenProposalsView",
+      "call": "crate::agent_dispatch::widen_doors::widen_proposals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.widen_proposals.approve",
+      "description": "The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued.",
+      "input": "crate::agent_dispatch::widen_doors::WidenProposalAnswer",
+      "output": "crate::agent_dispatch::widen_doors::WidenProposalView",
+      "call": "crate::agent_dispatch::widen_doors::approve_widen_proposal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals.approve\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.widen_proposals.decline",
+      "description": "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record.",
+      "input": "crate::agent_dispatch::widen_doors::WidenProposalAnswer",
+      "output": "crate::agent_dispatch::widen_doors::WidenProposalView",
+      "call": "crate::agent_dispatch::widen_doors::decline_widen_proposal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals.decline\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.settings.wake_policy.set",
       "description": "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof.",
       "input": "crate::policy_setting_doors::WakePolicySetRequest",

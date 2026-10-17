@@ -7,6 +7,7 @@ import keyword
 import re
 import subprocess
 from facade_types import Inventory
+from catalog_fragment import catalog_fragment
 from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
@@ -725,7 +726,7 @@ def http_members(tree, depth):
         inner = http_members(node['children'], depth + 1)
         if node['row']:
             row = node['row']; verb = json.dumps(row['name'])
-            value = f'({ts_input(row)}, options?: O): FacadeReturns<{verb}>[K] => invoke({verb}, input, options)'
+            value = f'({ts_input(row)}, options?: O): FacadeReturns<{verb}>[K] => invoke({verb}, input, options, newInvocation())'
             if node['children']: value = f'Object.assign({value}, {{\n{inner}{pad}}})'
             out += (pad + ts_doc(row) + '\n' if row.get('description') else '') + f'{pad}{key}: {value},\n'
         else:
@@ -733,7 +734,7 @@ def http_members(tree, depth):
     return out
 
 def http_facade():
-    'OF-246: the one client artifact, the typed facade tree over an injected transport, with its row metadata.'
+    'OF-246: the one client artifact, the typed facade tree over an injected transport, with its row metadata; OF-580: each call\'s invocation id and the pending ask a retry resends under it.'
     out = HEADER + 'import type * as Facade from "./facade-types.js";\n\n'
     out += '/** Every facade verb, in table order. */\n'
     out += 'export const FACADE_VERBS = ' + json.dumps([r['name'] for r in FACADE_ROWS]) + ' as const;\n'
@@ -766,18 +767,59 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
     out += '''};
 
 /**
+ * A fresh invocation id for one new verb call (ARCH-0080 §3): 32 lowercase hex
+ * digits from `crypto.getRandomValues`. The server fires a verb's hooks once
+ * per id, and a retry that names the same id is the same call.
+ */
+export function newInvocation(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+/** A verb hook's stop, as the server's refusal names it in `error.hook`. */
+export type FacadeHookStop =
+  | { status: "skipped"; hook: string; reason: string }
+  | { status: "pending"; invocation: string; ask: string }
+  | { status: "hidden"; hook: string };
+/** The server's refusal envelope, `{error, narrowing?}`, as `api/facade.rs` writes it. */
+export interface FacadeErrorEnvelope {
+  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; [field: string]: unknown };
+  narrowing?: unknown;
+}
+/**
+ * A call a verb hook stopped on an ask: the server answered `202 PENDING_ASK`
+ * and the verb did not run. `invocation` is the id the call ran under and `ask`
+ * the ask's handle. `facadeRetry` resends `verb` and `input` under that id: it
+ * answers this same pending while the ask is open, and runs the saved call once
+ * the ask is answered proceed.
+ */
+export interface FacadePending<V extends FacadeVerb = FacadeVerb> {
+  readonly kind: "pending";
+  readonly verb: V;
+  readonly input: FacadeInput<V>;
+  readonly invocation: string;
+  readonly ask: string;
+  readonly envelope: FacadeErrorEnvelope;
+}
+
+/**
  * What one call answers, by the kind of transport behind the tree: the HTTP
- * adapter's original `Response`, unread; an adapter that decodes, the typed
- * result; an in-process synchronous one, the typed result itself.
+ * adapter's original `Response`, unread, or a `FacadePending` for a call a verb
+ * hook stopped on an ask; an adapter that decodes, the typed result; an
+ * in-process synchronous one, the typed result itself.
  */
 export interface FacadeReturns<V extends FacadeVerb> {
-  response: Promise<Response>;
+  response: Promise<Response | FacadePending<V>>;
   result: Promise<FacadeResult<V>>;
   sync: FacadeResult<V>;
 }
 export type FacadeReturn = keyof FacadeReturns<FacadeVerb>;
-/** The one injected invocation: a verb, its typed input and the transport's own options. */
-export type FacadeTransport<K extends FacadeReturn, O = RequestInit> = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>, options?: O) => FacadeReturns<V>[K];
+/**
+ * The one injected invocation: a verb, its typed input, the transport's own
+ * options and the call's invocation id, fresh for each call the tree makes and
+ * the stopped call's own on a retry. The transport sends the id with the call
+ * (HTTP: `x-oneiron-invocation`).
+ */
+export type FacadeTransport<K extends FacadeReturn, O = RequestInit> = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>, options: O | undefined, invocation: string) => FacadeReturns<V>[K];
 
 /**
  * The facade as its path tree (`vault.claims.upsert`, `self.memory.diary`),
@@ -791,6 +833,11 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
     out += '''  };
 }
 export type FacadeTree<K extends FacadeReturn, O = RequestInit> = ReturnType<typeof facadeTree<K, O>>;
+
+/** Retries the call `pending` names through `invoke`: its verb and input, under its own invocation id. */
+export function facadeRetry<K extends FacadeReturn, O, V extends FacadeVerb>(invoke: FacadeTransport<K, O>, pending: FacadePending<V>, options?: O): FacadeReturns<V>[K] {
+  return invoke(pending.verb, pending.input, options, pending.invocation);
+}
 '''
     return out
 
@@ -1242,6 +1289,10 @@ def outputs():
     files['packages/oneiron/src/facade-types.ts'] = facade_types
     files['packages/oneiron-client/src/facade-types.ts'] = facade_types
     files['crates/oneiron-py/python/oneiron/facade_types.pyi'] = INVENTORY.python(census)
+    # ONE-2510 S2: the code-mode catalog fragment over every row code mode
+    # serves, with its revision; its own inventory leaves the facade types above
+    # as they are.
+    files.update(catalog_fragment(ROOT, ROWS + RUN_ROWS, HEADER))
     for path, text in list(files.items()):
         if path.endswith('.rs'):
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)

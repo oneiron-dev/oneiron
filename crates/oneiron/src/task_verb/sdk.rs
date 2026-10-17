@@ -349,6 +349,9 @@ pub use super::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
 };
+pub use super::sdk_catalog_fragment::{
+    CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
+};
 pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;

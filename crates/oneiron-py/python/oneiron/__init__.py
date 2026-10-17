@@ -419,6 +419,9 @@ class Oneiron:
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
+        def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
+            return Oneiron._VaultWidenProposalsVerbs(self._client)
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
         @property
@@ -815,6 +818,18 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultWidenProposalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
+            return json.loads(_translate(lambda: self._client.vault_widen_proposals(json.dumps(spec))))
+        def approve(self, spec):
+            """The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."""
+            return json.loads(_translate(lambda: self._client.vault_widen_proposals_approve(json.dumps(spec))))
+        def decline(self, spec):
+            """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
+            return json.loads(_translate(lambda: self._client.vault_widen_proposals_decline(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

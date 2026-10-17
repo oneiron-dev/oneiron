@@ -860,6 +860,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_widen_proposals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.widen_proposals", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_widen_proposals_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.widen_proposals.approve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_widen_proposals_decline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.widen_proposals.decline", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_settings_wake_policy_set(
         &self,
         input: serde_json::Value,
