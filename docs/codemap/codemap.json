@@ -8456,7 +8456,7 @@
      "path": "src/campaign/surface/campaign.rs",
      "purpose": "Campaign record types, lifecycle operations, and vault storage",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 3,
       "enum": 1,
       "fn": 6,
