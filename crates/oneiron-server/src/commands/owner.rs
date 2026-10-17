@@ -529,8 +529,10 @@ pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
     match command {
         SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
-        // `run_cli` sends revoke straight to `revoke_secret`, before the read.
+        // `run_cli` sends revoke and reveal straight to their doors, before
+        // the read.
         SecretsCommand::Revoke(args) => revoke_secret(*args),
+        SecretsCommand::Reveal(args) => reveal_secret(*args),
         SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value)?),
     }
 }
@@ -627,6 +629,48 @@ pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
     let vault = open_vault(&config, "POST /v1/owner/secrets/revoke --data -")?;
     let owner = local_owner(&vault)?;
     emit(&secrets::revoke(&vault, &owner, &args.name)?)
+}
+
+/// Reads a secret's value through the engine door `POST /v1/owner/secrets/reveal`
+/// uses, as the local owner, with the reason its receipt keeps (OF-560). The
+/// value goes to stdout exactly as held, unbuffered, and the receipt to
+/// stderr. It reads nothing from stdin.
+pub fn reveal_secret(args: crate::cli::SecretRevealArgs) -> anyhow::Result<()> {
+    use oneiron::secret_custody::RevealTarget;
+    let target = match (args.handle, args.name) {
+        (Some(handle), None) => RevealTarget::Handle(handle),
+        (None, Some(name)) => RevealTarget::Name(name),
+        _ => anyhow::bail!("name the secret by exactly one of --handle or --name"),
+    };
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/reveal --data -")?;
+    let owner = local_owner(&vault)?;
+    let revealed = vault.reveal_secret_as_owner(&owner, &target, &args.reason)?;
+    let receipt = &revealed.receipt;
+    let receipt_ref = receipt
+        .decision
+        .map(|decision| format!("gate:{}", decision.to_hex()))
+        .unwrap_or_default();
+    eprintln!(
+        "revealed {} ({}); reveal {}, receipt {receipt_ref}",
+        receipt.handle,
+        receipt.class.as_str(),
+        receipt.reveal.to_hex(),
+    );
+    let mut stdout = raw_stdout()?;
+    stdout.write_all(&revealed.value)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Stdout's own file, unbuffered, so a value written to it is copied through
+/// no process-wide buffer that is never wiped.
+fn raw_stdout() -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    let owned = std::os::fd::AsFd::as_fd(&io::stdout()).try_clone_to_owned()?;
+    #[cfg(windows)]
+    let owned = std::os::windows::io::AsHandle::as_handle(&io::stdout()).try_clone_to_owned()?;
+    Ok(std::fs::File::from(owned))
 }
 
 /// Signs a portable secret's current custody transition with the owner

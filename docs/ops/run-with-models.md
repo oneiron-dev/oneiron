@@ -478,6 +478,16 @@ summary. A mark that fails its pass keeps why and waits for the next
 `compaction is off for this run`. The ledger is node-local and follows the
 run's route, so an off-record room's folds stay in its overlay.
 
+A secret reaches a run as its handle, `[secret sc12]` in text or `sc12` as a
+field's value, never as its value. `describe("sc12")` says what it names,
+where it was found and whether a reveal would deliver at once, ask the owner
+or be refused. `reveal({handle, why})` returns a pending reveal every time,
+and `wait(pending)` answers `pending`, `denied`, `expired` or `granted`. The
+first `granted` answer carries the value as `value` (or `value_base64`), and
+later ones carry only the receipt. The run's record keeps that answer without
+the value, so a resumed step must reveal again. The rows are `reveal`,
+`reveal.wait` and `reveal.describe` on every other door too.
+
 ### Type check (shadow mode)
 
 Each generated program can be type-checked before it runs, against the same

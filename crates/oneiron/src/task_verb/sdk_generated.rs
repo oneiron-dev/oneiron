@@ -512,6 +512,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "reveal",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RevealRequest>(
+                ),
+            ),
+            (
+                "reveal.wait",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RevealWaitRequest,
+                >(),
+            ),
+            (
+                "reveal.describe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RevealDescribeRequest,
+                >(),
+            ),
+            (
                 "vault.shares.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ShareCreateRequest,
@@ -1915,6 +1932,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "reveal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "reveal.wait" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "reveal.describe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.shares.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3019,6 +3057,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.disclosure.offer" => {
             let _input: crate::task_verb::sdk::DisclosureOfferRequest = decode(value.clone())?;
         }
+        "reveal" => {
+            let _input: crate::task_verb::sdk::RevealRequest = decode(value.clone())?;
+        }
+        "reveal.wait" => {
+            let _input: crate::task_verb::sdk::RevealWaitRequest = decode(value.clone())?;
+        }
+        "reveal.describe" => {
+            let _input: crate::task_verb::sdk::RevealDescribeRequest = decode(value.clone())?;
+        }
         "vault.shares.create" => {
             let _input: crate::task_verb::sdk::ShareCreateRequest = decode(value.clone())?;
         }
@@ -3635,6 +3682,9 @@ pub fn invoke(
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
         "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
         "vault.disclosure.offer" => encode(vault_disclosure_offer(memory, decode(value)?)?),
+        "reveal" => encode(reveal(memory, decode(value)?)?),
+        "reveal.wait" => encode(reveal_wait(memory, decode(value)?)?),
+        "reveal.describe" => encode(reveal_describe(memory, decode(value)?)?),
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
@@ -4802,6 +4852,24 @@ pub fn vault_disclosure_offer(
     input: crate::task_verb::sdk::DisclosureOfferRequest,
 ) -> MemoryResult<crate::task_verb::sdk::DisclosureOffered> {
     crate::task_verb::sdk::offer_contact_disclosure_as_caller(memory, input)
+}
+pub fn reveal(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RevealRequest,
+) -> MemoryResult<crate::task_verb::sdk::RevealPending> {
+    crate::task_verb::sdk::reveal_as_caller(memory, input)
+}
+pub fn reveal_wait(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RevealWaitRequest,
+) -> MemoryResult<crate::task_verb::sdk::RevealWaitAnswer> {
+    crate::task_verb::sdk::wait_reveal_as_caller(memory, input)
+}
+pub fn reveal_describe(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RevealDescribeRequest,
+) -> MemoryResult<crate::task_verb::sdk::RevealHandleCard> {
+    crate::task_verb::sdk::describe_secret_as_caller(memory, input)
 }
 pub fn vault_shares_create(
     memory: &Memory<'_>,

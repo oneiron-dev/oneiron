@@ -620,6 +620,13 @@ export class Oneiron {
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
     outcomes: (handle: TaskAskHandle): Facade.CalibrationPair[] => this.#call(() => this.#client.tasksOutcomes(handle) as Facade.CalibrationPair[]),
   }
+  /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+  readonly reveal = Object.assign((input: Facade.RevealRequest): Facade.RevealPending => this.#call(() => this.#client.reveal(input) as Facade.RevealPending), {
+    /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
+    wait: (input: Facade.RevealWaitRequest): Facade.RevealWaitAnswer => this.#call(() => this.#client.revealWait(input) as Facade.RevealWaitAnswer),
+    /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+    describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
+  })
   /** Read-only ask routing or attributed partial answers. */
   can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
   /** Read-only ask routing or attributed partial answers. */

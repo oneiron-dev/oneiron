@@ -101,6 +101,9 @@ pub enum AgentVerb {
     VaultLensesList,
     VaultLensesDefault,
     VaultDisclosureOffer,
+    Reveal,
+    RevealWait,
+    RevealDescribe,
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
@@ -345,6 +348,9 @@ impl AgentVerb {
         Self::VaultLensesList,
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
+        Self::Reveal,
+        Self::RevealWait,
+        Self::RevealDescribe,
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
@@ -594,6 +600,9 @@ impl AgentVerb {
             Self::VaultLensesList => "vault.lenses.list",
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
+            Self::Reveal => "reveal",
+            Self::RevealWait => "reveal.wait",
+            Self::RevealDescribe => "reveal.describe",
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
@@ -837,6 +846,9 @@ impl AgentVerb {
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
+                | Self::RevealWait
+                | Self::RevealDescribe
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1088,6 +1100,9 @@ impl AgentVerb {
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
+                | Self::RevealWait
+                | Self::RevealDescribe
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1364,6 +1379,9 @@ impl AgentVerb {
                 | Self::VaultLensesList
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
+                | Self::RevealWait
+                | Self::RevealDescribe
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1565,6 +1583,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
@@ -1650,6 +1669,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
+                | Self::Reveal
                 | Self::VaultGraphAsk
                 | Self::VaultCommit
                 | Self::VaultRemember
@@ -1759,6 +1779,9 @@ impl AgentVerb {
             Self::VaultLensesList => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::Reveal => &["spec"],
+            Self::RevealWait => &["spec"],
+            Self::RevealDescribe => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2004,6 +2027,9 @@ impl AgentVerb {
             Self::VaultLensesList => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::Reveal => &["spec"],
+            Self::RevealWait => &["spec"],
+            Self::RevealDescribe => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2419,6 +2445,15 @@ impl AgentVerb {
             }
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
+            }
+            Self::Reveal => {
+                "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."
+            }
+            Self::RevealWait => {
+                "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."
+            }
+            Self::RevealDescribe => {
+                "What a secret handle names, where it was found and what a reveal of it would do now; never the value."
             }
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."

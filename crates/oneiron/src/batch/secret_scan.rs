@@ -6,6 +6,7 @@ mod wordlist;
 use heed::{RoTxn, RwTxn};
 
 pub(super) use self::mask::mask_batch_ops;
+pub(crate) use self::mask::{MaskOrigin, mask_origin_in_txn};
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
     Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,

@@ -251,6 +251,8 @@ class Oneiron:
     def describe(self, task_ref: str | None = None) -> TaskDescription: ...
     @property
     def tasks(self) -> "Oneiron._TasksVerbs": ...
+    @property
+    def reveal(self) -> "Oneiron._RevealVerbs": ...
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
     @overload
@@ -756,6 +758,13 @@ class Oneiron:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+    class _RevealVerbs:
+        def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
+            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+        def wait(self, spec: Facade.RevealWaitRequest) -> Facade.RevealWaitAnswer:
+            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
+        def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
+            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."""

@@ -23,6 +23,10 @@ declare const connector: {
 declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
+declare const reveal: ((input: { handle: string; why: string }) => Promise<unknown>) & {
+  describe(input: { handle: string }): Promise<unknown>;
+  wait(input: { reveal: string }): Promise<unknown>;
+};
 declare namespace self {
   const agents: {
     spawn(input: { agent?: string | null; budget?: object | object | null; care?: "light" | "medium" | "high" | "xhigh" | "max" | null; context?: unknown; context_from?: string[] | null; depth?: number | null; intent_key: string; model?: object | object | null; need: string; notes?: string | null; pattern?: object | object | null; project?: string | null; prompt: string; width?: object | object | null }): Promise<unknown>;

@@ -344,6 +344,15 @@ impl OneironClient {
                 "vault.disclosure.offer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DisclosureOffered,
                 >(client, verb, &input),
+                "reveal" => remote_agent_verb_output::<oneiron::task_verb::sdk::RevealPending>(
+                    client, verb, &input,
+                ),
+                "reveal.wait" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RevealWaitAnswer,
+                >(client, verb, &input),
+                "reveal.describe" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RevealHandleCard,
+                >(client, verb, &input),
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
@@ -1932,6 +1941,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.disclosure.offer", value)
+    }
+    pub fn reveal(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealRequest,
+    ) -> Result<oneiron::task_verb::sdk::RevealPending, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("reveal", value)
+    }
+    pub fn reveal_wait(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealWaitRequest,
+    ) -> Result<oneiron::task_verb::sdk::RevealWaitAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("reveal.wait", value)
+    }
+    pub fn reveal_describe(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealDescribeRequest,
+    ) -> Result<oneiron::task_verb::sdk::RevealHandleCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("reveal.describe", value)
     }
     pub fn vault_shares_create(
         &self,

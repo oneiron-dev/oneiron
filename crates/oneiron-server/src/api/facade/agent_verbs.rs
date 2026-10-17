@@ -180,6 +180,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.lenses.list", post(vault_lenses_list))
         .route("/vault.lenses.default", post(vault_lenses_default))
         .route("/vault.disclosure.offer", post(vault_disclosure_offer))
+        .route("/reveal", post(reveal))
+        .route("/reveal.wait", post(reveal_wait))
+        .route("/reveal.describe", post(reveal_describe))
         .route("/vault.shares.create", post(vault_shares_create))
         .route("/vault.shares.revoke", post(vault_shares_revoke))
         .route("/vault.shares.view", post(vault_shares_view))
@@ -2569,6 +2572,60 @@ async fn vault_disclosure_offer(
         actor,
         class,
         "vault.disclosure.offer",
+        value,
+    )?))
+}
+async fn reveal(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server, &headers, &auth, actor, class, "reveal", value,
+    )?))
+}
+async fn reveal_wait(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "reveal.wait",
+        value,
+    )?))
+}
+async fn reveal_describe(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(facade_invoke(
+        &server,
+        &headers,
+        &auth,
+        actor,
+        class,
+        "reveal.describe",
         value,
     )?))
 }

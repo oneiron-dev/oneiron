@@ -34,7 +34,7 @@ pub use owner_args::{
     EmbeddingSpaceProbePutArgs, EmbeddingSpaceProbesCommand, EmbeddingSpacesCommand,
     SecretAnchorSignArgs,
 };
-pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevokeArgs};
+pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
@@ -919,8 +919,9 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::RecoverClock(args) => commands::recover_clock(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
-        // Revoke reads no value, so it never reaches the stdin read.
+        // Revoke and reveal read no value, so they never reach the stdin read.
         Command::Secrets(SecretsCommand::Revoke(args)) => commands::revoke_secret(*args),
+        Command::Secrets(SecretsCommand::Reveal(args)) => commands::reveal_secret(*args),
         Command::Secrets(command) => commands::secrets(command),
         Command::VaultKey(command) => commands::vault_key(command),
         Command::RecoveryKit(command) => commands::recovery_kit(command),

@@ -1477,6 +1477,43 @@
       "section": false
     },
     {
+      "name": "reveal",
+      "description": "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.",
+      "input": "crate::task_verb::sdk::RevealRequest",
+      "output": "crate::task_verb::sdk::RevealPending",
+      "call": "crate::task_verb::sdk::reveal_as_caller(memory, input)?",
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "reveal.wait",
+      "description": "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt.",
+      "input": "crate::task_verb::sdk::RevealWaitRequest",
+      "output": "crate::task_verb::sdk::RevealWaitAnswer",
+      "call": "crate::task_verb::sdk::wait_reveal_as_caller(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "reveal.describe",
+      "description": "What a secret handle names, where it was found and what a reveal of it would do now; never the value.",
+      "input": "crate::task_verb::sdk::RevealDescribeRequest",
+      "output": "crate::task_verb::sdk::RevealHandleCard",
+      "call": "crate::task_verb::sdk::describe_secret_as_caller(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.shares.create",
       "description": "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels.",
       "input": "crate::task_verb::sdk::ShareCreateRequest",

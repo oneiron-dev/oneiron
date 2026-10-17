@@ -223,6 +223,9 @@ class Oneiron:
     @property
     def tasks(self) -> "Oneiron._TasksVerbs":
         return Oneiron._TasksVerbs(self._client)
+    @property
+    def reveal(self) -> "Oneiron._RevealVerbs":
+        return Oneiron._RevealVerbs(self._client)
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
         return json.loads(_translate(lambda: self._client.can(json.dumps(request, allow_nan=False))))
@@ -1129,6 +1132,18 @@ class Oneiron:
         def outcomes(self, handle):
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
             return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+    class _RevealVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+            return json.loads(_translate(lambda: self._client.reveal(json.dumps(spec))))
+        def wait(self, spec):
+            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
+            return json.loads(_translate(lambda: self._client.reveal_wait(json.dumps(spec))))
+        def describe(self, spec):
+            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+            return json.loads(_translate(lambda: self._client.reveal_describe(json.dumps(spec))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

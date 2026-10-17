@@ -60,6 +60,10 @@ side_tables! {
     /// holds it, and its band (OF-560, owner ruling G04 binary = C2). Key: hash32 (blake3 of the
     /// stored bytes).
     SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named;
+    /// One reveal of a secret's value by its handle: the agent's ask, the owner's answer and the
+    /// lease that delivered it, or the owner's own read with its reason (OF-560). Holds no value.
+    /// Key: id16 (reveal id).
+    SECRET_REVEAL: VaultMeta b"secret_reveal:v1:" Named;
     /// Durable attestation of one secret rotate-or-revoke op; carries no value bytes. Key:
     /// hex32(receipt id).
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;

@@ -59,6 +59,17 @@ pub(crate) struct MaskOrigin {
     pub(crate) masked_at: u64,
 }
 
+/// Where a mask on write lifted the secret custody record `id` holds, read
+/// in `txn`; `None` for a record an owner registered. A handle's `describe`
+/// names it (OF-560).
+pub(crate) fn mask_origin_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<MaskOrigin>> {
+    MASK_ORIGIN.get(store, txn, id)
+}
+
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
 /// before. `at` stamps each custody record the batch mints.

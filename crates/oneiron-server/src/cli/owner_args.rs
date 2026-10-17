@@ -332,6 +332,10 @@ pub enum SecretsCommand {
     /// Revoke a secret: the record goes terminal and every lease over it is
     /// revoked. Reads nothing from stdin.
     Revoke(Box<SecretRevokeArgs>),
+    /// Read a secret's value, with a reason its receipt keeps: the value to
+    /// stdout exactly as held, the receipt to stderr. Reads nothing from
+    /// stdin.
+    Reveal(Box<SecretRevealArgs>),
     /// Sign a portable secret's current custody transition with your owner
     /// anchor, for an install that cannot sign as one of your machines. Reads
     /// your recovery kit from stdin, one recovery code per line; the kit
@@ -402,6 +406,24 @@ pub struct SecretRevokeArgs {
     /// The secret's custody name.
     #[arg(long)]
     pub name: String,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SecretRevealArgs {
+    /// The secret's handle, such as `sc12`, as a masked text or field holds it.
+    #[arg(long, conflicts_with = "name", required_unless_present = "name")]
+    pub handle: Option<String>,
+
+    /// The secret's custody name.
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Why you read it, one line; the receipt keeps it.
+    #[arg(long)]
+    pub reason: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,
