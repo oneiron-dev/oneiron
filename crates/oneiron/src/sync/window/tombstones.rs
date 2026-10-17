@@ -18,7 +18,7 @@ use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{WindowAddress, WindowDeletionRows};
-use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_FULL_RESYNC_MARKER, WINDOW_UPDATE};
+use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_FULL_RESYNC_MARKER};
 use loro::{CommitOptions, LoroDoc};
 
 /// Applies one tombstone (raw v2/legacy wire value) to a window doc IN
@@ -105,6 +105,8 @@ pub(crate) fn mark_removed_carriers_first(
     carriers: &[(EntityId, Vec<u8>)],
 ) -> Result<()> {
     crate::task_authority::mark_removed_carriers(vault, carriers)?;
+    // A peer's record of a removed carrier leaves with it.
+    crate::sync::ingest::forget_peer_rows(vault, carriers)?;
     #[cfg(test)]
     fail_after_carrier_mark(path)?;
     Ok(())
@@ -399,9 +401,12 @@ pub fn rebuild_window_from_updates(
 ) -> Result<LoroDoc> {
     let doc = create_window_doc(user_id, key);
     let rtxn = vault.store.env.read_txn()?;
-    for entry in WINDOW_UPDATE.iter_from(&vault.store, &rtxn, format!("{key}:").as_bytes())? {
-        let (_k, v) = entry?;
-        import_doc(&doc, &v)?;
+    let address = WindowAddress::new(key.as_str());
+    for entry in vault
+        .store
+        .port_window_updates(&rtxn, address, |_, v| import_doc(&doc, v))?
+    {
+        entry??;
     }
     Ok(doc)
 }
