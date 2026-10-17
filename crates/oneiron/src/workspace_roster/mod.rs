@@ -182,9 +182,10 @@ pub use rooms::{
 pub(crate) use rooms::RoomThreadTask;
 pub use rooms::{HostPin, HostPinKind, RoomHostHand, RoomHostPin};
 pub use rooms::{
-    OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferSettlement, OfferState,
-    OffersPage, OffersRequest,
+    OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
+    OfferState, OfferVoteRequest, OffersPage, OffersRequest,
 };
+pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 
 pub(crate) use rooms::erase_room_side_rows;

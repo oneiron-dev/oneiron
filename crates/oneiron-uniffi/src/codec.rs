@@ -27,9 +27,9 @@ use crate::dto::{
     FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
     MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QuoteSpan, ReadReceipt, ReadScope,
-    RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
-    SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn,
+    RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
+    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson,
+    WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -947,6 +947,12 @@ impl Lift<engine::MemoryItem> for MemoryItem {
                 .map(|cited| CitedMessage {
                     short_id: cited.short_id,
                     value_text: cited.value_text,
+                    record: cited.record.map(|record| crate::RecordRef {
+                        kind: record.kind,
+                        id: record.id,
+                        short_id: record.short_id,
+                        label: record.label,
+                    }),
                 })
                 .collect(),
             conversation_id: item.conversation_id,

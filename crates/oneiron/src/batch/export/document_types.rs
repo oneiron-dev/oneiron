@@ -141,6 +141,21 @@ pub struct ExportRunResults {
 pub struct ExportRun {
     pub run_id: String,
     pub outputs: Vec<ExportRunOutput>,
+    /// The run's fold receipts (ARCH-0079 #reader-forks), each beside the
+    /// manifest of the occurrence it describes.
+    pub receipts: Vec<ExportReaderFold>,
+}
+
+/// One fold receipt: the path of the folded occurrence in its run, and the
+/// receipt. A withheld occurrence's receipt carries its marker and its
+/// occurrence refs only, and `withheld` says why; it holds no content
+/// either way.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportReaderFold {
+    pub path: String,
+    pub receipt: serde_json::Value,
+    pub withheld: Option<String>,
 }
 
 /// One result occurrence's manifest. Its preview and line index are derived

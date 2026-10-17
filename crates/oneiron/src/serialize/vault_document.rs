@@ -4,9 +4,10 @@
 use super::credential_nulling::null_document_credentials;
 use super::export_value::{ExportBody, ExportValue};
 use crate::batch::export::{
-    EmbeddingSetupWithheld, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportResultBody,
-    ExportRun, ExportRunOutput, ExportRunResults, ExportSourceVault, VAULT_ARCHIVE_FORMAT,
-    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
+    EmbeddingSetupWithheld, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportReaderFold,
+    ExportResultBody, ExportRun, ExportRunOutput, ExportRunResults, ExportSourceVault,
+    VAULT_ARCHIVE_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument,
+    WholeVaultDocumentManifest, WholeVaultExport,
 };
 use crate::batch::export::{ExportCut, ExportSnapshot, VAULT_OKF_FORMAT};
 use crate::error::{Error, Result};
@@ -200,6 +201,18 @@ fn export_run_results(
         runs: runs
             .into_iter()
             .map(|run| ExportRun {
+                receipts: run
+                    .receipts
+                    .iter()
+                    .map(|(receipt, withheld)| ExportReaderFold {
+                        path: receipt.folded.path.clone(),
+                        receipt: match withheld {
+                            Some(_) => receipt.refs_only(),
+                            None => serde_json::to_value(receipt).unwrap_or_default(),
+                        },
+                        withheld: withheld.map(str::to_owned),
+                    })
+                    .collect(),
                 run_id: run.run_id.to_hex(),
                 outputs: run
                     .outputs

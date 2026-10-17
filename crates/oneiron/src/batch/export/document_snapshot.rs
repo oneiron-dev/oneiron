@@ -44,6 +44,9 @@ pub(crate) struct ExportSnapshot {
 pub(crate) struct ExportSnapshotRun {
     pub(crate) run_id: EntityId,
     pub(crate) outputs: Vec<(crate::code_run::CodeRunRawOutput, Option<&'static str>)>,
+    /// The run's fold receipts, each with why the egress door withholds the
+    /// occurrence it describes, if it does.
+    pub(crate) receipts: Vec<(crate::code_run::ReaderFoldReceipt, Option<&'static str>)>,
 }
 
 /// One result body a clean occurrence names: its bytes, or why they are
@@ -422,7 +425,8 @@ impl Vault {
 
     /// The run result closure (OF-190 B++): every run's manifests, each
     /// occurrence through the egress door before any bytes are shared
-    /// (Docs Q08), and each body a clean occurrence names, once. A withheld
+    /// (Docs Q08), each body a clean occurrence names, once, and each fold
+    /// receipt beside the occurrence it describes. A withheld
     /// occurrence keeps its mark and names no body, so one clean occurrence
     /// of the same bytes neither clears it nor ships its body for it. A body
     /// no row holds any longer is withheld as absent.
@@ -454,9 +458,22 @@ impl Vault {
                 }
                 occurrences.push((output, withheld));
             }
+            // Each receipt goes beside the manifest of the occurrence it
+            // describes, judged as that occurrence is.
+            let receipts = self
+                .code_run_reader_folds_in_txn(rtxn, run_id)?
+                .into_iter()
+                .filter_map(|receipt| {
+                    occurrences
+                        .iter()
+                        .find(|(output, _)| output.path == receipt.folded.path)
+                        .map(|(_, withheld)| (receipt, *withheld))
+                })
+                .collect();
             runs.push(ExportSnapshotRun {
                 run_id,
                 outputs: occurrences,
+                receipts,
             });
         }
         Ok((runs, bodies))

@@ -382,16 +382,17 @@ fn run_bound(
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
-    // it names the scope it would spend under, which is not open, so its
-    // spawns answer `reader_spawn_unmetered`. Its door withholds nothing, so
-    // its children's reads withhold nothing, as its own do.
+    // so do its children's. Its door withholds nothing, so its children's
+    // reads withhold nothing, as its own do.
     let metered = AgentDispatcher::new(vault)
         .spend_scope_for_attempt(status.attempt.id)
         .map_err(text)?;
-    let spend = metered
-        .clone()
-        .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
-    let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
+    let seat = seats.seat(
+        run_id,
+        metered.clone(),
+        CallerLocality::OnDevice,
+        provider.reader_window_tokens(),
+    );
     // One door for the whole run, so its browser lives as long as the run.
     let door: Arc<dyn AgentVerbDoor> = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
@@ -435,6 +436,7 @@ fn run_bound(
 /// its model calls spend under `spend`, and `seat`, which its reader
 /// children spawn under. With the host's `[models.planner]` seats, its
 /// spawns are planned on `decisions`' ladder and its leader calls answer.
+/// A run its parent planned is born on the model its plan picked.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -471,6 +473,7 @@ fn enter_run(
         compaction,
         reactor,
         spend,
+        status.input.plan.as_ref(),
     )
 }
 

@@ -491,6 +491,28 @@ fn put_run_results_in_txn(
             vault.put_code_run_output_in_txn(wtxn, finished, &occurrence, Some(run_id))?;
             imported += 1;
         }
+        // A receipt comes back with the occurrence it describes, and only
+        // whole: a withheld one's refs stay in the archive.
+        for fold in run.receipts.iter().filter(|fold| fold.withheld.is_none()) {
+            let came_back = run.outputs.iter().any(|output| {
+                output.path == fold.path
+                    && output
+                        .blake3
+                        .as_deref()
+                        .and_then(|blake3| parse_digest(blake3).ok())
+                        .is_some_and(|digest| staged.contains_key(&digest))
+            });
+            if !came_back {
+                continue;
+            }
+            let receipt: crate::code_run::ReaderFoldReceipt =
+                serde_json::from_value(fold.receipt.clone())
+                    .map_err(|_| invalid("run fold receipt"))?;
+            if receipt.folded.owner != run_id || receipt.folded.path != fold.path {
+                return Err(invalid("run fold receipt names another occurrence"));
+            }
+            vault.put_code_run_reader_fold_in_txn(wtxn, &receipt)?;
+        }
     }
     Ok((imported, withheld))
 }

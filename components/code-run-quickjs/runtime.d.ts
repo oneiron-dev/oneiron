@@ -148,10 +148,14 @@ type QueryReply =
   | { derived: StoredResult; count: number; done: boolean; next?: QueryCursor };
 /** Chunks of `bytes` or of `lines` each (lines for text only), `overlap`
  * of the same unit, a byte chunk ending at the next newline by default for
- * text. */
+ * text. `tokens` (text only, alone) grows each chunk line by line to about
+ * that many tokens of the executor's tokenizer, at most `max_bytes`; one
+ * call tokenizes at most 8 MiB and answers `next` to go on. */
 declare interface ChunkBy {
   bytes?: number;
   lines?: number;
+  tokens?: number;
+  max_bytes?: number;
   overlap?: number;
   align?: "line" | "none";
   cursor?: ChunkCursor;
@@ -186,8 +190,56 @@ declare interface ResultChunks extends AsyncIterable<ChunkRef> {
 }
 /** Stores `value` as a result of the run and binds it to `name`, or to the
  * next free `r<n>`: a string as given, any other value as its JSON. The name
- * outlives the step; the value is never held whole in the interpreter. */
-declare function store(value: unknown, name?: string): Promise<StoredResult>;
+ * outlives the step; the value is never held whole in the interpreter.
+ * `sources` are the results the value was made from: it inherits their
+ * taint. `receipt` names a fold's inputs (the source it read, the reader
+ * tasks it read it by, its summary tree); the host checks them, computes
+ * the fold receipt and keeps it with the binding, and the card says what
+ * was read. */
+declare function store(value: unknown, name?: string, options?: StoreOptions): Promise<StoredResult & { receipt?: FoldCoverage }>;
+declare interface StoreOptions {
+  sources?: ResultRef[];
+  receipt?: { source: ResultRef; tasks: string[]; tree?: { summary: ResultRef; inputs: ResultRef[] }[]; recipe?: unknown };
+}
+/** What a fold read of its source, in its byte offsets: ranges its readers
+ * finished, ranges none read, readers that stopped short and why, and how
+ * many it named. */
+declare interface FoldCoverage {
+  read: [number, number][];
+  unread: [number, number][];
+  partial: { task: string; reason: string }[];
+  children: number;
+}
+/** One model call over a result and the results after it (`group`), made
+ * by a host job, never inside the step, and memoised by those results and
+ * the recipe: the same call again answers the same summary. A made summary
+ * answers its card (with its `task`); `defer: true` answers `{task, state}`
+ * at once, to wait on with `tasks.wait`; without it the run parks until the
+ * summary is made, and the same call in a later step answers it. A withheld
+ * member answers its withheld reply, and nothing is summarized. A group too
+ * big for the model's window settles `group_exceeds_window`: split it. */
+declare function summarize(r: ResultRef, opts?: { effort?: "low" | "medium" | "high"; group?: ResultRef[]; defer?: boolean }):
+  Promise<(StoredResult & { task: string }) | { task: string; state: "queued" | "active" | "failed" | "partial" | "done"; reason?: string } | WithheldReply>;
+/** Reads a result with reader children and folds what they find (an SDK
+ * helper, not an engine verb): `can` first, then chunks of half the child
+ * window, one `self.spawn` per chunk, `tasks.wait` until `until` (the
+ * children's cutoff by default) or `n_of` of them, findings deduped by the
+ * ranges they cite, then staged `summarize` groups until one is left, stored
+ * as `rf_<key>` with a fold receipt. It runs in phases: call it again with
+ * the same arguments until `done`; a parked phase goes on once the run
+ * resumes. A refused source answers `{done: true, refused}`. */
+declare function readAll(r: ResultRef, opts: { ask: string; by?: ChunkBy; window?: number; until?: number; n_of?: number; effort?: "low" | "medium" | "high"; key?: string }):
+  Promise<{ done: true; result: StoredResult; coverage: FoldCoverage | null } | { done: true; refused: string; detail?: unknown } | { done: false; phase: string; waiting?: true; progress: { chunks: number; spawned: number; findings: number; groups: number; level: number } }>;
+/** A diff of two results (an SDK helper, not an engine verb), stated in
+ * `algorithm`: by lines, Myers' O(ND) inside lockstep windows of 4096 lines,
+ * a hunk a window edge cuts closed there (`edge`), and a window past 512
+ * edits one `coarse` hunk; by bytes, 64 KiB blocks compared. Hunks carry no
+ * context lines, with both sides' offsets (from 0). Hunk text past 1 MiB is
+ * stored as a result made from both (`stored`). Past one step's calls it
+ * answers `next`: pass it back as `from`. */
+declare function diff(a: ResultRef, b: ResultRef, opts?: { by?: "lines" | "bytes"; from?: { window: number }; name?: string }):
+  Promise<{ algorithm: "myers-windowed/v1" | "blocks/v1"; window: number; by: "lines" | "bytes"; count: number; done: boolean; next?: { window: number };
+    hunks?: { a: [number, number]; b: [number, number]; text: string; edge?: true; coarse?: true }[]; stored?: StoredResult } | { refused: string; ref: string; detail?: unknown }>;
 /** The card of a result of this run, by its name, its handle, a range or its
  * card. An unknown name throws `unknown_handle` with the live names. Start a
  * big result here: its `shape` says which read fits. */
@@ -212,9 +264,11 @@ declare function chunks(r: ResultRef, by: ChunkBy): ResultChunks;
 declare function can(input: { read: ResultRef; child?: {} }): Promise<CanReadReply>;
 /** `can({read})`'s answer: the result's ref, size, kind and taint, or why
  * not, with the detail a read of it would refuse with. With `child`, the
- * children's cutoff and what their scope may still spend. */
+ * children's cutoff, the meter they spend on (`scope`, with what it may
+ * still spend, or `host`, the host's own meter, with no figure), the window
+ * of the model they run on, in tokens, and the memory one child may hold. */
 type CanReadReply =
-  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; spend_available_units: number } }
+  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; meter: "scope" | "host"; spend_available_units?: number; window_tokens: number; memory_bytes: number } }
   | { can: false; reason: "unknown_handle" | "withheld_rows" | "tainted" | "outside_delegated_range" | "reader_task_settled" | "spawn_unbound" | "past_cutoff" | "unmetered" | "denied"; [detail: string]: unknown };
 /** Foreign tier only. Proposals are data; they never commit host writes. */
 declare const propose: {

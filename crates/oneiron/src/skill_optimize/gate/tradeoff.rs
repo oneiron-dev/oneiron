@@ -7,8 +7,10 @@
 //! then a typed decision bound to the exact question at or above the goal's high
 //! band, then a durable A/B ask to the responsible person, whose pick becomes a
 //! learned preference. Every settlement is a resolution row that answers the
-//! pending row, written by the decision door. A goal without preferences waits
-//! for the owner door ([`super::resolve_skill_edit_tradeoff`]).
+//! pending row, written by the decision door. A goal with neither preferences
+//! nor a project climbs the same ladder with no rule and no band: its A/B ask
+//! goes to the vault's owners, and the first pick starts the goal's
+//! preferences, whose author later asks reach first.
 //!
 //! Preferences are part of the goal record. They are keyed by the portable goal
 //! identity and hashed into the goal revision, so a successor revision on any
@@ -378,7 +380,7 @@ pub fn skill_tradeoff_preferences(
 
 /// The ask bound to this pending verdict, while the proposal is open and the
 /// goal, preferences included, is the one the question was put under. The
-/// preferences are absent only for a project-bound goal with no picks yet.
+/// preferences are absent until the goal's first pick.
 fn bound_ask_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -402,9 +404,6 @@ fn bound_ask_in_txn(
         return Ok(None);
     }
     let preferences = preferences_in_txn(vault, txn, &ask.question.goal_id)?;
-    if preferences.is_none() && ask.question.project.is_none() {
-        return Ok(None);
-    }
     Ok(Some((ask, preferences)))
 }
 
@@ -416,14 +415,26 @@ fn bound_ask_in_txn(
 /// An unreadable verdict, goal, ask or policy row, or storage errors.
 pub fn skill_tradeoff_ask(vault: &Vault, proposal: &EntityId) -> Result<Option<SkillTradeoffAsk>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(pending) = standing_verdict_in_txn(vault, &txn, proposal)? else {
+    skill_tradeoff_ask_in_txn(vault, &txn, proposal)
+}
+
+/// [`skill_tradeoff_ask`] in the caller's snapshot, so a host that settles
+/// the ask reads it in the transaction it settles in.
+/// # Errors
+/// As [`skill_tradeoff_ask`].
+pub(crate) fn skill_tradeoff_ask_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<Option<SkillTradeoffAsk>> {
+    let Some(pending) = standing_verdict_in_txn(vault, txn, proposal)? else {
         return Ok(None);
     };
-    let Some((ask, preferences)) = bound_ask_in_txn(vault, &txn, &pending)? else {
+    let Some((ask, preferences)) = bound_ask_in_txn(vault, txn, &pending)? else {
         return Ok(None);
     };
     let holder = limits_holder(preferences.as_ref(), &ask.question)?;
-    let limits = skill_tradeoff_limits_in_txn(&vault.store, &txn, &holder)?;
+    let limits = skill_tradeoff_limits_in_txn(&vault.store, txn, &holder)?;
     Ok((!learning_full(preferences.as_ref(), limits)).then_some(ask))
 }
 
@@ -504,23 +515,17 @@ pub fn escalate_skill_tradeoff_ask(
 }
 
 /// Whether a standing pending verdict may be returned to a redelivery as it
-/// is. A goal without preferences waits for the owner door. A goal with them
-/// waits on its bound A/B ask; a pending verdict with no bound ask is ruled
-/// again. While policy leaves no capacity to learn the pick, the delivery is
+/// is. It waits on its bound A/B ask; a pending verdict with no bound ask is
+/// ruled again. While policy leaves no capacity to learn the pick, the delivery is
 /// refused before any judge is paid, and a policy revision recovers it.
 pub(super) fn pending_waits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     pending: &HeldOutVerdict,
 ) -> Result<bool> {
-    let goal_id = pending.goal_id.ok_or(Error::CorruptedIndex(
+    pending.goal_id.ok_or(Error::CorruptedIndex(
         "pending skill tradeoff without a goal",
     ))?;
-    if preferences_in_txn(vault, txn, &goal_id)?.is_none()
-        && project_goal_in_txn(vault, txn, &goal_id)?.is_none()
-    {
-        return Ok(true);
-    }
     let Some((ask, preferences)) = bound_ask_in_txn(vault, txn, pending)? else {
         return Ok(false);
     };
@@ -536,7 +541,7 @@ pub(super) fn pending_waits_in_txn(
 
 /// What the ladder decided outside the write transaction.
 pub(super) enum TradeoffPlan {
-    /// Not a pending tradeoff, or its goal holds no preferences.
+    /// Not a pending tradeoff.
     None,
     /// A preference rule, or a confident bound Jev verdict, answered.
     Decided {
@@ -573,9 +578,6 @@ pub(super) fn plan(
     let txn = vault.store.env.read_txn()?;
     let preferences = preferences_in_txn(vault, &txn, &basis.goal_id)?;
     let prior: Option<SkillTradeoffAsk> = load(vault, &txn, &key(ASK_PREFIX, proposal))?;
-    if preferences.is_none() && definition.project.is_none() {
-        return Ok(TradeoffPlan::None);
-    }
     let roles = responsible_roles_in_txn(
         vault,
         &txn,
@@ -733,9 +735,6 @@ pub(super) fn apply_in_txn(
         }
         TradeoffPlan::Ask { question, jev } => {
             let preferences = preferences_in_txn(vault, txn, &question.goal_id)?;
-            if preferences.is_none() && question.project.is_none() {
-                return Err(retry("tradeoff preferences moved while scoring"));
-            }
             // A policy contraction while Jev was thinking cannot commit an
             // ask the person is no longer permitted to settle.
             let holder = limits_holder(preferences.as_ref(), question)?;
@@ -791,21 +790,112 @@ pub fn settle_skill_tradeoff_ask(
     at: u64,
 ) -> Result<HeldOutVerdict> {
     vault.with_write_txn_grouped(|txn| {
-        // The role check below is the authorization: a board member who is
-        // not a vault owner answers on their own behalf.
-        let actor = owner.revalidate_person_in_txn(vault, txn)?;
-        settle_ask_in_txn(
+        settle_skill_tradeoff_ask_in_txn(
             vault,
             txn,
-            actor,
-            format!("{:?}", owner.decision_id()),
-            TradeoffRung::Person,
+            owner,
             proposal,
             expected_question_digest,
             choice,
             at,
         )
     })
+}
+
+/// [`settle_skill_tradeoff_ask`] in the caller's write transaction, so a
+/// host commits the pick with its own writes (a project ask's answer and its
+/// route) or not at all.
+/// # Errors
+/// As [`settle_skill_tradeoff_ask`].
+pub(crate) fn settle_skill_tradeoff_ask_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    let actor = owner.revalidate_person_in_txn(vault, txn)?;
+    settle_ask_in_txn(
+        vault,
+        txn,
+        actor,
+        format!("{:?}", owner.decision_id()),
+        TradeoffRung::Person,
+        proposal,
+        expected_question_digest,
+        choice,
+        at,
+    )
+}
+
+/// [`settle_skill_tradeoff_ask`] for a live person or a bound agent, owner
+/// or not, that holds a responsible role the ask has reached
+/// (ROLES-EVERYWHERE): a board member answers on their own behalf. The role
+/// check is the authorization; a person's pick is learned at the person
+/// rung, an agent's at the role rung.
+/// # Errors
+/// A writer that is no live person or bound agent, plus every error of
+/// [`settle_skill_tradeoff_ask`]. An error writes nothing.
+pub fn settle_skill_tradeoff_ask_as(
+    vault: &Vault,
+    by: &crate::write_envelope::WriteActor,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    vault.with_write_txn_grouped(|txn| {
+        settle_skill_tradeoff_ask_as_in_txn(
+            vault,
+            txn,
+            by,
+            proposal,
+            expected_question_digest,
+            choice,
+            at,
+        )
+    })
+}
+
+/// [`settle_skill_tradeoff_ask_as`] in the caller's write transaction.
+/// # Errors
+/// As [`settle_skill_tradeoff_ask_as`].
+pub(crate) fn settle_skill_tradeoff_ask_as_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    by: &crate::write_envelope::WriteActor,
+    proposal: &EntityId,
+    expected_question_digest: &str,
+    choice: TradeoffChoice,
+    at: u64,
+) -> Result<HeldOutVerdict> {
+    vault.verify_write_actor_in_txn(txn, by)?;
+    let actor = by.entity_ref();
+    let (authentication, rung) = match by.actor_class() {
+        crate::edge::EdgeActorClass::Human => {
+            if !crate::consent::person_is_live_in_txn(vault, txn, &actor)? {
+                return Err(invalid("a person's tradeoff pick requires a live person"));
+            }
+            (format!("person:{}", actor.to_hex()), TradeoffRung::Person)
+        }
+        crate::edge::EdgeActorClass::Agent => {
+            (format!("agent:{}", actor.to_hex()), TradeoffRung::Role)
+        }
+        _ => return Err(invalid("a tradeoff pick comes from a person or an agent")),
+    };
+    settle_ask_in_txn(
+        vault,
+        txn,
+        actor,
+        authentication,
+        rung,
+        proposal,
+        expected_question_digest,
+        choice,
+        at,
+    )
 }
 
 /// [`settle_skill_tradeoff_ask`] for an agent that holds a responsible role
@@ -823,24 +913,10 @@ pub fn settle_skill_tradeoff_ask_as_agent(
     choice: TradeoffChoice,
     at: u64,
 ) -> Result<HeldOutVerdict> {
-    vault.with_write_txn_grouped(|txn| {
-        if agent.actor_class() != crate::edge::EdgeActorClass::Agent {
-            return Err(invalid("an agent tradeoff pick requires an agent actor"));
-        }
-        vault.verify_write_actor_in_txn(txn, agent)?;
-        let actor = agent.entity_ref();
-        settle_ask_in_txn(
-            vault,
-            txn,
-            actor,
-            format!("agent:{}", actor.to_hex()),
-            TradeoffRung::Role,
-            proposal,
-            expected_question_digest,
-            choice,
-            at,
-        )
-    })
+    if agent.actor_class() != crate::edge::EdgeActorClass::Agent {
+        return Err(invalid("an agent tradeoff pick requires an agent actor"));
+    }
+    settle_skill_tradeoff_ask_as(vault, agent, proposal, expected_question_digest, choice, at)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -876,9 +952,7 @@ fn settle_ask_in_txn(
         }
         let previous = preferences_in_txn(vault, txn, &question.goal_id)?;
         let project = project_goal_in_txn(vault, txn, &question.goal_id)?;
-        if project.as_ref().map(|join| join.project) != question.project
-            || (previous.is_none() && project.is_none())
-        {
+        if project.as_ref().map(|join| join.project) != question.project {
             return Err(invalid("tradeoff goal changed before the pick"));
         }
         let holder = previous

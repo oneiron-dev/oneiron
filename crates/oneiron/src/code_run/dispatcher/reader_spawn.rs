@@ -79,6 +79,11 @@ impl HostSelfDispatcher<'_> {
         Ok(self)
     }
 
+    /// The seat the host lent this run to spawn readers under, if any.
+    pub(crate) fn reader_spawn_seat(&self) -> Option<&SpawnHostSeat> {
+        self.reader_spawn.as_ref()
+    }
+
     /// The reader child this dispatcher is bound to, if any.
     pub(crate) fn reader_child(&self) -> Option<&ReaderChildBinding> {
         self.reader_child.as_ref()
@@ -113,13 +118,14 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// A spawn's admission at `now_ms` with nothing written: the children's
-    /// cutoff and what their scope may still spend, or why a spawn would be
-    /// refused (`spawn_unbound`, `past_cutoff`, `unmetered`).
+    /// cutoff and what their scope may still spend (`None` when they spend
+    /// on the host's meter, which is never looked up here), or why a spawn
+    /// would be refused (`spawn_unbound`, `past_cutoff`, `unmetered`).
     pub(crate) fn preflight_reader_spawn(
         &self,
         parent_run: EntityId,
         now_ms: u64,
-    ) -> Result<std::result::Result<(u64, u64), &'static str>> {
+    ) -> Result<std::result::Result<(u64, Option<u64>), &'static str>> {
         let Some(seat) = &self.reader_spawn else {
             return Ok(Err("spawn_unbound"));
         };
@@ -131,8 +137,11 @@ impl HostSelfDispatcher<'_> {
         if now_ms >= cutoff {
             return Ok(Err("past_cutoff"));
         }
-        Ok(match self.storage.spend_book().open_scope(&spend)? {
-            Some((_, available)) => Ok((cutoff, available)),
+        let Some(scope) = spend.scope() else {
+            return Ok(Ok((cutoff, None)));
+        };
+        Ok(match self.storage.spend_book().open_scope(scope)? {
+            Some((_, available)) => Ok((cutoff, Some(available))),
             None => Err("unmetered"),
         })
     }
@@ -174,6 +183,7 @@ impl HostSelfDispatcher<'_> {
                 session_ref: self.session_ref().map(str::to_owned),
                 participant: self.participant(),
             },
+            kind: crate::code_run::ReaderJobKind::Read,
             ask: call.ask,
         };
         let (job, replay) =

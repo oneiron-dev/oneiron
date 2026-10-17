@@ -188,8 +188,13 @@ pub use project_goal::{
 pub use tradeoff::{
     JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffPreferences, SkillTradeoffQuestion,
     TradeoffRule, escalate_skill_tradeoff_ask, pending_skill_tradeoff_asks,
-    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as_agent,
-    skill_tradeoff_ask, skill_tradeoff_asks_for, skill_tradeoff_preferences,
+    set_skill_tradeoff_preferences, settle_skill_tradeoff_ask, settle_skill_tradeoff_ask_as,
+    settle_skill_tradeoff_ask_as_agent, skill_tradeoff_ask, skill_tradeoff_asks_for,
+    skill_tradeoff_preferences,
+};
+pub(crate) use tradeoff::{
+    settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn,
+    skill_tradeoff_ask_in_txn,
 };
 pub use verdict::{
     HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,
