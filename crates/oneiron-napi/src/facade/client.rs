@@ -5,12 +5,12 @@ use napi_derive::napi;
 use super::boundary::{boundary_error, facade_error};
 use super::convert::{
     commit_receipt_from_engine, gate_receipt_from_engine, memory_pack_from_engine,
-    recall_media_to_engine, recall_scope_to_engine, witness_receipt_from_engine,
-    witness_turn_to_engine,
+    query_affect_to_engine, recall_media_to_engine, recall_scope_to_engine,
+    witness_receipt_from_engine, witness_turn_to_engine,
 };
 use super::dtos::{
-    NapiClaimInput, NapiCommitReceipt, NapiGateReceipt, NapiMemoryPack, NapiRecallMedia,
-    NapiRecallScope, NapiWitnessMessage, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiClaimInput, NapiCommitReceipt, NapiGateReceipt, NapiMemoryPack, NapiQueryAffect,
+    NapiRecallMedia, NapiRecallScope, NapiWitnessMessage, NapiWitnessReceipt, NapiWitnessTurn,
 };
 use super::input_error::witness_input_error;
 use super::numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};

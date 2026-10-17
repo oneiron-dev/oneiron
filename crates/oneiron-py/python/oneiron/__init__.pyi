@@ -73,6 +73,12 @@ class RecallMedia(TypedDict):
     bytes_b64: str
     kinds: NotRequired[list[Literal["text", "image", "audio"]]]
 
+class QueryAffect(TypedDict):
+    """A recall's query affect (OF-423): valence in -1..1, arousal and dominance in 0..1."""
+    valence: float
+    arousal: float
+    dominance: float
+
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -359,7 +365,7 @@ class Oneiron:
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None) -> MemoryPack: ...
         def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         @property
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs": ...

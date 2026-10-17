@@ -118,6 +118,16 @@ export type RecallMedia = {
   kinds?: ("text" | "image" | "audio")[]
 }
 
+/** A recall's query affect (OF-423): emotion congruence ranks a candidate by how near its own valence, arousal and dominance sit. Out of range returns `BAD_REQUEST`. */
+export type QueryAffect = {
+  /** Valence, -1 to 1. */
+  valence: number
+  /** Arousal, 0 to 1. */
+  arousal: number
+  /** Dominance, 0 to 1. */
+  dominance: number
+}
+
 /** Options for `vault.recall` on {@link Oneiron}. */
 export type RecallOptions = {
   /** Defaults to `medium`. */
@@ -134,6 +144,8 @@ export type RecallOptions = {
   deadlineMs?: number
   /** A media query the server embeds into its declared space and searches beside the query. */
   media?: RecallMedia
+  /** The affect the query is asked in; omitted, recall ranks as before. */
+  queryAffect?: QueryAffect
 }
 
 /** Where one recalled item came from. */

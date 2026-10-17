@@ -601,6 +601,18 @@ pub struct RecallMedia {
     pub kinds: Vec<crate::InputKind>,
 }
 
+/// A recall's query affect (OF-423): emotion congruence ranks a candidate by
+/// how near its own valence, arousal and dominance sit.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct QueryAffect {
+    /// Valence, -1 to 1.
+    pub valence: f32,
+    /// Arousal, 0 to 1.
+    pub arousal: f32,
+    /// Dominance, 0 to 1.
+    pub dominance: f32,
+}
+
 /// Item provenance; default-on, never stripped.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MemoryProvenance {
