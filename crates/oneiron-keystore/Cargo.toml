@@ -23,6 +23,10 @@ core-foundation = "0.10"
 security-framework = { version = "3.7", features = ["OSX_10_15"] }
 security-framework-sys = "2.17"
 
+# DPAPI, through the binding the workspace already locks; no SDK at build time.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
 [features]
 # The process-memory adapter, for this crate's tests and its dependents' tests.
 test-keystore = []

@@ -320,11 +320,23 @@ impl McpEndpointTool {
                 "{} One atomic native response; nested arrays retain the native request budgets and result metadata. Narrow connector ceilings fail closed.",
                 tool.memory_method().map_or("", VaultReadMethod::description)
             ),
-            Self::Verb(tool) => format!(
-                "Invoke the exported {family} verb {name} directly, with the same actor ceiling and gate every other door applies.",
-                family = tool.family.as_str(),
-                name = tool.name,
-            ),
+            // OF-246: the row's own description, from the verb table's
+            // generated catalog; a row that states none keeps the plain line.
+            Self::Verb(tool) => match AgentVerb::from_name(tool.name)
+                .map(AgentVerb::description)
+                .filter(|description| !description.is_empty())
+            {
+                Some(description) => format!(
+                    "{description} Runs the exported {family} verb {name} with the same actor ceiling and gate every other door applies.",
+                    family = tool.family.as_str(),
+                    name = tool.name,
+                ),
+                None => format!(
+                    "Invoke the exported {family} verb {name} directly, with the same actor ceiling and gate every other door applies.",
+                    family = tool.family.as_str(),
+                    name = tool.name,
+                ),
+            },
         }
     }
 

@@ -961,6 +961,21 @@ so a reobserve or a retry never restarts it. One call still runs at most
 60 seconds. Name `"reversibility": "outbound_effect"` for a step whose
 effect leaves the vault: at a cut it abstains and goes up.
 
+A computer step runs on the run's own desktop guest, a Linux desktop the
+`[desktop]` section names (`runtime`, a digest-pinned `image` built from
+`crates/oneiron-container/guest/desktop`, and the same bounds as
+`[browser]`). The section is refused on macOS: the guest never runs on, or
+drives, the owner's own desktop. A program drives it with `self.desktop.*`:
+the browser's verbs over one window's accessibility tree (`open` takes
+`app:<name>` from the guest's app set), plus `key`, `hotkey`, `scroll`,
+`windows` and `window`. Its batches take `key`, `hotkey` and `scroll` steps
+beside the browser's, and its routine steps call `ai.verdict` the same way;
+a window with no tree reads `no_tree: true`, and a click-only step there
+locates its target in a `no_accessibility_tree` screenshot. A Return, or
+typed text with a line break, takes the press of a send, and every effect's
+receipt screenshot has its password fields blacked out before it is held.
+The desktop rides the `oneiron.browser` pack and its grants.
+
 ## 11. When a provider refuses for a limit
 
 A rung refused for a limit hands the call to the next rung of its ladder, and
@@ -1016,7 +1031,9 @@ Answer with `POST /v1/ai/quota/{id}`
     first.
 
   Setting it is the permission, paid models included. Once the offer is back,
-  calls use it again.
+  calls use it again. The choice is owner policy, kept in the vault's model
+  settings rather than with the deployment's cooldowns. A checkpoint keeps
+  it, and a restore over a live vault keeps the live vault's choice.
 
 ### When a provider is down
 
