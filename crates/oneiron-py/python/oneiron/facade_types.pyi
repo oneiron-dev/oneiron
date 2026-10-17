@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 163 facade rows, 594 declarations.
-Inputs: 141 of 163 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 137 of 163 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 165 facade rows, 615 declarations.
+Inputs: 143 of 165 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 139 of 165 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -105,6 +105,97 @@ class IdentityActNowNeedsPerson(TypedDict):
     ask: str
     card: Any
 IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowDeciding | IdentityActNowNeedsPerson
+class ConcernCardRequest(TypedDict):
+    card: str
+AgentHealthSignal = Literal["loop", "failed_check_repeat", "cost_spike", "long_wait", "silent", "duplicate_work", "unsupported_done", "misalignment"]
+AgentHealthTone = Literal["struggling", "off_course", "concern"]
+AgentHealthConfidence = Literal["high", "low"]
+AgentHealthCounter = Literal["results_changed", "refused_calls", "queue_wait", "few_runs"]
+AgentHealthMove = Literal["note", "steer", "budget", "reassign", "ask_coach", "hold"]
+AgentHealthOutcome = Literal["open", "confirmed", "dismissed", "unresolved"]
+class AgentHealthCard(TypedDict):
+    subject: EntityId
+    signal: AgentHealthSignal
+    task: NotRequired[EntityId | None]
+    attempt: NotRequired[EntityId | None]
+    tone: AgentHealthTone
+    tier: int
+    confidence: AgentHealthConfidence
+    diagnostics: list[EntityId]
+    evidence: list[EntityId]
+    window_from: int
+    window_to: int
+    measured: int
+    dial: int
+    counter_evidence: list[AgentHealthCounter]
+    agent_blocked: bool
+    confession: NotRequired[EntityId | None]
+    moves: list[AgentHealthMove]
+    recipients: list[EntityId]
+    owner_copy: bool
+    outcome: AgentHealthOutcome
+    outcome_by: NotRequired[EntityId | None]
+    outcome_at: NotRequired[int | None]
+    watermark: int
+    opened_at: int
+    updated_at: int
+RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
+class RunTreeTimestamps(TypedDict):
+    created_at: int
+    updated_at: int
+class RunTreeFailure(TypedDict):
+    reason: str
+RunTreeEventKind = Literal["created", "claimed", "paused", "resumed", "completed", "failed", "cancelled", "interrupted", "redirected", "abandoned", "result_attached"]
+class RunTreeEvent(TypedDict):
+    sequence: int
+    at: int
+    actor: str
+    kind: RunTreeEventKind
+    note: NotRequired[str | None]
+class RunTreeNode(TypedDict):
+    job_id: str
+    run_id: NotRequired[str | None]
+    parent_id: NotRequired[str | None]
+    worker_kind: str
+    worker: NotRequired[str | None]
+    agent_id: NotRequired[str | None]
+    status: RunTreeStatus
+    result_ref: NotRequired[str | None]
+    timestamps: RunTreeTimestamps
+    failure: NotRequired[RunTreeFailure | None]
+    events: list[RunTreeEvent]
+    children: list[RunTreeNode]
+class RunTreeRepairMissingParent(TypedDict):
+    kind: Literal["missing_parent"]
+    job_id: str
+    missing_parent_id: str
+class RunTreeRepairParentCycle(TypedDict):
+    kind: Literal["parent_cycle"]
+    job_id: str
+    parent_id: str
+RunTreeRepair = RunTreeRepairMissingParent | RunTreeRepairParentCycle
+class RunTree(TypedDict):
+    roots: list[RunTreeNode]
+    repairs: list[RunTreeRepair]
+class AgentHealthRunTree(TypedDict):
+    run_id: str
+    tree: RunTree
+    marked: str
+class AgentHealthCardView(TypedDict):
+    card: str
+    body: AgentHealthCard
+    run_tree: NotRequired[AgentHealthRunTree | None]
+ConcernOutcome = Literal["confirmed", "dismissed", "unresolved"]
+class ConcernOutcomeRequest(TypedDict):
+    card: str
+    outcome: ConcernOutcome
+class ConcernCardSummary(TypedDict):
+    card: str
+    agent: str
+    signal: str
+    tone: str
+    outcome: str
+    evidence: int
 class PeopleListRequest(TypedDict):
     vault: NotRequired[str | None]
     page: NotRequired[int | None]
@@ -190,7 +281,6 @@ DiaryQueryOutcome = DiaryQueryOutcomeGranted | DiaryQueryOutcomePendingReview | 
 class TaskRequest(TypedDict):
     task_ref: str
 ClaimApprovalStatus = Literal["auto", "proposed", "approved", "rejected"]
-RunTreeStatus = Literal["queued", "running", "paused", "completed", "failed", "cancelled", "abandoned"]
 class TaskCancelReceipt(TypedDict):
     approval: ClaimApprovalStatus
     effected: bool
@@ -307,6 +397,9 @@ class TaskCreateReceipt(TypedDict):
     approval: ClaimApprovalStatus
     effected: bool
     route: NotRequired[TaskRouteOutcome | None]
+class TaskUpdateRequest(TypedDict):
+    task_ref: str
+    resultRef: NotRequired[str | None]
 class TaskUpdateReceipt(TypedDict):
     task_ref: EntityId
     acked: bool
@@ -1633,7 +1726,8 @@ class ReleasedWait(TypedDict):
     released: bool
 class SlideReviewUnitInput(TypedDict):
     target: Any
-    review_image: str
+    review_image: NotRequired[str | None]
+    review_image_ref: NotRequired[str | None]
     renderer: str
 class SlideReviewSubmit(TypedDict):
     artifact_ref: str
@@ -1939,7 +2033,7 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId

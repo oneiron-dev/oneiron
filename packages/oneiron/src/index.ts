@@ -148,6 +148,11 @@ export class Oneiron {
       /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
       settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
     },
+    inbox: {
+      concern: Object.assign((input: Facade.ConcernCardRequest): Facade.AgentHealthCardView => this.#call(() => this.#client.selfInboxConcern(input) as Facade.AgentHealthCardView), {
+        outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
+      }),
+    },
     /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
     message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),
     grants: {
@@ -511,7 +516,7 @@ export class Oneiron {
     /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */
     create: (input: Facade.TaskCreateRequest): Facade.TaskCreateReceipt => this.#call(() => this.#client.tasksCreate(input) as Facade.TaskCreateReceipt),
     /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
-    update: (input: Facade.TaskRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
+    update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
