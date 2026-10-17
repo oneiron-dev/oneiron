@@ -28219,7 +28219,7 @@
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 4,
       "fn": 20,
       "struct": 12,
@@ -34910,7 +34910,7 @@
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
       "crate-vis": 5,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -64961,7 +64961,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -71398,7 +71398,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 16,
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },
