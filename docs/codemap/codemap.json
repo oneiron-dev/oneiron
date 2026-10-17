@@ -2123,6 +2123,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AuthorityCheckpointAttestation",
+      "AuthorityCheckpointKeyBinding",
+      "AuthorityCheckpointPin"
+     ],
+     "path": "src/authority/checkpoint_attest.rs",
+     "purpose": "Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 13,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "AuthorityArchiveManifest",
       "AuthorityCheckpointRow",
       "AuthorityCheckpointUnresolved",
@@ -2598,7 +2615,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 33
+      "re-export": 34
      }
     },
     {
@@ -2751,13 +2768,15 @@
      "notable": [
       "PairingDescriptor",
       "PairingLink",
-      "PairingPrincipal"
+      "PairingPinRef",
+      "PairingPrincipal",
+      "PairingRedeemed"
      ],
      "path": "src/authority/slip_pairing.rs",
      "purpose": "Single-use pairing links bind a throwaway key and mint one log-backed slip",
      "surface": {
-      "fn": 9,
-      "struct": 3
+      "fn": 15,
+      "struct": 5
      }
     },
     {
@@ -2816,7 +2835,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 24,
       "struct": 1
      }
@@ -31507,6 +31526,7 @@
       "OfficeBodyFork",
       "OfficeBodyHead",
       "OfficeBodyKind",
+      "OfficeRecalcZone",
       "XlsxPreview"
      ],
      "path": "src/office_body/mod.rs",
@@ -31514,9 +31534,9 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 17,
+      "fn": 18,
       "re-export": 8,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -31602,6 +31622,7 @@
       "OfficeBodyForkRequest",
       "OfficeBodyImportRequest",
       "OfficeBodyOps",
+      "OfficeBodyPreviewRequest",
       "OfficeBodyProposalRequest",
       "OfficeBodyProposalSettleRequest",
       "OfficeBodyReadRequest",
@@ -31616,7 +31637,7 @@
       "crate-vis": 4,
       "enum": 3,
       "fn": 14,
-      "struct": 20
+      "struct": 21
      }
     },
     {
@@ -36620,7 +36641,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CheckpointSigner"
@@ -36628,7 +36649,7 @@
      "path": "src/recovery/checkpoint/commitment.rs",
      "purpose": "Hash-signed checkpoints (OF-570 (e))",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 1,
       "struct": 1
      }
@@ -39002,9 +39023,9 @@
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…",
      "surface": {
       "const": 5,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
-      "fn": 9,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -43902,7 +43923,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 7,
       "re-export": 2,
@@ -44010,6 +44031,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HomeSearch"
+     ],
+     "path": "src/sync/connection/home_search.rs",
+     "purpose": "The home search this device's query doors reach through its own sync connection (OF-534): a search an opened…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -44021,7 +44056,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "fn": 18,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -44073,7 +44108,7 @@
      "purpose": "Host-authorized home-node candidate updates, independent of socket liveness",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -51709,7 +51744,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 133,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52962,7 +52997,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53153,7 +53188,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3222,
+   "source_files": 3224,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60299,7 +60334,7 @@
   "oneiron-mesh-transport": {
    "files": [
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -60391,7 +60426,7 @@
     "iroh_transport": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Private iroh data plane"
     },
@@ -60410,7 +60445,7 @@
      "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Vault-scoped mesh transport",
    "source_files": 4,
    "test_files": 2
@@ -62227,7 +62262,7 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 15,
+      "fn": 16,
       "mod": 1,
       "re-export": 4,
       "struct": 2
@@ -68677,7 +68712,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -72747,6 +72782,7 @@
       "OfficeBodyImportRequest",
       "OfficeBodyKind",
       "OfficeBodyOps",
+      "OfficeBodyPreviewRequest",
       "OfficeBodyProposal",
       "OfficeBodyProposalRequest",
       "OfficeBodyProposalSettleRequest",
@@ -73162,7 +73198,7 @@
      "purpose": "—",
      "surface": {
       "enum": 244,
-      "struct": 606
+      "struct": 607
      }
     },
     {
