@@ -106,7 +106,8 @@ fn classify(
                 Receipted
             }
         }
-        (_, Some(ShapeRow::World { .. })) => Receipted,
+        // A world or a mask grants nothing.
+        (_, Some(ShapeRow::World { .. } | ShapeRow::Facet { .. })) => Receipted,
         (None, Some(ShapeRow::Actor { ceiling, .. })) => match ceiling {
             ShapeCeiling::Auto => Widening,
             ShapeCeiling::Proposed => Receipted,
@@ -149,6 +150,7 @@ fn door(
         (ShapeChange::Update, ShapeTarget::Member { .. }) => Some("change_shared_member_role"),
         (ShapeChange::Retire, ShapeTarget::Member { .. }) => Some("remove_shared_member"),
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
+        (ShapeChange::Create, ShapeTarget::Facet { .. }) => Some("create_facet"),
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
             Some("update_agent_definition_as")
@@ -179,6 +181,12 @@ fn door(
             Some("create_standing_grant")
         }
         (ShapeChange::Retire, ShapeTarget::Grant { .. }) => Some("revoke_consent_grant"),
+        (ShapeChange::Create | ShapeChange::Update, ShapeTarget::Manifest { .. }) => {
+            Some("install_owner_policy_manifest")
+        }
+        (ShapeChange::Retire, ShapeTarget::Manifest { .. }) => {
+            Some("quarantine_manifest_contribution")
+        }
         _ => None,
     }
 }
