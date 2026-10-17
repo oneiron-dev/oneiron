@@ -14275,7 +14275,7 @@
      "purpose": "Board turn anchors reference one CRDT frontier; facts remain CLAIM rows",
      "surface": {
       "crate-vis": 1,
-      "fn": 7
+      "fn": 9
      }
     },
     {
@@ -33734,9 +33734,9 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 37,
+      "crate-vis": 36,
       "enum": 5,
-      "fn": 14,
+      "fn": 15,
       "re-export": 1,
       "struct": 9
      }
