@@ -56,7 +56,9 @@ use tower::ServiceExt;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::server::{HeldLiveRun, LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer};
+use crate::server::{
+    HeldLiveRun, LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer, seated_planner,
+};
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -338,13 +340,26 @@ where
         ),
         None => None,
     };
+    let host = Arc::clone(server);
     let vault = Arc::clone(&server.vault);
     tokio::task::spawn_blocking(move || {
+        // OF-181: an action for a live run plans its leader rows as the
+        // run's own entries do, on the host's ladder.
+        let planner = match live_run.as_ref().map(ResolvedLiveRun::planner) {
+            Some((Some(settings), model)) => seated_planner(
+                &vault,
+                settings,
+                model,
+                host.decision_host().host_planner_decisions(actor),
+            )
+            .map_err(oneiron::Error::InvalidConfig)?,
+            _ => None,
+        };
         let binding = ActionHostBinding {
             verb_door: Some(door),
             owner: owner.as_ref(),
             live_run: held.as_ref().map(HeldLiveRun::proof),
-            planner: None,
+            planner,
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
     })

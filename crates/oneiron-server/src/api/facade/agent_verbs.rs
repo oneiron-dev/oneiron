@@ -29,6 +29,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/tasks.wave", post(facade_route))
         .route("/vault.fanout.launch", post(facade_route))
         .route("/vault.fanout.resume", post(facade_route))
+        .route("/vault.fanout.resume_as", post(facade_route))
         .route("/vault.fanout.ack", post(facade_route))
         .route("/tasks.update", post(facade_route))
         .route("/vault.witness", post(facade_route))
