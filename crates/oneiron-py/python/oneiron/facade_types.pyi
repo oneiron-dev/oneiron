@@ -3817,6 +3817,7 @@ class DecisionAsk(TypedDict):
     correlation: NotRequired[str | None]
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
+    withdrawn_at: NotRequired[int | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
 class ConnectorListRequest(TypedDict):

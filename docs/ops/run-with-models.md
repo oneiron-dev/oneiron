@@ -1440,8 +1440,11 @@ bind:
   `person_threshold` becomes its row.
 - **Big**: the big model, through the seat `[models.decisions.big]` names
   (below).
-- **The local head**: no typed provider fills it yet, so the ladder steps
-  past it.
+- **Local**: the Local-vision seat, when `[models.roles.local_vision]`
+  binds one, on its own meter (`models.raw_budget_units`). It answers Box,
+  Point and image questions. On a call with no image it abstains before any
+  model call, so the ladder steps past it. A caller with a turn budget
+  (`ai.verdict`, `graph.ask`) seats its own per-call rung there instead.
 - **The owner**: the last rung is a durable queue. Each ask waits in the
   vault until you answer it (owner-actions.md, "Answer the decision
   ladder's asks").

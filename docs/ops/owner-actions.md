@@ -785,8 +785,10 @@ oldest first (50 unless `limit` says fewer, at most 500). Each ask carries:
 - the principal it is for, and the evidence ids;
 - why it was asked;
 - the answer the ladder held, if any, and the model that read it;
-- your answer, once given.
-`open=true` keeps only the unanswered asks.
+- your answer, once given;
+- `withdrawn_at`, when the decision stopped waiting on it (an exploration
+  overrun ask that lapsed, for example).
+`open=true` keeps only the asks that are neither answered nor withdrawn.
 
 Answer one with `POST /v1/owner/decisions/asks/answer`:
 
@@ -799,7 +801,8 @@ options) or `score` (a number in its range). An abstention is not an answer.
 The decision waiting on the ask gets your answer. When your answer differs
 from the ladder's, the case is kept for the Coach, which tunes when the
 ladder asks you. Sending the same answer again changes nothing. A different
-answer to an answered ask is refused.
+answer to an answered ask is refused, and so is any answer to a withdrawn
+ask.
 
 ## The vault key on a new host
 
