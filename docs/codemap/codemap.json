@@ -10619,13 +10619,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "HostPlannerBinding"
+     ],
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "fn": 6
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -10650,7 +10654,7 @@
      "surface": {
       "crate-vis": 14,
       "fn": 8,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1,
       "type": 1
      }
@@ -10855,6 +10859,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LeaderAdviceInput",
+      "LeaderPatternInput",
       "MemoryClaimInput",
       "MemoryEdgeInput",
       "MemorySearchInput",
@@ -10871,7 +10877,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "struct": 9
+      "struct": 11
      }
     },
     {
@@ -11039,6 +11045,7 @@
       "SelfEffect",
       "SelfFailedResult",
       "SelfFixtureEffectCall",
+      "SelfLeaderCall",
       "SelfMemoryEdgeWriteResult",
       "SelfMemoryPutClaimCall",
       "SelfMemoryPutEdgeCall",
@@ -11049,6 +11056,7 @@
       "SelfMemoryWriteResult",
       "SelfSkillCall",
       "SelfSkillCallResult",
+      "SelfSpawnAsk",
       "SelfSpeechCall",
       "SelfSpeechResult",
       "SelfTaskRefusalResult",
@@ -11059,9 +11067,9 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "enum": 6,
-      "fn": 19,
-      "struct": 28,
+      "enum": 7,
+      "fn": 20,
+      "struct": 29,
       "trait": 2
      }
     },
@@ -34146,15 +34154,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "RowBirth"
+      "RowBirth",
+      "WithheldKey",
+      "WithheldRef",
+      "WithheldRole"
      ],
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
      }
     },
     {
