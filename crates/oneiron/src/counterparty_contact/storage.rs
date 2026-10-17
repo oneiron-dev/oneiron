@@ -234,31 +234,6 @@ pub(crate) fn counterparty_contacts_by_party_channel(
     Ok(records)
 }
 
-/// Every contact record for this party, found by scanning ALL COUNTERPARTY_CONTACT rows.
-///
-/// Unbounded and mandatory: the party-channel index cannot prove its own
-/// completeness at HEAD (rows written before it existed are absent, and so is
-/// any row whose identity had no resolvable channel class at write time), and a
-/// bounded lookup that missed one opted-out row would answer a false "no".
-/// ONE-1752's cutover owns retiring this scan.
-pub(crate) fn counterparty_contacts_by_party_full_scan(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    party_ref: &str,
-) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
-    let mut records = Vec::new();
-    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_COUNTERPARTY_CONTACT, None)? {
-        let id = entry?;
-        let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
-            return Err(Error::CorruptedIndex("counterparty contact entity row"));
-        };
-        if record.matches_party(party_ref) {
-            records.push((id, record));
-        }
-    }
-    Ok(records)
-}
-
 /// Whether the `counterparty_contact.*` claims name a contact of `party_ref`
 /// on `channel_class`, or on a class its identity does not resolve to: UNKNOWN
 /// matches every class, as above.
@@ -327,26 +302,53 @@ pub(crate) fn counterparty_contacts_for_send_in_claims_in_txn(
     party_ref: &str,
     channel_class: &str,
 ) -> Result<Vec<CounterpartyContactRecord>> {
+    let contacts = contact_ids_with_live_head_in_txn(
+        store,
+        txn,
+        PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+        party_ref.trim(),
+    )?;
+    let mut records = Vec::with_capacity(contacts.len());
+    for contact in contacts {
+        let Some(record) = super::lifecycle::counterparty_contact_record_from_store_claims_in_txn(
+            store, txn, &contact,
+        )?
+        else {
+            continue;
+        };
+        if counterparty_contact_matches_channel_class(store, txn, &record, channel_class)? {
+            records.push(record);
+        }
+    }
+    Ok(records)
+}
+
+/// Every contact whose live `predicate` head holds exactly `value`, in id
+/// order: the claim-posting lookup behind the contact read doors (OF-272). It
+/// walks the predicate's whole posting list under the scan-check door, so a
+/// contact whose type-132 row a cache drop removed is still found, and one a
+/// hard delete or soft erase marked is skipped. A batch delete leaves the
+/// postings but tears the `claim_of` edges, so the readers find no heads.
+pub(super) fn contact_ids_with_live_head_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    value: &str,
+) -> Result<Vec<EntityId>> {
     const PAGE: usize = 256;
-    let party_ref = party_ref.trim();
     let mut contacts = std::collections::BTreeSet::new();
     let mut count = ScanCount::start(store, txn, EngineScan::PartyContactClaims, &[])?;
     let mut after = None;
     loop {
-        let page = crate::claim::claim_ids_for_predicate_page_in_txn(
-            store,
-            txn,
-            PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
-            after,
-            PAGE,
-        )?;
+        let page =
+            crate::claim::claim_ids_for_predicate_page_in_txn(store, txn, predicate, after, PAGE)?;
         count.rows(page.len());
         for claim_id in &page {
             let Some(body) = claim_body_in_txn(store, txn, claim_id)? else {
                 continue;
             };
-            if body.predicate != PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY
-                || body.value.as_str() != Some(party_ref)
+            if body.predicate != predicate
+                || body.value.as_str() != Some(value)
                 || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
                 || body.stale
             {
@@ -362,18 +364,14 @@ pub(crate) fn counterparty_contacts_for_send_in_claims_in_txn(
         after = page.last().copied();
     }
     count.defer(store);
-    let mut records = Vec::with_capacity(contacts.len());
+    let mut ids = Vec::with_capacity(contacts.len());
     for contact in contacts {
-        let record = super::lifecycle::counterparty_contact_record_from_store_claims_in_txn(
-            store,
-            txn,
-            &EntityId::from_bytes(contact)?,
-        )?;
-        if counterparty_contact_matches_channel_class(store, txn, &record, channel_class)? {
-            records.push(record);
+        let id = EntityId::from_bytes(contact)?;
+        if !contact_deleted_in_txn(store, txn, &id)? {
+            ids.push(id);
         }
     }
-    Ok(records)
+    Ok(ids)
 }
 
 /// Whether one of the contact's `identity_ref` claims names an identity on
@@ -409,6 +407,18 @@ fn contact_claims_match_class(
         }
     }
     Ok(!any_identity)
+}
+
+/// Whether `contact_id` was hard-deleted or soft-erased, by the deletion state
+/// those doors record (OF-272). A supported cache drop records none: it
+/// removes the row and keeps the contact, so row presence can never be the
+/// deletion question.
+pub(super) fn contact_deleted_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    contact_id: &EntityId,
+) -> Result<bool> {
+    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, contact_id)?.deleted)
 }
 
 fn claim_body_in_txn(

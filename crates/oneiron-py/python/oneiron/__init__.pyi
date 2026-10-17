@@ -267,6 +267,8 @@ class Oneiron:
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
         def identity(self) -> "Oneiron._SelfIdentityVerbs": ...
+        @property
+        def inbox(self) -> "Oneiron._SelfInboxVerbs": ...
         def message(self, spec: Facade.MessagePersonRequest) -> Facade.MessagePersonReceipt:
             """Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."""
         @property
@@ -290,6 +292,12 @@ class Oneiron:
             """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
         def settle(self, spec: Facade.IdentityActNowRequest) -> Facade.IdentityActNow:
             """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""
+    class _SelfInboxVerbs:
+        @property
+        def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
+    class _SelfInboxConcernVerbs:
+        def __call__(self, spec: Facade.ConcernCardRequest) -> Facade.AgentHealthCardView: ...
+        def outcome(self, spec: Facade.ConcernOutcomeRequest) -> Facade.ConcernCardSummary: ...
     class _SelfGrantsVerbs:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
@@ -647,7 +655,7 @@ class Oneiron:
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
-        def update(self, spec: Facade.TaskRequest) -> Facade.TaskUpdateReceipt:
+        def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
             """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""

@@ -88,6 +88,10 @@ pub fn connector_reply_request(
     if let SurfaceCounterpartyStamp::Known { counterparty_ref } = &origin.counterparty {
         request = request.counterparty_ref(counterparty_ref.clone());
     }
+    // A reply on a pinned thread speaks as the thread's pin (OF-272).
+    if let Some(thread) = &origin.thread_ref {
+        request = request.reply_thread(thread.clone());
+    }
     request.ledger_identity_ref = Some(logical);
     Ok(ConnectorReplyDispatch {
         request,
