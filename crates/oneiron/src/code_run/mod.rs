@@ -64,6 +64,19 @@ pub(crate) use self::storage::{FinishedOutput, code_run_body_file_of_row, delive
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
+pub use self::reader::{
+    ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DelegatedSource, ReaderActor, ReaderFindingRef,
+    ReaderJob, ReaderJobRunner, ReaderJobState, ReaderJobWake, ReaderParent, ReaderReportReceipt,
+    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, RunDeadline, SelfReaderReportCall,
+    SelfReaderSpawnCall, SpawnHostSeat, SpawnParentBinding, TaskWaitFailure, TaskWaitFinding,
+    TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult, reader_task_brief,
+};
+pub(crate) use self::reader::{
+    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
+    valid_reader_key, vault_ref,
+};
+pub use self::storage::ReaderJobs;
+pub(crate) use self::storage::SpendBook;
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]
@@ -80,19 +93,6 @@ pub use self::types::{
     SelfSkillCallResult, SelfSpeechCall, SelfSpeechResult, SelfTaskRefusalResult,
     SelfTaskRefuseCall, SelfWakePolicyWriteCall, peer_result_wait,
 };
-pub(crate) use self::reader::{
-    reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
-    reduce_task_wait_set, valid_reader_key, vault_ref,
-};
-pub use self::reader::{
-    ClaimOutcome, DEFAULT_READER_FOLD_RESERVE_MS, DelegatedSource, ReaderActor, ReaderFindingRef,
-    ReaderJob, ReaderJobRunner, ReaderJobState, ReaderJobWake, ReaderParent, ReaderReportReceipt,
-    ReaderRoute, ReaderRunEnd, ReaderSpawnReceipt, RunDeadline, SelfReaderReportCall,
-    SelfReaderSpawnCall, SpawnHostSeat, SpawnParentBinding, TaskWaitFailure, TaskWaitFinding,
-    TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult, reader_task_brief,
-};
-pub use self::storage::ReaderJobs;
-pub(crate) use self::storage::SpendBook;
 pub use run_verbs::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
     MemoryTimeRange, ReaderSpawnInput, SkillCallInput, TaskRefuseDomain, TaskRefuseInput,

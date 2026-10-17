@@ -18,12 +18,13 @@ use crate::code_run::{
     ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat, SpawnParentBinding,
     TaskWaitSet, TaskWaitSetResult, reduce_task_wait_set,
 };
-use crate::side_table::{self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable};
+use crate::side_table::{
+    self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 /// One row per child, keyed by its task.
-const JOBS: SideTable<EntityId, ReaderJob, Raw> =
-    SideTable::new(&side_table::CODE_RUN_READER_JOB);
+const JOBS: SideTable<EntityId, ReaderJob, Raw> = SideTable::new(&side_table::CODE_RUN_READER_JOB);
 /// One row per parent run.
 const PARENTS: SideTable<EntityId, ReaderParent, Raw> =
     SideTable::new(&side_table::CODE_RUN_READER_PARENT);
@@ -31,8 +32,7 @@ const PARENTS: SideTable<EntityId, ReaderParent, Raw> =
 const WAITS: SideTable<EntityId, TaskWaitSet, Raw> =
     SideTable::new(&side_table::CODE_RUN_READER_WAIT);
 /// The tagged index rows (`c`, `f`, `q`, `w`, `d`) the declaration names.
-const INDEX: SideTable<Vec<u8>, Vec<u8>, Raw> =
-    SideTable::new(&side_table::CODE_RUN_READER_INDEX);
+const INDEX: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::CODE_RUN_READER_INDEX);
 
 /// A `d` row's value: the id after its due time is a wait set's.
 const DUE_SET: &[u8] = b"s";
@@ -122,7 +122,11 @@ impl<'v> SpendBook<'v> {
     }
 
     /// `scope`'s row while it is open.
-    fn open_scope_in_txn(self, txn: &RoTxn<'_>, scope: &SpendScopeId) -> Result<Option<SpendScope>> {
+    fn open_scope_in_txn(
+        self,
+        txn: &RoTxn<'_>,
+        scope: &SpendScopeId,
+    ) -> Result<Option<SpendScope>> {
         Ok(self
             .spend()
             .scope_with_root_in_txn(txn, scope)?
@@ -260,14 +264,12 @@ impl ReaderTxn<'_, '_> {
     /// Whether `run`'s committed record holds the output at `path` with
     /// `handle`.
     fn committed(&self, run: EntityId, path: &str, handle: &str) -> Result<bool> {
-        Ok(self
-            .get_row(&REPLAY_RECORDS, &run)?
-            .is_some_and(|record| {
-                record
-                    .outputs
-                    .iter()
-                    .any(|output| output.path == path && output.handle == handle)
-            }))
+        Ok(self.get_row(&REPLAY_RECORDS, &run)?.is_some_and(|record| {
+            record
+                .outputs
+                .iter()
+                .any(|output| output.path == path && output.handle == handle)
+        }))
     }
 
     /// `job`'s latest finding while it is in the child's committed record:
@@ -595,7 +597,11 @@ impl ExecutorStorage<'_> {
             if now_ms >= child_cutoff {
                 return Ok(SpawnAdmission::PastCutoff);
             }
-            if tx.spend.open_scope_in_txn(&*tx.txn, &parent.spend)?.is_none() {
+            if tx
+                .spend
+                .open_scope_in_txn(&*tx.txn, &parent.spend)?
+                .is_none()
+            {
                 return Ok(SpawnAdmission::Unmetered);
             }
             let job = ReaderJob {
@@ -644,7 +650,9 @@ impl ExecutorStorage<'_> {
             match job.state {
                 ReaderJobState::Queued => {}
                 ReaderJobState::Active => {
-                    return Err(Error::InvalidConfig("reader job is already active".to_owned()));
+                    return Err(Error::InvalidConfig(
+                        "reader job is already active".to_owned(),
+                    ));
                 }
                 _ => return Ok(ClaimOutcome::Settled),
             }

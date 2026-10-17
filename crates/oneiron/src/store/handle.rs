@@ -283,8 +283,7 @@ pub struct StoreCore {
     pub(crate) limit_watch: crate::limit_ask::LimitWatch,
     /// Where this vault's queued code-run reader children are woken, none
     /// until a host installs one ([`crate::Vault::set_reader_job_runner`]).
-    pub(crate) reader_job_runner:
-        RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,
+    pub(crate) reader_job_runner: RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).

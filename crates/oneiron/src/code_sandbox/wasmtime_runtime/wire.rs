@@ -297,10 +297,9 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
             name: decode::<Store>(args.input)?.name,
         }),
         "describe" => result_ref(args.input).map(JsResultCall::Describe),
-        "can" => can_read(args.input)?.map(|(target, child)| JsResultCall::CanRead {
-            target,
-            child,
-        }),
+        "can" => {
+            can_read(args.input)?.map(|(target, child)| JsResultCall::CanRead { target, child })
+        }
         _ => None,
     })
 }
@@ -441,11 +440,13 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 let result_ref = request
                     .result_ref
                     .ok_or_else(|| failure("invalid task update"))?;
-                return Ok(SelfCall::ReaderReport(crate::code_run::SelfReaderReportCall {
-                    task: EntityId::from_hex(&request.task_ref)?,
-                    result_ref,
-                    bound: None,
-                }));
+                return Ok(SelfCall::ReaderReport(
+                    crate::code_run::SelfReaderReportCall {
+                        task: EntityId::from_hex(&request.task_ref)?,
+                        result_ref,
+                        bound: None,
+                    },
+                ));
             }
             SelfCall::AgentVerb(crate::code_run::SelfAgentVerbCall {
                 verb,

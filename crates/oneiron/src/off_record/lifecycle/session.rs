@@ -586,17 +586,15 @@ impl OffRecordSession<'_> {
                 segment.commit()?;
                 Ok(answer)
             }
-            RouteTarget::Base => {
-                self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
-                    route.revalidate()?;
-                    let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                    f(
-                        wtxn,
-                        RoutedDbs::Session(&view),
-                        RoutedDbs::Base(&self.vault.store),
-                    )
-                })
-            }
+            RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
+                route.revalidate()?;
+                let view = self.vault.store.session_view(self.entry.overlay.clone())?;
+                f(
+                    wtxn,
+                    RoutedDbs::Session(&view),
+                    RoutedDbs::Base(&self.vault.store),
+                )
+            }),
         }
     }
 
@@ -619,9 +617,7 @@ impl OffRecordSession<'_> {
     }
 
     /// The runner this session's vault wakes its reader children through.
-    pub(crate) fn reader_job_runner(
-        &self,
-    ) -> Option<Arc<dyn crate::code_run::ReaderJobRunner>> {
+    pub(crate) fn reader_job_runner(&self) -> Option<Arc<dyn crate::code_run::ReaderJobRunner>> {
         self.vault.reader_job_runner()
     }
 

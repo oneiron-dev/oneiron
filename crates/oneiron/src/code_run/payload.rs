@@ -344,9 +344,7 @@ fn json_outcome(kind: &'static str, value: &impl serde::Serialize) -> Result<Val
 }
 
 /// An outcome [`json_outcome`] kept.
-fn decode_json_outcome<T: serde::de::DeserializeOwned>(
-    entries: &[(Value, Value)],
-) -> Result<T> {
+fn decode_json_outcome<T: serde::de::DeserializeOwned>(entries: &[(Value, Value)]) -> Result<T> {
     serde_json::from_str(str_value(map_get(entries, "json")?)?)
         .map_err(|_| invalid_code_run_replay("dispatch outcome does not decode"))
 }

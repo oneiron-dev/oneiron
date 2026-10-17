@@ -17,8 +17,8 @@ use crate::code_run::types::{
 use crate::code_run::{
     DelegatedSource, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
     ReaderSpawnReceipt, SelfReaderReportCall, SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy,
-    TaskWaitSet, TaskWaitSetCall, reader_attempt_id, reader_run_id, reader_task_id,
-    reader_wait_id, valid_reader_key, vault_ref,
+    TaskWaitSet, TaskWaitSetCall, reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id,
+    valid_reader_key, vault_ref,
 };
 use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Error, Result};
@@ -176,25 +176,26 @@ impl HostSelfDispatcher<'_> {
             },
             ask: call.ask,
         };
-        let (job, replay) = match self
-            .storage
-            .spawn_reader_job(seat, new, crate::unix_millis_now())?
-        {
-            SpawnAdmission::Queued { job, queued } => {
-                // The backlog row asks on its crossing edge and keeps
-                // queueing: it never refuses and never bounds the window.
-                let watch = self.storage.limit_watch();
-                let bound = watch.bound(EngineLimit::CodeReaderBacklog);
-                if queued == bound.saturating_add(1) {
-                    watch.crossed(EngineLimit::CodeReaderBacklog, bound, queued);
+        let (job, replay) =
+            match self
+                .storage
+                .spawn_reader_job(seat, new, crate::unix_millis_now())?
+            {
+                SpawnAdmission::Queued { job, queued } => {
+                    // The backlog row asks on its crossing edge and keeps
+                    // queueing: it never refuses and never bounds the window.
+                    let watch = self.storage.limit_watch();
+                    let bound = watch.bound(EngineLimit::CodeReaderBacklog);
+                    if queued == bound.saturating_add(1) {
+                        watch.crossed(EngineLimit::CodeReaderBacklog, bound, queued);
+                    }
+                    self.storage.wake_reader_runner(job.task);
+                    (job, false)
                 }
-                self.storage.wake_reader_runner(job.task);
-                (job, false)
-            }
-            SpawnAdmission::Existing(job) => (job, true),
-            SpawnAdmission::PastCutoff => return Ok(failed("reader_spawn_past_cutoff")),
-            SpawnAdmission::Unmetered => return Ok(failed("reader_spawn_unmetered")),
-        };
+                SpawnAdmission::Existing(job) => (job, true),
+                SpawnAdmission::PastCutoff => return Ok(failed("reader_spawn_past_cutoff")),
+                SpawnAdmission::Unmetered => return Ok(failed("reader_spawn_unmetered")),
+            };
         Ok(SelfDispatchOutcome::ReaderSpawn(ReaderSpawnReceipt {
             task: job.task,
             attempt: crate::entity_id::bytes_to_hex_lower(job.attempt.as_bytes()),
@@ -218,7 +219,10 @@ impl HostSelfDispatcher<'_> {
                 error: code.to_owned(),
             })
         };
-        let Some(child) = self.reader_child.as_ref().filter(|child| child.task == call.task)
+        let Some(child) = self
+            .reader_child
+            .as_ref()
+            .filter(|child| child.task == call.task)
         else {
             return Ok(failed("not_reader_task"));
         };

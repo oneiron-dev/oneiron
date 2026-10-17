@@ -411,10 +411,7 @@ pub(crate) fn reader_task_id(parent_run: EntityId, intent_key: &str) -> Result<E
 
 /// The run a child task runs as.
 pub(crate) fn reader_run_id(task: EntityId) -> Result<EntityId> {
-    EntityId::derive(
-        b"oneiron:code-reader-run:v1",
-        &[task.as_bytes().as_slice()],
-    )
+    EntityId::derive(b"oneiron:code-reader-run:v1", &[task.as_bytes().as_slice()])
 }
 
 /// The attempt a child's spend scope is keyed by (OF-532). It has no queue
@@ -459,18 +456,22 @@ pub(crate) fn reduce_task_wait_set(
         reason: None,
         until: set.until_ms,
     };
-    let finding = |task: EntityId, finding: &ReaderFindingRef, reason: Option<&str>| TaskWaitFinding {
-        task,
-        finding: finding.handle.clone(),
-        bytes: finding.bytes,
-        reason: reason.map(str::to_owned),
-    };
+    let finding =
+        |task: EntityId, finding: &ReaderFindingRef, reason: Option<&str>| TaskWaitFinding {
+            task,
+            finding: finding.handle.clone(),
+            bytes: finding.bytes,
+            reason: reason.map(str::to_owned),
+        };
     for (task, job) in jobs {
         let failed = |reason: &str| TaskWaitFailure {
             task: task.to_hex(),
             reason: reason.to_owned(),
         };
-        let Some(job) = job.as_ref().filter(|job| job.binding.parent_run == set.parent_run) else {
+        let Some(job) = job
+            .as_ref()
+            .filter(|job| job.binding.parent_run == set.parent_run)
+        else {
             result.failed.push(failed("unknown_task"));
             continue;
         };
@@ -478,7 +479,9 @@ pub(crate) fn reduce_task_wait_set(
             (ReaderJobState::Queued | ReaderJobState::Active, _) => result.pending.push(*task),
             (ReaderJobState::Done, Some(found)) => result.ready.push(finding(*task, found, None)),
             (ReaderJobState::Partial { reason }, Some(found)) => {
-                result.partial.push(finding(*task, found, Some(reason.as_str())));
+                result
+                    .partial
+                    .push(finding(*task, found, Some(reason.as_str())));
             }
             (ReaderJobState::Done, None) => result.failed.push(failed("no_finding")),
             (ReaderJobState::Partial { reason } | ReaderJobState::Failed { reason }, _) => {

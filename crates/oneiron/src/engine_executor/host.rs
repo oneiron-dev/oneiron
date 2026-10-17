@@ -622,7 +622,8 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             if !names_source {
                 return Ok(None);
             }
-            let Some(output) = recorded_output(storage, source.owner, &source.path, &source.handle)?
+            let Some(output) =
+                recorded_output(storage, source.owner, &source.path, &source.handle)?
             else {
                 return Ok(None);
             };
