@@ -60074,7 +60074,7 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -66126,7 +66126,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/mcp_bridge.rs",
@@ -70779,7 +70779,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 38,
+   "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 564,
    "test_files": 182
@@ -71692,7 +71692,7 @@
      "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
      "surface": {
       "const": 1,
-      "fn": 6,
+      "fn": 7,
       "re-export": 3,
       "struct": 1
      }
