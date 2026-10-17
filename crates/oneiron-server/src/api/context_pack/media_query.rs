@@ -37,8 +37,7 @@ pub(crate) struct ContextPackMediaQuery {
     #[schema(example = "iVBORw0KGgo=")]
     bytes_b64: String,
     /// The kinds of item the space's list keeps (`text`, `image`, `audio`);
-    /// every kind the space holds when empty. `POST /v1/core/query` does not
-    /// filter by it yet.
+    /// every kind the space holds when empty.
     #[serde(default)]
     #[schema(value_type = Vec<String>, example = json!(["image"]))]
     kinds: Vec<InputKind>,
