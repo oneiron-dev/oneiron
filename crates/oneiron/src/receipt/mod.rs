@@ -71,8 +71,8 @@ pub use self::pack_attribution::{
     SkillContribution, UsedProvenanceEdge,
 };
 pub(crate) use self::pack_attribution::{
-    has_attempt_pack_attribution_in_txn, put_attempt_pack_attribution_in_txn,
-    take_attempt_pack_attribution_in_txn,
+    attempt_pack_attribution_in_txn, has_attempt_pack_attribution_in_txn,
+    put_attempt_pack_attribution_in_txn, take_attempt_pack_attribution_in_txn,
 };
 pub use self::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,
@@ -83,7 +83,7 @@ pub use self::questions::{
     GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskDeclined, GraphAskOutcome,
     GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersRequest,
     QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest,
-    QuestionPaused, QuestionReadRequest,
+    QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals,

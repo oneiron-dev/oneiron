@@ -263,6 +263,7 @@ pub enum SyncEngineContext {
     RebootstrapEncode,
     DreamerProgressTransport,
     FederationReplayStartup,
+    CustodyResealAfterMachineAdmission,
 }
 
 #[cfg(feature = "sync")]
@@ -281,6 +282,9 @@ impl SyncEngineContext {
             Self::RebootstrapEncode => "re-bootstrap encode",
             Self::DreamerProgressTransport => "dreamer progress transport",
             Self::FederationReplayStartup => "federation replay startup",
+            Self::CustodyResealAfterMachineAdmission => {
+                "custody re-seal after a committed machine admission; the admission stands"
+            }
         }
     }
 }
