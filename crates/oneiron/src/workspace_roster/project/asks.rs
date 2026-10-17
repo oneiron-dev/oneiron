@@ -5,7 +5,8 @@
 //! and the route is a record, never an authority grant.
 use super::*;
 
-const PREFIX: &[u8] = b"project.ask.v1/";
+const PROJECT_ASKS: SideTable<EntityId, ProjectAsk, Named> =
+    SideTable::new(&side_table::PROJECT_ASK);
 
 fn unplaced() -> Error {
     RecordError::InvalidProjectBody("task is not placed in a project that serves authority").into()
@@ -66,11 +67,7 @@ impl Vault {
         let (mut project, _) = self
             .effective_project_in_txn(txn, route.project)?
             .ok_or_else(unplaced)?;
-        self.store.vault_meta.put(
-            txn,
-            &[PREFIX, route.ask.as_bytes()].concat(),
-            &encode(route)?,
-        )?;
+        PROJECT_ASKS.put(&self.store, txn, &route.ask, route)?;
         if !project.asks.contains(&route.ask.to_hex()) {
             project.asks.push(route.ask.to_hex());
         }
@@ -111,10 +108,6 @@ impl Vault {
     /// The route of a project ask, not an authority grant.
     pub fn project_ask_route(&self, ask: EntityId) -> Result<Option<ProjectAsk>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &[PREFIX, ask.as_bytes()].concat())?
-            .map(|raw| decode(&raw))
-            .transpose()
+        PROJECT_ASKS.get(&self.store, &txn, &ask)
     }
 }

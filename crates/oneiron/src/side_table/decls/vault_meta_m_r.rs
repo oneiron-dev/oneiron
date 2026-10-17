@@ -297,6 +297,9 @@ side_tables! {
     PORTS_WITHDRAWN: VaultMeta b"ports:withdrawn:v1:" Raw;
     /// Community snapshot rows: meta, node:hex32, members:hex32. Key: string.
     PPR_COMMUNITY_CACHE: VaultMeta b"ppr_community_cache:v0:" Raw;
+    /// Where one project ask went: its project, placing TASK and ask (content, not authority).
+    /// Key: id16 (ask).
+    PROJECT_ASK: VaultMeta b"project.ask.v1/" Named;
     /// An owner question about a parent cycle past its world bound (OF-520), local. Key: id16
     /// (the cycle's first project).
     PROJECT_CYCLE_QUESTION: VaultMeta b"project.cycle_question.v1/" Named;

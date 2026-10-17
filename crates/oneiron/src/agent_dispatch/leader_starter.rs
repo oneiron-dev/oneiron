@@ -258,10 +258,11 @@ impl AgentDispatcher<'_> {
         let project_ref = input
             .project_ref
             .ok_or_else(|| invalid("leader has no project"))?;
-        let (project, authority) = self
+        let (project, frontier, project_depth) = self
             .vault
-            .effective_project_in_txn(&txn, project_ref)?
+            .project_planning_context_in_txn(&txn, project_ref)?
             .ok_or(Error::EntityNotFound)?;
+        let authority = frontier.effective.ok_or(Error::EntityNotFound)?;
         let leader = EntityId::from_hex(&authority.leader)?;
         let definition = self.dispatchable_definition_in_txn(&txn, &input.target)?;
         if input.target.agent_definition_ref()? != leader && definition.forked_from != Some(leader)
@@ -282,13 +283,10 @@ impl AgentDispatcher<'_> {
             crate::task_verb::leader_task_body_in(self.vault, &txn, task_ref, leader)?;
         let (type_ref, brief) =
             crate::task_verb::leader_task_brief_in(self.vault, &txn, task_ref, leader)?;
-        let (_, spawn_view) = self
-            .vault
-            .project_for_spawn_in_txn(&txn, Some(project_ref))?;
         let depth_remaining = input
             .depth_remaining
             .unwrap_or(0)
-            .min(spawn_view.depth)
+            .min(project_depth)
             .min(authority.depth_remaining)
             .min(authority.depth_limit);
         Ok(LeaderTaskContext {

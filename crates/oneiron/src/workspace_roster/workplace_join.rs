@@ -18,6 +18,7 @@ use super::join_consent::{
 use super::join_door::rooms_join_in_txn;
 use super::join_receipt::JoinReceiptRef;
 use crate::error::{ClaimError, Error, Result};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::{EntityId, Vault, WriteActor};
 
 /// Why a workplace filing is made: the purpose its intent key names.
@@ -27,6 +28,8 @@ enum Purpose {
     House,
     /// A companion follows her principal into a room.
     Companion,
+    /// A roster update newly seats a member in a project home room.
+    Member,
 }
 
 impl Purpose {
@@ -34,6 +37,7 @@ impl Purpose {
         match self {
             Self::House => "workplace.house",
             Self::Companion => "workplace.companion",
+            Self::Member => "workplace.member",
         }
     }
 }
@@ -146,6 +150,78 @@ pub(super) fn file_house_joins_in_txn(
         file_house_join_in_txn(vault, txn, room, house, caller, now)?;
     }
     Ok(())
+}
+
+/// Files the joins a roster update newly seats, for the project home room
+/// `room`, with the authenticated `caller` as filer. Each id in `added` is
+/// filed only where OF-531's caller rule lets `caller` file for it: its own
+/// subject, its principal, or a live owner for the vault's own agent. A
+/// subject the caller does not stand for (an unrelated person) is left to
+/// its own first write or explicit join, since a board write is no one's
+/// join consent. A seated house mind files as the house; a person whose
+/// filing stands brings her companions along. A seat that is neither a
+/// PERSON nor an AGENT_DEF takes part in no room.
+pub(super) fn file_roster_joins_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    added: &BTreeSet<String>,
+    caller: WriteActor,
+    now: u64,
+) -> Result<()> {
+    let houses: BTreeSet<EntityId> = super::records::PRESET
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, row)| row.preset.house_actor_ref)
+        .collect();
+    // A PERSON and her pen are one subject, filed once.
+    let mut subjects: Vec<JoinSubject> = Vec::new();
+    for seat in added {
+        let actor = EntityId::from_hex(seat)?;
+        if !matches!(
+            vault.get_entity_type_in_txn(txn, &actor)?,
+            Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_AGENT_DEF)
+        ) {
+            continue;
+        }
+        let subject = super::rooms::join_subject_for_actor_in_txn(vault, txn, actor, now)?;
+        if !subjects.contains(&subject) {
+            subjects.push(subject);
+        }
+    }
+    for subject in subjects {
+        if !roster_caller_files_for_in_txn(vault, txn, caller, &subject, now)? {
+            continue;
+        }
+        let purpose = match subject {
+            JoinSubject::Agent(agent) if houses.contains(&agent) => Purpose::House,
+            _ => Purpose::Member,
+        };
+        let receipt = file_in_txn(vault, txn, purpose, room, subject, caller, now)?;
+        if let (JoinSubject::Person(person), Some(_)) = (subject, receipt) {
+            file_companion_joins_in_txn(vault, txn, room, person, caller, now)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `caller` files `subject`'s join on a roster update: OF-531's
+/// caller rule, read live. A caller that does not stand for the subject
+/// files nothing for it, so a board write is never an unrelated person's
+/// join consent, and the subject joins on its own first write or explicit
+/// join. The one place a roster filing passes a subject by.
+fn roster_caller_files_for_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    caller: WriteActor,
+    subject: &JoinSubject,
+    at: u64,
+) -> Result<bool> {
+    match super::join_door::caller_stands_for_in_txn(vault, txn, caller, subject, at) {
+        Ok(_) => Ok(true),
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Whether `caller` speaks for `person`: it is that PERSON, or its own pen.

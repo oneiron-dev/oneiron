@@ -385,7 +385,7 @@ fn participate_in_txn(
 
 /// Whom `caller` may file a join for: the subject itself, or its principal.
 /// For the vault's own agent, returns the live owner filing for it.
-fn caller_stands_for_in_txn(
+pub(super) fn caller_stands_for_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     caller: WriteActor,
