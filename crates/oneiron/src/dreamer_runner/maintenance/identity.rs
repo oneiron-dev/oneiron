@@ -12,11 +12,16 @@
 //!
 //! The host asks each open ask as one decide() Choice over the candidates
 //! plus [`SOMEONE_NEW`] ([`Vault::decide_identity_ask`]). A choice settles
-//! the mention. An abstention goes to the person: one inbox Ask
-//! NOTIFICATION per owner in the conversation the name came from (the
-//! needs-you strip), sent again in the conversation that next mentions the
-//! name ([`Vault::resurface_identity_asks`]), with a one-tap GenUI choice
-//! card ([`Vault::identity_card`]) whose buttons answer through
+//! the mention. An abstention on a nightly ask keeps the names separate for
+//! now (OF-023): nothing merges, nothing is confirmed and no one is asked.
+//! The ask stays open and answerable, is not decided again until its
+//! candidates change, and leaves the Dreamer's receipt, which the owner
+//! reverts into today's question to them. An abstention on an act-now ask
+//! goes to the person: one inbox Ask NOTIFICATION per owner in the
+//! conversation the name came from (the needs-you strip), sent again in the
+//! conversation that next mentions the name
+//! ([`Vault::resurface_identity_asks`]), with a one-tap GenUI choice card
+//! ([`Vault::identity_card`]) whose buttons answer through
 //! `self.identity.answer`.
 //!
 //! An agent that must act on a person now (send, pay, invite, share) asks
@@ -36,6 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::MAINTENANCE_QUEUE_KIND;
+use super::applied::{MaintenanceInverse, MaintenanceRevert, MaintenanceTarget};
 use crate::claim::ClaimSource;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
@@ -70,7 +76,8 @@ pub const IDENTITY_ANSWER_VERB: &str = "self.identity.answer";
 const IS_PREFIX: &str = "is:";
 /// Tag sets one nightly pass reads.
 const SCAN_TURNS: usize = 2_048;
-/// Open asks at once: past this a pass opens none.
+/// Open asks at once, besides those kept separate: past this a pass opens
+/// none.
 const MAX_OPEN_ASKS: usize = 64;
 /// Candidates one Choice carries beside "someone new".
 const MAX_CANDIDATES: usize = 63;
@@ -153,6 +160,9 @@ pub struct IdentityAsk {
     pub escalated_at: Option<u64>,
     /// The newest turn the ask was sent to the person from.
     pub surfaced_turn: Option<EntityId>,
+    /// When a nightly decision abstained and the names were kept separate
+    /// for now: the ask is not due until its candidates change.
+    pub kept_separate_at: Option<u64>,
 }
 
 /// The words an answer about a name was given in.
@@ -191,6 +201,9 @@ pub struct IdentityAskView {
     pub reason: IdentityAskReason,
     pub opened_at: u64,
     pub escalated_at: Option<u64>,
+    /// When the names were kept separate for now; the ask still takes an
+    /// answer.
+    pub kept_separate_at: Option<u64>,
 }
 
 /// The words a choice card shows, in the person's language: the host's or
@@ -221,8 +234,11 @@ pub struct IdentityDecisions<'a> {
 pub enum IdentityRuling {
     /// The mention names this entity now.
     Settled(EntityId),
-    /// The ladder abstained: the ask went to the person.
+    /// The ladder abstained on an act-now ask: the ask went to the person.
     NeedsPerson,
+    /// The ladder abstained on a nightly ask: the names stay separate for
+    /// now, and the ask waits, answerable, for its candidates to change.
+    KeptSeparate,
     /// The ladder failed: the ask waits and is decided again.
     Retry,
     /// The ask was answered or changed meanwhile.
@@ -384,7 +400,7 @@ fn key_hex(key: &[u8; 32]) -> String {
     key.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn parse_key(hex: &str) -> Option<[u8; 32]> {
+pub(super) fn parse_key(hex: &str) -> Option<[u8; 32]> {
     if hex.len() != 64 || !hex.is_ascii() {
         return None;
     }
@@ -808,6 +824,74 @@ fn notify_in_txn(
     Ok(())
 }
 
+/// A nightly abstention's inverse: the ask as it stood before the names were
+/// kept separate, and when they were.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProvisionalInverse {
+    prior: IdentityAsk,
+    kept_at: u64,
+}
+
+/// Keeps the names separate for now (OF-023): a nightly decision that
+/// abstained merges, confirms and asks nothing. The candidates and the
+/// mention's provisional entity stay as they are; the ask stays open and
+/// answerable, out of the due list until its candidates change. The
+/// Dreamer's receipt and the prior ask let the owner revert it.
+fn keep_separate_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8; 32],
+    ask: IdentityAsk,
+    now: u64,
+) -> Result<()> {
+    let kept = IdentityAsk {
+        kept_separate_at: Some(now),
+        ..ask.clone()
+    };
+    ASKS.put(&vault.store, txn, key, &kept)?;
+    let actor = vault.dreamer_authority_in_txn(txn, now)?;
+    super::applied::record_disposition_in_txn(
+        vault,
+        txn,
+        *key,
+        IDENTITY_RECHECK_FACET,
+        actor,
+        MaintenanceInverse::IdentityProvisional(Box::new(ProvisionalInverse {
+            prior: ask,
+            kept_at: now,
+        })),
+        now,
+    )
+}
+
+/// The owner's revert of a kept-separate ask: the ask as it stood before
+/// goes to them as today's question, an inbox Ask with its choice card, as
+/// reverting "keep them separate for now" means "ask me". An ask answered,
+/// decided again or taken up for an act-now effect since is left alone.
+pub(super) fn revert_provisional_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    inverse: &ProvisionalInverse,
+    now: u64,
+    out: &mut MaintenanceRevert,
+) -> Result<()> {
+    let MaintenanceTarget::IdentityAsk(key) = out.target else {
+        return Err(invalid("the revert names no ask"));
+    };
+    let kept = IdentityAsk {
+        kept_separate_at: Some(inverse.kept_at),
+        ..inverse.prior.clone()
+    };
+    if ASKS.get(&vault.store, txn, &key)?.as_ref() != Some(&kept) {
+        out.left_alone.push(key_hex(&key));
+        return Ok(());
+    }
+    escalate_in_txn(vault, txn, &key, inverse.prior.clone(), now)?;
+    out.asked.push(key_hex(&key));
+    Ok(())
+}
+
 /// Sends an ask to the person: it waits on their answer from now on.
 fn escalate_in_txn(
     vault: &Vault,
@@ -868,6 +952,7 @@ fn view_in_txn(
         reason: ask.reason,
         opened_at: ask.opened_at,
         escalated_at: ask.escalated_at,
+        kept_separate_at: ask.kept_separate_at,
     })
 }
 
@@ -989,11 +1074,13 @@ fn ask_for_mention_in_txn(
         retry_at: 0,
         escalated_at: None,
         surfaced_turn: None,
+        kept_separate_at: None,
     }))
 }
 
 /// Checks each mention of one turn again: a hint settles it, else it opens
-/// an ask unless one is open for it or for its question.
+/// an ask unless one is open for it or for its question. A kept-separate
+/// ask whose candidates changed opens afresh, to be decided again.
 fn recheck_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -1014,7 +1101,22 @@ fn recheck_turn_in_txn(
             continue;
         };
         let key = ask_key(turn, &mention.message, mention.start, mention.end);
-        if open.iter().any(|(held, _)| *held == key) {
+        if let Some((_, held)) = open.iter_mut().find(|(held, _)| *held == key) {
+            if held.kept_separate_at.is_some()
+                && let Some(fresh) = ask_for_mention_in_txn(
+                    vault,
+                    txn,
+                    turn,
+                    mention,
+                    text,
+                    IdentityAskReason::Unsettled,
+                    now,
+                )?
+                && fresh.candidates != held.candidates
+            {
+                ASKS.put(&vault.store, txn, &key, &fresh)?;
+                *held = fresh;
+            }
             continue;
         }
         let Some(ask) = ask_for_mention_in_txn(
@@ -1040,7 +1142,11 @@ fn recheck_turn_in_txn(
             )?;
             continue;
         }
-        if open.len() >= MAX_OPEN_ASKS || open.iter().any(|(_, held)| same_question(held, &ask)) {
+        let waiting = open
+            .iter()
+            .filter(|(_, held)| held.kept_separate_at.is_none())
+            .count();
+        if waiting >= MAX_OPEN_ASKS || open.iter().any(|(_, held)| same_question(held, &ask)) {
             continue;
         }
         ASKS.put(&vault.store, txn, &key, &ask)?;
@@ -1108,13 +1214,16 @@ pub(super) fn run(vault: &Vault, _attempt: &DreamerAdmittedAttempt, now: u64) ->
 
 impl Vault {
     /// Open asks the host decides now, act-now ones first, up to `limit`,
-    /// as 64 hex: none sent to the person yet, none waiting on a retry.
+    /// as 64 hex: none sent to the person yet, none kept separate, none
+    /// waiting on a retry.
     pub fn identity_asks_due(&self, now: u64, limit: usize) -> Result<Vec<String>> {
         let txn = self.store.env.read_txn()?;
         let mut due: Vec<(bool, u64, [u8; 32])> = ASKS
             .scan(&self.store, &txn)?
             .into_iter()
-            .filter(|(_, ask)| ask.escalated_at.is_none() && ask.retry_at <= now)
+            .filter(|(_, ask)| {
+                ask.escalated_at.is_none() && ask.kept_separate_at.is_none() && ask.retry_at <= now
+            })
             .map(|(key, ask)| {
                 let later = !matches!(ask.reason, IdentityAskReason::ActNow { .. });
                 (later, ask.opened_at, key)
@@ -1149,10 +1258,12 @@ impl Vault {
     }
 
     /// Asks one open ask on the host's ladder: a Choice over its candidates
-    /// and [`SOMEONE_NEW`]. A choice settles the mention and saves the hint;
-    /// anything else sends the ask to the person. A failed call waits
-    /// [`RETRY_SECS`]. An act-now ask is an outbound effect's question; a
-    /// nightly one a reversible read's, as a later answer can move it.
+    /// and [`SOMEONE_NEW`]. A choice settles the mention and saves the hint.
+    /// Anything else keeps a nightly ask's names separate for now, with the
+    /// Dreamer's receipt, and sends an act-now ask to the person. A failed
+    /// call waits [`RETRY_SECS`]. An act-now ask is an outbound effect's
+    /// question; a nightly one a reversible read's, as a later answer can
+    /// move it.
     pub fn decide_identity_ask(
         &self,
         decisions: &IdentityDecisions<'_>,
@@ -1249,7 +1360,10 @@ impl Vault {
             let Some(current) = ASKS.get(&self.store, txn, &key)? else {
                 return Ok(IdentityRuling::Gone);
             };
-            if current.candidates != held.candidates || current.escalated_at.is_some() {
+            if current.candidates != held.candidates
+                || current.escalated_at.is_some()
+                || current.kept_separate_at.is_some()
+            {
                 return Ok(IdentityRuling::Gone);
             }
             match answer {
@@ -1262,6 +1376,10 @@ impl Vault {
                     ClaimSource::Inferred,
                     now,
                 )?)),
+                None if current.reason == IdentityAskReason::Unsettled => {
+                    keep_separate_in_txn(self, txn, &key, current, now)?;
+                    Ok(IdentityRuling::KeptSeparate)
+                }
                 None => {
                     escalate_in_txn(self, txn, &key, current, now)?;
                     Ok(IdentityRuling::NeedsPerson)
@@ -1429,9 +1547,12 @@ impl Memory<'_> {
                         card,
                     });
                 }
+                // A nightly ask, kept separate or not, is taken up for the
+                // effect: decided now as an outbound effect's question.
                 if held.reason == IdentityAskReason::Unsettled {
                     held.reason = IdentityAskReason::ActNow { effect };
                     held.retry_at = 0;
+                    held.kept_separate_at = None;
                     ASKS.put(&vault.store, txn, &key, &held)?;
                 }
                 return Ok(IdentityActNow::Deciding { ask: key_hex(&key) });
