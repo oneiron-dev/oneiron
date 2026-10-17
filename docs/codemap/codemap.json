@@ -26730,7 +26730,7 @@
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
       "crate-vis": 2,
-      "fn": 18,
+      "fn": 20,
       "struct": 4
      }
     },
@@ -34924,6 +34924,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionAskAnswerRequest",
+      "DecisionAskClimbRequest"
+     ],
+     "path": "src/receipt/decision_asks.rs",
+     "purpose": "OF-493's role-holder doors (Q3 by role): the wire shapes a person or a bound agent uses to answer a decision…",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/receipt/direct_dispatch.rs",
      "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
@@ -35076,7 +35089,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 18,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -44982,7 +44995,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 237
+      "fn": 240
      }
     },
     {
@@ -50516,7 +50529,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50980,7 +50993,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3079,
+   "source_files": 3080,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58847,7 +58860,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 192
+      "fn": 195
      }
     },
     {
@@ -59861,7 +59874,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 193
+      "fn": 196
      }
     },
     {
@@ -62387,6 +62400,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/decision_ask_doors.rs",
+     "purpose": "OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/decision_role_asks.rs",
      "purpose": "OF-516: a role holder's door to the ladder's person asks (Q3 by role)",
      "surface": {
@@ -62430,7 +62453,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -68750,7 +68773,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 268,
+     "files": 269,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69067,7 +69090,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 526,
+   "source_files": 527,
    "test_files": 182
   },
   "oneiron-spawn": {
