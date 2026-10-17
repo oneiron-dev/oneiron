@@ -178,6 +178,10 @@ pub struct ProactivityDigest {
     /// The cleanup line, on a regular digest with cleanup news.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup: Option<DigestCleanup>,
+    /// The Coach's agent-health cards opened, updated or settled since the
+    /// last regular digest (OF-568), concern first and newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub health_cards: Vec<super::agent_health::ConcernCardSummary>,
     pub rendered: String,
     pub voice_style: String,
 }
@@ -348,6 +352,9 @@ impl Vault {
     ) -> Result<Option<ProactivityDigest>> {
         let authority = self.dreamer_authority()?.entity_ref();
         let pending_offers = crate::skill_optimize::pending_training_offers(self)?;
+        // Read before the write, as the offers are; the period's start is
+        // known once the state is.
+        let cards = self.agent_health_cards_between(0, now)?;
         self.with_write_txn_grouped(|txn| {
             let recipient = owner
                 .map(|owner| super::validate_owner_in_txn(self, txn, owner))
@@ -425,6 +432,21 @@ impl Vault {
             } else {
                 None
             };
+            // So do the health cards: each one touched in the period.
+            let health_cards: Vec<_> = if due {
+                let from = state.last_regular.unwrap_or(0);
+                cards
+                    .iter()
+                    .filter(|card| {
+                        card.opened_at >= from
+                            || card.updated_at >= from
+                            || card.outcome_at.is_some_and(|at| at >= from)
+                    })
+                    .map(super::agent_health::ConcernCardSummary::of)
+                    .collect()
+            } else {
+                Vec::new()
+            };
             if groups.is_empty() && judge_asks.is_empty() && offers.is_empty() && cleanup.is_none()
             {
                 return Ok(None);
@@ -478,6 +500,26 @@ impl Vault {
                 state.cleanup_seen.extend(line.decisions.iter().cloned());
                 state.cleanup_seen.extend(line.proposals.iter().cloned());
             }
+            if !health_cards.is_empty() {
+                let facet = super::agent_health::COACH_AGENT_HEALTH_FACET;
+                let group = presentation
+                    .group_aliases
+                    .get(facet)
+                    .map_or(facet, String::as_str);
+                rendered.push_str(&presentation.group_template.replace("{group}", group));
+                for card in &health_cards {
+                    let summary = format!(
+                        "{facet}: {} {} {} on {}",
+                        card.signal, card.tone, card.outcome, card.agent
+                    );
+                    rendered.push_str(
+                        &presentation
+                            .item_template
+                            .replace("{summary}", &summary)
+                            .replace("{ref}", &card.card),
+                    );
+                }
+            }
             let is_urgent = !due && breakthrough && !groups.is_empty();
             let identity = serde_json::to_vec(&(
                 now,
@@ -500,6 +542,7 @@ impl Vault {
                 judge_asks,
                 offers,
                 cleanup,
+                health_cards,
                 rendered,
                 voice_style: presentation.voice_style,
             };

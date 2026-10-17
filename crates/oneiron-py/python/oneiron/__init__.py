@@ -190,6 +190,17 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
+    def last_receipt_ref(self) -> str | None:
+        """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
+
+        It is stated whether the call answered or refused, and
+        ``vault.receipts.get`` resolves it for the same actor or the vault's
+        owner. Typed returns keep their shape; the ref rides beside them here.
+        ``None`` for an embedded handle, before any call, after a call that
+        reached no server, and for an anonymous off-record call.
+        """
+        return self._client.last_receipt_ref()
+
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -256,6 +267,9 @@ class Oneiron:
         @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
+        @property
+        def decisions(self) -> "Oneiron._SelfDecisionsVerbs":
+            return Oneiron._SelfDecisionsVerbs(self._client)
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -289,6 +303,12 @@ class Oneiron:
     class _SelfInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def list(self, spec):
+            """Lists one page of notifications delivered to the bound actor, without marking them."""
+            return json.loads(_translate(lambda: self._client.self_inbox_list(json.dumps(spec))))
+        def mark(self, spec):
+            """Marks one delivered notification seen or acknowledged for the bound actor."""
+            return json.loads(_translate(lambda: self._client.self_inbox_mark(json.dumps(spec))))
         @property
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs":
             return Oneiron._SelfInboxConcernVerbs(self._client)
@@ -319,6 +339,11 @@ class Oneiron:
         def callables(self, spec=None):
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
             return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
+    class _SelfDecisionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def asks(self, spec=None):
+            return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -385,6 +410,12 @@ class Oneiron:
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
+        def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs":
+            return Oneiron._VaultEmbeddingSpacesVerbs(self._client)
+        @property
+        def settings(self) -> "Oneiron._VaultSettingsVerbs":
+            return Oneiron._VaultSettingsVerbs(self._client)
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs":
             return Oneiron._VaultLensesVerbs(self._client)
         @property
@@ -420,6 +451,9 @@ class Oneiron:
         @property
         def questions(self) -> "Oneiron._VaultQuestionsVerbs":
             return Oneiron._VaultQuestionsVerbs(self._client)
+        @property
+        def decisions(self) -> "Oneiron._VaultDecisionsVerbs":
+            return Oneiron._VaultDecisionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
             """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
@@ -457,6 +491,9 @@ class Oneiron:
         def habits(self) -> "Oneiron._VaultHabitsVerbs":
             return Oneiron._VaultHabitsVerbs(self._client)
         @property
+        def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
+            return Oneiron._VaultConsolidationVerbs(self._client)
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
     class _VaultPeopleVerbs:
@@ -486,6 +523,9 @@ class Oneiron:
         def admit(self, input: dict[str, Any]) -> Any:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
             return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
+        def seed(self, input: dict[str, Any]) -> Any:
+            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
+            return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -643,6 +683,9 @@ class Oneiron:
             self._client = client
         def revoke(self, spec):
             return json.loads(_translate(lambda: self._client.vault_guests_revoke(json.dumps(spec))))
+        def mint_slip(self, spec):
+            """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+            return json.loads(_translate(lambda: self._client.vault_guests_mint_slip(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -661,6 +704,72 @@ class Oneiron:
         def lift_and_erase(self, spec):
             """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
+    class _VaultEmbeddingSpacesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec=None):
+            """Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_list(json.dumps({} if spec is None else spec))))
+        def declare(self, spec):
+            """Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_declare(json.dumps(spec))))
+        def bind(self, spec):
+            """Binds one kind slot to a declared space, or returns it to its default when no space is named."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_bind(json.dumps(spec))))
+        def one_space(self, spec):
+            """Binds every kind slot the space accepts, text included, to that one space."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_one_space(json.dumps(spec))))
+        def retire(self, spec):
+            """Drops a declared space that no slot binds and no open move names, with its vector rows."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_retire(json.dumps(spec))))
+        def move(self, spec):
+            """Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_move(json.dumps(spec))))
+        def move_check(self, spec):
+            """Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_move_check(json.dumps(spec))))
+        def move_approve(self, spec):
+            """The owner says yes to a full candidate over a check that did not read not worse; it swaps in."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_move_approve(json.dumps(spec))))
+        def move_undo(self, spec):
+            """Binds a swapped-in move incumbent again."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_move_undo(json.dumps(spec))))
+        def move_abandon(self, spec):
+            """Ends an open embedding space move with no swap."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_move_abandon(json.dumps(spec))))
+        @property
+        def probes(self) -> "Oneiron._VaultEmbeddingSpacesProbesVerbs":
+            return Oneiron._VaultEmbeddingSpacesProbesVerbs(self._client)
+    class _VaultEmbeddingSpacesProbesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec=None):
+            """Every stored embedding space probe with its id."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_list(json.dumps({} if spec is None else spec))))
+        def put(self, spec):
+            """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_put(json.dumps(spec))))
+        def delete(self, spec):
+            """Removes one stored embedding space probe by its id."""
+            return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_delete(json.dumps(spec))))
+    class _VaultSettingsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def learning(self) -> "Oneiron._VaultSettingsLearningVerbs":
+            return Oneiron._VaultSettingsLearningVerbs(self._client)
+    class _VaultSettingsLearningVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."""
+            return json.loads(_translate(lambda: self._client.vault_settings_learning(json.dumps(spec))))
+        def put(self, spec):
+            """The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."""
+            return json.loads(_translate(lambda: self._client.vault_settings_learning_put(json.dumps(spec))))
+        def clear(self, spec):
+            """The owner clears one learned-setting row of a key, mode and scope."""
+            return json.loads(_translate(lambda: self._client.vault_settings_learning_clear(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -917,6 +1026,19 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
         def answers(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
+    class _VaultDecisionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def asks(self) -> "Oneiron._VaultDecisionsAsksVerbs":
+            return Oneiron._VaultDecisionsAsksVerbs(self._client)
+    class _VaultDecisionsAsksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def answer(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_answer(json.dumps(spec))))
+        def climb(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_climb(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -950,6 +1072,15 @@ class Oneiron:
         def checkin(self, input: dict[str, Any]) -> Any:
             """Appends one immutable check-in under a Habit TASK."""
             return json.loads(_translate(lambda: self._client.vault_habits_checkin(json.dumps(input, allow_nan=False))))
+    class _VaultConsolidationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def enqueue(self, spec):
+            """Enqueues one consolidation attempt and returns its durable job reference."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_enqueue(json.dumps(spec))))
+        def status(self, spec):
+            """Reads the status of one consolidation attempt by its durable job reference."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -224,11 +224,15 @@ pub(super) async fn serve_with_config(
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server));
     // Due standing questions are answered through the ladder (OF-506).
-    workers.push(crate::decision_graph::spawn(&sync_server));
+    if !ai.bind_question_timer(&sync_server) {
+        workers.push(crate::decision_graph::spawn(&sync_server));
+    }
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    workers.push(crate::ai_host::coach_host::spawn(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).
     workers.extend(crate::ai_host::failure_signals::spawn(
         &sync_server,
@@ -241,6 +245,11 @@ pub(super) async fn serve_with_config(
                 .map(zeroize::Zeroizing::new),
         ),
         crate::server::admit_every_pass(),
+    ));
+    // The owner's model-graded detectors read the retrieval telemetry (OF-418).
+    workers.extend(crate::ai_host::self_heal_detectors::spawn(
+        &sync_server,
+        &config.self_heal,
     ));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).

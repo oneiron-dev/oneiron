@@ -31,7 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
 | `src/error/code.rs` | src | s | 1 enum · 1 crate-vis | CodeError | Code-domain errors: codebase snapshots and symbol manifests, repo mutations, the micro-VM backend, code… |
 | `src/error/gate.rs` | src | m | 1 struct · 3 enum · 7 fn · 2 crate-vis | GateDenial, GateDenialOutcome, GateDenialReason, GateError | Gate-domain errors: consent grants and bounds, disclosure scope and clamps, and the Gate write refusal with… |
-| `src/error/hook.rs` | src | s | 1 enum | VerbHookStop | A verb hook's stop (ARCH-0080 §3): the typed answer a caller gets when a pre-hook skipped or asked, or a… |
+| `src/error/hook.rs` | src | s | 1 enum | VerbHookStop | A verb hook's stop (ARCH-0080 §3): the typed answer a caller gets when a pre-hook skipped or asked, a… |
 | `src/error/maintenance.rs` | src | s | 2 enum · 1 crate-vis | CompactionPacketError, MaintenanceError | Maintenance-domain errors: the compaction handoff refusal with its per-axis taxonomy, and the vault-cleanup… |
 | `src/error/mod.rs` | src | m | 2 enum · 7 fn · 1 type · 14 re-export | Error, ErrorKind | — |
 | `src/error/off_record.rs` | src | s | 1 enum · 1 crate-vis | OffRecordError | Off-record-domain errors: the kill switch, off-record session lifecycle, the overlay and its leases, and the… |

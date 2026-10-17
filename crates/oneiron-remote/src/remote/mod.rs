@@ -225,7 +225,7 @@ impl RemoteClient {
                     .map_err(|_| transport_error("could not name the room turn"))?,
             );
         }
-        let response = (if verb == "vault.export" {
+        let response = (if long_running(verb) {
             &self.export_agent
         } else {
             &self.agent
@@ -355,6 +355,14 @@ impl RemoteClient {
             .join(&format!("{FACADE_PREFIX}/{verb}"))
             .map_err(|error| transport_error(format!("could not build the {verb} URL: {error}")))
     }
+}
+
+/// Verbs whose one answer can take minutes, so they ride the export client's
+/// total timeout: the whole-vault export, and an embedding-space move's check,
+/// which runs the vault's probes through both spaces with no server deadline
+/// (OF-370).
+fn long_running(verb: &str) -> bool {
+    matches!(verb, "vault.export" | "vault.embedding_spaces.move_check")
 }
 
 /// The blocking client every facade verb and `pair` share.

@@ -23,6 +23,7 @@ mod replay;
 mod runner;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub mod sandbox;
+mod scope;
 mod source;
 mod store;
 pub mod verb;
@@ -43,6 +44,7 @@ pub use regen::{
 };
 pub use replay::{HookReplayEntry, HookReplayResult};
 pub use runner::{FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassReport};
+pub(crate) use scope::HookScope;
 #[allow(
     unused_imports,
     reason = "the gate's settlement doors call it once their seam lands"
@@ -54,3 +56,4 @@ pub use source::{
 };
 pub(crate) use store::hook_receipts;
 pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};
+pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};

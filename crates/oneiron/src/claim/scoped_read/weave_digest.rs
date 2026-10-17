@@ -276,6 +276,9 @@ enum WireItem {
         dreamed_at: u64,
         entries: u64,
     },
+    AgentHealth {
+        card: crate::dreamer_runner::maintenance::agent_health::AgentHealthCard,
+    },
 }
 
 impl WireDigest {
@@ -328,6 +331,9 @@ impl WireDigest {
                                         dreamed_at: *dreamed_at,
                                         entries: *entries,
                                     },
+                                    WeaveItem::AgentHealth { card } => {
+                                        WireItem::AgentHealth { card: card.clone() }
+                                    }
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
@@ -394,6 +400,9 @@ impl WireDigest {
                                             dreamed_at,
                                             entries,
                                         },
+                                        WireItem::AgentHealth { card } => {
+                                            WeaveItem::AgentHealth { card }
+                                        }
                                     })
                                 })
                                 .collect::<Result<Vec<_>>>()?,
@@ -444,6 +453,9 @@ fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
                 // The reader's own dreaming time and entry count: no copied
                 // body, and no diary entry's id or text.
                 WeaveItem::DreamProgress { .. } => {}
+                // A card is a side-table row, not a record: a saved period
+                // reads the current card again before it serves one.
+                WeaveItem::AgentHealth { .. } => {}
             }
         }
     }
@@ -1016,6 +1028,22 @@ impl ScopedRead<'_> {
                         if reader_key != WeaveDigestReader::Agent(*resident) =>
                     {
                         return Ok(None);
+                    }
+                    // A saved card stays its audience's: it must still exist,
+                    // and the reader must still be one of its recipients or a
+                    // live owner.
+                    WeaveItem::AgentHealth { card } => {
+                        match crate::dreamer_runner::maintenance::agent_health::agent_health_card_in_txn(
+                            self.vault,
+                            &txn,
+                            &card.card_ref(),
+                        )? {
+                            Some(current)
+                                if super::weave_report::weave_card_admitted(
+                                    self.vault, &txn, &current, id,
+                                )? => {}
+                            _ => return Ok(None),
+                        }
                     }
                     _ => {}
                 }
