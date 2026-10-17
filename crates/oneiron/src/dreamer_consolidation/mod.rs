@@ -95,6 +95,7 @@ pub use roles::{
     RoleBackend, RoleBackends, RoleCall,
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
+pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement,
     OpenConflict, ParkedConflictPass, SettledConflict, settle_parked_conflicts,
