@@ -1428,7 +1428,12 @@ def outputs():
         if body is None and start not in text: continue
         a=text.index(start)+len(start); b=text.index(end,a)
         files[path]=text[:a]+'\n'+body+'\n'+text[b:] if body is not None else text[:a-len(start)]+text[b+len(end):]
-    # Rendered last: every emitter above has named the types it uses.
+    # Rendered last: every emitter above has named the types it uses. OF-181:
+    # the hand-written lens-frame helpers (`POST
+    # /v1/core/lens-frames/{card_id}/events`, no verb row) name the engine's
+    # event, so it is a root here; their reply's `$state` and receipt are
+    # reached already.
+    INVENTORY.root_ir('crate::lens::GeneratedUiActionEvent')
     census = INVENTORY.census(FACADE_ROWS)
     facade_types = INVENTORY.typescript(census)
     files['packages/oneiron/src/facade-types.ts'] = facade_types
