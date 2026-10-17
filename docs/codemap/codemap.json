@@ -1318,7 +1318,7 @@
      "path": "src/anchored_annotation/codec.rs",
      "purpose": "MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -1450,7 +1450,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 8
      }
     },
@@ -1554,7 +1554,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AnnotationHold",
