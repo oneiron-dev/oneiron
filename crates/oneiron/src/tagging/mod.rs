@@ -71,8 +71,8 @@ pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn};
 pub(crate) use output::{check_links, check_span_order};
 pub(crate) use provisional::{
-    mint_for_span_in_txn, provisional_in_txn, refuse_held_id_in_txn, release_held_id_in_txn,
-    resolve_in_txn as resolve_provisional_in_txn,
+    confirm_in_txn as confirm_provisional_in_txn, mint_for_span_in_txn, provisional_in_txn,
+    refuse_held_id_in_txn, release_held_id_in_txn, resolve_in_txn as resolve_provisional_in_txn,
 };
 pub(crate) use save::{save_shadow_output_in_txn, shares_world_in_txn};
 pub(crate) use tags::{

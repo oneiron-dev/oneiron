@@ -76,6 +76,7 @@ impl WitnessTurnInput {
         Ok(WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
+            quote: None,
             messages,
             occurred_at,
         })
@@ -452,6 +453,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.weave.digest")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.weave.digest", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_lens(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.lens")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.lens", input))
             .map_err(raise)?;
         encode(&output)
     }

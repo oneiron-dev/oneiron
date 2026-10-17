@@ -24,26 +24,29 @@ impl<'v, O> ServedLinearEgress<'v, O> {
         }
     }
 
-    fn admit(
+    fn effect(
         &self,
         kind: LinearEffectKind,
         operation_id: [u8; 32],
         task_ref: EntityId,
         issue: Option<&LinearIssueRef>,
         fields: &MirroredTaskFields,
-    ) -> LinearSyncResult<()> {
-        self.vault.authorize_linear_effect(&LinearEffectRequest {
+    ) -> LinearEffectRequest {
+        LinearEffectRequest {
             operation_id,
             task_ref,
             scheduler_actor: self.scheduler_actor,
             issue: issue.cloned(),
             kind,
             fields: fields.clone(),
-        })?;
-        Ok(())
+        }
     }
 }
 
+/// Each mutation goes out as one [`LinearEffectRequest`]. The outbound
+/// admits it once for both actors: a bridge through
+/// [`Vault::authorize_linear_effect`], the recorded outbound door inside its
+/// own admission, so one remote mutation spends one allowance per key.
 impl<O: LinearEgress> LinearEgress for ServedLinearEgress<'_, O> {
     fn create_issue(
         &mut self,
@@ -51,14 +54,14 @@ impl<O: LinearEgress> LinearEgress for ServedLinearEgress<'_, O> {
         task_ref: EntityId,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
-        self.admit(
+        let effect = self.effect(
             LinearEffectKind::Create,
             operation_id,
             task_ref,
             None,
             fields,
-        )?;
-        self.outbound.create_issue(operation_id, task_ref, fields)
+        );
+        self.outbound.create_issue_admitted(self.vault, &effect)
     }
 
     fn update_issue_conditional(
@@ -72,14 +75,14 @@ impl<O: LinearEgress> LinearEgress for ServedLinearEgress<'_, O> {
             .link_for_issue(issue)?
             .ok_or(LinearSyncError::AuthorizationDenied)?
             .task_ref;
-        self.admit(
+        let effect = self.effect(
             LinearEffectKind::Update,
             operation_id,
             task_ref,
             Some(issue),
             fields,
-        )?;
+        );
         self.outbound
-            .update_issue_conditional(operation_id, issue, expected_remote, fields)
+            .update_issue_conditional_admitted(self.vault, &effect, expected_remote)
     }
 }

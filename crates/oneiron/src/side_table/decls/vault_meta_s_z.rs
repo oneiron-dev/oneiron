@@ -137,6 +137,10 @@ side_tables! {
     /// Owner-set inbox review dial (exceptions-only vs review-all), house per-feature dial pattern.
     /// Key: ().
     INBOX_REVIEW_DIAL: VaultMeta b"settings:inbox:v1:review_dial" Raw;
+    /// The owner's standing quota fallback for one model offer (OF-305): the engine model id its
+    /// calls go to while the offer is parked, set by a `use_fallback` answer. Owner policy, kept
+    /// apart from the deployment's runtime cooldowns. Key: hex64 (the offer's cooldown key).
+    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().

@@ -7,6 +7,7 @@ pub mod action_mode;
 pub mod agent_health;
 pub mod coach;
 pub mod coach_heal;
+pub mod code_fix;
 mod curator;
 mod evaluation;
 pub mod honesty;
