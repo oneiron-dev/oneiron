@@ -66,7 +66,7 @@ pub fn preserve_review_dissent(
             .map_err(|_| invalid_critic_config("dissent prediction encoding"))?;
         let receipt = vault
             .memory(actor.entity_ref(), actor.actor_class())
-            .author_take(TakeTarget::Claim(result.verdict_claim), markdown)
+            .author_dissent(TakeTarget::Claim(result.verdict_claim), markdown)
             .map_err(|error| invalid_critic_config(error.to_string()))?;
         state.note = Some(EntityId::from_hex(&receipt.id_hex)?);
         save_dissent(vault, &result.verdict_claim, &state)?;
