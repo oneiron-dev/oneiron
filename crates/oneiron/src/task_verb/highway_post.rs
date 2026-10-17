@@ -61,9 +61,9 @@ use super::wire_encode::canonical_bytes;
 /// Domain of a post's request digest.
 const POST_REQUEST_DOMAIN: &[u8] = b"oneiron.tasks.post.request.v1";
 /// Reason code of a proposal the addressed agent declined.
-const TAKE_DECLINED_REASON: &str = "tasks.take.declined";
+const TAKE_DECLINED_REASON: &str = "gate.tasks.take.declined";
 /// Reason code of a proposal the addressed agent took.
-const TAKE_ACCEPTED_REASON: &str = "tasks.take.accepted";
+const TAKE_ACCEPTED_REASON: &str = "gate.tasks.take.accepted";
 /// Reason code of a post whose addressed agent said yes but whose take was
 /// refused: the proposal stays in the owner's tray, and the post still
 /// answers `Proposed`.

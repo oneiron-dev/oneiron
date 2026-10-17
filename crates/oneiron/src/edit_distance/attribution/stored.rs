@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, FixedSideKey, HexId, Raw, RawValue, SideKey, SideTable};
+use crate::skill_attribution::AuditBatch;
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -190,6 +191,8 @@ pub(super) struct StoredAudit {
     pub(super) passed: u64,
     pub(super) abstained: u64,
     pub(super) at: u64,
+    /// The run's cases kept whole, and the floor they argue for (OF-542).
+    pub(super) batch: AuditBatch,
 }
 
 // ---------------------------------------------------------------------------

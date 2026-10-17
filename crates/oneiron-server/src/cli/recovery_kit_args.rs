@@ -96,6 +96,22 @@ pub struct RecoveryKitRestoreArgs {
     #[arg(long)]
     pub confirm_unverified: bool,
 
+    /// Restore the vault from its sealed cloud bundle on an install that holds
+    /// no copy of it yet: the bundle's file, with `--sealed-pads` and
+    /// `--vault-id`. The kit alone opens it.
+    #[arg(long, value_name = "FILE", requires = "sealed_pads")]
+    pub sealed_bundle: Option<PathBuf>,
+
+    /// With `--sealed-bundle`: the file of the pad object of the bundle's
+    /// generation.
+    #[arg(long, value_name = "FILE", requires = "sealed_bundle")]
+    pub sealed_pads: Option<PathBuf>,
+
+    /// With `--sealed-bundle`: the vault id the kit is bound to, 64 hex digits,
+    /// as `oneiron recovery-kit status` prints it.
+    #[arg(long, value_name = "HEX", requires = "sealed_bundle")]
+    pub vault_id: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

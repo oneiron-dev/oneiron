@@ -158,13 +158,10 @@ async fn serve_prepared<A: AppHost>(
         config.limits.connections(),
     )
     .await?;
-    // A machine that is not the elected home dials its home on that mesh.
-    let device_sync = crate::device_sync::DeviceSyncHost::start(
-        &mesh_server,
-        config.device_sync.as_ref(),
-        mesh.as_ref(),
-    )
-    .await;
+    // A machine that is not the elected home dials its home, on that mesh
+    // when the home has a paired address there.
+    let device_sync =
+        crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
     host.ready()?;
     let (stopping, mut stopped) = (started.stopping, started.stopped);
     let api = serve_channel(connections, app, header_read_timeout, stopped.clone());

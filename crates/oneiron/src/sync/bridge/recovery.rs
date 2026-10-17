@@ -92,11 +92,16 @@ pub(crate) fn preflight_canonical_recovery(
                 &edge.value,
             )?;
             if trusted_soft
-                && crate::batch::stored_entity_type(&vault.store, &txn, &target)?
-                    != Some(crate::registry::ENTITY_TYPE_PERSON)
+                && !matches!(
+                    crate::batch::stored_entity_type(&vault.store, &txn, &target)?,
+                    Some(
+                        crate::registry::ENTITY_TYPE_PERSON
+                            | crate::registry::ENTITY_TYPE_AGENT_DEF
+                    )
+                )
             {
                 return Err(ArtifactError::InvalidRecoveryArtifact(
-                    "retained addressing recipient missing or not a PERSON",
+                    "retained addressing recipient missing or not a PERSON or AGENT_DEF",
                 )
                 .into());
             }
