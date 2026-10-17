@@ -158,12 +158,17 @@ impl Memory<'_> {
             .into());
         }
         let changes = self.vault().code_document_semantic_diff(&before, &after)?;
-        Ok(Some(CodeDiffView {
+        let view = CodeDiffView {
             before: before_view,
             after: after_view,
             rendered: render_attributed_semantic_diff(&changes),
             changes: changes.into_iter().map(change_view).collect(),
-        }))
+        };
+        // A lifted key reads as its handle to all but the owner (OF-067).
+        self.lifted_view(view, || {
+            self.vault().code_document_lifted_keys(&[&before, &after])
+        })
+        .map(Some)
     }
 
     /// `vault.code.blame`: every unit of one tested state, with the
@@ -173,10 +178,12 @@ impl Memory<'_> {
             return Ok(None);
         };
         let units = self.vault().code_document_symbol_blame(&at)?;
-        Ok(Some(CodeBlameView {
+        let view = CodeBlameView {
             at: view,
             units: units.into_iter().map(unit_view).collect(),
-        }))
+        };
+        self.lifted_view(view, || self.vault().code_document_lifted_keys(&[&at]))
+            .map(Some)
     }
 }
 

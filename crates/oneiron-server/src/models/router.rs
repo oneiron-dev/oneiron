@@ -13,6 +13,9 @@ pub struct ModelRouter {
     /// Each configured chat model served alone by its own id, and the family
     /// its provider's config names for it.
     chat: BTreeMap<ModelId, Option<String>>,
+    /// The owner's aliases (`[models.aliases]`), each for a configured
+    /// model's id.
+    aliases: BTreeMap<String, ModelId>,
 }
 
 impl ModelRouter {
@@ -29,6 +32,17 @@ impl ModelRouter {
     /// `family`.
     pub(super) fn chat_model(&mut self, model: ModelId, family: Option<String>) {
         self.chat.insert(model, family);
+    }
+
+    /// Names the owner's aliases, each for the configured model it calls.
+    pub(super) fn name_aliases(&mut self, aliases: &BTreeMap<String, ModelId>) {
+        self.aliases.clone_from(aliases);
+    }
+
+    /// The configured model an owner alias names, when `[models.aliases]`
+    /// has it.
+    pub fn aliased(&self, alias: &str) -> Option<&ModelId> {
+        self.aliases.get(alias)
     }
 
     /// Every chat model this router serves alone by its own id (no seat, no

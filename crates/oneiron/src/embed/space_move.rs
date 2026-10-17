@@ -553,6 +553,7 @@ impl Vault {
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
+        self.embedding_move_ended();
         Ok(())
     }
 
@@ -778,6 +779,7 @@ impl Vault {
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
+        self.embedding_move_ended();
         Ok(())
     }
 
@@ -864,6 +866,9 @@ impl Vault {
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
+        if !expired.is_empty() {
+            self.embedding_move_ended();
+        }
         Ok(expired)
     }
 
@@ -914,6 +919,9 @@ impl Vault {
         let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
+        if concluded {
+            self.embedding_move_ended();
+        }
         let check = check.unwrap_or(SpaceMoveCheck {
             checked_at: at,
             kinds: Vec::new(),

@@ -28,6 +28,9 @@ use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
 use serde::{Deserialize, Serialize};
 use std::ops::ControlFlow;
 
+mod lift;
+pub(crate) use self::lift::{TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn};
+
 const HEADS: SideTable<EntityId, TypedBodyHead, Named> =
     SideTable::new(&side_table::TYPED_BODY_HEAD);
 const DOCS: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::TYPED_BODY_DOC);
@@ -622,7 +625,11 @@ fn commit_as<T>(
     if end <= 0 {
         return Err(invalid("the call changed nothing"));
     }
-    admit_body(vault, txn, doc, &before)?;
+    // A body that read as secret before the call and still does: the texts
+    // it leaves are marked, a lifted value keeping its record (OF-067).
+    if admit_body(vault, txn, doc, &before)? {
+        lift::remark_typed_body_in_txn(vault, txn, &entity, doc)?;
+    }
     bind_peer(vault, txn, peer, actor, made_by.at)?;
     Ok((
         value,
@@ -640,20 +647,25 @@ fn commit_as<T>(
 /// owner's switch before it is serialized (OF-067). A typed body's history is
 /// its receipt ledger, so no handle can replace what an operation wrote: a
 /// hit refuses the call, unless the body read the same way before it.
-fn admit_body(vault: &Vault, txn: &RoTxn<'_>, doc: &LoroDoc, before: &Frontiers) -> Result<()> {
+/// `true` when the door let a hit stand because the body read as secret
+/// before the call too.
+fn admit_body(vault: &Vault, txn: &RoTxn<'_>, doc: &LoroDoc, before: &Frontiers) -> Result<bool> {
     let read = |doc: &LoroDoc| {
         serde_json::to_vec(&doc.get_deep_value())
             .map_err(|_| Error::InvariantViolation("typed body state did not encode"))
     };
+    let mut stood = false;
     crate::batch::secret_scan::scan_document_in_txn(&vault.store, txn, &read(doc)?, || {
         if before.is_empty() {
             return Ok(None);
         }
+        stood = true;
         let prior = doc
             .fork_at(before)
             .map_err(|_| invalid("unknown typed body frontier"))?;
         read(&prior).map(Some)
-    })
+    })?;
+    Ok(stood)
 }
 
 /// Whether `made_by` is a receipt `actor` may give: its process names the

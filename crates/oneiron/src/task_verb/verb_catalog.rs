@@ -31,6 +31,7 @@ pub enum AgentVerb {
     TasksWave,
     VaultFanoutLaunch,
     VaultFanoutResume,
+    VaultFanoutResumeAs,
     VaultFanoutAck,
     TasksUpdate,
     VaultWitness,
@@ -343,6 +344,7 @@ impl AgentVerb {
         Self::TasksWave,
         Self::VaultFanoutLaunch,
         Self::VaultFanoutResume,
+        Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::VaultWitness,
@@ -658,6 +660,7 @@ impl AgentVerb {
             Self::TasksWave => "tasks.wave",
             Self::VaultFanoutLaunch => "vault.fanout.launch",
             Self::VaultFanoutResume => "vault.fanout.resume",
+            Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::VaultWitness => "vault.witness",
@@ -973,6 +976,7 @@ impl AgentVerb {
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
                 | Self::VaultFanoutResume
+                | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
@@ -1292,6 +1296,7 @@ impl AgentVerb {
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
                 | Self::VaultFanoutResume
+                | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
@@ -1637,6 +1642,7 @@ impl AgentVerb {
                 | Self::TasksWave
                 | Self::VaultFanoutLaunch
                 | Self::VaultFanoutResume
+                | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1930,6 +1936,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::TasksWave
                 | Self::VaultFanoutResume
+                | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
@@ -2154,6 +2161,7 @@ impl AgentVerb {
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
@@ -2467,6 +2475,7 @@ impl AgentVerb {
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
@@ -2824,10 +2833,13 @@ impl AgentVerb {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
             }
             Self::VaultFanoutLaunch => {
-                "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."
+                "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."
             }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
+            }
+            Self::VaultFanoutResumeAs => {
+                "A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember."
             }
             Self::VaultFanoutAck => {
                 "The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."

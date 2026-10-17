@@ -56,7 +56,8 @@ pub(crate) use self::step_only::{
 };
 
 pub(crate) use self::step_claim::{
-    deindex_dreamer_step_claim, index_dreamer_step_claim_for_put, terminal_step_identity,
+    deindex_dreamer_step_claim, forget_step_memo, index_dreamer_step_claim_for_put,
+    terminal_step_identity,
 };
 
 #[cfg(test)]

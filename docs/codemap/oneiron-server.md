@@ -17,7 +17,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/coach_heal.rs` | src | s | 5 crate-vis | — | The host Coach (ARCH-0066 #coach, OF-418) |
 | `src/ai_host/coach_health.rs` | src | s | 2 crate-vis | — | The host Coach's answer to an agent-health ask (agent-mind §3.5, OF-568) |
 | `src/ai_host/coach_host.rs` | src | m | 1 crate-vis | — | The host Coach's nightly jobs (ARCH-0066 #coach, OF-420) |
-| `src/ai_host/code_fix.rs` | src | m | 8 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
+| `src/ai_host/coach_host/seal_checks.rs` | src | s | 1 crate-vis | — | The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession… |
+| `src/ai_host/code_fix.rs` | src | m | 9 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/ai_host/code_mode.rs` | src | s | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
 | `src/ai_host/compaction.rs` | src | m | 7 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
 | `src/ai_host/compaction/tests.rs` | test | s | 1 crate-vis | — | A compaction pass is bounded work: it outlives the call that started it, so its thread holds a permit of its… |
@@ -152,7 +153,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
-| `src/api/facade/fanout_doors.rs` | src | s | 2 crate-vis | — | The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and… |
+| `src/api/facade/fanout_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and… |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 7 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/host_doors.rs` | src | L | 44 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
@@ -373,7 +374,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/recovery_kit_args.rs` | src | s | 5 struct · 1 enum | KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitRestoreArgs, RecoveryKitStatusArgs | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173) |
 | `src/cli/wake_args.rs` | src | s | 1 struct · 1 enum | WakeArgs, WakeCommand | Host-side wake inbox commands |
 | `src/cli/widen_proposal_args.rs` | src | s | 2 struct · 2 enum | WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand | `oneiron widen-proposals`: the context-widen proposals agents raised, on a stopped vault… |
-| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 19 re-export · 6 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 20 re-export · 6 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | m | 1 fn · 18 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | s | 7 crate-vis | — | A file holding a credential, readable by its owner alone |
 | `src/commands/dreamer.rs` | src | s | 1 fn | — | `oneiron dreamer grant`: the owner's weave grant, made offline, for a vault created before the Dreamer's… |
@@ -406,7 +407,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
 | `src/commands/seat.rs` | src | s | 4 fn | — | `oneiron seat …`: the owner's official-seat sign-in surface (OF-375) |
-| `src/commands/serve.rs` | src | m | 11 crate-vis | — | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
+| `src/commands/serve.rs` | src | m | 1 struct · 1 fn · 11 crate-vis | OpenedServedVault | The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then… |
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/unauthenticated_bind_tests.rs` | test | s | — | — | Unauthenticated mode (`--insecure-allow-unauthenticated` with no `auth_secret`) admits a request with no… |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
@@ -464,7 +465,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_host.rs` | src | L | 1 struct · 23 fn · 1 const · 13 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_verdict.rs` | src | m | 8 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/device_local.rs` | src | s | 6 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
-| `src/embedded.rs` | src | s | 1 fn | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
+| `src/embedded.rs` | src | m | 1 fn · 2 re-export | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
+| `src/embedded/engine.rs` | src | m | 4 struct · 20 fn | BlockingEngine, EmbeddedEngine, EmbeddedReply, EmbeddedRequest | The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding |
 | `src/embedder/admitted.rs` | src | s | 3 crate-vis | — | A remote embedder's requests under run admission (ARCH-0053 `#run-admission`) |
 | `src/embedder/endpoint.rs` | src | L | 16 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |
@@ -608,7 +610,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/forward.rs` | src | s | 2 crate-vis | — | One rung's stream handed to the caller event by event, up to its terminal or its failure |
 | `src/models/gemini_media.rs` | src | s | 1 crate-vis | — | The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key` |
 | `src/models/hosted_speech.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | HostedCloner | Hosted speech wires that are not OpenAI-compatible: ARCH-0061 §5's hosted realtime tier, Cartesia Sonic… |
-| `src/models/http.rs` | src | m | 19 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
+| `src/models/http.rs` | src | m | 21 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 10 fn · 16 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/media.rs` | src | L | 3 struct · 16 fn · 10 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
@@ -623,7 +625,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/rerank.rs` | src | s | 5 crate-vis | — | The rerank transport: the `reranker` role's rungs speak `/v1/rerank`, the indexed-scores protocol… |
 | `src/models/responses_socket.rs` | src | m | 4 crate-vis | — | Responses over a held socket (ARCH-0081 §5) |
 | `src/models/role_route.rs` | src | s | 2 struct · 1 enum · 3 fn | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
-| `src/models/router.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
+| `src/models/router.rs` | src | s | 1 struct · 5 fn · 4 crate-vis | ModelRouter | Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its… |
 | `src/models/run_backend.rs` | src | s | 1 struct · 1 fn | RunBackend | A ladder as an [`LlmBackend`], for engine code that calls a backend itself (the Dreamer's step layer) |
 | `src/models/served.rs` | src | s | 3 crate-vis | — | Which model actually answered: the receipt field a ladder fills in |
 | `src/models/soniox.rs` | src | L | 9 crate-vis | — | Soniox's real-time speech-to-text socket (OF-410): a live `[models.media.transcribe]` rung |
@@ -693,10 +695,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
 | `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
-| `src/server/live_runs.rs` | src | m | 24 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
+| `src/server/live_runs.rs` | src | m | 25 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
 | `src/server/media_embedding.rs` | src | m | 6 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
-| `src/server/mod.rs` | src | s | 3 re-export · 13 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 3 re-export · 14 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/organs.rs` | src | s | 2 crate-vis | — | The organs on the server's one host ([`SyncServer::organs`]): at boot it takes every organ an Active pack… |
 | `src/server/oversight.rs` | src | s | 1 enum · 5 crate-vis | OversightStartError | The healer oversight receipts (ARCH-0066 §8): each vault signs three counts about review work, coverage… |
 | `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
@@ -704,7 +706,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/reader_runner.rs` | src | L | 8 crate-vis | — | The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each… |
 | `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_rerank.rs` | src | s | 6 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
-| `src/server/resident_pump.rs` | src | L | 1 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |
+| `src/server/resident_pump.rs` | src | L | 2 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |
 | `src/server/run_host_door.rs` | src | m | 3 crate-vis | — | A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own… |
 | `src/server/slip_transport_tests.rs` | test | s | — | — | Slip-only transport admission with a historical receipt-key registry row |
 | `src/server/space_move.rs` | src | m | 4 crate-vis | — | The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`… |
