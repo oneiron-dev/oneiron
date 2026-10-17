@@ -33,7 +33,13 @@ where
             match transport.read_next().await {
                 Some(Ok(WsMessage::Binary(data))) => {
                     return match validate_protocol_hello(&data) {
-                        Ok(version) => HelloOutcome::Valid(version),
+                        Ok(version) => {
+                            // A valid hello's codec list always decodes.
+                            if let Ok(codecs) = protocol::decode_protocol_hello_codecs(&data) {
+                                transport.set_peer_codecs(codecs);
+                            }
+                            HelloOutcome::Valid(version)
+                        }
                         Err(_) => HelloOutcome::Reject("protocol version mismatch"),
                     };
                 }

@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
+mod codec;
+pub use codec::{
+    CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, LinkBytes, MAX_CODEC_INNER_BYTES,
+    MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket, codec_ids,
+    decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, process_link_bytes,
+};
 mod documents;
 pub use documents::{
     DocumentFrame, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT, decode_document,
@@ -27,9 +33,11 @@ pub const TAG_SYNC_UPDATE: u8 = 0;
 pub const TAG_EPHEMERAL: u8 = 1;
 /// Loro binary `VersionVector::encode()` bytes for sync negotiation.
 pub const TAG_VERSION_VECTOR: u8 = 2;
-/// Protocol-version hello: `[TAG_PROTOCOL_HELLO:1][version:1]`.
+/// Protocol-version hello: `[TAG_PROTOCOL_HELLO:1][version:1][codec ids:0..8]`.
 ///
-/// The client's FIRST frame on every connection. The server checks the
+/// The client's FIRST frame on every connection. The codec ids name the
+/// codec frames the client decodes ([`TAG_CODEC`]); a client that lists none,
+/// such as a light web client, gets plain frames. The server checks the
 /// version byte and closes with a 4xxx code on mismatch, so the NEXT wire
 /// break is detectable instead of surfacing as garbled decode errors
 /// mid-sync (ONE-1127).
@@ -299,9 +307,10 @@ impl From<EncodedFrame> for tokio_tungstenite::tungstenite::Bytes {
 
 /// Encodes the protocol-version hello frame.
 ///
-/// Format: `[TAG_PROTOCOL_HELLO:1][PROTOCOL_VERSION:1]` — exactly 2 bytes.
+/// Format: `[TAG_PROTOCOL_HELLO:1][PROTOCOL_VERSION:1][codec ids]`; every
+/// hello lists [`DECODED_CODEC_IDS`].
 pub fn encode_protocol_hello() -> Vec<u8> {
-    vec![TAG_PROTOCOL_HELLO, PROTOCOL_VERSION]
+    codec::hello_frame(PROTOCOL_VERSION)
 }
 
 /// Encodes the legacy full-window protocol hello frame.
@@ -311,39 +320,40 @@ pub fn encode_protocol_hello() -> Vec<u8> {
 /// cannot downgrade themselves to a full-window export after negotiating the
 /// selector protocol.
 pub fn encode_legacy_full_window_protocol_hello() -> Vec<u8> {
-    vec![TAG_PROTOCOL_HELLO, LEGACY_FULL_WINDOW_PROTOCOL_VERSION]
+    codec::hello_frame(LEGACY_FULL_WINDOW_PROTOCOL_VERSION)
 }
 
 /// Encodes the chunk-capable owner/full-window hello, distinct from selector v9.
 pub fn encode_chunk_full_window_protocol_hello() -> Vec<u8> {
-    vec![TAG_PROTOCOL_HELLO, CHUNK_FULL_WINDOW_PROTOCOL_VERSION]
+    codec::hello_frame(CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
 }
 
 /// Encodes the own-device opened-item residence hello.
 pub fn encode_residence_protocol_hello() -> Vec<u8> {
-    vec![TAG_PROTOCOL_HELLO, RESIDENCE_PROTOCOL_VERSION]
+    codec::hello_frame(RESIDENCE_PROTOCOL_VERSION)
 }
 
 /// Encodes the owner hello of a client that installs window replacements (v13).
 pub fn encode_replacement_full_window_protocol_hello() -> Vec<u8> {
-    vec![TAG_PROTOCOL_HELLO, REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION]
+    codec::hello_frame(REPLACEMENT_FULL_WINDOW_PROTOCOL_VERSION)
 }
 
 /// Encodes the residence hello of a client that installs window replacements (v14).
 pub fn encode_replacement_residence_protocol_hello() -> Vec<u8> {
-    vec![TAG_PROTOCOL_HELLO, REPLACEMENT_RESIDENCE_PROTOCOL_VERSION]
+    codec::hello_frame(REPLACEMENT_RESIDENCE_PROTOCOL_VERSION)
 }
 
 /// Decodes a protocol-version hello frame (the FULL frame, tag included).
 ///
 /// Returns the peer's protocol version byte. Rejects anything that is not
-/// exactly `[TAG_PROTOCOL_HELLO, version]` — version comparison is the
-/// caller's responsibility (the decoder must surface a mismatched version,
-/// not hide it).
+/// `[TAG_PROTOCOL_HELLO, version]` plus at most [`MAX_HELLO_CODECS`] codec
+/// ids — version comparison is the caller's responsibility (the decoder must
+/// surface a mismatched version, not hide it). The codec list is
+/// [`decode_protocol_hello_codecs`].
 pub fn decode_protocol_hello(frame: &[u8]) -> Result<u8, TransportError> {
-    if frame.len() != 2 {
+    if !(2..=2 + MAX_HELLO_CODECS).contains(&frame.len()) {
         return Err(TransportError::InvalidPayload(
-            "protocol hello must be exactly 2 bytes",
+            "protocol hello must be a tag, a version and at most 8 codec ids",
         ));
     }
     if frame[0] != TAG_PROTOCOL_HELLO {

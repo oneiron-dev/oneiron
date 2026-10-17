@@ -3,12 +3,17 @@
 use std::sync::Arc;
 use std::task::Poll;
 
-use axum::extract::ws::Message as WsMessage;
+use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes};
 use futures_util::{SinkExt, Stream, StreamExt};
+use oneiron::sync::transport::{
+    LinkBytes, MAX_CODEC_INNER_BYTES, TAG_CODEC, TransportError, WireCodecs, decode_codec_frame,
+    encode_codec_frame,
+};
 use tokio::time::Duration;
 
 use super::connection::session_credential_revoked;
 use crate::auth::RevokedTokenJtis;
+use crate::protocol::close_codes;
 
 /// Out-buffer size an outbound frame must exceed before the WebSocket codec
 /// writes it straight to the socket, in bytes.
@@ -198,6 +203,13 @@ pub(super) struct GuardedTransport<S> {
     /// one value and drive the real write-through — a refusal that can only be
     /// exercised at `usize::MAX` is a refusal no test can prove.
     write_through_threshold: usize,
+    /// The codec frames the peer's hello said it decodes (ARCH-0081 §7).
+    /// Plain until the hello is read.
+    peer_codecs: WireCodecs,
+    /// The largest inner frame an inbound codec frame may unwrap to.
+    max_inner: usize,
+    /// Raw and wire bytes per inner tag on this link.
+    link_bytes: LinkBytes,
 }
 
 impl<S, E> GuardedTransport<S>
@@ -239,7 +251,24 @@ where
             app_jti: None,
             conn_id,
             write_through_threshold,
+            peer_codecs: WireCodecs::NONE,
+            max_inner: MAX_CODEC_INNER_BYTES,
+            link_bytes: LinkBytes::default(),
         }
+    }
+
+    /// Caps what an inbound codec frame may unwrap to: the socket's own
+    /// `max_frame_size`, so a compressed frame never carries more than a plain
+    /// one could (ARCH-0081 §7).
+    pub(super) fn with_inbound_cap(mut self, max_inner: usize) -> Self {
+        self.max_inner = max_inner.min(MAX_CODEC_INNER_BYTES);
+        self
+    }
+
+    /// Records the codecs the peer's hello listed; binary sends after this
+    /// wrap frames it decodes.
+    pub(super) fn set_peer_codecs(&mut self, codecs: WireCodecs) {
+        self.peer_codecs = codecs;
     }
 
     fn credential_revoked(&self) -> bool {
@@ -264,7 +293,47 @@ where
             self.socket.take();
             return None;
         }
-        frame
+        match frame {
+            Some(Ok(WsMessage::Binary(data))) => self
+                .unwrap_inbound(&data)
+                .await
+                .map(|inner| Ok(WsMessage::Binary(inner.map_or(data, Into::into)))),
+            other => other,
+        }
+    }
+
+    /// Unwraps one inbound codec frame and counts the frame. `Some(None)` is a
+    /// plain frame to pass on as it came. A frame that will not unwrap within
+    /// the cap closes the socket with a protocol error: `None`.
+    async fn unwrap_inbound(&mut self, data: &[u8]) -> Option<Option<Vec<u8>>> {
+        let Some(&tag) = data.first() else {
+            return Some(None);
+        };
+        if tag != TAG_CODEC {
+            self.link_bytes.record_received(tag, data.len(), data.len());
+            return Some(None);
+        }
+        match decode_codec_frame(data, self.max_inner) {
+            Ok(inner) => {
+                self.link_bytes
+                    .record_received(inner[0], inner.len(), data.len());
+                Some(Some(inner))
+            }
+            Err(error) => {
+                tracing::warn!(conn_id = self.conn_id, %error, "codec frame refused — closing");
+                let code = match error {
+                    TransportError::FrameTooLarge { .. } => close_codes::FRAME_TOO_LARGE,
+                    _ => close_codes::DECODE_ERROR,
+                };
+                self.send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                    code,
+                    reason: Utf8Bytes::from_static("codec frame refused"),
+                })))
+                .await;
+                self.abort();
+                None
+            }
+        }
     }
 
     /// Whether this payload can be queued without risking a write-through.
@@ -357,6 +426,10 @@ where
     /// process, the sink's own queue included, is revocable.
     #[must_use]
     pub(super) async fn send_binary(&mut self, data: Vec<u8>) -> bool {
+        // The codec frame wraps here, after the internal routing tag is gone
+        // and before any consult, so every outbound kind gets it and the
+        // threshold below is judged on the bytes that will be queued.
+        let data = self.wrap_outbound(data);
         // Before anything is handed to the codec: a frame that could reach the
         // write-through threshold is refused outright, because queuing it would
         // put its bytes on the wire from inside `start_send` — between the
@@ -458,6 +531,18 @@ where
         self.guarded_flush().await
     }
 
+    /// Wraps one outbound frame for the peer's codecs, when it is big enough
+    /// and shrinks (ARCH-0081 §7), and counts it.
+    fn wrap_outbound(&self, data: Vec<u8>) -> Vec<u8> {
+        let Some(&tag) = data.first() else {
+            return data;
+        };
+        let raw = data.len();
+        let wire = encode_codec_frame(&data, self.peer_codecs).unwrap_or(data);
+        self.link_bytes.record_sent(tag, raw, wire.len());
+        wire
+    }
+
     /// Drains the codec's out-buffer BEFORE an application frame is queued.
     ///
     /// Same posture as [`Self::guarded_flush`] and the same loop, but it runs
@@ -551,11 +636,26 @@ where
     /// Sends one non-binary control frame, bypassing the revocation consult.
     ///
     /// The single documented exception to the chokepoint: the hello-rejection
-    /// close frame carries no vault state and IS the refusal, so gating it on
-    /// the credential's liveness could only turn one refusal into another.
+    /// close frame (and the codec-frame refusal's) carries no vault state and
+    /// IS the refusal, so gating it on the credential's liveness could only
+    /// turn one refusal into another.
     pub(super) async fn send_unguarded_close_frame(&mut self, close: WsMessage) {
         if let Some(socket) = self.socket.as_mut() {
             let _ = socket.send(close).await;
         }
+    }
+}
+
+impl<S> Drop for GuardedTransport<S> {
+    fn drop(&mut self) {
+        let ((out_raw, out_sent), (in_raw, in_received)) = self.link_bytes.totals();
+        tracing::debug!(
+            conn_id = self.conn_id,
+            out_raw,
+            out_sent,
+            in_raw,
+            in_received,
+            "link bytes"
+        );
     }
 }
