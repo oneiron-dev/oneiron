@@ -364,7 +364,7 @@ pub(crate) fn erase_person_about_in_txn(
     let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
         return Ok(());
     };
-    row.asked = FACTS_MOVED;
+    row.moved = true;
     row.lines.clear();
     row.previous = None;
     PERSON_ABOUT.put(store, txn, &person, &row)
