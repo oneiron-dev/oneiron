@@ -279,8 +279,9 @@ impl ActionRegistry {
     }
     /// Offers the run rows that act on their caller's live agent run
     /// (`tasks.refuse`, `self.agents.spawn`, `self.team.start`,
-    /// `self.team.record`, `self.team.submit`, and the leader's `self.leader.advice` and
-    /// `self.leader.pattern` on the planner the host lends beside it) under
+    /// `self.team.record`, `self.team.submit`, the leader's
+    /// `self.leader.advice` and `self.leader.pattern` on the planner the host
+    /// lends beside it, and the fold rows on the run's own log) under
     /// their own names, as the memory rows are offered. Each runs only when the host binds the run's lease
     /// ([`ActionHostBinding::live_run`]), read live, so the call is the run's
     /// own: its parent, actor and lease are the run's, never the body's.
@@ -576,9 +577,15 @@ impl ActionRegistry {
         let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(frozen, seed));
         let generation = vault.put_code_run_replay_record_if_generation(&record, None)?;
         let dispatcher = match &leased {
-            Some(record) => {
-                GatedActorWrite::for_action_attempt(vault, actor, run_id.to_hex(), record)?
-            }
+            Some(record) => GatedActorWrite::for_action_attempt(
+                vault,
+                actor,
+                run_id.to_hex(),
+                record,
+                live_run
+                    .as_ref()
+                    .and_then(crate::task_verb::HostBinding::executor_run),
+            )?,
             None => GatedActorWrite::new(vault, actor, run_id.to_hex())?,
         };
         let dispatcher = match owner {
