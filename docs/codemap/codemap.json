@@ -17689,24 +17689,30 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "AgentHealthCard",
+      "AgentHealthCardView",
       "AgentHealthConfidence",
       "AgentHealthCounter",
       "AgentHealthMove",
       "AgentHealthOutcome",
-      "AgentHealthTone"
+      "AgentHealthRunTree",
+      "AgentHealthTone",
+      "ConcernCardRequest",
+      "ConcernCardSummary",
+      "ConcernOutcome",
+      "ConcernOutcomeRequest"
      ],
      "path": "src/dreamer_runner/maintenance/agent_health.rs",
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
-      "const": 9,
+      "const": 10,
       "crate-vis": 2,
-      "enum": 5,
-      "fn": 7,
-      "struct": 1
+      "enum": 6,
+      "fn": 12,
+      "struct": 6
      }
     },
     {
@@ -27084,7 +27090,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 9,
       "re-export": 12
      }
@@ -27605,7 +27611,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 5
      }
     },
@@ -27718,7 +27724,7 @@
      "path": "src/llm/step/trap_binding.rs",
      "purpose": "Device-local trap-anchor binding rows (attempt/step-hash/park-owner ground truth for consume)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -28118,7 +28124,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DiaryAgentRead",
@@ -28139,9 +28145,9 @@
      "purpose": "The reason-logged door to an agent's diary (OF-490, owner AGM-1+8)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
-      "fn": 12,
+      "fn": 13,
       "struct": 9
      }
     },
@@ -44556,7 +44562,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 189
+      "fn": 210
      }
     },
     {
@@ -49466,7 +49472,7 @@
     "dreamer_runner": {
      "files": 41,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Private Dreamer runner store plus atomic admission"
     },
@@ -50444,7 +50450,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 126,
+   "over_bar": 127,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3046,
    "test_files": 903
@@ -52553,13 +52559,27 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "DesktopGuest",
+      "DesktopSession"
+     ],
+     "path": "src/desktop.rs",
+     "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…",
+     "surface": {
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -52574,12 +52594,15 @@
       "ClickInput",
       "CropInput",
       "DecideStep",
+      "DesktopWindow",
       "EffectReceipt",
       "ExpectInput",
       "ExpectOutput",
       "FindInput",
       "FindOutput",
+      "HotkeyInput",
       "ImageOutput",
+      "KeyInput",
       "NoDecider",
       "Observation",
       "ObserveInput",
@@ -52594,6 +52617,8 @@
       "ScreenshotInput",
       "ScreenshotOutput",
       "ScreenshotTrigger",
+      "ScrollDirection",
+      "ScrollInput",
       "SelectInput",
       "SendPolicy",
       "SubgoalStatus",
@@ -52601,16 +52626,19 @@
       "ViewInput",
       "WaitForInput",
       "WaitForOutput",
+      "WindowInput",
+      "WindowsInput",
+      "WindowsOutput",
       "ZoomInput"
      ],
      "path": "src/lib.rs",
      "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
       "const": 9,
-      "enum": 6,
-      "fn": 8,
-      "re-export": 3,
-      "struct": 28,
+      "enum": 7,
+      "fn": 9,
+      "re-export": 4,
+      "struct": 35,
       "trait": 2
      }
     },
@@ -52645,6 +52673,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/mcp.rs",
+     "purpose": "MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outline.rs",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
@@ -52661,6 +52699,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
+      "crate-vis": 2,
       "fn": 10,
       "struct": 2
      }
@@ -52673,6 +52712,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…"
+    },
+    "desktop": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
      "files": 1,
@@ -52687,6 +52733,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…"
+    },
+    "mcp": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader…"
     },
     "outline": {
      "files": 1,
@@ -52703,9 +52756,9 @@
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 6,
+   "source_files": 8,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -58186,7 +58239,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 163
+      "fn": 165
      }
     },
     {
@@ -59200,7 +59253,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 164
+      "fn": 166
      }
     },
     {
@@ -62347,7 +62400,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/concern_routes.rs",
-     "purpose": "`/v1/owner/inbox/concern/outcome`: the owner settles one of the Coach's agent-health cards (OF-568)…",
+     "purpose": "`/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health cards (OF-568) with its run-tree…",
      "surface": {
       "crate-vis": 1
      }
@@ -62468,6 +62521,16 @@
      "notable": [],
      "path": "src/api/owner_routes/pack_routes.rs",
      "purpose": "`/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/pad_routes.rs",
+     "purpose": "`/v1/owner/pads/read`: the owner reads an agent's sealed scratchpads, stating a reason the agent sees in its…",
      "surface": {
       "crate-vis": 1
      }
@@ -63941,6 +64004,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DesktopConfig"
+     ],
+     "path": "src/config/desktop.rs",
+     "purpose": "`[desktop]`: the guest a code run's `self.desktop.*` verbs drive",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -64100,8 +64177,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 1,
-      "mod": 10,
-      "re-export": 16
+      "mod": 11,
+      "re-export": 17
      }
     },
     {
@@ -66850,8 +66927,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 16,
-      "fn": 16,
+      "crate-vis": 17,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -67720,7 +67797,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 259,
+     "files": 260,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67776,7 +67853,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68037,7 +68114,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 495,
+   "source_files": 497,
    "test_files": 182
   },
   "oneiron-spawn": {
