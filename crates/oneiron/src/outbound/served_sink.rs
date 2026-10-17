@@ -13,15 +13,23 @@
 //! event's own reply token while the token is fresh, and otherwise pushes to
 //! the sender. A push is counted against the account's monthly allowance
 //! first; past it the send asks whether everything is okay and still goes.
+//!
+//! Slack (OF-519): a send that answers an inbound Slack message posts into
+//! that message's own conversation and thread; any other send posts to the
+//! target user's direct message.
 
 use std::io::Read;
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use super::intent::OutboundIntentSource;
-use crate::channel_identity_provider::{DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL};
+use super::reply_content::CONNECTOR_REPLY_BODY_PREFIX;
+use crate::channel_identity_provider::{
+    DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, SLACK_CHANNEL,
+};
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::surface_event::SurfaceConnectorPayload;
@@ -34,6 +42,12 @@ const SLACK_CONNECTION: &str = "slack-app";
 const MAX_REPLY_BYTES: u64 = 64 * 1024;
 /// Slack refuses a message longer than this many characters.
 const SLACK_MAX_TEXT_CHARS: usize = 40_000;
+/// What the Slack adapter puts between a workspace and a sender's user id.
+const SLACK_USER_TARGET_INFIX: &str = ":user:";
+/// A reply to a Slack message posted outside a direct message opens a thread
+/// under it, so a channel is not filled with the agent's answers. A message
+/// already in a thread is answered in that thread either way.
+const SLACK_THREAD_CHANNEL_REPLIES: bool = true;
 /// The execution field a provider's own cool-down travels on.
 const RETRY_AFTER_FIELD: &str = "retry_after";
 
@@ -61,8 +75,12 @@ const LINE_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl Vault {
     /// The plain text an outbound content ref sends, when this engine has a
-    /// typed loader for it: today, a commitment reminder.
+    /// typed loader for it: an agent's connector reply body, or a commitment
+    /// reminder.
     pub fn outbound_content_text(&self, content_ref: &str) -> Result<Option<String>> {
+        if content_ref.starts_with(CONNECTOR_REPLY_BODY_PREFIX) {
+            return self.connector_reply_body_text(content_ref);
+        }
         self.commitment_reminder_text(content_ref)
     }
 }
@@ -137,6 +155,9 @@ impl<'a> ServedChannelSink<'a> {
             return OutboundExecutionOutcome::failed("content_unresolvable");
         };
         let text: String = text.chars().take(SLACK_MAX_TEXT_CHARS).collect();
+        let Some((channel, thread_ts)) = self.slack_destination(request) else {
+            return OutboundExecutionOutcome::failed("slack_target_unrecognized");
+        };
         let secret = match self
             .vault
             .verified_pack_connection_secret(SLACK_PACK, SLACK_CONNECTION)
@@ -144,7 +165,10 @@ impl<'a> ServedChannelSink<'a> {
             Ok(secret) => secret,
             Err(_) => return OutboundExecutionOutcome::failed("slack_connection_unchecked"),
         };
-        let body = serde_json::json!({ "channel": request.intent.target, "text": text });
+        let mut body = serde_json::json!({ "channel": channel, "text": text });
+        if let Some(thread_ts) = thread_ts {
+            body["thread_ts"] = serde_json::Value::String(thread_ts);
+        }
         let mut outcome = None;
         let _door = self.vault.inject_secret_at_door(
             &secret.name,
@@ -159,6 +183,30 @@ impl<'a> ServedChannelSink<'a> {
         // Once the POST ran, what Slack said is the delivery fact, whatever
         // the door reports after it.
         outcome.unwrap_or_else(|| OutboundExecutionOutcome::failed("slack_credential_unavailable"))
+    }
+
+    /// Where a Slack send posts: the answered message's own conversation and
+    /// thread ([`slack_reply_thread`]) when the send answers an inbound Slack
+    /// message, else the target user's direct message (Slack opens it from
+    /// the user id) or a bare channel id. `None` for a target Slack cannot
+    /// address.
+    fn slack_destination(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+    ) -> Option<(String, Option<String>)> {
+        if let Some(body) = self.answered_provider_event(request, SLACK_CHANNEL)
+            && let Some(channel) = body
+                .pointer("/event/channel")
+                .and_then(serde_json::Value::as_str)
+                .filter(|channel| !channel.is_empty())
+        {
+            return Some((channel.to_owned(), slack_reply_thread(&body)));
+        }
+        let target = request.intent.target.as_str();
+        let to = target
+            .rsplit_once(SLACK_USER_TARGET_INFIX)
+            .map_or(target, |(_, user)| user);
+        (!to.is_empty() && !to.contains(':')).then(|| (to.to_owned(), None))
     }
 
     fn slack_send(&self, token: &str, body: &serde_json::Value) -> OutboundExecutionOutcome {
@@ -312,12 +360,15 @@ impl<'a> ServedChannelSink<'a> {
         }
     }
 
-    /// The fresh reply token of the inbound LINE event this send answers:
-    /// the intent's trigger names the connector event, its frozen origin
-    /// names the archived provider event, and the archive keeps the token.
-    /// `None` when the send answers no LINE event, the event is not this
-    /// send's sender's, or it is older than [`LINE_REPLY_TOKEN_FRESH_SECS`].
-    fn line_reply_token(&self, request: &OutboundExecutionRequest<'_>) -> Option<String> {
+    /// The archived provider event on `channel` this send answers: the
+    /// intent's trigger names the connector event, and its frozen origin
+    /// names the archived provider event. `None` when the send answers no
+    /// event on `channel`, or the event is not this send's target's.
+    fn answered_provider_event(
+        &self,
+        request: &OutboundExecutionRequest<'_>,
+        channel: &str,
+    ) -> Option<serde_json::Value> {
         let intent = request.intent;
         if intent.intent_source != OutboundIntentSource::AgentImmediate.as_str() {
             return None;
@@ -326,12 +377,12 @@ impl<'a> ServedChannelSink<'a> {
         let event = match self.vault.connector_event_woken(agent, &intent.trigger_ref) {
             Ok(event) => event?,
             Err(error) => {
-                tracing::info!(%error, "the answered LINE event is unreadable; the send pushes");
+                tracing::info!(%error, channel, "the answered event is unreadable");
                 return None;
             }
         };
         let origin = SurfaceConnectorPayload::from_connector_event(&event).ok()?;
-        if origin.channel != LINE_CHANNEL || origin.source.user_ref != intent.target {
+        if origin.channel != channel || origin.source.user_ref != intent.target {
             return None;
         }
         let body = match self
@@ -340,10 +391,19 @@ impl<'a> ServedChannelSink<'a> {
         {
             Ok(body) => body?,
             Err(error) => {
-                tracing::info!(%error, "the archived LINE event is unreadable; the send pushes");
+                tracing::info!(%error, channel, "the answered event's archive is unreadable");
                 return None;
             }
         };
+        serde_json::from_slice(&body).ok()
+    }
+
+    /// The fresh reply token of the inbound LINE event this send answers;
+    /// the archive keeps the token. `None` when the send answers no LINE
+    /// event, the event is not this send's sender's, or it is older than
+    /// [`LINE_REPLY_TOKEN_FRESH_SECS`]: the send pushes.
+    fn line_reply_token(&self, request: &OutboundExecutionRequest<'_>) -> Option<String> {
+        let body = self.answered_provider_event(request, LINE_CHANNEL)?;
         fresh_line_reply_token(&body, crate::unix_seconds_now())
     }
 
@@ -481,10 +541,35 @@ fn line_text(text: &str) -> String {
         .collect()
 }
 
+/// The thread a reply to an archived Slack message posts in: the message's
+/// own thread, else, under [`SLACK_THREAD_CHANNEL_REPLIES`], a new thread
+/// under a message posted outside a direct message. A direct message is
+/// answered in line.
+fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
+    let event = body.get("event")?;
+    let ts = |field: &str| {
+        event
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|ts| !ts.is_empty())
+            .map(str::to_owned)
+    };
+    if let Some(thread) = ts("thread_ts") {
+        return Some(thread);
+    }
+    let direct = event
+        .get("channel_type")
+        .and_then(serde_json::Value::as_str)
+        == Some("im");
+    if SLACK_THREAD_CHANNEL_REPLIES && !direct {
+        return ts("ts");
+    }
+    None
+}
+
 /// The reply token an archived LINE event carries, while the event is
 /// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
-fn fresh_line_reply_token(body: &[u8], now: u64) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+fn fresh_line_reply_token(value: &serde_json::Value, now: u64) -> Option<String> {
     let token = value.pointer("/event/replyToken")?.as_str()?.trim();
     let at = value.pointer("/event/timestamp")?.as_u64()? / 1000;
     (!token.is_empty() && now.saturating_sub(at) < LINE_REPLY_TOKEN_FRESH_SECS)
@@ -526,5 +611,44 @@ impl OutboundExecutionSink for ServedChannelSink<'_> {
             (LINE_CHANNEL, "push") => self.line_send(request, LineMode::Push),
             _ => OutboundExecutionOutcome::failed("no_served_transport_for_channel"),
         }
+    }
+}
+
+/// The served sink a host keeps past one borrow of its vault: a connector
+/// event responder's. Each send builds its client and runs on a thread of
+/// its own, so its blocking HTTPS calls never run on, and its client is
+/// never dropped inside, the async runtime the responder is called from.
+pub struct OwnedServedChannelSink {
+    vault: Arc<Vault>,
+    /// The LINE account plan's monthly push allowance.
+    line_push_allowance: u32,
+}
+
+impl OwnedServedChannelSink {
+    #[must_use]
+    pub fn new(vault: Arc<Vault>, line_push_allowance: u32) -> Self {
+        Self {
+            vault,
+            line_push_allowance,
+        }
+    }
+}
+
+impl OutboundExecutionSink for OwnedServedChannelSink {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        let vault = self.vault.as_ref();
+        let allowance = self.line_push_allowance;
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| match ServedChannelSink::new(vault) {
+                    Ok(sink) => sink.with_line_push_allowance(allowance).execute(request),
+                    Err(_) => OutboundExecutionOutcome::failed("served_send_client_unavailable"),
+                })
+                .join()
+        })
+        // A send that panicked may have reached the provider.
+        .unwrap_or_else(|_| {
+            OutboundExecutionOutcome::failed("served_send_panicked").with_possible_delivery()
+        })
     }
 }

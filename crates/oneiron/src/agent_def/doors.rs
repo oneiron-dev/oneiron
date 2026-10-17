@@ -284,6 +284,71 @@ impl Vault {
         })
     }
 
+    /// Applies an accepted acting revision of agent `id`'s charter (OF-379),
+    /// as `owner`, in one write transaction: the revision's stored text is
+    /// appended to the definition's instructions, the version moves, and the
+    /// revision is marked Applied with that version. Every other field and
+    /// the ceiling pin stay. A revision already applied returns the live
+    /// definition and writes nothing. Only a charter revision whose actor is
+    /// `id` applies here; a brief revision keeps its scope and waits for its
+    /// brief's own door.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds or its actor does not own this vault;
+    /// [`Error::EntityNotFound`] for an unknown revision or definition;
+    /// [`Error::InvalidClaimBody`] for a revision of another target, or one
+    /// not accepted; an encoding refusal when the grown instructions no
+    /// longer fit, which writes nothing.
+    pub fn apply_agent_acting_revision(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        revision_id: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<AgentDefinition> {
+        use crate::edit_distance::compile::{
+            ActingTarget, RevisionStatus, acting_revision_in_txn,
+            mark_acting_revision_applied_in_txn,
+        };
+        self.with_write_txn(|txn| {
+            let by = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let revision =
+                acting_revision_in_txn(self, txn, revision_id)?.ok_or(Error::EntityNotFound)?;
+            if revision.target != (ActingTarget::Charter { actor: *id }) {
+                return Err(Error::InvalidClaimBody(
+                    "an agent definition applies only a charter revision for that agent",
+                ));
+            }
+            let existing = self.read_agent_definition_in_txn(txn, id)?;
+            match revision.status {
+                RevisionStatus::Accepted { .. } => {}
+                RevisionStatus::Applied { .. } => return Ok(existing),
+                _ => {
+                    return Err(Error::InvalidClaimBody(
+                        "only an accepted acting revision is applied",
+                    ));
+                }
+            }
+            let mut updated = existing.clone();
+            updated.instructions = Some(match existing.instructions.as_deref() {
+                Some(prior) if !prior.trim().is_empty() => format!("{prior}\n\n{}", revision.text),
+                _ => revision.text.clone(),
+            });
+            let seed = serde_json::to_vec(&(&existing.version, &revision.id))
+                .map_err(|_| Error::InvariantViolation("acting revision version encode"))?;
+            updated.version = format!("acting-{}", blake3::hash(&seed).to_hex());
+            validate_agent_definition_update(&existing, &updated)?;
+            let data = encode_agent_definition(&updated)?;
+            self.apply_agent_definition_body(txn, id, occurred, learned_at, data)?;
+            let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            mark_acting_revision_applied_in_txn(self, txn, &revision.id, by, &updated.version, at)?;
+            Ok(updated)
+        })
+    }
+
     /// Returns the decoded `AgentDefinition` for `id`, or `None` if absent.
     pub fn get_agent_definition(&self, id: &EntityId) -> Result<Option<AgentDefinition>> {
         let Some(raw) = self.get_raw(id)? else {

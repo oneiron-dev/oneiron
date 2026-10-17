@@ -171,9 +171,22 @@ pub(crate) fn withdrawn_keyframe_envelope(envelope: &[u8]) -> Result<Option<Vec<
     Ok(Some(out))
 }
 
+/// What erasure leaves of stored row `envelope` (its header, then its body):
+/// an epoch summary keeps its keyframe, as a withdrawn one does, so epoch
+/// numbering never restarts under an erased epoch; any other row keeps its
+/// header only.
+pub(crate) fn erased_form(envelope: &[u8]) -> ScrubbedRecord {
+    crate::batch::EntityMetadataHeader::parse(envelope)
+        .filter(|header| header.entity_type == ENTITY_TYPE_SUMMARY)
+        .and_then(|_| envelope.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
+        .and_then(WithdrawnKeyframe::of_stored)
+        .map_or(ScrubbedRecord::Shell, ScrubbedRecord::WithdrawnEpoch)
+}
+
 /// Takes withdrawn epoch summary `id`'s words from its row and from the
 /// carriers beside it on this device: its document, its row revisions, its
-/// short-id rows and the L2 cache. The row keeps its header and keyframe.
+/// short-id rows and the L2 cache. The row keeps its header and keyframe, or
+/// only its header when its keyframe keys do not decode.
 ///
 /// The caller has marked `id` stale, recorded its worlds and walked every
 /// epoch written from it; the keyframe still reads as an epoch for any walk
@@ -222,8 +235,7 @@ pub(crate) fn scrub_withdrawn_epoch_in_txn(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .erase(id, store.env.info().last_txn_id);
-    if let Some(keyframe) = keyframe {
-        store.port_entity_scrub(txn, id, ScrubbedRecord::WithdrawnEpoch(keyframe), at)?;
-    }
+    let scrubbed = keyframe.map_or(ScrubbedRecord::Shell, ScrubbedRecord::WithdrawnEpoch);
+    store.port_entity_scrub(txn, id, scrubbed, at)?;
     Ok(())
 }

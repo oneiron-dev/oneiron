@@ -238,7 +238,10 @@ pub(crate) use gate::{
 
 pub(crate) use self::goal_binding::validate_goal_birth_in_txn;
 use self::goal_binding::{GOAL_ID_KEY, SkillGoalId};
-pub(crate) use self::job::{SKILL_EDIT_CYCLE_RUN_PREFIX, proven_cycle};
+pub(crate) use self::job::{
+    SKILL_EDIT_CYCLE_RUN_PREFIX, SkillRepairStamp, propose_skill_repair_in_txn, proven_cycle,
+    skill_repair_brief, validate_skill_draft,
+};
 
 use self::dials::invalid;
 use self::tier::tier_verdict_in_txn;

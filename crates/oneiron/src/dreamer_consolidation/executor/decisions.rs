@@ -93,12 +93,14 @@ pub(super) fn id_options(ids: &[EntityId], none: bool) -> Vec<Vec<String>> {
 pub(super) fn named_id(decisions: Vec<&KeptDecision>) -> Option<EntityId> {
     decisions
         .into_iter()
-        .filter_map(|decision| match (decision.answer(), decision.probability()) {
-            (Some(DecisionAnswer::Choice(label)), Some(probability)) if label != NONE => {
-                EntityId::from_hex(label).ok().map(|id| (id, probability))
-            }
-            _ => None,
-        })
+        .filter_map(
+            |decision| match (decision.answer(), decision.probability()) {
+                (Some(DecisionAnswer::Choice(label)), Some(probability)) if label != NONE => {
+                    EntityId::from_hex(label).ok().map(|id| (id, probability))
+                }
+                _ => None,
+            },
+        )
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
 }
@@ -187,7 +189,7 @@ impl ConsolidationExecutor<'_> {
             .iter()
             .map(|question| {
                 Ok(vault
-                    .decision_ask_for(question, principal, evidence, to)?
+                    .decision_ask_for(question, principal, evidence, to, None)?
                     .filter(holds))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -265,7 +267,7 @@ impl ConsolidationExecutor<'_> {
                 None if went_up(&decision)
                     && decision.human_ask != Some(HumanAskReason::Deadline) =>
                 {
-                    vault.decision_ask_for(question, principal, evidence, to)?
+                    vault.decision_ask_for(question, principal, evidence, to, None)?
                 }
                 None => None,
             };

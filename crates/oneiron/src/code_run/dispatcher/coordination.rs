@@ -94,6 +94,20 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(dispatcher)
     }
 
+    /// A host action for a live agent run (OF-181): the run's leased try,
+    /// read live, under the action's own run reference, so the action's
+    /// replay and provenance stay its own.
+    pub(crate) fn for_action_attempt(
+        vault: &'a Vault,
+        actor: WriteActor,
+        action_ref: String,
+        leased: &AttemptRecord,
+    ) -> Result<Self> {
+        let mut dispatcher = Self::for_leased_agent_attempt(vault, actor, leased)?;
+        dispatcher.run_ref = action_ref;
+        Ok(dispatcher)
+    }
+
     /// The sealed binding a host lends this run's TASK creates (OF-532,
     /// `Memory::with_task_host`): the running agent attempt, its lease owner
     /// and generation, read live. `None` only for a canonical run bound to no
@@ -449,6 +463,9 @@ impl<'a> HostSelfDispatcher<'a> {
                     observed = observed.max(generation);
                 }
             }
+            // A Changed this run resumed from is kept on its own cursor (OF-533).
+            observed =
+                crate::code_run::observe_wait_change(vault, run_id, handle.group_ref, observed)?;
             crate::task_verb::ack_option_void_generation(vault, handle.group_ref, observed)?;
         }
         Ok(match memory.tasks_wait_observing(handle, None, observed) {
