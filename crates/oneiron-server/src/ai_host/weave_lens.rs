@@ -124,33 +124,52 @@ pub(crate) async fn render_live_weave_lens(
 ) -> MemoryResult<GeneratedLens> {
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
-    // The narrative role's route, else the extraction role's.
-    let mut refused = None;
-    let mut chosen = None;
-    for role in [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE] {
-        let Some(seat) = runtime.seat(role) else {
-            continue;
-        };
-        match runtime.route_role(&vault, role, seat) {
-            Ok(route) => {
-                chosen = Some((role, route));
-                break;
+    // An agent that dreams on its own model reads its own lens on that
+    // model (OF-490); anyone else on the narrative role's route, else the
+    // extraction role's.
+    let own = match &caller {
+        WeaveLensCaller::Credential {
+            actor,
+            class: EdgeActorClass::Agent,
+            ..
+        } => match super::dreamer::own_dreaming_slot(&vault, *actor)? {
+            Some(slot) => super::dreamer::served_slot_model(&vault, runtime, &slot)?,
+            None => None,
+        },
+        _ => None,
+    };
+    let (role, model, locality, ladder) = match own {
+        Some((model, locality, ladder)) => (None, model, locality, ladder),
+        None => {
+            let mut refused = None;
+            let mut chosen = None;
+            for role in [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE] {
+                let Some(seat) = runtime.seat(role) else {
+                    continue;
+                };
+                match runtime.route_role(&vault, role, seat) {
+                    Ok(route) => {
+                        chosen = Some((role, route));
+                        break;
+                    }
+                    Err(refusal) => {
+                        refused.get_or_insert_with(|| refusal.to_string());
+                    }
+                }
             }
-            Err(refusal) => {
-                refused.get_or_insert_with(|| refusal.to_string());
-            }
+            let (role, route) = chosen.ok_or_else(|| {
+                unavailable(match refused {
+                    Some(refusal) => format!("{VERB}: {refusal}"),
+                    None => format!("{VERB}: no model seat serves the Dreamer"),
+                })
+            })?;
+            (Some(role), route.model, route.locality, route.ladder)
         }
-    }
-    let (role, route) = chosen.ok_or_else(|| {
-        unavailable(match refused {
-            Some(refusal) => format!("{VERB}: {refusal}"),
-            None => format!("{VERB}: no model seat serves the Dreamer"),
-        })
-    })?;
+    };
     // The report goes to the model and its lens back to the caller: it is
     // read as the farther of the two, on this device only when both are.
     let reads_at = if caller.locality() == CallerLocality::OnDevice
-        && route.locality == ModelLocality::OnDevice
+        && locality == ModelLocality::OnDevice
     {
         CallerLocality::OnDevice
     } else {
@@ -188,7 +207,6 @@ pub(crate) async fn render_live_weave_lens(
         actor,
     )?;
     let run = server.ai.undeclared_run(run_id, meter);
-    let model = route.model.clone();
     let step = live_weave_lens_request(
         &vault,
         &live,
@@ -197,14 +215,13 @@ pub(crate) async fn render_live_weave_lens(
         &HostInferenceContext {
             binding: HostInferenceBinding::Advertised {
                 model: model.clone(),
-                locality: route.locality,
+                locality,
             },
             extraction_egress: server.extraction_egress.as_deref(),
         },
-        route.ladder.supports(&model, &LlmCapability::Reasoning),
+        ladder.supports(&model, &LlmCapability::Reasoning),
     )?;
-    let response = route
-        .ladder
+    let response = ladder
         .generate(&run, step, None)
         .await
         .map_err(|error| step_failed(&error))?;
