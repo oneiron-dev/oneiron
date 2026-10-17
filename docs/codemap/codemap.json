@@ -4646,7 +4646,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 1,
       "re-export": 3
      }
@@ -22038,7 +22038,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 2,
       "re-export": 9
      }
@@ -22070,7 +22070,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -37137,6 +37137,7 @@
       "CanonicalEntityDocument",
       "CanonicalEntityDocumentHistory",
       "CanonicalForkStatus",
+      "CanonicalPinCarrier",
       "CanonicalRoomFact",
       "CanonicalRoomTurn",
       "CanonicalSchemaManifest",
@@ -37152,7 +37153,7 @@
       "crate-vis": 18,
       "enum": 2,
       "fn": 8,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -44379,7 +44380,7 @@
      "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 13,
       "struct": 6,
       "trait": 1
@@ -44844,6 +44845,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/document_pins.rs",
+     "purpose": "FIX 853 (OF-460): document quote pins on the window plane",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -45199,7 +45210,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 24,
       "re-export": 16
      }
@@ -54028,7 +54039,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 164,
+     "files": 165,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54219,7 +54230,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3292,
+   "source_files": 3293,
    "test_files": 902
   },
   "oneiron-android": {
