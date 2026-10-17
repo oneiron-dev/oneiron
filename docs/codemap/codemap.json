@@ -10161,9 +10161,9 @@
      "path": "src/claim/scoped_read/weave_lens.rs",
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
-      "const": 3,
+      "const": 5,
       "crate-vis": 14,
-      "fn": 2,
+      "fn": 4,
       "struct": 6
      }
     },
@@ -63528,7 +63528,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/weave_lens.rs",
@@ -72400,10 +72400,7 @@
       "PackSection",
       "PackSetup",
       "PackSetupAccount",
-      "PackSetupAnswer",
-      "PackSetupAnswerRequest",
       "PackSetupAuth",
-      "PackSetupCardActionInput",
       "PackSetupCheck",
       "PackSetupConnection",
       "PackSetupConnectionState",
@@ -72788,8 +72785,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 242,
-      "struct": 595
+      "enum": 241,
+      "struct": 593
      }
     },
     {
