@@ -995,6 +995,16 @@ export_facade! {
     let output = client.connector_status(&input)?;
     crate::codec::lift_record("connector.status", &output)
 };
+"connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ConnectorCallReply = |client| {
+    let input: oneiron::outbound_consent::ConnectorCallRequest = crate::codec::lower_record("connector.call", input)?;
+    let output = client.connector_call(&input)?;
+    crate::codec::lift_record("connector.call", &output)
+};
+"connector.schema" => fn connector_schema(&self, input: ConnectorSchemaRequest) -> ConnectorSchemaReply = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorSchemaRequest = crate::codec::lower_record("connector.schema", input)?;
+    let output = client.connector_schema(&input)?;
+    crate::codec::lift_record("connector.schema", &output)
+};
 "vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
     let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
     let output = client.vault_commit(&input)?;

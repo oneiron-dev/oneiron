@@ -36,11 +36,12 @@ pub(crate) async fn write_core_turn(
     input: ConversationTurnCreateInput,
 ) -> MemoryResult<CoreEntityWriteReceipt> {
     let vault = Arc::clone(&server.vault);
-    let receipt =
-        tokio::task::spawn_blocking(move || vault.write_core_conversation_turn(&input))
-            .await
-            .map_err(|_| internal("vault.conversations.turns.create"))??;
-    server.ai.turn_landed(server.vault(), WakeTurnSubject::Vault);
+    let receipt = tokio::task::spawn_blocking(move || vault.write_core_conversation_turn(&input))
+        .await
+        .map_err(|_| internal("vault.conversations.turns.create"))??;
+    server
+        .ai
+        .turn_landed(server.vault(), WakeTurnSubject::Vault);
     Ok(receipt)
 }
 
@@ -73,7 +74,9 @@ pub(crate) fn write_dag_record(
     )
     .at(auth.locality());
     let receipt = writer.conversations_records_append(input)?;
-    server.ai.turn_landed(server.vault(), WakeTurnSubject::Vault);
+    server
+        .ai
+        .turn_landed(server.vault(), WakeTurnSubject::Vault);
     Ok(receipt)
 }
 
