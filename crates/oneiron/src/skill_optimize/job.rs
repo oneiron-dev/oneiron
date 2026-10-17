@@ -731,7 +731,8 @@ pub(crate) fn propose_skill_package_revision(
         package.files.extend(files.iter().cloned());
         record.content_hash = Some(package.content_hash()?);
         package.record = record.clone();
-        let package = crate::skill_hub::package_from_source(&record, package.files, package.format)?;
+        let package =
+            crate::skill_hub::package_from_source(&record, package.files, package.format)?;
         vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
         vault.persist_hub_package_in_txn(wtxn, &proposal_id, &package)
     })?;

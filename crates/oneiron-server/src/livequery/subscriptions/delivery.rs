@@ -54,8 +54,7 @@ impl LiveQueries {
             )
         };
         if poll
-            && let Err(error) =
-                self.materialized(&[local("owner-feed"), local(NOTIFICATIONS_PATH)])
+            && let Err(error) = self.materialized(&[local("owner-feed"), local(NOTIFICATIONS_PATH)])
         {
             self.require_resync();
             return Err(error);
