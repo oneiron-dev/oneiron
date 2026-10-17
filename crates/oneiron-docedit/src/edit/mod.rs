@@ -22,7 +22,10 @@ pub mod transaction;
 mod xfrm;
 pub(crate) mod xml;
 
-pub use structure::{NewGroup, NewShape, Preset, StructureEdit, StructureReport, structure_patch};
+pub use structure::{
+    ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit,
+    StructureReport, structure_patch,
+};
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,
