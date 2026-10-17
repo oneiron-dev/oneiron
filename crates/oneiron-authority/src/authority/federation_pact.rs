@@ -90,7 +90,9 @@ pub struct FederationLifecycleAction {
 }
 
 /// Fold-derived status of one federation pact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum FederationPactStatus {
     /// Pact is live; its grant confers access.
     Active,
@@ -114,7 +116,7 @@ impl FederationPactStatus {
 }
 
 /// Fold-derived state of one federation pact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FederationPactState {
     /// Current pact status.
     pub status: FederationPactStatus,
@@ -150,7 +152,7 @@ pub enum FederationGrantActivation {
 }
 
 /// Deterministic per-entry rejection reason for lifecycle ops.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FederationLifecycleRejection {
     /// Non-Connect op names a pact absent from ancestry.
     UnknownPact,
