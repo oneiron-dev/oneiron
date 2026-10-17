@@ -730,10 +730,10 @@ fn membership_in_txn(
     Ok(consent.map_or(Loaded::missing(need), Loaded::granted))
 }
 
-/// Whether the request names a live room, and a thread of that room whose
-/// audience holds its subject: a private thread (FIX 2951) admits no join,
-/// and its Ready re-proves none, for anyone else, and reads to them as an
-/// unknown thread.
+/// Whether the request names a live room, and a thread of that room by its
+/// root (FIX 2019) whose audience holds its subject: a private thread (FIX
+/// 2951) admits no join, and its Ready re-proves none, for anyone else, and
+/// reads to them as an unknown thread.
 fn room_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, request: &JoinRequest) -> Result<bool> {
     if vault.get_entity_type_in_txn(txn, &request.room)? != Some(ENTITY_TYPE_CONVERSATION)
         || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &request.room)?.is_live()
@@ -750,12 +750,14 @@ fn room_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, request: &JoinRequest
     {
         return Ok(false);
     }
+    // FIX 2019: a join names a thread by its root, the first turn every
+    // reply's join and receipt keys by, never a reply inside it or a trunk
+    // record: an erased root's sweep then reaches every join filed there.
     let held = match super::rooms::TURNS.get(&vault.store, txn, &branch)? {
-        Some(turn) => turn.room_id == request.room.to_hex(),
+        Some(turn) => turn.room_id == request.room.to_hex() && super::rooms::is_thread_root(&turn),
         None => {
-            vault.get_entity_type_in_txn(txn, &branch)?.is_some()
-                && crate::conversation::room_for_record_in(vault, txn, branch)?
-                    == Some(request.room)
+            crate::conversation_dag::erased_thread_room_in_txn(&vault.store, txn, &branch)?
+                == Some(request.room)
         }
     };
     if !held {

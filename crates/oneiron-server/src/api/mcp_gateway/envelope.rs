@@ -19,6 +19,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, HeaderValue};
 use axum::response::IntoResponse;
 use axum::response::Json;
+use axum::response::Response;
 use oneiron::claim::CallerLocality;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::runtime_hooks::verb::InvocationOutcome;
@@ -274,6 +275,95 @@ pub(crate) async fn mcp_tool_first_gateway(
     .await
 }
 
+/// A reply no `tools/call` receipt covers is its connection's (FIX 811): a
+/// parse or envelope error, an invocation claim's refusal, `initialize`,
+/// `tools/list`, `oneiron/wakes`, an unknown method, and a `tools/call`
+/// refused before its credential resolved. A refusal states the ref in
+/// `error.data.receipt_ref`, as a refused call does; every such reply states
+/// it in `x-oneiron-receipt-ref`. A result's body is left as it is, so
+/// `tools/list` stays the same bytes for every credential.
+fn mcp_connection_stamp(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    method: &str,
+    body: &[u8],
+    answered: &mut Result<Value, McpGatewayError>,
+) -> crate::api::call_receipt::CallStamp {
+    let (outcome, result_digest) = match &*answered {
+        Ok(result) => (
+            oneiron::receipt::CallOutcome::Ok,
+            Some(oneiron::receipt::call_json_digest(result)),
+        ),
+        Err(error) => (
+            oneiron::receipt::CallOutcome::Refused {
+                code: error.kind.to_owned(),
+            },
+            Some(oneiron::receipt::call_refusal_digest(
+                error.kind,
+                &error.message,
+            )),
+        ),
+    };
+    let anonymous = crate::api::call_receipt::in_anonymous_session(server, headers, None);
+    let stamp = crate::api::call_receipt::record(
+        server,
+        anonymous,
+        crate::api::call_receipt::connection_call(
+            oneiron::receipt::CallTransport::Mcp,
+            method.to_owned(),
+            outcome,
+            oneiron::receipt::call_bytes_digest(body),
+            result_digest,
+        ),
+    );
+    if let Err(error) = answered {
+        error.call_receipt = Some(Box::new(stamp.clone()));
+    }
+    stamp
+}
+
+/// One JSON-RPC reply: its result, or its error.
+fn mcp_envelope(id: Value, answered: Result<Value, McpGatewayError>) -> Value {
+    match answered {
+        Ok(result) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }),
+        Err(error) => mcp_error_response(id, error),
+    }
+}
+
+/// The HTTP reply: a connection's receipt in `x-oneiron-receipt-ref`, or,
+/// for a reply a `tools/call` receipt covers (or a replay of one), the mark
+/// that its door answered it.
+fn mcp_http_reply(reply: Value, stamp: Option<&crate::api::call_receipt::CallStamp>) -> Response {
+    let mut response = Json(reply).into_response();
+    match stamp {
+        Some(stamp) => stamp.stamp_header(&mut response),
+        None => {
+            response
+                .extensions_mut()
+                .insert(crate::api::call_receipt::DoorAnswered);
+        }
+    }
+    response
+}
+
+/// An envelope refused before any method ran, as its connection's reply.
+fn mcp_connection_refusal(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    method: &str,
+    body: &[u8],
+    id: Value,
+    error: McpGatewayError,
+) -> Response {
+    let mut refused = Err(error);
+    let stamp = mcp_connection_stamp(server, headers, method, body, &mut refused);
+    mcp_http_reply(mcp_envelope(id, refused), Some(&stamp))
+}
+
 async fn mcp_endpoint(
     mode: McpSurfaceMode,
     headers: HeaderMap,
@@ -281,24 +371,32 @@ async fn mcp_endpoint(
     connection: Extensions,
     server: Arc<SyncServer>,
     body: Bytes,
-) -> Json<Value> {
+) -> Response {
     let raw: Value = match serde_json::from_slice(&body) {
         Ok(raw) => raw,
         Err(error) => {
-            return Json(mcp_error_response(
+            return mcp_connection_refusal(
+                &server,
+                &headers,
+                "mcp",
+                &body,
                 Value::Null,
                 McpGatewayError::new(-32700, "parse_error", error.to_string()),
-            ));
+            );
         }
     };
     let id = raw.get("id").cloned().unwrap_or(Value::Null);
     let request = match serde_json::from_value::<McpJsonRpcRequest>(raw) {
         Ok(request) => request,
         Err(error) => {
-            return Json(mcp_error_response(
+            return mcp_connection_refusal(
+                &server,
+                &headers,
+                "mcp",
+                &body,
                 id,
                 McpGatewayError::new(-32600, "invalid_request", error.to_string()),
-            ));
+            );
         }
     };
     let id = request.id.clone().unwrap_or(id);
@@ -324,32 +422,42 @@ async fn mcp_endpoint(
                     if let Some(reply) = reply.as_object_mut() {
                         reply.insert("id".to_owned(), id);
                     }
-                    return Json(reply);
+                    // The replay states the first call's receipt.
+                    return mcp_http_reply(reply, None);
                 }
                 DoorClaim::InFlight => {
-                    return Json(mcp_error_response(
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
                         id,
                         McpGatewayError::new(
                             -32020,
                             facade::INVOCATION_IN_FLIGHT,
                             "another request is still running this invocation; retry with it once the first call returns",
                         ),
-                    ));
+                    );
                 }
                 DoorClaim::Conflict => {
-                    return Json(mcp_error_response(
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
                         id,
                         McpGatewayError::new(
                             -32020,
                             facade::INVOCATION_CONFLICT,
                             "this invocation id names a different call",
                         ),
-                    ));
+                    );
                 }
             }
         }
     };
-    let result = handle_mcp_request(
+    let method = request.method.clone();
+    let mut result = handle_mcp_request(
         mode,
         &headers,
         locality,
@@ -359,14 +467,15 @@ async fn mcp_endpoint(
         raw_arguments.as_deref(),
     )
     .await;
-    let reply = match result {
-        Ok(result) => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": result,
-        }),
-        Err(error) => mcp_error_response(id, error),
+    // A `tools/call` that reached its door carries its own receipt; every
+    // other reply is the connection's (FIX 811).
+    let covered = match &result {
+        Ok(_) => method == "tools/call",
+        Err(error) => error.call_receipt.is_some(),
     };
+    let stamp = (!covered)
+        .then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
+    let reply = mcp_envelope(id, result);
     if let Some(claim) = claim {
         let mut saved = reply.clone();
         if let Some(saved) = saved.as_object_mut() {
@@ -377,7 +486,7 @@ async fn mcp_endpoint(
             body: saved,
         });
     }
-    Json(reply)
+    mcp_http_reply(reply, stamp.as_ref())
 }
 
 /// The invocation a `tools/call` names in `_meta`, when it names a valid
