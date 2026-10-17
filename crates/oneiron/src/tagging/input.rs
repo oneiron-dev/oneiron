@@ -391,7 +391,7 @@ fn context_text_in_txn(
             return Ok(None);
         }
         let id = edge?.target;
-        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
             continue;
         };
         if EntityMetadataHeader::parse(&raw)
@@ -481,7 +481,7 @@ fn context_row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Re
     if crate::entity_doc::has_record_head(store, txn, id)? {
         return Ok(ContextRow::Unbounded);
     }
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(ContextRow::Nothing);
     };
     let Some(message) = raw
@@ -659,7 +659,7 @@ fn header_key(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<(u64, [u8; 16])>> {
-    let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? else {
         return Ok(None);
     };
     Ok(EntityMetadataHeader::parse(&raw)

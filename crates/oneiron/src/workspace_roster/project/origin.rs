@@ -28,9 +28,7 @@ fn pending() -> Error {
     crate::error::RecordError::ProjectDependencyPending.into()
 }
 fn present(store: &Store, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) -> Result<Vec<u8>> {
-    let raw = store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &id)?
         .ok_or_else(pending)?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(reject)?;
     if header.entity_type != kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -117,9 +115,7 @@ pub(super) fn validate_binding(
         _ => return Err(reject()),
     };
     sole_edge(store, txn, message, EdgeKind::BelongsTo, room)?;
-    let raw_thread = store
-        .entities
-        .get(txn, thread.as_bytes())?
+    let raw_thread = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &thread)?
         .ok_or_else(pending)?;
     let header = EntityMetadataHeader::parse(&raw_thread).ok_or_else(reject)?;
     if header.entity_type != ENTITY_TYPE_TURN

@@ -38,9 +38,7 @@ fn stored_group(
     txn: &heed::RoTxn<'_>,
     group: EntityId,
 ) -> Result<AskGroup> {
-    let raw = store
-        .entities
-        .get(txn, group.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &group)?
         .ok_or(Error::Record(RecordError::AskDependencyPending))?;
     let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
     if header.entity_type != ENTITY_TYPE_TASK {

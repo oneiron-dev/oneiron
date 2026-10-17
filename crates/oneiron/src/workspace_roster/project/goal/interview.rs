@@ -61,10 +61,7 @@ fn content(vault: &Vault, txn: &RoTxn<'_>, turn: &RoomTurn, author: &str) -> Res
         return Err(invalid());
     };
     let id = EntityId::from_hex(message).map_err(|_| invalid())?;
-    let raw = vault
-        .store
-        .entities
-        .get(txn, id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &id)?
         .ok_or_else(invalid)?;
     if EntityMetadataHeader::parse(&raw).is_none_or(|h| h.entity_type != ENTITY_TYPE_MESSAGE)
         || raw.len() == ENTITY_METADATA_HEADER_LEN

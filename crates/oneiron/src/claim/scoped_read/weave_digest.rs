@@ -509,9 +509,7 @@ fn sources_live_in_txn(store: &Store, txn: &heed::RoTxn<'_>, report: &WeaveRepor
     for section in &report.sections {
         for item in &section.items {
             if let WeaveItem::Claim { id, .. } = item
-                && store
-                    .entities
-                    .get(txn, id.as_bytes())?
+                && crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
                     .is_none_or(|raw| raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN)
             {
                 return Ok(false);
@@ -958,7 +956,11 @@ impl ScopedRead<'_> {
             for item in &section.items {
                 match item {
                     WeaveItem::Claim { id, body } => {
-                        let Some(current) = self.vault.store.entities.get(&txn, id.as_bytes())?
+                        let Some(current) = crate::ports::EntityStoreRead::port_entity_raw(
+                            &self.vault.store,
+                            &txn,
+                            id,
+                        )?
                         else {
                             return Ok(None);
                         };

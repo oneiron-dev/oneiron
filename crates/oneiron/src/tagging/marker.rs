@@ -296,12 +296,7 @@ fn free_id(
 ) -> Result<AttemptId> {
     for generation in 0..generations {
         let id = derive(generation)?;
-        if vault
-            .store
-            .attempt_records
-            .get(wtxn, id.as_bytes())?
-            .is_none()
-        {
+        if crate::ports::JobQueueRead::port_job_row(&vault.store, wtxn, &id)?.is_none() {
             return Ok(id);
         }
     }

@@ -110,6 +110,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
 use crate::error::{Error, RecordError, Result};
 use crate::llm::Scope;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
@@ -595,7 +596,8 @@ impl Vault {
                 });
             // A leader's signed spawn needs no owner birth; the shared door
             // verifies its proof.
-            if self.store.entities.get(txn, id.as_bytes())?.is_none() && body.write_proof.is_none()
+            if EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &id)?.is_none()
+                && body.write_proof.is_none()
             {
                 let posture = self.privacy_posture();
                 match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
@@ -745,7 +747,7 @@ impl Vault {
         if parent.leader != actor.to_hex() {
             return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
         }
-        if self.store.entities.get(txn, child_id.as_bytes())?.is_some() {
+        if EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &child_id)?.is_some() {
             return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
         }
         let remaining = parent
@@ -819,7 +821,7 @@ impl Vault {
                 )
                 .into());
             }
-            if self.store.entities.get(txn, id.as_bytes())?.is_some()
+            if EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &id)?.is_some()
                 || crate::gate::project_depth::birth_for_project(&self.store, txn, id)?.is_some()
             {
                 return Err(crate::error::RecordError::InvalidProjectBody(

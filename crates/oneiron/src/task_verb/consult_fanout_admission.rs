@@ -643,14 +643,13 @@ impl Memory<'_> {
         // Consults created individually or replayed from peers also close
         // cycles. Stream the existing TASK index; do not reconstruct a second
         // task graph from only this facade's historical runs.
-        for entry in self
-            .vault()
-            .store
-            .type_index
-            .prefix_iter(txn, &[crate::registry::ENTITY_TYPE_TASK])?
-        {
-            let (key, _) = entry?;
-            let task = crate::vault::entity_id_from_type_index_key(&key)?;
+        for entry in EntityStoreRead::port_entity_ids_by_type(
+            &self.vault().store,
+            txn,
+            crate::registry::ENTITY_TYPE_TASK,
+            None,
+        )? {
+            let task = entry?;
             if let Some(body) = task_verb_body_in(self.vault(), txn, task)?
                 && body.task_kind() == TaskKind::Consult
                 && let Some(TaskAssignee::Peer { actor_ref }) = body.assignee

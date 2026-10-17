@@ -164,13 +164,8 @@ fn held_children(
     kind: u8,
 ) -> Result<BTreeMap<EntityId, BTreeSet<EntityId>>> {
     let mut children: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
-    for row in store.type_index.prefix_iter(txn, &[kind])? {
-        let (key, _) = row?;
-        let child = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project type index"))?,
-        )?;
+    for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(store, txn, kind, None)? {
+        let child = row?;
         for held in held_in_txn(store, txn, child, kind)?.rows.values() {
             let Some(authority) = held.revision.authority() else {
                 continue;

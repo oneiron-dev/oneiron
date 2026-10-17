@@ -6,8 +6,9 @@
 use super::{HUB_MEMBERSHIP_WEIGHT, ProjectRecord, is_project_entity};
 use crate::EntityId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::edge::{EdgeKind, parse_strict_edge_record};
+use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::ManifestDbs;
 use heed::RoTxn;
@@ -46,9 +47,7 @@ fn leader_chat_rule_about_project(
     if kind != EdgeKind::ClaimOf || entity_type(store, txn, claim_id)? != Some(ENTITY_TYPE_CLAIM) {
         return Ok(false);
     }
-    let raw = store
-        .entities()
-        .get(txn, claim_id.as_bytes())?
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim_id)?
         .ok_or_else(invalid)?;
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     Ok(
@@ -137,16 +136,15 @@ pub(crate) fn validate_project_graph(
             continue;
         }
         let mut parents = BTreeSet::new();
-        for (db, reverse) in [(store.edges_out(), false), (store.edges_in(), true)] {
-            for row in db.prefix_iter(txn, id.as_bytes())? {
-                let (key, value) = row?;
-                let edge = parse_strict_edge_record(&key, &value)?;
+        for (direction, reverse) in [(EdgeDirection::Out, false), (EdgeDirection::In, true)] {
+            for edge in store.port_edges(txn, id, direction, None, None)? {
+                let edge = edge?;
                 let (src, tgt) = if reverse {
-                    (edge.target, edge.source)
+                    (edge.target, *id)
                 } else {
-                    (edge.source, edge.target)
+                    (*id, edge.target)
                 };
-                validate_project_edge_put(store, txn, src, edge.kind, tgt, edge.decoded.weight)?;
+                validate_project_edge_put(store, txn, src, edge.kind, tgt, edge.weight)?;
                 if is_project
                     && !reverse
                     && edge.kind == EdgeKind::BelongsTo
