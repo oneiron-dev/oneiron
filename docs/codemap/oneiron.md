@@ -1594,7 +1594,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/slides_review/tests.rs` | test | L | — | — | — |
 | `src/edit_roundtrip/tests.rs` | test | L | — | — | ARTL-3 pipeline tests |
 | `src/edit_roundtrip/xml.rs` | src | s | 12 crate-vis | — | Namespace-aware OPC and worksheet XML reads for the edit gate |
-| `src/edit_settle/carry.rs` | src | L | 2 struct · 3 enum · 4 fn · 6 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
+| `src/edit_settle/carry.rs` | src | L | 2 struct · 3 enum · 4 fn · 7 crate-vis | ReaskShape, UnitWithdrawal, WithdrawReason, WithdrawnAnswer, WithdrawnUnit | ARCH-0075 §4: a held answer proposal whose units change under it |
 | `src/edit_settle/codec.rs` | src | m | 6 crate-vis | — | Row and anchor codec |
 | `src/edit_settle/keys.rs` | src | s | 4 const · 48 crate-vis | — | Pinned ledger keys and receipt fields |
 | `src/edit_settle/mod.rs` | src | s | 7 re-export · 1 crate-vis | — | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
@@ -2125,7 +2125,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/codec.rs` | src | s | 9 crate-vis | — | Canonical entity references for typed-decision wire records |
 | `src/llm/decision/generated.rs` | src | m | 1 struct · 3 enum · 1 fn | GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep | The generated read: a typed pack answered by one generation on the caller's own backend, for a caller… |
 | `src/llm/decision/held.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | HeldLadder | What a component that outlives one call holds to ask typed questions (a worker thread, a provider a host… |
-| `src/llm/decision/ladder.rs` | src | L | 12 struct · 4 enum · 4 trait · 18 fn · 1 const · 13 crate-vis | AskAct, AskRole, AskRoleResolver, AskTo, DecisionCall, DecisionLadder, DecisionModel, DecisionPack +12 | Host-injected, one-step decision ladder |
+| `src/llm/decision/ladder.rs` | src | L | 12 struct · 4 enum · 4 trait · 19 fn · 1 const · 13 crate-vis | AskAct, AskRole, AskRoleResolver, AskTo, DecisionCall, DecisionLadder, DecisionModel, DecisionPack +12 | Host-injected, one-step decision ladder |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
 | `src/llm/decision/locate.rs` | src | s | 1 struct · 4 fn · 1 const | LocatedDecision | Presence before coordinates (owner point 4) |
 | `src/llm/decision/media.rs` | src | s | 2 struct · 12 fn · 7 const | DecisionAudio, DecisionImage | Images and audio clips a typed decision reads |
@@ -2133,14 +2133,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/mod.rs` | src | s | 2 mod · 14 re-export · 1 crate-vis | — | Typed question records and shared outcome projection |
 | `src/llm/decision/policy.rs` | src | s | 4 struct · 2 enum · 10 fn · 1 const | BandMode, DecisionBandPolicy, LearnedBand, PersonThreshold, Reversibility, ThinkThreshold | Question- and reversibility-scoped escalation bands; learning starts in shadow |
 | `src/llm/decision/questions/arrival.rs` | src | m | 12 crate-vis | — | Outcome arrival projection in the materializing transaction |
+| `src/llm/decision/questions/artifact_refresh.rs` | src | m | 2 struct · 1 fn · 1 crate-vis | ArtifactRefreshBatch, ArtifactRefreshFailure | Standing artifact questions (ARCH-0076, OF-506): a question whose adapter is [`ARTIFACT_ADAPTER`] asks each… |
 | `src/llm/decision/questions/graph_ask.rs` | src | L | 7 struct · 1 enum · 1 trait · 6 fn · 13 crate-vis | GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource, GraphDecision, GraphPrediction, GraphTypeSelection +1 | One-off graph judgment: scoped context, injected answerer, and proposed claims |
 | `src/llm/decision/questions/graph_ask_tests.rs` | test | L | — | — | — |
 | `src/llm/decision/questions/health_ask.rs` | src | s | 2 struct · 2 fn · 2 const | HealthAnswer, HealthBound | Wire health checks (OF-520) on the shared versioned question substrate |
-| `src/llm/decision/questions/mod.rs` | src | s | 8 re-export · 5 crate-vis | — | Versioned questions, scoped answer receipts, and bound outcome labels |
+| `src/llm/decision/questions/mod.rs` | src | s | 9 re-export · 5 crate-vis | — | Versioned questions, scoped answer receipts, and bound outcome labels |
 | `src/llm/decision/questions/outcomes.rs` | src | s | 3 fn | — | Idempotent outcome projection over durable facts and immutable question versions |
 | `src/llm/decision/questions/recipe.rs` | src | s | 2 struct · 1 fn · 1 crate-vis | GraphQuestionInput, GraphQuestionRef | Explicit, resident-authored context recipes over immutable graph questions |
-| `src/llm/decision/questions/records.rs` | src | m | 10 struct · 4 enum · 11 fn · 3 const · 1 crate-vis | AnswerProposal, AnswerRecord, CalibrationPair, OutcomeBinding, OutcomeLabel, OutcomeSource, QuestionActivation, QuestionAudience +6 | Immutable definitions and typed outcome bindings |
-| `src/llm/decision/questions/refresh.rs` | src | L | 2 struct · 7 fn · 1 crate-vis | RefreshBatch, RefreshFailure | Host-driven answer work: observe under principal, invoke provider outside a write transaction, then… |
+| `src/llm/decision/questions/records.rs` | src | m | 11 struct · 4 enum · 11 fn · 4 const · 1 crate-vis | AnswerProposal, AnswerRecord, ArtifactUnits, CalibrationPair, OutcomeBinding, OutcomeLabel, OutcomeSource, QuestionActivation +7 | Immutable definitions and typed outcome bindings |
+| `src/llm/decision/questions/refresh.rs` | src | L | 2 struct · 7 fn · 3 crate-vis | RefreshBatch, RefreshFailure | Host-driven answer work: observe under principal, invoke provider outside a write transaction, then… |
 | `src/llm/decision/questions/refresh/tests.rs` | test | m | — | — | — |
 | `src/llm/decision/questions/standing.rs` | src | L | 1 struct · 2 fn · 6 crate-vis | StandingAnswer | Explicit graph-unit backfill with same-snapshot authority and source pins |
 | `src/llm/decision/questions/standing_tests.rs` | test | L | — | — | — |
