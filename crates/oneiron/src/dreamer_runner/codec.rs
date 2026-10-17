@@ -15,15 +15,15 @@ use super::constants::{
     DREAMER_BUDGET_SCHEMA_VERSION, DREAMER_HOME_NODE_DESIGNATION_KEYS,
     DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_PARKED_KEYS,
     DREAMER_PARKED_SCHEMA_VERSION, DREAMER_RUN_TREE_KEYS, DREAMER_RUN_TREE_SCHEMA_VERSION,
-    KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CLASS, KEY_CREATED_AT, KEY_ELECTED_AT,
-    KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER, KEY_PARKED_AT, KEY_REASON,
-    KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS, KEY_UPDATED_AT,
-    MAX_DREAMER_ATTEMPT_TYPE_LEN, MAX_DREAMER_BUDGET_ID_LEN, MAX_DREAMER_PARK_OWNER_LEN,
-    MAX_DREAMER_PARK_REASON_LEN,
+    KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CAUSE, KEY_CLASS, KEY_CREATED_AT,
+    KEY_ELECTED_AT, KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER, KEY_PARKED_AT,
+    KEY_REASON, KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS,
+    KEY_UPDATED_AT, MAX_DREAMER_ATTEMPT_TYPE_LEN, MAX_DREAMER_BUDGET_ID_LEN,
+    MAX_DREAMER_PARK_OWNER_LEN, MAX_DREAMER_PARK_REASON_LEN,
 };
 use super::types::{
     DreamerAttemptPayload, DreamerBudgetRecord, DreamerBudgetReservation, DreamerHomeNodeClass,
-    DreamerHomeNodeDesignation, DreamerParkedAttemptRecord, DreamerRunTreeRecord,
+    DreamerHomeNodeDesignation, DreamerParkCause, DreamerParkedAttemptRecord, DreamerRunTreeRecord,
 };
 use crate::error::ArtifactError;
 
@@ -531,6 +531,7 @@ pub(super) fn encode_parked_record(record: &DreamerParkedAttemptRecord) -> Resul
             encode_attempt_id(record.attempt_id),
         ),
         (Value::from(KEY_REASON), Value::from(record.reason.as_str())),
+        (Value::from(KEY_CAUSE), Value::from(record.cause.as_str())),
         (
             Value::from(KEY_PARK_OWNER),
             Value::from(record.park_owner.as_str()),
@@ -546,6 +547,7 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
     let mut schema_version = None;
     let mut attempt_id = None;
     let mut reason = None;
+    let mut cause = None;
     let mut park_owner = None;
     let mut parked_at = None;
     let mut seen = [false; DREAMER_PARKED_KEYS.len()];
@@ -573,6 +575,13 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
                 validate_park_reason(&parsed)?;
                 reason = Some(parsed);
             }
+            KEY_CAUSE => {
+                let parsed = expect_string(value, "dreamer parked cause must be a string")?;
+                cause = Some(
+                    DreamerParkCause::parse(&parsed)
+                        .ok_or(invalid_dreamer_runner("invalid dreamer parked cause"))?,
+                );
+            }
             KEY_PARK_OWNER => {
                 let parsed = expect_string(value, "dreamer parked park_owner must be a string")?;
                 validate_park_owner(&parsed)?;
@@ -597,6 +606,7 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
     Ok(DreamerParkedAttemptRecord {
         attempt_id: attempt_id.ok_or(invalid_dreamer_runner("missing dreamer parked job_id"))?,
         reason: reason.ok_or(invalid_dreamer_runner("missing dreamer parked reason"))?,
+        cause: cause.ok_or(invalid_dreamer_runner("missing dreamer parked cause"))?,
         park_owner: park_owner
             .ok_or(invalid_dreamer_runner("missing dreamer parked park_owner"))?,
         parked_at: parked_at.ok_or(invalid_dreamer_runner("missing dreamer parked_at"))?,

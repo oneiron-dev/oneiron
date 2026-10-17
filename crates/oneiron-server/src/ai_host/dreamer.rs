@@ -689,6 +689,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 Some(lend) => lend.realize(attempt, ctx).await,
                 None => Ok(DreamerAttemptExecution::Park {
                     reason: TASK_REALIZE_UNLENT_PARK_REASON.to_owned(),
+                    cause: oneiron::dreamer_runner::DreamerParkCause::Other,
                 }),
             }
         } else if attempt.status.payload.attempt_type
@@ -698,6 +699,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 Some(lend) => lend.render_lens(attempt, ctx).await,
                 None => Ok(DreamerAttemptExecution::Park {
                     reason: WEAVE_LENS_UNLENT_PARK_REASON.to_owned(),
+                    cause: oneiron::dreamer_runner::DreamerParkCause::Other,
                 }),
             }
         } else {
