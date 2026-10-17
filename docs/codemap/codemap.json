@@ -916,7 +916,7 @@
      "path": "src/agent_dispatch/project_conversation.rs",
      "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -18957,6 +18957,7 @@
      "path": "src/edit_distance/compile.rs",
      "purpose": "Compiling approved preferences into acting revisions (OF-379): every manual edit is a critique of the…",
      "surface": {
+      "crate-vis": 2,
       "enum": 4,
       "fn": 4,
       "struct": 2
