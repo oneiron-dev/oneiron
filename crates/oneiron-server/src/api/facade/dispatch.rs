@@ -534,18 +534,24 @@ async fn tasks_create(
     let position = facade_landing(server, call)?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke_born(
-        server,
-        call,
-        actor,
-        class,
-        "tasks.create",
-        value,
-        position,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (server, owned) = (Arc::clone(server), call.owned());
+    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+        let call = owned.call();
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = facade_invoke_born(
+            &server,
+            &call,
+            actor,
+            class,
+            "tasks.create",
+            value,
+            position,
+            &producers,
+        )?;
+        Ok(FacadeCallOutput::listed(output, &producers))
+    })
+    .await
+    .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.create")))?
 }
 async fn tasks_wave(
     server: &Arc<SyncServer>,
@@ -644,17 +650,23 @@ async fn tasks_update(
         oneiron::memory::RoomTurnHandle::serves("tasks.update"),
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
-        server,
-        call,
-        actor,
-        class,
-        "tasks.update",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+    let (server, owned) = (Arc::clone(server), call.owned());
+    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+        let call = owned.call();
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = facade_invoke(
+            &server,
+            &call,
+            actor,
+            class,
+            "tasks.update",
+            value,
+            &producers,
+        )?;
+        Ok(FacadeCallOutput::listed(output, &producers))
+    })
+    .await
+    .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.update")))?
 }
 async fn vault_witness(
     server: &Arc<SyncServer>,

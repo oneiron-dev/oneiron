@@ -566,6 +566,12 @@ def mcp_argument_projection(row):
             lines.append(f'if let Some(value) = input.get({json.dumps(path.removeprefix("="))}) {{ arguments.insert({json.dumps(field)}.to_owned(), value.clone()); }}')
     return f'{json.dumps(row["name"])} => {{\n' + '\n'.join(lines) + '\n},\n'
 
+# OF-533: the task rows that may ask the host's decision ladder: a post's take
+# question, a report's done and ask-up questions. A model rung may block on the
+# server's runtime, so MCP and the facade run these rows on a blocking thread,
+# on a credential surface built there with the ladder bound.
+TASK_DECISION_ROWS = ('tasks.create', 'tasks.update')
+
 def mcp_input_dispatch(row):
     'One row of the input dispatcher every MCP door shares.'
     name, method = row['name'], row['name'].replace('.', '_')
@@ -629,7 +635,14 @@ def mcp_input_dispatch(row):
         if 'mcp_served' in row:
             # The rows the verb reads by name: a continuation of its result is released only while they may leave.
             body += f'served.extend({row["mcp_served"]});\n'
-        body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
+        if name in TASK_DECISION_ROWS:
+            # Its hooks stay here; the typed row alone crosses to the worker.
+            body += (f'let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input)).await?;\n'
+                     '// Derived from the rows its reads listed, on a refusal too.\n'
+                     'served.extend(listed);\n'
+                     'let output = output.map_err(mcp_facade_error)?;\n')
+        else:
+            body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
         if 'mcp_served_output' in row:
             body += f'served.extend({row["mcp_served_output"]});\n'
     if row.get('lands_turn'):
@@ -730,11 +743,8 @@ async fn execute_agent_verb_listing(
         position.facet = Some(facet);
     }
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
-    let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(position).listing_producers(producers).with_invocation(invocation);
-    let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
-    // OF-063: the off-record session the request named; inside an anonymous
-    // one a reference refusal writes no receipt (Engine ruling 10-17).
-    let memory = match actor.off_record_session.as_deref() { Some(session) => memory.in_off_record_session(session), None => memory };
+    let surface = McpRowSurface { position, invocation, origin };
+    let memory = surface.memory(server, actor, producers);
     // Rule 5: a task-work row takes its one turn here, for MCP and code mode
     // alike, and holds it through its hooks and its row.
     let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work) {
@@ -743,18 +753,21 @@ async fn execute_agent_verb_listing(
         None
     };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
-    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served, board_hooks).await?;
+    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     Ok((output, source, carrier, epoch))
     }
 
-/// One row of [`execute_agent_verb_listing`], on the args its pre chain left.
+/// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
+/// on `memory`, the caller's surface `surface` built. A task row that may ask
+/// the host's decision ladder builds its own from `surface`, off the runtime.
 async fn execute_agent_verb_row(
         server: &Arc<SyncServer>,
         tool: &str,
         input: Value,
         actor: &McpCallContext,
         memory: oneiron::Memory<'_>,
+        surface: McpRowSurface,
         served: &mut Vec<oneiron::EntityId>,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
@@ -1074,9 +1087,11 @@ def facade_dispatch(facade_rows):
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
         room_guard, ref_guard = '', ''
-        result = f'facade_invoke(server, call, actor, class, "{name}", value, &producers)?'
+        # A task-decision row invokes on its worker's own server and call.
+        on = '&server, &call' if name in TASK_DECISION_ROWS else 'server, call'
+        result = f'facade_invoke({on}, actor, class, "{name}", value, &producers)?'
         if r.get('admission', {}).get('born_record_scope'):
-            result = f'facade_invoke_born(server, call, actor, class, "{name}", value, position, &producers)?'
+            result = f'facade_invoke_born({on}, actor, class, "{name}", value, position, &producers)?'
         result += ';'
         readables = r.get('admission', {}).get('readable', [])
         # A room turn refuses an unserved verb before any credential lookup,
@@ -1131,6 +1146,23 @@ def facade_dispatch(facade_rows):
             continue
         # Rule 5: a task-work row's turn, held until its engine call returns.
         turn = '\nlet _turn = server.admit_task_work(actor).await;' if r.get('task_work') else ''
+        if name in TASK_DECISION_ROWS:
+            # OF-533: after the call's own refusals, the whole invoke runs on a
+            # blocking thread, its surface, rewrite admission, drain, room turn
+            # and hooks with it as one row, since a model rung of the decision
+            # ladder its surface binds may block on the server's runtime.
+            dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}{turn}
+        let (server, owned) = (Arc::clone(server), call.owned());
+        tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
+        let call = owned.call();
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = {result}{landed}
+        Ok(FacadeCallOutput::listed(output, &producers))
+        }})
+        .await
+        .map_err(|_| FacadeApiError::from(super::host_doors::internal("{name}")))?
+        }}\n'''
+            continue
         dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}{turn}
         let producers = oneiron::memory::ProducerRows::default();
         let output = {result}{landed}
