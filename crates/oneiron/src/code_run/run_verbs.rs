@@ -314,6 +314,20 @@ pub struct LeaderPatternInput {
     pub skill: String,
 }
 
+/// `self.leader.split`: the bound leader splits her TASK into a subproject
+/// inside the TASK's wrapper (OF-389). The parent still sees one checkbox.
+/// The TASK and the parent project are the host's, from her lease.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LeaderSplitInput {
+    /// The child's leader, hex; herself when absent.
+    pub leader: Option<String>,
+    /// What the child sees: a scope that narrows the parent's
+    /// (`world`, `facet`, `relationship`, `project`, `readable`,
+    /// `writable`); the parent's own when absent.
+    pub slice: Option<serde_json::Value>,
+}
+
 /// `self.spawn`: one reader child over a result of the run (ARCH-0079
 /// #reader-forks). The child is queued and answers through its task; it
 /// never runs inline.
@@ -455,6 +469,21 @@ pub struct LeaderPatternOutput {
     pub version: String,
     pub desc: String,
     pub files: Option<Vec<LeaderPatternFile>>,
+}
+
+/// `self.leader.split`'s output: the subproject her TASK wraps (OF-389).
+/// A retry answers the same child.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LeaderSplitOutput {
+    /// The child PROJECT.
+    pub project: EntityId,
+    /// The TASK that wraps it.
+    pub task: EntityId,
+    /// The project it was spawned under.
+    pub parent: EntityId,
+    pub leader: EntityId,
+    /// How many more levels the child may spawn.
+    pub depth_remaining: u8,
 }
 
 /// One file of a loaded pattern.

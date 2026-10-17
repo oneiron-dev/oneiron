@@ -94,9 +94,11 @@ pub enum SelfCall {
     /// results, made by a host job on the run's route and memoised by its
     /// members' occurrences and recipe.
     Summarize(Box<super::reader::SelfSummarizeCall>),
-    /// `self.leader.advice` and `self.leader.pattern` (OF-389): the bound
-    /// leader's top shapes, and the pattern she picked from them, on the
-    /// host's planner binding. The lease and the skills are the host's.
+    /// `self.leader.advice`, `self.leader.pattern` and `self.leader.split`
+    /// (OF-389): the bound leader's top shapes and the pattern she picked
+    /// from them, on the host's planner binding, and the split of her TASK
+    /// into a subproject, signed by the host's issuer. The lease, the skills,
+    /// the TASK and the key are the host's.
     Leader(SelfLeaderCall),
 }
 
@@ -133,6 +135,7 @@ impl SelfCall {
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
             Self::Summarize(_) => SelfEffect::Summarize,
+            Self::Leader(SelfLeaderCall::Split { .. }) => SelfEffect::LeaderSplit,
             Self::Leader(_) => SelfEffect::Leader,
             Self::Team(_) | Self::TeamSubmit(_) => SelfEffect::Team,
         }
@@ -213,6 +216,9 @@ pub enum SelfEffect {
     Summarize,
     /// The bound leader's advice or pattern load (OF-389).
     Leader,
+    /// The bound leader's split of her TASK into a subproject (OF-389): a
+    /// write, apart from her reads.
+    LeaderSplit,
     /// A team run the bound agent leads: its start or its receipt.
     Team,
 }
@@ -252,6 +258,7 @@ impl SelfEffect {
             Self::TasksWaitSet => "tasks.wait_set",
             Self::Summarize => "summarize",
             Self::Leader => "self.leader",
+            Self::LeaderSplit => "self.leader.split",
             Self::Team => "self.team",
         }
     }
@@ -289,7 +296,7 @@ impl SelfEffect {
             | Self::InferenceDefaultsReplace => None,
             Self::WakePolicyWrite | Self::AgentVerb | Self::Fold => None,
             Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
-            Self::Leader => None,
+            Self::Leader | Self::LeaderSplit => None,
             Self::Team => None,
         }
     }
@@ -908,6 +915,13 @@ pub enum SelfLeaderCall {
     /// Load the pattern workflow she picked from the advice. Selecting a
     /// pattern is not a spawn.
     Pattern { skill: EntityId },
+    /// Split her TASK into a subproject under the TASK's project, led by
+    /// `leader` (herself when unset) over `slice` (the parent's when
+    /// unset). The host binds the TASK and the project from her lease.
+    Split {
+        leader: Option<EntityId>,
+        slice: Option<crate::llm::Scope>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

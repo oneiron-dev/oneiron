@@ -2,9 +2,10 @@
 
 use super::HostSelfDispatcher;
 use crate::agent_dispatch::{
-    AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, LeaderStarter, LeaderStarterSkills,
-    LeaderTeamPlanner, LivePlanRequest, PlannerDecisions, PlannerSeat, PlannerSkills,
-    SpawnPlanReceipt, VaultLeaderTeamPlanner, agent_dispatch_actor, decode_agent_dispatch_input,
+    AgentDispatchInput, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, LeaderStarter,
+    LeaderStarterSkills, LeaderTeamPlanner, LivePlanRequest, PlannerDecisions, PlannerSeat,
+    PlannerSkills, SpawnPlanReceipt, VaultLeaderTeamPlanner, agent_dispatch_actor,
+    decode_agent_dispatch_input,
 };
 use crate::attempt_queue::AttemptRecord;
 use crate::code_run::storage::ExecutorStorage;
@@ -106,6 +107,15 @@ impl<'a> HostSelfDispatcher<'a> {
         self.planner = Some(planner);
         self
     }
+
+    /// Lends the run the host's slip issuer, which signs the leader's
+    /// subproject spawn (OF-389). Without one, `self.leader.split` answers
+    /// `slip_issuer_unbound`.
+    #[must_use]
+    pub fn with_slip_issuer(mut self, issuer: &'a crate::authority::HostSlipIssuer) -> Self {
+        self.slip_issuer = Some(issuer);
+        self
+    }
 }
 
 impl HostSelfDispatcher<'_> {
@@ -164,10 +174,18 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// `self.leader.advice` and `self.leader.pattern` (OF-389), on the
-    /// host's planner over the leader's host-bound lease.
+    /// host's planner over the leader's host-bound lease, and
+    /// `self.leader.split`, which reads no planner.
     pub(super) fn dispatch_leader(&self, call: SelfLeaderCall) -> Result<SelfDispatchOutcome> {
         let Some(planner) = self.planner.as_ref() else {
-            return Ok(Self::planner_unbound(SelfEffect::Leader));
+            return match call {
+                SelfLeaderCall::Split { leader, slice } => {
+                    self.dispatch_leader_split(leader, slice)
+                }
+                SelfLeaderCall::Advice { .. } | SelfLeaderCall::Pattern { .. } => {
+                    Ok(Self::planner_unbound(SelfEffect::Leader))
+                }
+            };
         };
         let at = crate::unix_seconds_now();
         let host = planner.decisions.as_ref();
@@ -190,8 +208,61 @@ impl HostSelfDispatcher<'_> {
             SelfLeaderCall::Pattern { skill } => {
                 pattern_json(&self.reload_leader_pattern(skill, &planner.executor, at)?)
             }
+            SelfLeaderCall::Split { leader, slice } => {
+                return self.dispatch_leader_split(leader, slice);
+            }
         };
         Ok(SelfDispatchOutcome::Leader(answer.to_string()))
+    }
+
+    /// `self.leader.split` (OF-389): the bound leader splits her TASK into a
+    /// subproject. Her lease names the TASK, her dispatch its project, and
+    /// the host's issuer signs her spawn; the guest names at most the
+    /// child's leader (herself when unset) and slice (the parent's).
+    fn dispatch_leader_split(
+        &self,
+        leader: Option<EntityId>,
+        slice: Option<crate::llm::Scope>,
+    ) -> Result<SelfDispatchOutcome> {
+        let failed = |error: String| {
+            Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: SelfEffect::LeaderSplit,
+                error,
+            }))
+        };
+        let Some(issuer) = self.slip_issuer else {
+            return failed("slip_issuer_unbound".to_owned());
+        };
+        let (vault, leased, input) = self.leader_lease()?;
+        let (Some(wrapper), Some(parent)) = (leased.task_ref.as_deref(), input.project_ref) else {
+            return failed("leader_split_unbound".to_owned());
+        };
+        let wrapper = EntityId::from_hex(wrapper)?;
+        let slice = match slice {
+            Some(slice) => slice,
+            None => {
+                let txn = vault.store.env.read_txn()?;
+                vault
+                    .effective_project_in_txn(&txn, parent)?
+                    .and_then(|(_, effective)| effective.slice)
+                    .unwrap_or_default()
+            }
+        };
+        let leader = leader.unwrap_or_else(|| self.actor.entity_ref());
+        let now = vault.store.clock.now_recorded_at();
+        match self.spawn_leader_subproject(issuer, wrapper, parent, leader, slice, now) {
+            Ok(record) => Ok(SelfDispatchOutcome::Leader(
+                serde_json::json!(crate::code_run::LeaderSplitOutput {
+                    project: task_subproject_id(wrapper)?,
+                    task: wrapper,
+                    parent,
+                    leader: EntityId::from_hex(&record.leader)?,
+                    depth_remaining: record.depth_remaining,
+                })
+                .to_string(),
+            )),
+            Err(error) => failed(error.code),
+        }
     }
 
     /// OF-389: load the pattern the leader picked from her advice, through
@@ -301,7 +372,9 @@ impl HostSelfDispatcher<'_> {
     /// `parent`, led by `leader` (OF-389). The host signs her spawn proof
     /// ([`Self::leader_spawn_proof`]), and
     /// [`crate::memory::Memory::spawn_task_subproject`] links the TASK and the
-    /// child both ways in one write.
+    /// child both ways in one write. The child's id derives from the TASK,
+    /// so a retry names the child the first try linked, and the door answers
+    /// it again.
     pub fn spawn_leader_subproject(
         &self,
         issuer: &crate::authority::HostSlipIssuer,
@@ -312,7 +385,7 @@ impl HostSelfDispatcher<'_> {
         now: u64,
     ) -> MemoryResult<ProjectRecord> {
         let (vault, _) = self.leader_attempt()?;
-        let child = EntityId::now();
+        let child = task_subproject_id(wrapper)?;
         let proof = self.leader_spawn_proof(vault, issuer, parent, child, leader, &slice)?;
         vault
             .memory(self.actor.entity_ref(), self.actor.actor_class())
@@ -356,7 +429,13 @@ impl HostSelfDispatcher<'_> {
             .saturating_sub(1);
         body.board.push(actor.to_hex());
         let mut claims = vault.ensure_host_root_slip(issuer)?.claims;
-        claims.slip_id = *blake3::hash(child.as_bytes()).as_bytes();
+        // Each signing mints its own slip: a retry signs again for the same
+        // child, and the fold refuses a slip id minted twice.
+        claims.slip_id = *blake3::Hasher::new()
+            .update(child.as_bytes())
+            .update(EntityId::now().as_bytes())
+            .finalize()
+            .as_bytes();
         claims.parent_id = None;
         claims.holder_ref = actor.to_hex();
         let mut scope = crate::federation::Scope::top();
@@ -383,6 +462,12 @@ impl HostSelfDispatcher<'_> {
     }
 
     fn leader_attempt(&self) -> Result<(&Vault, AttemptRecord)> {
+        let (vault, attempt, _) = self.leader_lease()?;
+        Ok((vault, attempt))
+    }
+
+    /// The leader's live attempt, with the dispatch input it runs.
+    fn leader_lease(&self) -> Result<(&Vault, AttemptRecord, AgentDispatchInput)> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return Err(invalid());
         };
@@ -398,8 +483,16 @@ impl HostSelfDispatcher<'_> {
         {
             return Err(invalid());
         }
-        Ok((vault, status.attempt))
+        Ok((vault, status.attempt, input))
     }
+}
+
+/// The subproject `wrapper` holds, by id: a TASK wraps one.
+fn task_subproject_id(wrapper: EntityId) -> Result<EntityId> {
+    Ok(EntityId::derive(
+        crate::entity_id::derived_domains::TASK_SUBPROJECT,
+        &[wrapper.as_bytes()],
+    )?)
 }
 
 /// A budget the spawner set, seed or pin, narrows the child's hard carve; it
