@@ -5,6 +5,7 @@
 //! flags the Dreamer's tuning config for a retune. Neither deploys anything.
 pub mod agent_health;
 pub mod coach;
+pub mod coach_heal;
 mod curator;
 mod evaluation;
 pub mod honesty;

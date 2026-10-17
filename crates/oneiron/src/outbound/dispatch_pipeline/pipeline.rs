@@ -58,6 +58,19 @@ impl OutboundDispatchPipeline {
         prepared.owner_proof = Some(owner.clone());
         self.dispatch_prepared_or_completed(vault, prepared, sink)
     }
+    /// One mutation two actors speak for (OF-427): the request's actor is
+    /// the primary, and `co_actor` is admitted beside it in the same writer.
+    pub(in crate::outbound) fn dispatch_with_co_actor<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        co_actor: crate::outbound_chokepoint::CoActorAdmission,
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
+        let mut prepared = PreparedOutboundDispatch::prepare(vault, request, None, None)?;
+        prepared.co_actor = Some(co_actor);
+        self.dispatch_prepared_or_completed(vault, prepared, sink)
+    }
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
@@ -164,6 +177,7 @@ impl OutboundDispatchPipeline {
             // A completed replay sends nothing, so it neither spends nor
             // rechecks today's allowance.
             admission_ceiling: None,
+            co_actor: None,
         })?;
         let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
@@ -227,6 +241,7 @@ impl OutboundDispatchPipeline {
             replay,
             native_mail_recipient,
             step_binding: _,
+            co_actor,
         } = prepared;
         // Calendar authority is read under the outbound writer, not prepared
         // from a snapshot before it acquires the publication transaction.
@@ -262,6 +277,7 @@ impl OutboundDispatchPipeline {
                 &admission.window_resolution,
             ),
             authorization,
+            co_actor,
         })?;
         // A cap reached under the admission writer lock is the seat's own
         // hold. The receipt carries the count that lock read and the closed

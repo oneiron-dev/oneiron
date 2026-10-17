@@ -199,6 +199,15 @@ pub(crate) fn admit_calendar_invite_in_txn(
     now: u64,
 ) -> Result<CalendarInviteAdmission, CalendarError> {
     payload.validate_shape()?;
+    // OF-123 act-now guard: a recipient taken from a saved mention waits
+    // until that mention is settled.
+    if let Some(mention) = payload.mention.as_ref()
+        && let Some(name) = crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+            vault, txn, mention,
+        )?
+    {
+        return Err(CalendarError::IdentityUnsettled { name });
+    }
 
     // --- emit/state validation -----------------------------------------
     let event_ref = resolve_invite_event_in_txn(vault, txn, &payload.uid)?

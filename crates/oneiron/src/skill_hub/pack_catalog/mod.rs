@@ -67,6 +67,7 @@ mod admission;
 mod admission_types;
 mod bundled_skills;
 mod qualify;
+mod removal;
 #[cfg(test)]
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 pub use qualify::{

@@ -144,6 +144,9 @@ impl Vault {
         }
 
         let id = self.store.clock.entity_id()?;
+        // The install key signs a portable record's transition in the writer
+        // below; a host with no keystore signs none, and the record stays here.
+        let _ = self.load_install_signing_if_minted();
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -185,7 +188,16 @@ impl Vault {
             policy_floor_snapshot: floor,
         });
         register_secret_in_txn(self, &mut wtxn, &id, &mut rec.0)?;
+        // OF-422: a portable record leaves this device only as the owner's
+        // signed transition, written with the record.
+        let transition = super::write_custody_transition_in_txn(self, &mut wtxn, id, &rec.0, at)?;
         wtxn.commit()?;
+        #[cfg(feature = "sync")]
+        if let Some(transition) = &transition {
+            self.refresh_custody_in_live_window(transition);
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = transition;
         let rec = &rec.0;
         Ok(SecretRegistered {
             secret_id: id,
