@@ -9,14 +9,16 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
+use super::reader_folds::{MEMOS, SummaryMemo};
 use super::records::REPLAY_RECORDS;
 use super::wait_delivery::deliver_wait_in_txn;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
 use crate::attempt_queue::AttemptId;
+use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
-    ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat, SpawnParentBinding,
-    TaskWaitSet, TaskWaitSetResult, reduce_task_wait_set,
+    ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat,
+    SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reduce_task_wait_set,
 };
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
@@ -38,6 +40,9 @@ const INDEX: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::CODE
 const DUE_SET: &[u8] = b"s";
 /// A `d` row's value: the id after its due time is a child's task.
 const DUE_JOB: &[u8] = b"j";
+
+/// The one name a summary job's run binds its text to.
+const SUMMARY_RESULT_NAME: &str = "summary";
 
 macro_rules! json_row {
     ($row:ty, $what:literal) => {
@@ -284,8 +289,10 @@ impl ReaderTxn<'_, '_> {
     }
 
     /// Settles `job` into `state` with `finding` at `now_ms`: its queue,
-    /// due and finding rows, its spend scope and its parent's counts move in
-    /// this transaction, and so does every wait set over it that it settles.
+    /// due and finding rows, its child scope when it spends under one, and
+    /// its parent's counts move in this transaction, and so does every wait
+    /// set over it that it settles. A child on the host's meter has no child
+    /// scope: the meter settled each of its calls itself.
     fn settle(
         &mut self,
         mut job: ReaderJob,
@@ -312,15 +319,58 @@ impl ReaderTxn<'_, '_> {
             self.drop_finding_row(parent_run, dropped, job.task)?;
         }
         self.delete_index(&due_key(job.binding.child_cutoff_unix_ms, job.task))?;
-        self.spend
-            .spend()
-            .settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+        if job.binding.spend.scope().is_some() {
+            self.spend
+                .spend()
+                .settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+        }
         job.state = state;
         job.finding = finding;
         job.settled_at_ms = Some(now_ms);
         self.put_job(&job)?;
         self.reduce_waiters(job.task, now_ms)?;
+        if let ReaderJobKind::Summarize { memo, .. } = &job.kind {
+            self.settle_summary(&job, *memo, now_ms)?;
+        }
         Ok(job)
+    }
+
+    /// A summary job settled: its memo row once it is done, then its reply
+    /// to the call parked on its task, a card of its text or why it was not
+    /// made. The call made again later is the memo's hit.
+    fn settle_summary(&mut self, job: &ReaderJob, memo: [u8; 32], now_ms: u64) -> Result<()> {
+        let reply = match (&job.state, &job.finding) {
+            (ReaderJobState::Done, Some(found)) => {
+                self.put_row(
+                    &MEMOS,
+                    &memo,
+                    &SummaryMemo {
+                        task: job.task,
+                        owner: found.owner,
+                        path: found.path.clone(),
+                        handle: found.handle.clone(),
+                    },
+                )?;
+                serde_json::json!({
+                    "task": job.task.to_hex(),
+                    "state": job.state.word(),
+                    "ref": found.handle,
+                    "handle": found.handle,
+                    "bytes": found.bytes,
+                })
+            }
+            (ReaderJobState::Partial { reason } | ReaderJobState::Failed { reason }, _) => {
+                serde_json::json!({
+                    "task": job.task.to_hex(),
+                    "state": "failed",
+                    "reason": reason,
+                })
+            }
+            _ => {
+                serde_json::json!({"task": job.task.to_hex(), "state": "failed", "reason": "no_finding"})
+            }
+        };
+        self.deliver_reply(job.task, reply, now_ms)
     }
 
     /// Deletes the `f` row of `finding` while it names `task`: the first
@@ -377,6 +427,17 @@ impl ReaderTxn<'_, '_> {
     ) -> Result<()> {
         let reply = serde_json::to_value(result)
             .map_err(|_| Error::InvariantViolation("a wait set reduction is plain data"))?;
+        self.deliver_reply(wait, reply, now_ms)
+    }
+
+    /// `reply` as the reply of wait `wait`: in this transaction on the
+    /// canonical vault, along the session's route once it commits otherwise.
+    fn deliver_reply(
+        &mut self,
+        wait: EntityId,
+        reply: serde_json::Value,
+        now_ms: u64,
+    ) -> Result<()> {
         match self.vault {
             Some(vault) => {
                 deliver_wait_in_txn(vault, self.txn, wait, &reply, now_ms)?;
@@ -422,6 +483,7 @@ pub(crate) struct NewReaderJob {
     pub(crate) actor: ReaderActor,
     pub(crate) source: DelegatedSource,
     pub(crate) route: ReaderRoute,
+    pub(crate) kind: ReaderJobKind,
     pub(crate) ask: String,
 }
 
@@ -504,7 +566,10 @@ impl ExecutorStorage<'_> {
     }
 
     /// One read of the run's reader rows through its route's view.
-    fn reader_read<T>(&self, f: impl FnOnce(&RoTxn<'_>, RoutedDbs<'_>) -> Result<T>) -> Result<T> {
+    pub(super) fn reader_read<T>(
+        &self,
+        f: impl FnOnce(&RoTxn<'_>, RoutedDbs<'_>) -> Result<T>,
+    ) -> Result<T> {
         match self {
             Self::Canonical(vault) => {
                 let txn = vault.store.env.read_txn()?;
@@ -573,9 +638,10 @@ impl ExecutorStorage<'_> {
     }
 
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
-    /// at its first spawn and read from there after: the clock is fixed
-    /// once. A child past the cutoff, or under a scope that is gone, is
-    /// refused with nothing written.
+    /// at its first spawn and read from there after: the clock and the meter
+    /// are fixed once. A child past the cutoff, or under a scope that is
+    /// gone, is refused with nothing written; one on the host's meter is
+    /// admitted with no ledger lookup.
     pub(crate) fn spawn_reader_job(
         &self,
         seat: &SpawnHostSeat,
@@ -598,10 +664,8 @@ impl ExecutorStorage<'_> {
             if now_ms >= child_cutoff {
                 return Ok(SpawnAdmission::PastCutoff);
             }
-            if tx
-                .spend
-                .open_scope_in_txn(&*tx.txn, &parent.spend)?
-                .is_none()
+            if let Some(scope) = parent.spend.scope()
+                && tx.spend.open_scope_in_txn(&*tx.txn, scope)?.is_none()
             {
                 return Ok(SpawnAdmission::Unmetered);
             }
@@ -618,6 +682,7 @@ impl ExecutorStorage<'_> {
                     deadline: parent.deadline,
                     child_cutoff_unix_ms: child_cutoff,
                 },
+                kind: new.kind,
                 ask: new.ask,
                 state: ReaderJobState::Queued,
                 generation: 0,
@@ -642,7 +707,9 @@ impl ExecutorStorage<'_> {
 
     /// Claims queued child `task` for its runner: it becomes active at its
     /// next generation, its spend held from its parent's scope in the same
-    /// transaction. A child past its cutoff settles instead.
+    /// transaction when it spends under one; one on the host's meter holds
+    /// nothing and never waits for spend. A child past its cutoff settles
+    /// instead.
     pub(crate) fn claim_reader_job(&self, task: EntityId, now_ms: u64) -> Result<ClaimOutcome> {
         self.reader_txn(|tx| {
             let mut job = tx
@@ -661,36 +728,39 @@ impl ExecutorStorage<'_> {
                 tx.settle_at_cutoff(job, now_ms)?;
                 return Ok(ClaimOutcome::Settled);
             }
-            let source = &job.binding.source;
-            if !tx.committed(job.binding.parent_run, &source.path, &source.handle)? {
-                return Ok(ClaimOutcome::SourceNotReady);
+            for source in job.sources() {
+                if !tx.committed(source.owner, &source.path, &source.handle)? {
+                    return Ok(ClaimOutcome::SourceNotReady);
+                }
             }
             let parent_run = job.binding.parent_run;
             let mut parent = tx
                 .parent(parent_run)?
                 .ok_or(Error::CorruptedIndex("code-run reader parent"))?;
             // A requeued child keeps the scope its first claim reserved.
-            let reserved = tx
-                .spend
-                .spend()
-                .scope_with_root_in_txn(&*tx.txn, &SpendScopeId::for_attempt(&job.attempt))?
-                .is_some();
-            if !reserved {
-                if tx.spend.available_in_txn(&*tx.txn, &job.binding.spend)? == 0 {
-                    return Ok(ClaimOutcome::WaitingForSpend);
-                }
-                tx.spend
+            if let Some(scope) = job.binding.spend.scope() {
+                let reserved = tx
+                    .spend
                     .spend()
-                    .reserve_child_in_txn(
-                        tx.txn,
-                        &job.binding.spend,
-                        &job.attempt,
-                        ChildSpend::Hold {
-                            expected_units: parent.hold_units,
-                        },
-                        now_ms / 1000,
-                    )
-                    .map_err(Error::from)?;
+                    .scope_with_root_in_txn(&*tx.txn, &SpendScopeId::for_attempt(&job.attempt))?
+                    .is_some();
+                if !reserved {
+                    if tx.spend.available_in_txn(&*tx.txn, scope)? == 0 {
+                        return Ok(ClaimOutcome::WaitingForSpend);
+                    }
+                    tx.spend
+                        .spend()
+                        .reserve_child_in_txn(
+                            tx.txn,
+                            scope,
+                            &job.attempt,
+                            ChildSpend::Hold {
+                                expected_units: parent.hold_units,
+                            },
+                            now_ms / 1000,
+                        )
+                        .map_err(Error::from)?;
+                }
             }
             tx.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
             job.state = ReaderJobState::Active;
@@ -899,6 +969,191 @@ impl ExecutorStorage<'_> {
     }
 }
 
+/// One member of a summary job as its runner reads it: its handle, the
+/// range of it read, the rows its parent's read of it was checked against
+/// (`None` when one answer kept no set), and its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummaryMember {
+    pub handle: String,
+    pub range: (u64, u64),
+    pub rows: Option<Vec<EntityId>>,
+    pub text: String,
+}
+
+/// What a summary job's read of its members came to: the members, or why
+/// the job reads nothing (`reader_task_settled`, `group_exceeds_window`,
+/// `tainted`, `member_gone`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SummaryRead {
+    Members(Vec<SummaryMember>),
+    Refused(String),
+}
+
+impl ExecutorStorage<'_> {
+    /// Summary job `task` while it is active at `generation`, with its
+    /// members.
+    fn live_summary(
+        &self,
+        task: EntityId,
+        generation: u32,
+    ) -> Result<Option<(ReaderJob, Vec<DelegatedSource>)>> {
+        let Some(job) = self
+            .reader_job(task)?
+            .filter(|job| job.state == ReaderJobState::Active && job.generation == generation)
+        else {
+            return Ok(None);
+        };
+        let ReaderJobKind::Summarize { members, .. } = &job.kind else {
+            return Ok(None);
+        };
+        let members = members.clone();
+        Ok(Some((job, members)))
+    }
+
+    /// The output at `path` with `handle` in `run`'s committed record.
+    fn recorded(
+        &self,
+        run: EntityId,
+        path: &str,
+        handle: &str,
+    ) -> Result<Option<CodeRunRawOutput>> {
+        Ok(self.get_code_run_replay_record(&run)?.and_then(|record| {
+            record
+                .outputs
+                .into_iter()
+                .find(|output| output.path == path && output.handle == handle)
+        }))
+    }
+
+    /// Every member of summary job `task`, read as a child's `src` read is
+    /// while the job is live at `generation`: in its owner's committed
+    /// record, clean now, inside its range. Members past `max_bytes`
+    /// together are refused unread.
+    pub(crate) fn summary_job_members(
+        &self,
+        task: EntityId,
+        generation: u32,
+        max_bytes: u64,
+    ) -> Result<SummaryRead> {
+        let refused = |reason: &str| Ok(SummaryRead::Refused(reason.to_owned()));
+        let Some((_, members)) = self.live_summary(task, generation)? else {
+            return refused("reader_task_settled");
+        };
+        let total = members
+            .iter()
+            .map(|member| member.range.1.saturating_sub(member.range.0))
+            .fold(0_u64, u64::saturating_add);
+        if total > max_bytes {
+            return refused(crate::code_run::SUMMARY_GROUP_EXCEEDS_WINDOW);
+        }
+        let mut read = Vec::with_capacity(members.len());
+        for member in members {
+            let Some(output) = self.recorded(member.owner, &member.path, &member.handle)? else {
+                return refused("member_gone");
+            };
+            if self
+                .code_run_result_taint(Some(member.owner), &output)?
+                .0
+                .is_tainted()
+            {
+                return refused("tainted");
+            }
+            let (start, end) = member.range;
+            if start > end || end > output.raw_len {
+                return refused("member_gone");
+            }
+            let len = usize::try_from(end - start)
+                .map_err(|_| Error::ArithmeticOverflow("summary member length"))?;
+            let bytes = self
+                .read_code_run_raw_output_range(&output, start, len)?
+                .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
+            // A body stored before its scan read every rule may hold a secret
+            // no mark names (OF-067); the model is shown none of it.
+            if crate::batch::secret_scan::write_payload_hit(&bytes).is_some() {
+                return refused("tainted");
+            }
+            read.push(SummaryMember {
+                handle: member.handle,
+                range: member.range,
+                rows: member.rows,
+                text: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        Ok(SummaryRead::Members(read))
+    }
+
+    /// Stores `text` as summary job `task`'s finding while it is live at
+    /// `generation`: a stored value of the job's own run (a record with no
+    /// executor, its one name `summary`), marked with its members' taint,
+    /// then reported as the job's finding. The run's end settles it.
+    pub(crate) fn store_summary_job_text(
+        &self,
+        task: EntityId,
+        generation: u32,
+        text: &str,
+    ) -> Result<std::result::Result<(), String>> {
+        let Some((job, members)) = self.live_summary(task, generation)? else {
+            return Ok(Err("reader_task_settled".to_owned()));
+        };
+        let mut sink = self.code_run_output_sink()?;
+        sink.write(text.as_bytes())?;
+        let path = crate::engine_executor::store_result_output_path(&sink.digest()?);
+        let output = self.publish_code_run_output(path, sink, true, job.run)?;
+        let mut from = Vec::with_capacity(members.len());
+        for member in &members {
+            if let Some(held) = self.recorded(member.owner, &member.path, &member.handle)? {
+                from.push((member.owner, held));
+            }
+        }
+        self.inherit_code_run_result_marks(job.run, &output, &from)?;
+        let held = self.get_code_run_replay_record(&job.run)?;
+        let expected = held
+            .as_ref()
+            .map(crate::code_run::CodeRunReplayRecord::generation)
+            .transpose()?;
+        let mut record = held.unwrap_or_else(|| {
+            crate::code_run::CodeRunReplayRecord::new(
+                job.run,
+                crate::code_run::CodeRunDeterminism::new(
+                    0,
+                    [0; crate::code_run::CODE_RUN_RNG_SEED_LEN],
+                ),
+            )
+        });
+        if !record.outputs.iter().any(|held| held.path == output.path) {
+            record.outputs.push(output.clone());
+        }
+        let binding =
+            crate::code_run::CodeRunResultBinding::new(SUMMARY_RESULT_NAME, output.handle.clone());
+        match record
+            .bindings
+            .iter_mut()
+            .find(|held| held.name == binding.name)
+        {
+            Some(held) => *held = binding,
+            None => record.bindings.push(binding),
+        }
+        self.put_code_run_replay_record_if_generation_with_heal(&record, expected, None)?;
+        let rows = members.iter().try_fold(Vec::new(), |mut all, member| {
+            all.extend(member.rows.clone()?);
+            Some(all)
+        });
+        let finding = ReaderFindingRef {
+            owner: job.run,
+            path: output.path,
+            handle: output.handle,
+            bytes: output.raw_len,
+            rows,
+        };
+        Ok(
+            match self.report_reader_finding(task, generation, &finding)? {
+                ReportOutcome::Kept | ReportOutcome::Replay => Ok(()),
+                ReportOutcome::Settled => Err("reader_task_settled".to_owned()),
+            },
+        )
+    }
+}
+
 /// The reader children of one vault, or of one off-record session, as their
 /// runner drives them: the queue, claims, completions, the restart recovery
 /// and the due sweep. Every time is unix milliseconds.
@@ -977,5 +1232,28 @@ impl<'a> ReaderJobs<'a> {
     /// When [`Self::settle_due`] next has work.
     pub fn next_due(&self) -> Result<Option<u64>> {
         self.storage.next_task_wait_due()
+    }
+
+    /// The members of summary job `task`, claimed at `generation`, read as
+    /// a child's source is; past `max_bytes` together, refused unread.
+    pub fn summary_members(
+        &self,
+        task: EntityId,
+        generation: u32,
+        max_bytes: u64,
+    ) -> Result<SummaryRead> {
+        self.storage
+            .summary_job_members(task, generation, max_bytes)
+    }
+
+    /// Stores `text` as summary job `task`'s finding, claimed at
+    /// `generation`; `Err` names why it was not kept.
+    pub fn store_summary(
+        &self,
+        task: EntityId,
+        generation: u32,
+        text: &str,
+    ) -> Result<std::result::Result<(), String>> {
+        self.storage.store_summary_job_text(task, generation, text)
     }
 }

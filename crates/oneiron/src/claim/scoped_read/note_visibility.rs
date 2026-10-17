@@ -24,7 +24,9 @@ impl ScopedRead<'_> {
         let Ok(body) = crate::note::decode_note_body_in_txn(&self.vault.store, txn, bytes) else {
             return Ok(false);
         };
-        if body.kind == crate::note::NoteKind::OpinionTake {
+        if body.kind == crate::note::NoteKind::OpinionTake
+            || crate::note::note_explicit_only_in_txn(&self.vault.store, txn, &body)?
+        {
             return Ok(true);
         }
         if crate::note::note_body_readable(&self.vault.store, txn, bytes, None)? {

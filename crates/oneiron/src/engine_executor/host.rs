@@ -8,15 +8,20 @@ use super::store::{
 };
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream,
-    JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
+    JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse, StoreReceiptInput,
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
     CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
-    ReaderFindingRef, ResultFacet, ResultRead, ResultReply, RunCall, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult, SelfReaderReportCall,
-    SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult, agent_verb_rows_of, result_cannot,
-    result_card, result_refusal,
+    ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply, RunCall,
+    SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
+    SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
+    SelfSummarizeCall, SummarizeReply, agent_verb_rows_of, result_cannot, result_card,
+    result_refusal,
+};
+use crate::code_run::{
+    OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
+    ReceiptSource, ReceiptTree,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -51,6 +56,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     bindings: Vec<CodeRunResultBinding>,
     /// The names this step bound or rebound, in order, for the record.
     pub(super) bound: Vec<CodeRunResultBinding>,
+    /// The fold receipts this step's stores computed, written with its
+    /// bindings in its checkpoint's one transaction.
+    pub(super) receipts: Vec<ReaderFoldReceipt>,
     /// The rows the run's recorded verb answers were served from, `None`
     /// when one kept no set (DEC-0005).
     recorded_rows: Option<Vec<EntityId>>,
@@ -78,6 +86,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
 
 /// The name a reader child reads its parent's source by.
 const READER_SOURCE_NAME: &str = "src";
+
+/// The longest recipe a fold's `store` may name for its receipt, as JSON.
+const RECEIPT_RECIPE_MAX_BYTES: usize = 4096;
 
 /// A result a reference names for this run: one of its own, the source a
 /// reader child reads in its parent's record, or a finding of one of the
@@ -119,6 +130,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             captured: Vec::new(),
             bindings: Vec::new(),
             bound: Vec::new(),
+            receipts: Vec::new(),
             recorded_rows: Some(Vec::new()),
             bridge_calls: Vec::new(),
             durable_wait: None,
@@ -373,6 +385,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 let report = report.clone();
                 self.report_finding(seq, report)
             }
+            (SelfCall::Summarize(summary), _) => {
+                let summary = (**summary).clone();
+                self.summarize(seq, summary)
+            }
             _ => {
                 let site = ExecutorCallSite {
                     run_id: self.run_id,
@@ -505,7 +521,18 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// a result of the run and bound to a name. Not gated: the value is the
     /// run's own, as a file it writes is. A halted bridge, or a run whose
     /// TASK was declined, stores nothing.
-    fn store_result(&mut self, name: Option<String>) -> Result<serde_json::Value> {
+    ///
+    /// With `sources` (results it was made from) or a fold `receipt` (the
+    /// inputs a fold names), the stored body inherits the taint of every
+    /// occurrence named; a receipt is computed by the host from the jobs it
+    /// names and written with the binding at the step's checkpoint. Any input
+    /// the run may not name is refused with nothing stored.
+    fn store_result(
+        &mut self,
+        name: Option<String>,
+        sources: &[String],
+        receipt: Option<&StoreReceiptInput>,
+    ) -> Result<serde_json::Value> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
@@ -525,7 +552,32 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         {
             return Ok(result_refusal("invalid_result_name"));
         }
-        Ok(json!({"output": self.bind_stored(storage, sink, name)?}))
+        let mut inherit = Vec::with_capacity(sources.len());
+        for source in sources {
+            match self.checked_read(&JsResultTarget::parse(source))? {
+                Ok((read, _)) => inherit.push((read.owner(), read.output().clone())),
+                Err(refused) => return Ok(refused),
+            }
+        }
+        let mut receipt = match receipt {
+            Some(input) => match self.fold_receipt(storage, input)? {
+                Ok((receipt, named)) => {
+                    inherit.extend(named);
+                    Some(receipt)
+                }
+                Err(refused) => return Ok(refused),
+            },
+            None => None,
+        };
+        let (output, mut card) = self.bind_stored_with(storage, sink, name, &inherit)?;
+        if let Some(mut receipt) = receipt.take() {
+            receipt.folded = OccurrenceRef::new(self.run_id, &output.path, &output.handle)?;
+            card["receipt"] = receipt.card();
+            self.receipts
+                .retain(|held| held.folded.occurrence != receipt.folded.occurrence);
+            self.receipts.push(receipt);
+        }
+        Ok(json!({"output": card}))
     }
 
     /// Publishes the body `sink` wrote as a stored value of the run, named
@@ -537,8 +589,24 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         sink: BodySink,
         name: Option<String>,
     ) -> Result<serde_json::Value> {
+        Ok(self.bind_stored_with(storage, sink, name, &[])?.1)
+    }
+
+    /// [`Self::bind_stored`], the body first marked with the taint of every
+    /// occurrence in `inherit` (each by the run that holds it): the stored
+    /// output and its card.
+    fn bind_stored_with(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
+        sink: BodySink,
+        name: Option<String>,
+        inherit: &[(EntityId, CodeRunRawOutput)],
+    ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
         let path = store_result_output_path(&sink.digest()?);
         let output = storage.publish_code_run_output(path, sink, true, self.run_id)?;
+        if !inherit.is_empty() {
+            storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;
+        }
         if !self
             .results
             .iter()
@@ -549,7 +617,159 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone());
-        result_card(storage, self.run_id, &output, Some(name.as_str()))
+        let card = result_card(storage, self.run_id, &output, Some(name.as_str()))?;
+        Ok((output, card))
+    }
+
+    /// The fold receipt `input` names, computed here from the jobs it names
+    /// (ARCH-0079 #reader-forks): its source resolved and read-checked, each
+    /// task this run's child over that source, `read` the ranges of the done
+    /// ones, `partial` the ones that settled short, with their reasons,
+    /// `unread` the source's range less both, and each summary of its tree
+    /// resolved as a read of it is. Its `folded` occurrence is filled in once
+    /// the body is stored. Beside it, every occurrence it names, whose taint
+    /// the folded body inherits. A refusal is the reply the guest gets.
+    fn fold_receipt(
+        &mut self,
+        storage: &ExecutorStorage<'_>,
+        input: &StoreReceiptInput,
+    ) -> Result<
+        std::result::Result<
+            (ReaderFoldReceipt, Vec<(EntityId, CodeRunRawOutput)>),
+            serde_json::Value,
+        >,
+    > {
+        let mut named: Vec<(EntityId, CodeRunRawOutput)> = Vec::new();
+        let mut occurrence_of = |owner: EntityId, output: &CodeRunRawOutput| {
+            named.push((owner, output.clone()));
+            OccurrenceRef::new(owner, &output.path, &output.handle)
+        };
+        let (source, _) = match self.checked_read(&JsResultTarget::parse(&input.source))? {
+            Ok(read) => read,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        let source_range = source.range().unwrap_or((0, source.output().raw_len));
+        let source = ReceiptSource {
+            occurrence: occurrence_of(source.owner(), source.output())?,
+            range: source_range,
+        };
+        let cutoff_unix_ms = storage
+            .reader_parent(self.run_id)?
+            .map_or(0, |parent| parent.deadline.child_cutoff());
+        let mut findings = Vec::with_capacity(input.tasks.len());
+        let (mut read, mut partial, mut short) = (Vec::new(), Vec::new(), Vec::new());
+        for task in &input.tasks {
+            let Ok(task) = EntityId::from_hex(task) else {
+                return Ok(Err(result_refusal("receipt_invalid_task")));
+            };
+            let Some(job) = storage
+                .reader_job(task)?
+                .filter(|job| job.binding.parent_run == self.run_id)
+            else {
+                return Ok(Err(result_refusal("receipt_task_not_own")));
+            };
+            let delegated = &job.binding.source;
+            let (start, end) = delegated.range;
+            if job.kind != ReaderJobKind::Read
+                || delegated.owner != source.occurrence.owner
+                || delegated.path != source.occurrence.path
+                || start < source_range.0
+                || end > source_range.1
+            {
+                return Ok(Err(result_refusal("receipt_task_other_source")));
+            }
+            let occurrence = match &job.finding {
+                Some(finding) => {
+                    match recorded_output(storage, finding.owner, &finding.path, &finding.handle)? {
+                        Some(output) => Some(occurrence_of(finding.owner, &output)?),
+                        None => None,
+                    }
+                }
+                None => None,
+            };
+            let reason = match &job.state {
+                ReaderJobState::Done if occurrence.is_some() => {
+                    read.push(delegated.range);
+                    None
+                }
+                ReaderJobState::Partial { reason } if occurrence.is_some() => {
+                    short.push(delegated.range);
+                    partial.push(ReceiptPartial {
+                        task,
+                        reason: reason.clone(),
+                    });
+                    Some(reason.clone())
+                }
+                ReaderJobState::Partial { reason } | ReaderJobState::Failed { reason } => {
+                    Some(reason.clone())
+                }
+                _ => None,
+            };
+            findings.push(ReceiptFinding {
+                task,
+                occurrence,
+                state: job.state.word().to_owned(),
+                reason,
+                range: delegated.range,
+            });
+        }
+        let mut tree = Vec::with_capacity(input.tree.len());
+        for node in &input.tree {
+            let mut refs = Vec::with_capacity(node.inputs.len() + 1);
+            for reference in std::iter::once(&node.summary).chain(&node.inputs) {
+                match self.checked_read(&JsResultTarget::parse(reference))? {
+                    Ok((found, _)) => refs.push(occurrence_of(found.owner(), found.output())?),
+                    Err(refused) => return Ok(Err(refused)),
+                }
+            }
+            let summary = refs.remove(0);
+            tree.push(ReceiptTree {
+                summary,
+                inputs: refs,
+            });
+        }
+        if input
+            .recipe
+            .as_ref()
+            .is_some_and(|recipe| recipe.to_string().len() > RECEIPT_RECIPE_MAX_BYTES)
+        {
+            return Ok(Err(result_refusal("receipt_recipe_too_large")));
+        }
+        let read = merge_ranges(read);
+        let covered = merge_ranges(read.iter().copied().chain(short).collect());
+        let unread = subtract_ranges(source_range, &covered);
+        let mut taint: Vec<OccurrenceRef> = Vec::new();
+        for (owner, output) in &named {
+            let occurrence = OccurrenceRef::new(*owner, &output.path, &output.handle)?;
+            if !taint
+                .iter()
+                .any(|held| held.occurrence == occurrence.occurrence)
+            {
+                taint.push(occurrence);
+            }
+        }
+        let substrate_ref = ReaderSubstrateRef {
+            source: source.occurrence.clone(),
+            findings: findings
+                .iter()
+                .filter_map(|finding| finding.occurrence.clone())
+                .collect(),
+        };
+        let receipt = ReaderFoldReceipt {
+            // Filled in once the folded body is stored.
+            folded: source.occurrence.clone(),
+            source,
+            findings,
+            read,
+            unread,
+            partial,
+            cutoff_unix_ms,
+            recipe: input.recipe.clone(),
+            tree,
+            taint,
+            substrate_ref,
+        };
+        Ok(Ok((receipt, named)))
     }
 
     /// The result `target` names, read as every read of a result is:
@@ -565,6 +785,15 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         &mut self,
         target: &JsResultTarget,
     ) -> Result<std::result::Result<ResultRead, serde_json::Value>> {
+        Ok(self.checked_read(target)?.map(|(read, _)| read))
+    }
+
+    /// [`Self::checked_result`], with the rows the read was checked against:
+    /// the run's own and the ones its owner's answers were served from.
+    fn checked_read(
+        &mut self,
+        target: &JsResultTarget,
+    ) -> Result<std::result::Result<(ResultRead, Option<Vec<EntityId>>), serde_json::Value>> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
@@ -587,14 +816,17 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 .zip(extra)
                 .map(|(run, extra)| [run, extra].concat()),
         };
-        if self.withholds_rows(rows)? {
+        if self.withholds_rows(rows.clone())? {
             return Ok(Err(result_refusal("result_withheld")));
         }
         let whole = found
             .within
             .is_some_and(|range| range == (0, found.output.raw_len));
         let range = target.range.or(found.within.filter(|_| !whole));
-        ResultRead::new(storage, found.owner, found.output, found.name, range)
+        Ok(
+            ResultRead::new(storage, found.owner, found.output, found.name, range)?
+                .map(|read| (read, rows)),
+        )
     }
 
     /// What `reference` names for a read by this run: its own result first,
@@ -724,6 +956,57 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .dispatch_for_executor_run(site, SelfCall::ReaderSpawn(Box::new(spawn)))
     }
 
+    /// `summarize(r, {group?, ...})`: every member resolved in this run and
+    /// read-checked as a read of it is, in order, then the call dispatched
+    /// with them bound; the run's record keeps the guest's call. A tainted
+    /// member answers the reply its read would, so a withheld body is never
+    /// summarized; any other refusal answers its own reason. A reader
+    /// child's call goes straight to its refusal.
+    fn summarize(&mut self, seq: u64, mut call: SelfSummarizeCall) -> Result<SelfDispatchOutcome> {
+        if self.gated_write.reader_child().is_none() {
+            let members: Vec<String> = call.members().into_iter().map(str::to_owned).collect();
+            let mut bound = Vec::with_capacity(members.len());
+            for member in &members {
+                let (read, rows) = match self.checked_read(&JsResultTarget::parse(member))? {
+                    Ok(found) => found,
+                    Err(refused) => {
+                        let code = refused
+                            .get("denied")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("denied");
+                        return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                            effect: SelfEffect::Summarize,
+                            outcome: code.to_owned(),
+                            reason_codes: Vec::new(),
+                        }));
+                    }
+                };
+                if read.is_tainted() {
+                    return Ok(SelfDispatchOutcome::Summarize(SummarizeReply::Withheld {
+                        reply: read.withheld(),
+                    }));
+                }
+                let output = read.output();
+                bound.push(DelegatedSource {
+                    owner: read.owner(),
+                    path: output.path.clone(),
+                    handle: output.handle.clone(),
+                    range: read.range().unwrap_or((0, output.raw_len)),
+                    rows,
+                });
+            }
+            call.bound = Some(bound);
+        }
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
+        self.gated_write
+            .dispatch_for_executor_run(site, SelfCall::Summarize(Box::new(call)))
+    }
+
     /// A reader child's `tasks.update({task_ref, resultRef})`: its finding
     /// resolved among its own results only, a whole stored JSON value, then
     /// the report dispatched with it bound. Its parent's source is not its
@@ -795,8 +1078,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     ///
     /// With `child`, a readable result is also checked as a spawn's source
     /// would be, writing nothing: the run's own result, then the seat, the
-    /// clock and the scope. The verdict names the children's cutoff and what
-    /// their scope may still spend, or why a spawn would be refused.
+    /// clock and the scope. The verdict names the children's cutoff and the
+    /// meter they spend on (`scope`, with what it may still spend, or
+    /// `host`, the host's own meter, with no figure), or why a spawn would be
+    /// refused.
     fn can_read_result(
         &mut self,
         target: &JsResultTarget,
@@ -817,10 +1102,20 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             .preflight_reader_spawn(self.run_id, crate::unix_millis_now())?
         {
             Ok((cutoff, available)) => {
+                let (window_tokens, memory_bytes) = self
+                    .gated_write
+                    .reader_spawn_seat()
+                    .map_or((0, 0), |seat| (seat.window_tokens, seat.memory_bytes));
+                let meter = if available.is_some() { "scope" } else { "host" };
                 verdict["child"] = json!({
                     "cutoff_unix_ms": cutoff,
-                    "spend_available_units": available,
+                    "meter": meter,
+                    "window_tokens": window_tokens,
+                    "memory_bytes": memory_bytes,
                 });
+                if let Some(available) = available {
+                    verdict["child"]["spend_available_units"] = json!(available);
+                }
             }
             Err(reason) => verdict = json!({"can": false, "reason": reason}),
         }
@@ -1044,7 +1339,11 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
 
     fn result_call(&mut self, call: JsResultCall) -> Result<serde_json::Value> {
         match call {
-            JsResultCall::Store { name } => self.store_result(name),
+            JsResultCall::Store {
+                name,
+                sources,
+                receipt,
+            } => self.store_result(name, &sources, receipt.as_ref()),
             JsResultCall::Describe(target) => self.describe_result(&target),
             JsResultCall::CanRead { target, child } => self.can_read_result(&target, child),
             JsResultCall::Read {
@@ -1083,6 +1382,39 @@ fn recorded_output(
                 .into_iter()
                 .find(|output| output.path == path && output.handle == handle)
         }))
+}
+
+/// `ranges` sorted and merged where they touch or overlap.
+fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    ranges.retain(|(start, end)| start < end);
+    ranges.sort_unstable();
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
+/// What of `whole` the merged `covered` ranges leave.
+fn subtract_ranges(whole: (u64, u64), covered: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let mut left = Vec::new();
+    let mut at = whole.0;
+    for &(start, end) in covered {
+        if end <= at || start >= whole.1 {
+            continue;
+        }
+        if start > at {
+            left.push((at, start.min(whole.1)));
+        }
+        at = at.max(end);
+    }
+    if at < whole.1 {
+        left.push((at, whole.1));
+    }
+    left
 }
 
 fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOutcome> {

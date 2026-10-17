@@ -82,6 +82,9 @@ impl HistoryLedgerSnapshot {
         // The full reader table: a dry run that opens a vault first builds
         // the table a server opened beside it gets.
         options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
+        // A sealed vault (maximum tier) opens here only with the page key of
+        // a vault this process opened.
+        let keyed = crate::world_keys::seal_read_only(&mut options, vault_dir)?;
         // SAFETY: `READ_ONLY` asks LMDB for a read-only environment; heed
         // documents no further requirement on the flag itself.
         unsafe {
@@ -92,7 +95,8 @@ impl HistoryLedgerSnapshot {
         // the way it does for any reader beside a live writer. heed refuses a
         // second open of the same path in this process, and a dry run opens
         // no `Vault`.
-        let env = unsafe { options.open(vault_dir) }?;
+        let env = unsafe { options.open(vault_dir) }
+            .map_err(|error| crate::world_keys::page_seal_open_error(error, keyed))?;
         let txn = env.read_txn()?;
         let database: Database<Bytes, Bytes> = env
             .open_database(&txn, Some(VAULT_META_DB))?
