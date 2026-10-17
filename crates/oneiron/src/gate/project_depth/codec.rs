@@ -323,7 +323,7 @@ pub(crate) fn validate_contribution_put(
     if content_id(body)? != id || matches!(value, ProjectDepthContribution::Default(_)) {
         return Err(invalid());
     }
-    if let Some(old) = store.entities.get(txn, id.as_bytes())? {
+    if let Some(old) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? {
         let header = EntityMetadataHeader::parse(&old)
             .ok_or(Error::CorruptedIndex("depth contribution header"))?;
         if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST

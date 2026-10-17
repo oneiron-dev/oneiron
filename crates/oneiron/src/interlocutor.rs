@@ -314,6 +314,34 @@ impl InterlocutorSet {
         &self.entries
     }
 
+    /// Whether `other` holds the same people, placed the same way: entry for
+    /// entry, the same class, presence evidence, contact and owner flags.
+    /// Labels, relationship names and first-touch notes are cosmetic and do
+    /// not count.
+    #[must_use]
+    pub fn same_audience(&self, other: &Self) -> bool {
+        fn placed(
+            set: &InterlocutorSet,
+        ) -> Vec<(&'static str, &'static str, Option<&str>, bool, bool)> {
+            let mut placed: Vec<_> = set
+                .entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.class.as_str(),
+                        entry.evidence.as_str(),
+                        entry.contact_ref.as_deref(),
+                        entry.claimed_owner,
+                        entry.owner_print_matched,
+                    )
+                })
+                .collect();
+            placed.sort_unstable();
+            placed
+        }
+        placed(self) == placed(other)
+    }
+
     /// One per-speaker claims-not-instructions stamp per entry.
     #[must_use]
     pub fn stamps(&self) -> Vec<InterlocutorStamp> {
@@ -620,7 +648,8 @@ impl Vault {
     /// storage fault — so the one caller has a single fail-closed branch. A
     /// roster that resolves but names nobody legitimately yields no entries.
     /// One party per distinct speaker: repeated segments of the same speaker
-    /// collapse before the caller's contact-ref dedupe sees them.
+    /// key or placed identity collapse before the caller's contact-ref
+    /// dedupe sees them.
     fn voice_roster_parties(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -630,31 +659,40 @@ impl Vault {
             .voice_session_roster_in_txn(rtxn, voice_session_ref)?
             .ok_or(Error::EntityNotFound)?;
 
-        // The owner names a residual speaker against this roster: the ask's
-        // session is the roster ref, its speaker the dedupe key below, and
-        // its revision the roster's first resolution (OF-365 P5).
-        let revision = roster.created_at.max(1);
+        // A placed speaker is one party per identity it was placed as. An
+        // unplaced speaker is one party per capture speaker key, whose
+        // residual segments add nothing once any segment of that key is
+        // placed. The owner names an unplaced speaker against this roster:
+        // the ask's session is the roster ref, its speaker the speaker key,
+        // and its revision the roster's (OF-365 P5).
+        let unplaced = roster.unplaced_speakers();
         let mut parties = Vec::new();
-        let mut seen_speakers: HashSet<String> = HashSet::new();
+        let mut seen_parties: HashSet<String> = HashSet::new();
         for segment in &roster.segments {
-            let speaker_key = match &segment.evidence {
+            let party = match &segment.evidence {
                 VoiceAttributionEvidence::EnrolledPrint { subject_ref, .. } => {
                     format!("enrolled:{}", subject_ref.to_hex())
                 }
                 VoiceAttributionEvidence::InviteElimination { attendee_ref } => {
                     format!("invite:{}", attendee_ref.to_hex())
                 }
-                VoiceAttributionEvidence::ResidualCluster { cluster_ref } => {
-                    format!("residual:{cluster_ref}")
+                VoiceAttributionEvidence::ResidualCluster { .. } => {
+                    if !unplaced.contains(&segment.speaker_key.as_str()) {
+                        continue;
+                    }
+                    format!("speaker:{}", segment.speaker_key)
                 }
             };
-            if !seen_speakers.insert(speaker_key.clone()) {
+            if !seen_parties.insert(party) {
                 continue;
             }
             let answer = match &segment.evidence {
-                VoiceAttributionEvidence::ResidualCluster { .. } => {
-                    self.attendee_identity_in_txn(rtxn, voice_session_ref, &speaker_key, revision)?
-                }
+                VoiceAttributionEvidence::ResidualCluster { .. } => self.attendee_identity_in_txn(
+                    rtxn,
+                    voice_session_ref,
+                    &segment.speaker_key,
+                    roster.roster_revision,
+                )?,
                 _ => None,
             };
             parties.push(self.voice_roster_party(rtxn, segment, answer)?);

@@ -57,6 +57,7 @@ vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
+vaultWeaveLinkWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
@@ -77,6 +78,11 @@ vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
+vaultLegalHoldsPlace(input: unknown): unknown
+vaultLegalHoldsWiden(input: unknown): unknown
+vaultLegalHoldsList(input: unknown): unknown
+vaultLegalHoldsLog(input: unknown): unknown
+vaultLegalHoldsLiftAndErase(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
@@ -120,12 +126,17 @@ vaultProjectsConfirm(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
+vaultRoomsOffer(input: unknown): unknown
+vaultRoomsOfferAnswer(input: unknown): unknown
+vaultRoomsOffers(input: unknown): unknown
 vaultProjectsGoalRevisions(input: unknown): unknown
 vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
+vaultRoomsHostPin(input: unknown): unknown
+vaultRoomsHostHand(input: unknown): unknown
 vaultRoomsSharing(input: unknown): unknown
 vaultCompanionsSharingGet(input: unknown): unknown
 vaultCompanionsSharingSet(input: unknown): unknown
