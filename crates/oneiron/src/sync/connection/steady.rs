@@ -352,8 +352,10 @@ impl SyncConnection {
                 }
 
                 // A confirmed leave ends the lane for good (OF-158): what it
-                // buffered is queued, to be counted and discarded.
-                _ = left_rx.wait_for(|left| *left) => {
+                // buffered is queued, to be counted and discarded. The borrow
+                // `wait_for` returns goes before the close frame's await, so
+                // the loop stays `Send` for a host that spawns it.
+                () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
                     flush_to_queue(&self.queue, &mut debounce_buffer);
                     let _ = write.send(Message::Close(None)).await;
                     return LoopExit::Shutdown;

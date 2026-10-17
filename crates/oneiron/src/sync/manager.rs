@@ -86,8 +86,8 @@ pub struct WindowManager {
     /// Windows a sweep holds closed while it compacts them.
     sweep_fence: super::sweep_fence::SweepFence,
     /// Shared Observer A outbound sink: every window this manager opens
-    /// routes its persisted local updates here (connection channel when
-    /// attached, durable `SyncQueue` otherwise).
+    /// routes its persisted local updates here (every attached channel,
+    /// durable `SyncQueue` when none is).
     outbound: Arc<OutboundSink>,
     /// Window promotion notices for the one live sync socket. Markers remain
     /// durable when there is no receiver; reconnect replays them from rp:w:.

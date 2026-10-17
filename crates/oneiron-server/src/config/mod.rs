@@ -4,6 +4,7 @@ pub mod backup;
 pub mod browser;
 pub mod connectors;
 pub mod desktop;
+pub mod device_sync;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
@@ -31,6 +32,7 @@ pub use backup::{BackupConfig, default_backup_dir};
 pub use browser::BrowserConfig;
 pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
+pub use device_sync::DeviceSyncConfig;
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,

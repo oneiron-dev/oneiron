@@ -8,6 +8,7 @@
 //! masked by the group bits, so mode 0600 already closes it.
 
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Why a credential file is not admitted.
@@ -72,6 +73,64 @@ pub(crate) fn admit(path: &Path, file: &File) -> Result<(), CredentialFileError>
     #[cfg(not(unix))]
     let _ = (file, unchecked);
     Ok(())
+}
+
+/// The one-string form a paired client stores: `v2.cred.{slip}.{seed}`, as
+/// `token agent` and `token read` print it and the SDK's `pair` returns it.
+const PAIRED_PREFIX: &str = "v2.cred.";
+
+/// A paired credential read from its file: the logged slip, and the hex seed
+/// of the key it is bound to. The MCP bridge and a device's sync to its home
+/// read it alike; neither value is ever logged.
+pub(crate) struct PairedCredentialFile {
+    pub(crate) token: String,
+    pub(crate) seed: String,
+}
+
+impl PairedCredentialFile {
+    /// Reads `path`. The file holds the one-string form and nothing else, and
+    /// only its owner may read it, by its mode and by any ACL: a file another
+    /// user can read is a credential they hold too.
+    pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
+        let mut file = File::open(path).map_err(|error| {
+            anyhow::anyhow!(
+                "open {}: {error}; pass a file holding a paired credential, such as the one \
+                 `oneiron token agent --name <name> --out <new-file> --config <vault-config>` \
+                 writes (with the vault stopped)",
+                path.display()
+            )
+        })?;
+        admit(path, &file)?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+        text.trim()
+            .strip_prefix(PAIRED_PREFIX)
+            .and_then(|rest| rest.rsplit_once('.'))
+            .map(|(slip, seed)| Self {
+                token: format!("v2.slip.{slip}"),
+                seed: seed.to_owned(),
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} does not hold a paired credential ({PAIRED_PREFIX}…)",
+                    path.display()
+                )
+            })
+    }
+
+    /// The Ed25519 key the slip is bound to.
+    pub(crate) fn signing_key(&self) -> anyhow::Result<ed25519_dalek::SigningKey> {
+        anyhow::ensure!(
+            self.seed.len() == 64 && self.seed.bytes().all(|b| b.is_ascii_hexdigit()),
+            "binding seed must be 64 hex characters"
+        );
+        let mut bytes = [0u8; 32];
+        for (byte, pair) in bytes.iter_mut().zip(self.seed.as_bytes().chunks_exact(2)) {
+            *byte = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
+        }
+        Ok(ed25519_dalek::SigningKey::from_bytes(&bytes))
+    }
 }
 
 /// Whether an ACL entry may grant other users what the mode does not show;

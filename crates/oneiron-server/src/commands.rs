@@ -32,7 +32,7 @@ use crate::skills_pack::{self, OutputMode};
 /// serves — no endpoint, no authority model, and no response interpretation is
 /// added here.
 mod api;
-mod credential_file;
+pub(crate) mod credential_file;
 mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;

@@ -49,8 +49,8 @@ pub use self::companion_identity::{
 pub(in crate::sync) use self::entities::INJECT_BATCH_COMMIT_FAILURES;
 pub use self::observers::{
     BRIDGE_ORIGIN, LiveQueryTee, MaterializedDiffSummary, Materializer, ObserverAState, OriginMark,
-    OutboundSink, local_deletion_is_materialized, register_observer_a, register_observer_b,
-    register_observer_b_with_tee,
+    OutboundAttachment, OutboundSink, local_deletion_is_materialized, register_observer_a,
+    register_observer_b, register_observer_b_with_tee,
 };
 pub(crate) use self::observers::{
     DELETION_TOMBSTONE_ORIGIN, persist_window_update, persist_window_update_in_txn,
