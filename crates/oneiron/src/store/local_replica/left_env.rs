@@ -54,8 +54,8 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHORITY_SLIP_PROOF_CLOCK,
     &side_table::AUTHORITY_SLIP_PROOF_NOT_BEFORE,
     &side_table::AUTHORITY_SLIP_REPLAY_NONCE,
-    &side_table::AUTHORITY_CHECKPOINT_HEAD,
-    &side_table::AUTHORITY_CHECKPOINT_ROW,
+    &side_table::AUTHORITY_CHECKPOINT_V2_HEAD,
+    &side_table::AUTHORITY_CHECKPOINT_V2_IMAGE,
     &side_table::AUTHORITY_HANDOFF_ALARM,
     &side_table::PEER_AUTHORITY_ENTRY,
     &side_table::IDENTITY_CLIENT_ID,
@@ -71,6 +71,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::VAULT_KEY_STATE,
     &side_table::VAULT_KEY_WRAP,
     &side_table::VAULT_KEY_ESCROW_SPOOLED,
+    &side_table::VAULT_KEY_ESCROW_RETIRED,
     &side_table::RECOVERY_KIT,
     // Monotonic counters and floors, so no sequence or id is ever reused.
     &side_table::SYNC_M_U_SEQ_W,
@@ -80,6 +81,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SHORT_ID_COUNTER,
     &side_table::PORTS_ID_FLOOR,
     &side_table::PORTS_CLOCK_FLOOR,
+    &side_table::COMPACTION_EPOCH_FLOOR,
     // Fences and masks already written; none is added.
     &side_table::DELETION_ROW_FENCE,
     &side_table::DELETION_HARD_DELETE_MARKER,

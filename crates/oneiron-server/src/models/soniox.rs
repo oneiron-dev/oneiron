@@ -23,6 +23,7 @@
 //! before the next socket says anything fails the hearing.
 use std::collections::{BTreeMap, VecDeque};
 use std::future::{Future, poll_fn};
+use std::ops::Range;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -223,6 +224,9 @@ struct Journal {
     end: u64,
     /// Audio bytes the journal holds.
     bytes: usize,
+    /// The audio dropped past the limit that Soniox has not made final, as
+    /// a span of the segment's bytes: a replay misses it.
+    lost: Option<Range<u64>>,
     /// Bytes per sample frame (every channel), and per second.
     frame_bytes: u64,
     per_second: u64,
@@ -235,6 +239,7 @@ impl Journal {
             sent: VecDeque::new(),
             end: 0,
             bytes: 0,
+            lost: None,
             frame_bytes,
             per_second: u64::from(sample_rate) * frame_bytes,
         }
@@ -256,8 +261,11 @@ impl Journal {
                     else {
                         break;
                     };
-                    if let Some((_, Held::Audio(pcm))) = self.sent.remove(at) {
+                    if let Some((start, Held::Audio(pcm))) = self.sent.remove(at) {
                         self.bytes -= pcm.len();
+                        let end = start.saturating_add(pcm.len() as u64);
+                        let start = self.lost.as_ref().map_or(start, |lost| lost.start);
+                        self.lost = Some(start..end);
                     }
                 }
             }
@@ -308,7 +316,13 @@ impl Journal {
     }
 
     /// Drops the audio before byte `upto`; cuts stay until their `<fin>`.
+    /// Lost audio Soniox made final is lost no more.
     fn confirm(&mut self, upto: u64) {
+        self.lost = self
+            .lost
+            .take()
+            .map(|lost| lost.start.max(upto)..lost.end)
+            .filter(|lost| !lost.is_empty());
         let mut bytes = 0;
         self.sent.retain_mut(|(at, held)| {
             let Held::Audio(pcm) = held else {
@@ -319,7 +333,8 @@ impl Journal {
                 return false;
             }
             if *at < upto {
-                let made_final = usize::try_from(upto - *at).map_or(pcm.len(), |n| n.min(pcm.len()));
+                let made_final =
+                    usize::try_from(upto - *at).map_or(pcm.len(), |n| n.min(pcm.len()));
                 pcm.drain(..made_final);
                 *at = upto;
             }
@@ -330,8 +345,25 @@ impl Journal {
     }
 
     /// What the next segment hears again, in order, and its audio bytes.
+    /// Audio dropped past the limit is not among it: its span is logged.
     fn replay(self) -> (VecDeque<Held>, usize) {
-        (self.sent.into_iter().map(|(_, held)| held).collect(), self.bytes)
+        if let Some(lost) = &self.lost {
+            tracing::warn!(
+                from_ms = self.ms(lost.start),
+                to_ms = self.ms(lost.end),
+                bytes = lost.end - lost.start,
+                "live transcribe replay misses audio dropped past its queue limit"
+            );
+        }
+        (
+            self.sent.into_iter().map(|(_, held)| held).collect(),
+            self.bytes,
+        )
+    }
+
+    /// The segment's millisecond at byte `at`.
+    fn ms(&self, at: u64) -> u64 {
+        at.saturating_mul(1_000) / self.per_second.max(1)
     }
 }
 
