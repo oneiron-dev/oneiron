@@ -866,10 +866,10 @@ pub(super) async fn credential_listing<T: Send + 'static>(
 /// The rows a door reads beside its handle's own reads, as its caller names
 /// them: a whole id, or an image handle (`<asset>@<hash>`) by its asset.
 /// A short ref is the socket's to resolve, as every named ref is.
-pub(super) fn read_beside(named: impl IntoIterator<Item = &str>) -> Vec<EntityId> {
+pub(super) fn read_beside<S: AsRef<str>>(named: impl IntoIterator<Item = S>) -> Vec<EntityId> {
     named
         .into_iter()
-        .filter_map(|text| oneiron::memory::ImageHandle::parse(text).ok())
+        .filter_map(|text| oneiron::memory::ImageHandle::parse(text.as_ref()).ok())
         .map(|handle| handle.asset)
         .collect()
 }
