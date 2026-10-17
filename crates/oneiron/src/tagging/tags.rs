@@ -364,7 +364,8 @@ pub(super) fn readable_in_txn(
         return Ok(None);
     };
     for source in std::iter::once(&tags.turn).chain(&tags.messages) {
-        if crate::ports::EntityStoreRead::port_entity_raw(store, txn, source)?.is_none()
+        if crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, source, |_| Ok(()))?
+            .is_none()
             || store.port_deletion_state(txn, source)?.deleted
         {
             return Ok(None);
