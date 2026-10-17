@@ -21,6 +21,7 @@ use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use crate::provenance::text_commit::TextCommitReceipt;
 use crate::write_envelope::WriteActor;
+use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::DeckOp;
 
 /// `vault.artifacts.body.head`, `.commits` and `.preview`: the artifact.
@@ -147,6 +148,8 @@ pub struct DocxBlockView {
     pub imported: bool,
     pub locked: bool,
     pub text: String,
+    /// The paragraph's text as runs of one mark set each.
+    pub runs: Vec<DocxRun>,
     pub cells: Vec<DocxCellView>,
 }
 
@@ -201,6 +204,7 @@ impl From<DocxBody> for DocxBodyView {
                     imported: block.imported,
                     locked: block.locked,
                     text: block.text,
+                    runs: block.runs,
                     cells: block
                         .cells
                         .into_iter()

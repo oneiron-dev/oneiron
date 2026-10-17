@@ -4,7 +4,7 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 316 code-mode rows (298 host rows, 18 run rows), 1048 declarations.
+// Census: 316 code-mode rows (298 host rows, 18 run rows), 1061 declarations.
 // Replies: 258 fully typed, 46 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
@@ -86,10 +86,19 @@ declare namespace Sdk {
   type PeoplePage = { vault: string; page: number; people: PersonRow[]; more: number };
   type PersonRequest = { pr: string };
   type EmptyRequest = Record<string, never>;
+  type ShapePreset = "personal" | "family" | "team" | "org" | "community";
+  type ShapeMemberRole = "owner" | "admin" | "member" | "viewer";
   type ShapeCeiling = "auto" | "proposed";
+  type ShapeSkillSource = { from: "library"; subtree: string } | { from: "hub"; hub: string; folder: string; pin_type: string; pin_value: string; publisher: string };
+  type ShapeSelfHeld = "dedicated_address" | "dedicated_handle" | "shared_presence";
+  type ShapeMailScope = "mail.read" | "mail.metadata" | "mail.send";
+  type ShapeChannelCustody = { held: "self_held"; shape: ShapeSelfHeld } | { held: "delegated"; custody_record_ref: string; scopes: ShapeMailScope[] };
+  type ShapeChannelBinding = { to: "actor"; agent_id: string; facet?: string | null } | { to: "vault"; vault_id: number };
+  type ShapeChannelFulfillment = "api" | "manual" | "review";
+  type ShapeChannelProvision = { custody: ShapeChannelCustody; binding: ShapeChannelBinding; fulfillment: ShapeChannelFulfillment };
   type ShapeGrantBound = { domain: "action"; actor: string; actor_class?: string | null; class: string; selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean } | { domain: "disclosure"; audience: string[]; class: string; selectors: string[] };
-  type ShapeTarget = { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
-  type ShapeRow = { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeTarget = { kind: "shared" } | { kind: "member"; member: string } | { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
+  type ShapeRow = { kind: "shared"; vault_id: number; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole } | { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null; source?: ShapeSkillSource | null } | { kind: "channel"; channel: string; address: string; provision?: ShapeChannelProvision | null } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
   type ShapeSeed = { rows: ShapeRow[] };
   type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
   type ShapeChange = "create" | "update" | "retire";
@@ -99,7 +108,9 @@ declare namespace Sdk {
   type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
   type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
-  type ShapePlanRequest = { seed?: ShapeSeed | null };
+  type ShapePresetMember = { member: string; role?: ShapeMemberRole | null };
+  type ShapePresetPick = { preset: ShapePreset; vault_id: number; members?: ShapePresetMember[] };
+  type ShapePlanRequest = { seed?: ShapeSeed | null; preset?: ShapePresetPick | null };
   type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
@@ -912,8 +923,10 @@ declare namespace Sdk {
   type OfficeBodyArtifactRequest = { artifact_ref: string };
   type OfficeBodyReadRequest = { artifact_ref: string; at?: number[] | null };
   type BodyBlockKind = "paragraph" | { heading: number } | "table" | "opaque";
+  type DocxMark = "bold" | "italic" | "underline" | "strike" | "subscript" | "superscript";
+  type DocxRun = { text: string; marks?: DocxMark[] };
   type DocxCellView = { row: number; col: number; text: string };
-  type DocxBlockView = { id: string; kind: BodyBlockKind; role?: string | null; imported: boolean; locked: boolean; text: string; cells: DocxCellView[] };
+  type DocxBlockView = { id: string; kind: BodyBlockKind; role?: string | null; imported: boolean; locked: boolean; text: string; runs: DocxRun[]; cells: DocxCellView[] };
   type DocxBodyView = { blocks: DocxBlockView[] };
   type XlsxValue = "blank" | { number: number } | { text: string } | { bool: boolean } | { error: string };
   type XlsxLock = "shared_formula" | "array_formula" | "data_table" | "rich_value" | "table_row" | "unsupported" | "builtin_name";
@@ -942,7 +955,7 @@ declare namespace Sdk {
   type DeckBodyView = { frontier: number[]; version: number; nodes: DeckNodeView[] };
   type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView } | { format: "pptx"; body: DeckBodyView };
   type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy };
-  type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null };
+  type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };

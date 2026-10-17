@@ -16,18 +16,28 @@
 //! own; it says what should be true, never a new way of making it true.
 
 mod apply;
+mod channel;
 mod grant;
 mod live;
+mod member;
 mod plan;
 mod seed;
+mod skill;
 
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
 };
+pub use channel::{
+    ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision,
+    ShapeMailScope, ShapeSelfHeld,
+};
 pub use grant::ShapeGrantBound;
+pub use member::{ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick};
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
 pub use seed::StoredShapeSeed;
+pub use skill::ShapeSkillSource;
 
+use crate::EntityId;
 use crate::error::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -76,6 +86,21 @@ const fn enabled_by_default() -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ShapeRow {
+    /// The vault shared (ARCH-0043), under its shared-vault id and the
+    /// preset its defaults came from. A vault is shared once; no seed
+    /// reshares it.
+    Shared {
+        vault_id: u64,
+        #[serde(default)]
+        preset: Option<ShapePreset>,
+    },
+    /// A member of the shared vault, by person (entity id hex), at a role.
+    /// A new member is invited and joins on acceptance; an Owner's role
+    /// moves only through the ownership ceremony.
+    Member {
+        member: String,
+        role: ShapeMemberRole,
+    },
     /// A world (ARCH-0022), by name. A missing world is created.
     World { name: String },
     /// An installed pack, by name, optionally pinned to a version.
@@ -93,13 +118,23 @@ pub enum ShapeRow {
         enabled: bool,
     },
     /// A registered skill, by skill id, optionally pinned to a version.
+    /// Only a row naming its hub source can import a missing one.
     Skill {
         skill_id: String,
         #[serde(default)]
         version: Option<String>,
+        #[serde(default)]
+        source: Option<ShapeSkillSource>,
     },
     /// A channel identity (ARCH-0063), by channel and address or handle.
-    Channel { channel: String, address: String },
+    /// Only a row stating its custody, binding and fulfillment can
+    /// provision a missing one.
+    Channel {
+        channel: String,
+        address: String,
+        #[serde(default)]
+        provision: Option<ShapeChannelProvision>,
+    },
     /// A standing grant (DEC-0006), declared as its bound. Its registry
     /// reference is the bound's digest; a row may name the grant by that
     /// reference alone, but only a row carrying the bound can mint it. Every
@@ -122,6 +157,8 @@ pub enum ShapeRow {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ShapeTarget {
+    Shared,
+    Member { member: String },
     World { name: String },
     Pack { name: String },
     Actor { agent_id: String },
@@ -136,18 +173,22 @@ impl ShapeTarget {
     /// actors they bound.
     const fn rank(&self) -> u8 {
         match self {
-            Self::World { .. } => 0,
-            Self::Pack { .. } => 1,
-            Self::Actor { .. } => 2,
-            Self::Skill { .. } => 3,
-            Self::Channel { .. } => 4,
-            Self::Grant { .. } => 5,
-            Self::Sync { .. } => 6,
+            Self::Shared => 0,
+            Self::Member { .. } => 1,
+            Self::World { .. } => 2,
+            Self::Pack { .. } => 3,
+            Self::Actor { .. } => 4,
+            Self::Skill { .. } => 5,
+            Self::Channel { .. } => 6,
+            Self::Grant { .. } => 7,
+            Self::Sync { .. } => 8,
         }
     }
 
     fn keys(&self) -> Vec<&str> {
         match self {
+            Self::Shared => Vec::new(),
+            Self::Member { member } => vec![member.as_str()],
             Self::World { name } | Self::Pack { name } => vec![name.as_str()],
             Self::Actor { agent_id } => vec![agent_id.as_str()],
             Self::Skill { skill_id } => vec![skill_id.as_str()],
@@ -164,6 +205,10 @@ impl ShapeRow {
     #[must_use]
     pub fn target(&self) -> ShapeTarget {
         match self {
+            Self::Shared { .. } => ShapeTarget::Shared,
+            Self::Member { member, .. } => ShapeTarget::Member {
+                member: member.clone(),
+            },
             Self::World { name } => ShapeTarget::World { name: name.clone() },
             Self::Pack { name, .. } => ShapeTarget::Pack { name: name.clone() },
             Self::Actor { agent_id, .. } => ShapeTarget::Actor {
@@ -172,7 +217,9 @@ impl ShapeRow {
             Self::Skill { skill_id, .. } => ShapeTarget::Skill {
                 skill_id: skill_id.clone(),
             },
-            Self::Channel { channel, address } => ShapeTarget::Channel {
+            Self::Channel {
+                channel, address, ..
+            } => ShapeTarget::Channel {
                 channel: channel.clone(),
                 address: address.clone(),
             },
@@ -212,8 +259,11 @@ impl ShapeRow {
                 },
                 Self::Skill { version: have, .. },
             ) => have.as_ref() == Some(want),
+            // A source or provision says how to make a missing one; the
+            // live row is what it made.
             (Self::Pack { version: None, .. }, Self::Pack { .. })
-            | (Self::Skill { version: None, .. }, Self::Skill { .. }) => true,
+            | (Self::Skill { version: None, .. }, Self::Skill { .. })
+            | (Self::Channel { .. }, Self::Channel { .. }) => true,
             // One reference is one bound: a grant read by it is the grant.
             (Self::Grant { .. }, Self::Grant { .. }) => self.target() == live.target(),
             _ => self == live,
@@ -243,6 +293,11 @@ impl ShapeSeed {
         }
         let mut seen = BTreeSet::new();
         for row in &self.rows {
+            if let ShapeRow::Member { member, .. } = row
+                && EntityId::from_hex(member).is_err()
+            {
+                return Err(invalid("a member row names a person by entity id hex"));
+            }
             if let ShapeRow::Grant {
                 grant_ref,
                 bound: Some(bound),
@@ -293,6 +348,25 @@ pub struct ShapePlanRequest {
     /// The seed to plan; the stored seed when absent.
     #[serde(default)]
     pub seed: Option<ShapeSeed>,
+    /// A preset picked at creation, planned as the seed it compiles to with
+    /// the caller as the vault's Owner. Exclusive with `seed`.
+    #[serde(default)]
+    pub preset: Option<ShapePresetPick>,
+}
+
+impl ShapePlanRequest {
+    /// The seed this request plans, as `creator` would hold the vault.
+    ///
+    /// # Errors
+    ///
+    /// Both a seed and a preset, or a preset that does not compile.
+    pub fn seed_for(&self, creator: EntityId) -> Result<Option<ShapeSeed>> {
+        match (&self.seed, &self.preset) {
+            (Some(_), Some(_)) => Err(invalid("plan a seed or a preset, not both")),
+            (_, Some(pick)) => ShapeSeed::for_preset(pick, creator).map(Some),
+            (seed, None) => Ok(seed.clone()),
+        }
+    }
 }
 
 fn invalid(message: impl Into<String>) -> Error {

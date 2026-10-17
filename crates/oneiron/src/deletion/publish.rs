@@ -31,6 +31,8 @@ use super::topology_delete_intent::{
 use super::tombstone::{PENDING_TOMBSTONE, PendingTombstoneKey};
 #[cfg(feature = "sync")]
 use crate::error::SyncError;
+#[cfg(feature = "sync")]
+use crate::ports::{WindowAddress, WindowDeletionRows};
 
 /// Inputs committed together by the sync tombstone persistence transaction.
 /// Grouping these values makes the TXN1 contract explicit: the request-keyed
@@ -519,8 +521,9 @@ impl Vault {
             window: window_label.to_owned(),
             id: *id,
         };
-        let staged_by_this_delete = PENDING_TOMBSTONE
-            .get(&self.store, &*wtxn, &key)?
+        let staged_by_this_delete = self
+            .store
+            .port_pending_tombstone(&*wtxn, WindowAddress::new(window_label), id)?
             .is_some_and(|existing| existing == value.encode());
         if staged_by_this_delete {
             PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;

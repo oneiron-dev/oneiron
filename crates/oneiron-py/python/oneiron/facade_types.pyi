@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 258 facade rows, 943 declarations.
+Census: 258 facade rows, 956 declarations.
 Inputs: 214 of 258 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 210 of 258 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
@@ -305,10 +305,43 @@ class PersonRequest(TypedDict):
     pr: str
 class EmptyRequest(TypedDict):
     ...
+ShapePreset = Literal["personal", "family", "team", "org", "community"]
+ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeSkillSourceLibrary = TypedDict("ShapeSkillSourceLibrary", {"from": Literal["library"], "subtree": str})
+ShapeSkillSourceHub = TypedDict("ShapeSkillSourceHub", {"from": Literal["hub"], "hub": str, "folder": str, "pin_type": str, "pin_value": str, "publisher": str})
+ShapeSkillSource = ShapeSkillSourceLibrary | ShapeSkillSourceHub
+ShapeSelfHeld = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
+ShapeMailScope = Literal["mail.read", "mail.metadata", "mail.send"]
+class ShapeChannelCustodySelfHeld(TypedDict):
+    held: Literal["self_held"]
+    shape: ShapeSelfHeld
+class ShapeChannelCustodyDelegated(TypedDict):
+    held: Literal["delegated"]
+    custody_record_ref: str
+    scopes: list[ShapeMailScope]
+ShapeChannelCustody = ShapeChannelCustodySelfHeld | ShapeChannelCustodyDelegated
+class ShapeChannelBindingActor(TypedDict):
+    to: Literal["actor"]
+    agent_id: str
+    facet: NotRequired[str | None]
+class ShapeChannelBindingVault(TypedDict):
+    to: Literal["vault"]
+    vault_id: int
+ShapeChannelBinding = ShapeChannelBindingActor | ShapeChannelBindingVault
+ShapeChannelFulfillment = Literal["api", "manual", "review"]
+class ShapeChannelProvision(TypedDict):
+    custody: ShapeChannelCustody
+    binding: ShapeChannelBinding
+    fulfillment: ShapeChannelFulfillment
 ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
 ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
 ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
+class ShapeTargetShared(TypedDict):
+    kind: Literal["shared"]
+class ShapeTargetMember(TypedDict):
+    kind: Literal["member"]
+    member: str
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -331,7 +364,15 @@ class ShapeTargetGrant(TypedDict):
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+class ShapeRowShared(TypedDict):
+    kind: Literal["shared"]
+    vault_id: int
+    preset: NotRequired[ShapePreset | None]
+class ShapeRowMember(TypedDict):
+    kind: Literal["member"]
+    member: str
+    role: ShapeMemberRole
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -348,10 +389,12 @@ class ShapeRowSkill(TypedDict):
     kind: Literal["skill"]
     skill_id: str
     version: NotRequired[str | None]
+    source: NotRequired[ShapeSkillSource | None]
 class ShapeRowChannel(TypedDict):
     kind: Literal["channel"]
     channel: str
     address: str
+    provision: NotRequired[ShapeChannelProvision | None]
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: NotRequired[str]
@@ -363,7 +406,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):
@@ -410,8 +453,16 @@ class ShapeRead(TypedDict):
     seed: NotRequired[StoredShapeSeed | None]
     live: ShapeSeed
     applies: list[ShapeApplyReceipt]
+class ShapePresetMember(TypedDict):
+    member: str
+    role: NotRequired[ShapeMemberRole | None]
+class ShapePresetPick(TypedDict):
+    preset: ShapePreset
+    vault_id: int
+    members: NotRequired[list[ShapePresetMember]]
 class ShapePlanRequest(TypedDict):
     seed: NotRequired[ShapeSeed | None]
+    preset: NotRequired[ShapePresetPick | None]
 class ShapePlanSummary(TypedDict):
     changes: int
     needs_word: int
@@ -4371,6 +4422,10 @@ class OfficeBodyReadRequest(TypedDict):
 class BodyBlockKindHeading(TypedDict):
     heading: int
 BodyBlockKind = Literal["paragraph", "table", "opaque"] | BodyBlockKindHeading
+DocxMark = Literal["bold", "italic", "underline", "strike", "subscript", "superscript"]
+class DocxRun(TypedDict):
+    text: str
+    marks: NotRequired[list[DocxMark]]
 class DocxCellView(TypedDict):
     row: int
     col: int
@@ -4382,6 +4437,7 @@ class DocxBlockView(TypedDict):
     imported: bool
     locked: bool
     text: str
+    runs: list[DocxRun]
     cells: list[DocxCellView]
 class DocxBodyView(TypedDict):
     blocks: list[DocxBlockView]
@@ -4542,7 +4598,14 @@ class DocxBodyOpMove(TypedDict):
     op: Literal["move"]
     block: str
     after: NotRequired[str | None]
-DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove
+class DocxBodyOpMark(TypedDict):
+    op: Literal["mark"]
+    block: str
+    at: int
+    len: int
+    mark: DocxMark
+    on: bool
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove | DocxBodyOpMark
 class XlsxBodyOpSetValue(TypedDict):
     op: Literal["set_value"]
     sheet: str
