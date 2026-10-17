@@ -2,7 +2,7 @@
 
 use loro::VersionVector;
 
-use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window};
+use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::window::WindowExport;
 use oneiron::sync::{
@@ -635,12 +635,13 @@ pub(super) fn authorize_promoted_window(
         selector,
     )
     .map_err(map_selector_filter_err)?;
-    match promotion_covers_full_window(
+    match promotion_covers_full_window_for(
         &server.vault,
         source,
         key,
         selector_grant_scope(),
         selector,
+        admission.withhold(),
         |id| admission.allows_item(id),
     ) {
         Ok(true) => Ok(()),
