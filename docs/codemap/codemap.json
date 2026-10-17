@@ -13010,7 +13010,7 @@
      "path": "src/compaction/withdrawn.rs",
      "purpose": "What a withdrawn epoch summary keeps: its keyframe, without its words",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
