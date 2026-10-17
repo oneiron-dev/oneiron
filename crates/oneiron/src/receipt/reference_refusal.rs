@@ -175,6 +175,30 @@ pub(crate) fn receipt_reference_refusals(
     Ok(true)
 }
 
+/// Receipts each of `refusals` as its own reference-refusal record inside
+/// the caller's open write (OF-063, FIX 3417): for a writer that reads its
+/// text's links in that write, so its receipts land, or roll back, with the
+/// text they name. Nothing to write writes nothing.
+pub(crate) fn record_reference_refusals_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    refusals: &[ReferenceRefusalFacts],
+) -> Result<()> {
+    if refusals.is_empty() {
+        return Ok(());
+    }
+    // The ids first: the floor `recorded_at_in_txn` persists covers them.
+    let ids = refusals
+        .iter()
+        .map(|_| vault.store.clock.entity_id())
+        .collect::<Result<Vec<_>>>()?;
+    let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    for (id, facts) in ids.into_iter().zip(refusals) {
+        super::record::put_reference_refusal_in_txn(vault, txn, id, facts, at)?;
+    }
+    Ok(())
+}
+
 /// Receipts each of `refusals` as its own reference-refusal record, all on
 /// one grouped write of their own.
 fn record_reference_refusals(vault: &Vault, refusals: &[ReferenceRefusalFacts]) -> Result<()> {
