@@ -15,7 +15,9 @@
 //!
 //! A REST route whose write is a verb-table row runs it here too, through
 //! [`execute_facade_row`], when the credential binds an action at all
-//! ([`action_bound`]): its button and an agent's call meet one executor.
+//! ([`action_bound`]; [`rest_action_bound`] for a write whose body can
+//! outgrow one action argument): its button and an agent's call meet one
+//! executor.
 //!
 //! A memory run row (`vault.search`, `vault.claims.put`,
 //! `vault.claims.supersede`, `vault.edges.put`) has no facade route; the
@@ -165,6 +167,38 @@ pub(crate) fn action_bound(
         key: key.at(auth.locality()),
         owner: owner_authorship(auth, server)?,
     }))
+}
+
+impl ActionBound {
+    /// The actor an action under this binding writes as.
+    pub(crate) fn writes_as(&self) -> WriteActor {
+        WriteActor::new(self.actor, self.class)
+    }
+}
+
+/// What a REST write of `input` runs under as one action, if it runs as
+/// one: a credential [`action_bound`] binds to a person or an agent, on a
+/// request that names no room turn, with an input that fits one action
+/// argument. Every other write runs its row's own door, as its REST route
+/// always admitted it. The route chooses here, before it writes; a refused
+/// action is never written again another way.
+pub(crate) fn rest_action_bound<T: serde::Serialize>(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    headers: &HeaderMap,
+    input: &T,
+) -> Result<Option<ActionBound>, FacadeApiError> {
+    if headers.contains_key(super::ROOM_TURN_HEADER) {
+        return Ok(None);
+    }
+    let Some(bound) = action_bound(server, auth)? else {
+        return Ok(None);
+    };
+    if matches!(bound.class, EdgeActorClass::System) {
+        return Ok(None);
+    }
+    let text = serde_json::to_string(input).map_err(|_| internal())?;
+    Ok(LensText::new(text).is_ok().then_some(bound))
 }
 
 /// Runs `call` from the app's table under `bound`, its verb-table rows

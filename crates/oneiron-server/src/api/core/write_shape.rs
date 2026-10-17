@@ -1,30 +1,24 @@
-//! Create-entity DTOs, announcement normalization, and body field helpers.
+//! Create-entity DTOs, and the HTTP face of the core write shape the engine
+//! owns ([`oneiron::core_write::shape`]): its refusals as 400s naming their
+//! field, and a request's text fields as the engine's.
 
-use super::super::unix_seconds_now;
 use super::batch::CoreTextField;
-use super::batch::core_body_for_write;
-use super::batch::encode_core_body;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use oneiron::core_write::CoreWriteTextField;
+use oneiron::core_write::shape::{self, CoreWriteRefusal};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use std::borrow::Cow;
 use utoipa::ToSchema;
 
-pub(crate) const CORE_MAX_BATCH_ENTITIES: usize = 256;
+pub(crate) use oneiron::core_write::shape::CORE_MAX_BATCH_ENTITIES;
+#[cfg(test)]
+pub(crate) use oneiron::core_write::shape::{
+    PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE, PLATFORM_ANNOUNCEMENT_VOICE,
+};
 
 pub(crate) const CORE_MAX_LIST_LIMIT: usize = 1000;
-
-pub(crate) const PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE: &str = "platform_announcement";
-
-pub(crate) const PLATFORM_ANNOUNCEMENT_VOICE: &str = "platform";
-
-pub(crate) const ANNOUNCEMENT_STATUS_ACTIVE: &str = "active";
-
-pub(crate) const ANNOUNCEMENT_STATUS_CORRECTED: &str = "corrected";
-
-pub(crate) const ANNOUNCEMENT_STATUS_RETRACTED: &str = "retracted";
 
 /// Generic core entity create request.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -71,10 +65,11 @@ pub(crate) struct CoreEntityWriteResponse {
     pub(crate) item: Value,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct CoreEntityTimestamps {
-    pub(crate) occurred: oneiron::TimeRange,
-    pub(crate) learned_at: u64,
+pub(crate) type CoreEntityTimestamps = oneiron::core_write::CoreWriteTimes;
+
+/// A core write shape's refusal: a 400 naming its field.
+pub(crate) fn core_write_refusal(refusal: CoreWriteRefusal) -> ApiError {
+    ApiError::bad_request(refusal.message(), Some(refusal.field()))
 }
 
 pub(crate) fn core_entity_timestamps(
@@ -82,145 +77,7 @@ pub(crate) fn core_entity_timestamps(
     occurred_end: Option<u64>,
     learned_at: Option<u64>,
 ) -> Result<CoreEntityTimestamps, ApiError> {
-    let learned_at = learned_at.unwrap_or_else(unix_seconds_now);
-    let start = occurred_start.unwrap_or(learned_at);
-    let end = occurred_end.unwrap_or(start);
-    if start > end {
-        return Err(ApiError::bad_request(
-            "occurred_start must be less than or equal to occurred_end",
-            Some("occurred_start"),
-        ));
-    }
-    Ok(CoreEntityTimestamps {
-        occurred: oneiron::TimeRange { start, end },
-        learned_at,
-    })
-}
-
-pub(crate) fn normalize_platform_announcement_body(body: &Value) -> Cow<'_, Value> {
-    let Value::Object(object) = body else {
-        return Cow::Borrowed(body);
-    };
-    if !is_platform_announcement_body(object) {
-        return Cow::Borrowed(body);
-    }
-
-    let mut normalized = object.clone();
-    normalized.remove("messageType");
-    normalized.remove("originalText");
-    normalized.remove("showOriginal");
-    normalized.insert(
-        "message_type".to_owned(),
-        Value::String(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE.to_owned()),
-    );
-    normalized.insert(
-        "spkr".to_owned(),
-        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
-    );
-    normalized.insert(
-        "speaker".to_owned(),
-        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
-    );
-    normalized.insert(
-        "voice".to_owned(),
-        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
-    );
-    normalized.insert(
-        "attribution".to_owned(),
-        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
-    );
-    normalized.insert(
-        "render_voice".to_owned(),
-        Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
-    );
-    normalized.insert("platform_voice".to_owned(), Value::Bool(true));
-    normalized.insert("is_companion".to_owned(), Value::Bool(false));
-
-    let status = announcement_status(object);
-    normalized.insert(
-        "announcement_status".to_owned(),
-        Value::String(status.to_owned()),
-    );
-    normalized.insert(
-        "retracted".to_owned(),
-        Value::Bool(status == ANNOUNCEMENT_STATUS_RETRACTED),
-    );
-    normalized.insert(
-        "corrected".to_owned(),
-        Value::Bool(status == ANNOUNCEMENT_STATUS_CORRECTED),
-    );
-
-    let original = announcement_original_text(object);
-    if let Some(original) = original {
-        normalized.insert(
-            "original_txt".to_owned(),
-            Value::String(original.to_owned()),
-        );
-    }
-    let localized = object_bool_field(object, &["localized"]).unwrap_or(false)
-        || object_string_field(object, &["locale", "localized_locale", "localizedLocale"])
-            .is_some()
-        || original.is_some();
-    if localized {
-        normalized.insert("localized".to_owned(), Value::Bool(true));
-    }
-    if let Some(show_original) = object_bool_field(object, &["show_original", "showOriginal"]) {
-        normalized.insert("show_original".to_owned(), Value::Bool(show_original));
-    } else if original.is_some() {
-        normalized.insert("show_original".to_owned(), Value::Bool(true));
-    }
-
-    Cow::Owned(Value::Object(normalized))
-}
-
-pub(crate) fn is_platform_announcement_body(object: &serde_json::Map<String, Value>) -> bool {
-    object_string_field(object, &["message_type", "messageType"]).is_some_and(|message_type| {
-        message_type.eq_ignore_ascii_case(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE)
-    })
-}
-
-pub(crate) fn announcement_status(object: &serde_json::Map<String, Value>) -> &'static str {
-    match object_string_field(object, &["announcement_status", "announcementStatus"]) {
-        Some(status) if status.eq_ignore_ascii_case(ANNOUNCEMENT_STATUS_RETRACTED) => {
-            ANNOUNCEMENT_STATUS_RETRACTED
-        }
-        Some(status) if status.eq_ignore_ascii_case(ANNOUNCEMENT_STATUS_CORRECTED) => {
-            ANNOUNCEMENT_STATUS_CORRECTED
-        }
-        Some(status) if status.eq_ignore_ascii_case(ANNOUNCEMENT_STATUS_ACTIVE) => {
-            ANNOUNCEMENT_STATUS_ACTIVE
-        }
-        _ if object_bool_field(object, &["retracted"]).unwrap_or(false) => {
-            ANNOUNCEMENT_STATUS_RETRACTED
-        }
-        _ if object_bool_field(object, &["corrected"]).unwrap_or(false) => {
-            ANNOUNCEMENT_STATUS_CORRECTED
-        }
-        _ => ANNOUNCEMENT_STATUS_ACTIVE,
-    }
-}
-
-pub(crate) fn announcement_original_text(object: &serde_json::Map<String, Value>) -> Option<&str> {
-    object_string_field(object, &["original_txt", "originalText", "original_text"]).or_else(|| {
-        let original = object.get("original")?.as_object()?;
-        object_string_field(original, &["txt", "text", "body"])
-    })
-}
-
-pub(crate) fn object_string_field<'a>(
-    object: &'a serde_json::Map<String, Value>,
-    keys: &[&str],
-) -> Option<&'a str> {
-    keys.iter()
-        .find_map(|key| object.get(*key).and_then(Value::as_str))
-}
-
-pub(crate) fn object_bool_field(
-    object: &serde_json::Map<String, Value>,
-    keys: &[&str],
-) -> Option<bool> {
-    keys.iter()
-        .find_map(|key| object.get(*key).and_then(Value::as_bool))
+    shape::core_write_times(occurred_start, occurred_end, learned_at).map_err(core_write_refusal)
 }
 
 pub(crate) fn stage_core_entity_put<'a>(
@@ -231,34 +88,15 @@ pub(crate) fn stage_core_entity_put<'a>(
     body: &Value,
     text: Option<&[CoreTextField]>,
 ) -> Result<oneiron::BatchBuilder<'a>, ApiError> {
-    let body = core_body_for_write(entity_type, body);
-    let data = encode_core_body(&body)?;
-    // ARCH-0006a: only the Dreamer writes a scope summary's body. A caller
-    // declares the scope; it never puts the body through a generic write.
-    if entity_type == oneiron::registry::ENTITY_TYPE_SUMMARY
-        && oneiron::scope_summary::decode_scope_summary_body(&data).is_ok()
-    {
-        return Err(ApiError::bad_request(
-            "a scope summary's body is written by the Dreamer; declare the scope at POST /v1/core/conversations/{conversation_id}/summaries",
-            Some("entity_type"),
-        ));
-    }
-    let mut batch = batch.put(
+    shape::stage_core_put(
+        batch,
         id,
         entity_type,
-        timestamps.occurred,
-        timestamps.learned_at,
-        &data,
-    );
-    let text_fields = core_text_fields(text, &body);
-    if !text_fields.is_empty() {
-        let refs: Vec<(&str, &str)> = text_fields
-            .iter()
-            .map(|(field, value)| (field.as_str(), value.as_str()))
-            .collect();
-        batch = batch.text(id, &refs);
-    }
-    Ok(batch)
+        timestamps,
+        body,
+        text.map(text_pairs),
+    )
+    .map_err(core_write_refusal)
 }
 
 /// Commits `batch` as `auth` wrote it. Below owner grade, a put that turns an
@@ -279,24 +117,22 @@ pub(crate) fn core_text_fields(
     text: Option<&[CoreTextField]>,
     body: &Value,
 ) -> Vec<(String, String)> {
-    if let Some(text) = text {
-        return text
-            .iter()
-            .filter(|entry| !entry.field.is_empty() && !entry.value.is_empty())
-            .map(|entry| (entry.field.clone(), entry.value.clone()))
-            .collect();
-    }
+    shape::core_text_pairs(text.map(text_pairs), body)
+}
 
-    let Value::Object(object) = body else {
-        return Vec::new();
-    };
-    object
-        .iter()
-        .filter_map(|(key, value)| {
-            value
-                .as_str()
-                .filter(|value| !value.is_empty())
-                .map(|value| (key.clone(), value.to_owned()))
-        })
-        .collect()
+fn text_pairs(text: &[CoreTextField]) -> impl Iterator<Item = (&str, &str)> {
+    text.iter()
+        .map(|entry| (entry.field.as_str(), entry.value.as_str()))
+}
+
+/// A request's text fields as a row input's.
+pub(crate) fn core_write_text(text: Option<Vec<CoreTextField>>) -> Option<Vec<CoreWriteTextField>> {
+    text.map(|text| {
+        text.into_iter()
+            .map(|entry| CoreWriteTextField {
+                field: entry.field,
+                value: entry.value,
+            })
+            .collect()
+    })
 }

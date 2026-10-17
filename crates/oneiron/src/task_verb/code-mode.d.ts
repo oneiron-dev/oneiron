@@ -159,6 +159,7 @@ declare const vault: {
       acknowledge(input: { signer: string }): Promise<unknown>;
     };
   };
+  batch(input: { entities: { entity_type: number; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }[] }): Promise<unknown>;
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
     history(input: { claim_ref: string }): Promise<unknown>;
@@ -187,9 +188,16 @@ declare const vault: {
     status(input: { job_ref: string }): Promise<unknown>;
   };
   conversations: {
+    create(input: { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }): Promise<unknown>;
+    records: {
+      append(input: { conversation: string; parent?: string | null; reply_to?: string | null; addr?: "broadcast" | "direct" | null; to?: string[] | null; advance: boolean; body: unknown; text?: { field: string; value: string }[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: { message: string; start: number; end: number } | null }): Promise<unknown>;
+    };
     turn: {
       continue(input: { turn_id: string }): Promise<unknown>;
       retry(input: { turn_id: string }): Promise<unknown>;
+    };
+    turns: {
+      create(input: { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }): Promise<unknown>;
     };
   };
   decisions: {

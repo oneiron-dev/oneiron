@@ -254,6 +254,10 @@ pub enum AgentVerb {
     VaultHabitsCheckin,
     VaultClaimsAdmit,
     VaultArtifactsCreate,
+    VaultConversationsCreate,
+    VaultConversationsTurnsCreate,
+    VaultConversationsRecordsAppend,
+    VaultBatch,
     VaultArtifactsPut,
     VaultArtifactsAppend,
     VaultArtifactsRead,
@@ -520,6 +524,10 @@ impl AgentVerb {
         Self::VaultHabitsCheckin,
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
+        Self::VaultConversationsCreate,
+        Self::VaultConversationsTurnsCreate,
+        Self::VaultConversationsRecordsAppend,
+        Self::VaultBatch,
         Self::VaultArtifactsPut,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
@@ -793,6 +801,10 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
+            Self::VaultConversationsCreate => "vault.conversations.create",
+            Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
+            Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
+            Self::VaultBatch => "vault.batch",
             Self::VaultArtifactsPut => "vault.artifacts.put",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
@@ -1022,6 +1034,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1295,6 +1311,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1621,6 +1641,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1779,6 +1803,10 @@ impl AgentVerb {
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
+                | Self::VaultConversationsCreate
+                | Self::VaultConversationsTurnsCreate
+                | Self::VaultConversationsRecordsAppend
+                | Self::VaultBatch
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
@@ -2062,6 +2090,10 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultConversationsCreate => &["spec"],
+            Self::VaultConversationsTurnsCreate => &["spec"],
+            Self::VaultConversationsRecordsAppend => &["spec"],
+            Self::VaultBatch => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2329,6 +2361,10 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
+            Self::VaultConversationsCreate => &["spec"],
+            Self::VaultConversationsTurnsCreate => &["spec"],
+            Self::VaultConversationsRecordsAppend => &["spec"],
+            Self::VaultBatch => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2984,6 +3020,18 @@ impl AgentVerb {
             }
             Self::VaultArtifactsCreate => {
                 "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."
+            }
+            Self::VaultConversationsCreate => {
+                "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."
+            }
+            Self::VaultConversationsTurnsCreate => {
+                "Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."
+            }
+            Self::VaultConversationsRecordsAppend => {
+                "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."
+            }
+            Self::VaultBatch => {
+                "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."
             }
             Self::VaultArtifactsPut => {
                 "Registers one blob artifact; its bytes ride vault.artifacts.append."

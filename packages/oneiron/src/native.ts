@@ -242,6 +242,10 @@ vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
 vaultArtifactsCreate(input: unknown): unknown
+vaultConversationsCreate(input: unknown): unknown
+vaultConversationsTurnsCreate(input: unknown): unknown
+vaultConversationsRecordsAppend(input: unknown): unknown
+vaultBatch(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown

@@ -27,6 +27,7 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 mod call_context;
+mod core_write_doors;
 mod decision_ask_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
