@@ -4,6 +4,7 @@ use super::access_gate::HeldAuthority;
 use super::versions::AdmittedRevision;
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ClaimSubject;
 use crate::vault::ReadMode;
 use crate::{EntityId, Error, HydratedShortIdDeletion, Result, TimeRange};
 type EntityParts = (u8, u64, Vec<u8>);
@@ -66,6 +67,32 @@ impl ScopedRead<'_> {
         ids.iter()
             .map(|id| self.is_entity_readable_held_in(txn, &policy, id, &filter, &authority))
             .collect()
+    }
+
+    /// Whether this reader may read an EdgeRef claim subject in `txn`: its
+    /// exact edge is live and passes the same pair admission as a weave Links
+    /// row, both endpoints included. Endpoint readability alone is not pair
+    /// authority. An entity subject is not judged here and passes through.
+    pub(crate) fn claim_edge_subject_admitted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &ClaimSubject,
+    ) -> Result<bool> {
+        let ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = *subject
+        else {
+            return Ok(true);
+        };
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let Some(edge) = self.live_weave_edge_in(txn, source, kind, target)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .admit_stored_edge_in(txn, &policy, &filter, source, edge)?
+            .visible())
     }
 
     /// Actor-gated entity bodies at a caller-owned ledger snapshot. A wake

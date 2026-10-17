@@ -176,6 +176,7 @@ impl OffRecordSession<'_> {
                 order,
             }],
             occurred_at,
+            assertions: Default::default(),
         };
         // The run's own checks, first in each transaction the witness opens
         // (its container probes and the one that lands the turn): its

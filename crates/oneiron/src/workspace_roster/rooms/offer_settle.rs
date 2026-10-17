@@ -194,6 +194,7 @@ impl Acceptance {
                 order: 0,
             }],
             occurred_at: at,
+            assertions: Default::default(),
         }
     }
 }

@@ -203,6 +203,7 @@ impl Vault {
                 order: 0,
             }],
             occurred_at: tap.occurred_at,
+            assertions: Default::default(),
         };
         let mut minted = None;
         let result = self
