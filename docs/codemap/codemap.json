@@ -47089,7 +47089,7 @@
      "purpose": "Soniox streaming ASR wire client",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1,
       "trait": 1
      }
