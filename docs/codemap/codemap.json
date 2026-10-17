@@ -18811,7 +18811,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 19,
+      "const": 20,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -19006,7 +19006,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 13,
+      "mod": 14,
       "re-export": 5
      }
     },
@@ -19182,6 +19182,23 @@
      "path": "src/dreamer_runner/maintenance/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TypeEvidence",
+      "TypeNamer",
+      "TypeTreeUpkeepReport"
+     ],
+     "path": "src/dreamer_runner/maintenance/type_tree_upkeep.rs",
+     "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 2,
+      "trait": 1
+     }
     },
     {
      "bucket": "m",
@@ -28833,7 +28850,7 @@
      "path": "src/llm/run_admission/media.rs",
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 15,
       "struct": 2
      }
@@ -28845,7 +28862,7 @@
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -28914,6 +28931,21 @@
      "purpose": "Local fakes for the research-connector fixture",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WireCallError",
+      "WireSeat"
+     ],
+     "path": "src/llm/run_admission/wire.rs",
+     "purpose": "A media rung whose wire the host drives itself, on its own thread: a local process or a loopback worker…",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -36603,7 +36635,7 @@
      "path": "src/receipt/pack_attribution.rs",
      "purpose": "Frozen execution and actual-use facts on an attempt's pack receipt",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 6
      }
@@ -38341,7 +38373,7 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -40638,14 +40670,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_attribution/host.rs",
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
      "surface": {
-      "crate-vis": 1,
-      "fn": 1
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -40702,7 +40734,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 12
      }
     },
@@ -40743,6 +40775,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/run_writes.rs",
+     "purpose": "OF-540/OF-397: the write envelope of a leased agent run",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -42308,7 +42350,7 @@
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
       "const": 8,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 3,
       "struct": 1
      }
@@ -47768,7 +47810,7 @@
      "path": "src/team/run_binding.rs",
      "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -49066,6 +49108,7 @@
      "kind": "src",
      "notable": [
       "HostedBinding",
+      "HostedMediaQueue",
       "HostedProvider",
       "HostedRender",
       "HostedTransport",
@@ -49077,8 +49120,8 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 6,
-      "struct": 3,
+      "fn": 8,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -49112,6 +49155,7 @@
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 4,
       "fn": 18,
       "struct": 7,
@@ -49427,7 +49471,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VoxCpm2Event",
@@ -52514,7 +52558,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52822,7 +52866,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 96,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53242,7 +53286,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53517,7 +53561,7 @@
    },
    "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3249,
+   "source_files": 3252,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60519,7 +60563,7 @@
      "purpose": "Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event…",
      "surface": {
       "const": 2,
-      "fn": 22,
+      "fn": 23,
       "struct": 4
      }
     },
@@ -64018,6 +64062,16 @@
      "notable": [],
      "path": "src/ai_host/coach_host/seal_checks.rs",
      "purpose": "The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/type_tree_upkeep.rs",
+     "purpose": "The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the…",
      "surface": {
       "crate-vis": 1
      }
@@ -68792,9 +68846,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/embedder/admitted.rs",
-     "purpose": "A remote embedder's requests under run admission (ARCH-0053 `#run-admission`)",
+     "purpose": "An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -70550,7 +70604,7 @@
      "path": "src/models/responses_socket.rs",
      "purpose": "Responses over a held socket (ARCH-0081 §5)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -72306,7 +72360,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72700,7 +72754,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 596,
+   "source_files": 597,
    "test_files": 182
   },
   "oneiron-spawn": {
