@@ -463,6 +463,9 @@ impl<'a> HostSelfDispatcher<'a> {
                     observed = observed.max(generation);
                 }
             }
+            // A Changed this run resumed from is kept on its own cursor (OF-533).
+            observed =
+                crate::code_run::observe_wait_change(vault, run_id, handle.group_ref, observed)?;
             crate::task_verb::ack_option_void_generation(vault, handle.group_ref, observed)?;
         }
         Ok(match memory.tasks_wait_observing(handle, None, observed) {

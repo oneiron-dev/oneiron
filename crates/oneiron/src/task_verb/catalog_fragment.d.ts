@@ -4,10 +4,10 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 290 code-mode rows (272 host rows, 18 run rows), 906 declarations.
-// Replies: 233 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 306 code-mode rows (288 host rows, 18 run rows), 970 declarations.
+// Replies: 249 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 65; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Opaque serde_json::Value leaves: 70; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
@@ -34,7 +34,7 @@ declare namespace Sdk {
   type RecordRef = { kind: string; id: string; short_id?: string | null; label: string };
   type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null };
   type DiaryReadsRequest = { limit?: number | null };
-  type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null };
+  type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string };
   type DiaryReviewState = "pending" | "approved" | "declined" | "used";
   type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null };
   type DiaryReadsView = { review: boolean; reads: DiaryReadRecord[]; requests: DiaryReadRequest[] };
@@ -87,14 +87,15 @@ declare namespace Sdk {
   type PersonRequest = { pr: string };
   type EmptyRequest = Record<string, never>;
   type ShapeCeiling = "auto" | "proposed";
+  type ShapeGrantBound = { domain: "action"; actor: string; actor_class?: string | null; class: string; selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean } | { domain: "disclosure"; audience: string[]; class: string; selectors: string[] };
   type ShapeTarget = { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
-  type ShapeRow = { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeRow = { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
   type ShapeSeed = { rows: ShapeRow[] };
   type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
   type ShapeChange = "create" | "update" | "retire";
   type ShapeItemClass = "receipted" | "widening" | "authority";
   type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
-  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
+  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
   type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
   type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
@@ -613,13 +614,21 @@ declare namespace Sdk {
   type ProjectCardConfirmRequest = { card_id: string; action_id: string; occurred_at: number };
   type GateDecisionId = { bytes: number[] };
   type ProjectMintReceipt = { project_id: string; card_id: string; grant_decision_id: GateDecisionId; grant_ref: string };
-  type ProjectRefRequest = { project_ref: string };
-  type GoalPreference = { prefer: string; over: string; reason: string };
-  type ProjectGoalRevisionProposal = { project: EntityId; goal_claim: EntityId; preference: GoalPreference; question_digest: string; picked_by: EntityId; at: number };
-  type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
-  type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
-  type ConsentPart = "spend" | "membership" | "admission";
-  type RequiredParty = { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } };
+  type ProjectRole = "project" | "corpus";
+  type ProjectRevisionHash = unknown;
+  type ProjectParentWitness = { project: EntityId; head: ProjectRevisionHash; leader: EntityId };
+  type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string };
+  type ScopeScope = { world?: string | null; facet?: string | null; relationship?: string | null; project?: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
+  type ProjectAuthority = { parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice: ScopeScope; depth_limit: number; depth_remaining: number; leader: string; board: string[]; roster?: string[] | null };
+  type ProjectAnchor = { authority: ProjectAuthority; proof?: ProjectWriteProof | null };
+  type ProjectProofVersion = "v2" | "v3";
+  type ProjectWriteProof = { slip_wire: string; holder_signature: number[]; signed_at: number; anchor?: ProjectAnchor | null; version?: ProjectProofVersion };
+  type ProjectGoalRecord = { project_id: string; goal: string; why: string; axes: string[] };
+  type ProjectBudgetShare = { project_id: string; parent_id: string; share_bps: number };
+  type ProjectRecord = { role: ProjectRole; schema_version: number; depth?: number; parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice?: ScopeScope; depth_limit?: number; depth_remaining?: number; write_proof?: ProjectWriteProof | null; leader: string; board: string[]; roster: string[]; sessions: string[]; tasks: string[]; branches: string[]; skill_forks: string[]; goal?: string | null; goal_record?: ProjectGoalRecord | null; why?: string | null; born_from?: string | null; budget?: string | null; budget_share?: ProjectBudgetShare | null; asks: string[]; home_room: string; origin_room?: string | null; origin_thread?: string | null; origin_at?: number | null; wrapper_task?: string | null };
+  type ProjectRosterWriteRequest = { project: EntityId; record: unknown };
+  type ConsentPart = "subject" | "spend" | "membership" | "admission";
+  type RequiredParty = { subject: JoinSubject } | { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } };
   type ConsentNeed = { part: ConsentPart; party: RequiredParty };
   type JoinRefusal = { denied: { part: ConsentPart; party: EntityId; answer_ref: string } } | "unknown_subject" | { foreign_house_agent: { org: EntityId } } | "unknown_room" | { unknown_spend_scope: { scope: SpendScopeId } } | { forged_payer: { scope: SpendScopeId } };
   type JoinDecision = "ready" | { hold: { needs: ConsentNeed[] } } | { refuse: JoinRefusal };
@@ -629,10 +638,16 @@ declare namespace Sdk {
   type MembershipConsent = { vault_owner: { person: EntityId } } | { member: { person: EntityId; grant: EntityId } } | { companion_of_member: { companion: EntityId; principal: EntityId; grant?: EntityId | null } } | { scoped_guest: { person: EntityId; guest_grant: EntityId } } | { house_agent: { org: EntityId } };
   type AdmissionBasis = "room_owner" | "delegated_host" | "standing_home_roster" | { host_answer: { answer_ref: string } } | { through_principal: { principal: EntityId } };
   type AdmissionConsent = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; granted_by: EntityId; basis: AdmissionBasis };
-  type ConsentSet = { spend: ConsentState<SpendConsent>; membership: ConsentState<MembershipConsent>; admission: ConsentState<AdmissionConsent> };
+  type ConsentSet = { subject: ConsentState<EntityId>; spend: ConsentState<SpendConsent>; membership: ConsentState<MembershipConsent>; admission: ConsentState<AdmissionConsent> };
   type JoinParticipation = "ledger_seat" | "already_seated" | "home_room_receipt" | "branch_receipt" | "agent_receipt" | "principal_receipt";
   type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null };
   type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null };
+  type ProjectRosterWriteOutcome = { installed: boolean; invitations: JoinOutcome[] };
+  type ProjectRefRequest = { project_ref: string };
+  type GoalPreference = { prefer: string; over: string; reason: string };
+  type ProjectGoalRevisionProposal = { project: EntityId; goal_claim: EntityId; preference: GoalPreference; question_digest: string; picked_by: EntityId; at: number };
+  type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
+  type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
   type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null };
   type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string };
   type DeclaredMaximum = { units: number; unit: LeaseUnit };
@@ -752,7 +767,7 @@ declare namespace Sdk {
   type RoleHolder = { actor: string; kind: HolderKind };
   type ResolvedRole = { role: AskRole; holders: RoleHolder[] };
   type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean };
-  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; role?: ResolvedRole | null; answer?: AskAnswer | null };
+  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation?: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null };
   type DecisionAskClimbRequest = { seq: number };
   type ConnectorListRequest = { query?: string | null };
   type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
@@ -798,6 +813,8 @@ declare namespace Sdk {
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
   type WorkflowCheck = "solved" | "replay";
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
+  type LibraryRetireInput = { workflow: string };
+  type LibraryRetireOutput = { retired: LibraryCard };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
   type KeyInput = { key: string; modifiers?: string[]; ref?: string | null };
@@ -849,6 +866,49 @@ declare namespace Sdk {
   type CoreBatchEntityReceipt = { id: string; entity_type: number };
   type CoreBatchWriteReceipt = { count: number; entities: CoreBatchEntityReceipt[] };
   type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null };
+  type OfficeBodyImportRequest = { artifact_ref: string; version?: number | null; made_by?: unknown | null };
+  type OfficeBodyKind = "docx" | "xlsx" | "pptx";
+  type OfficeBodyHead = { artifact: EntityId; kind: OfficeBodyKind; source_version: number; source_hash: number[]; import_frontier: number[]; frontier: number[]; commits: number };
+  type OfficeBodyArtifactRequest = { artifact_ref: string };
+  type OfficeBodyReadRequest = { artifact_ref: string; at?: number[] | null };
+  type BodyBlockKind = "paragraph" | { heading: number } | "table" | "opaque";
+  type DocxCellView = { row: number; col: number; text: string };
+  type DocxBlockView = { id: string; kind: BodyBlockKind; role?: string | null; imported: boolean; locked: boolean; text: string; cells: DocxCellView[] };
+  type DocxBodyView = { blocks: DocxBlockView[] };
+  type XlsxValue = "blank" | { number: number } | { text: string } | { bool: boolean } | { error: string };
+  type XlsxLock = "shared_formula" | "array_formula" | "data_table" | "rich_value" | "table_row" | "unsupported" | "builtin_name";
+  type BodyCell = { address: string; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
+  type XlsxArea = { first: [number, number]; last: [number, number]; lock: XlsxLock };
+  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[] };
+  type BodyName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
+  type XlsxStyle = { num_fmt: number; format?: string | null };
+  type XlsxBodyView = { date1904: boolean; sheets: XlsxSheetView[]; names: BodyName[]; styles: XlsxStyle[] };
+  type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView };
+  type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy };
+  type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null };
+  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null };
+  type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] };
+  type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
+  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
+  type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null };
+  type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
+  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
+  type OfficeBodyForkEditRequest = { artifact_ref: string; fork_ref: string; ops: OfficeBodyOps; made_by?: unknown | null };
+  type OfficeBodyForkRequest = { artifact_ref: string; fork_ref: string };
+  type ChangeKind = "added" | "deleted" | "moved" | "text" | "cells";
+  type BlockChange = { block: string; kind: ChangeKind };
+  type ConflictKind = "delete_edit" | "competing_move" | "both_edited" | "both_set";
+  type BodyConflict = { block: string; kind: ConflictKind };
+  type OfficeBodyDiff = { base: number[]; head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
+  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[] };
+  type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null };
+  type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
+  type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
+  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[] };
+  type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
+  type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
+  type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
   type ReadBlobVersionRequest = { artifact_ref: string; version: number };
@@ -866,6 +926,10 @@ declare namespace Sdk {
   type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
+  type NoteRefRequest = { note_ref: string };
+  type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: string; sealed_at: number };
+  type NoteLifecycleStatus = "active" | "sealed" | "archived" | "tombstoned";
+  type NoteLifecycleView = { status: NoteLifecycleStatus; seal?: NoteSeal | null };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type MemorySearchOutput = { results: MemorySearchHit[] };
@@ -909,7 +973,7 @@ declare namespace Sdk {
   type TeamAxis = "converge" | "diverge";
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
-  type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null; confessions?: number | null; spend?: number | null; spendCap?: number | null; calls?: number | null };
+  type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
   type ReaderSpawnReceipt = { task: EntityId; attempt: string; run: EntityId; cutoff_unix_ms: number; state: string; replay: boolean };
   type TaskWaitSetRequest = { tasks: string[]; all?: boolean | null; n_of?: number | null; until?: number | null; step_key: string };
@@ -997,6 +1061,8 @@ declare namespace self {
       find(input: Sdk.LibraryFindInput): Promise<Sdk.Reply<Sdk.LibraryFindOutput>>;
       /** Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.Reply<Sdk.ProposeOutput>>;
+      /** Takes a program out of the replay library for every later run, and returns the card it had. */
+      retire(input: Sdk.LibraryRetireInput): Promise<Sdk.Reply<Sdk.LibraryRetireOutput>>;
       /** Runs a replay library program live with its arguments; a missed postcondition goes back to the planner. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.Reply<Sdk.LibraryRunOutput>>;
     };
@@ -1150,6 +1216,34 @@ declare const vault: Sdk.VaultHost & {
   artifacts: {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.Reply<Sdk.BlobVersionView>>;
+    body: {
+      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
+      commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.TextCommitReceipt[]>>;
+      /** A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head. */
+      edit(input: Sdk.OfficeBodyEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
+      /** Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator. */
+      export(input: Sdk.OfficeBodyExportVerbRequest): Promise<Sdk.Reply<Sdk.OfficeBodyExportView>>;
+      fork: {
+        /** A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show. */
+        diff(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
+        /** Abandons an open fork's unlanded work and returns its record. */
+        discard(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyFork>>;
+        /** The opener's typed DOCX or XLSX operations on its open fork of a live body. */
+        edit(input: Sdk.OfficeBodyForkEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
+        /** A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses. */
+        merge(input: Sdk.OfficeBodyForkMergeRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
+        /** Opens a fork of the live body at its head for machine work, in an optional run. */
+        open(input: Sdk.OfficeBodyForkOpenRequest): Promise<Sdk.Reply<Sdk.OfficeBodyFork>>;
+      };
+      /** An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none. */
+      head(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.OfficeBodyHead | null>>;
+      /** Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document. */
+      import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.Reply<Sdk.OfficeBodyHead>>;
+      /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
+      preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.XlsxPreview>>;
+      /** Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history. */
+      read(input: Sdk.OfficeBodyReadRequest): Promise<Sdk.Reply<Sdk.OfficeBodyView>>;
+    };
     /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
     born_from(input: Sdk.BornFromRequest): Promise<Sdk.Reply<Sdk.BornFromView>>;
     /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */
@@ -1398,6 +1492,10 @@ declare const vault: Sdk.VaultHost & {
     edit(input: Sdk.EditNoteRequest): Promise<Sdk.Reply<Sdk.NoteEditOutcome>>;
     /** Creates a NOTE of a registered kind from an existing entity. */
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.Reply<Sdk.EntityRefReceipt>>;
+    /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
+    lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.Reply<Sdk.NoteLifecycleView>>;
+    /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
+    seal(input: Sdk.NoteRefRequest): Promise<Sdk.Reply<Sdk.NoteSeal>>;
   };
   packs: {
     /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
@@ -1436,6 +1534,10 @@ declare const vault: Sdk.VaultHost & {
     proposals(input: Sdk.ProjectConversationRequest): Promise<Sdk.Reply<Sdk.ProjectCardRecord[]>>;
     /** The drafting agent proposes a project card on a source message; the card writes no project and confers no authority. */
     propose(input: Sdk.ProjectProposalRequest): Promise<Sdk.Reply<Sdk.ProjectProposalCard>>;
+    roster: {
+      /** Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent. */
+      write(input: Sdk.ProjectRosterWriteRequest): Promise<Sdk.Reply<Sdk.ProjectRosterWriteOutcome>>;
+    };
     /** Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room. */
     route_tradeoff(input: Sdk.ProjectTradeoffRouteRequest): Promise<Sdk.Reply<Sdk.TaskAskReceipt>>;
   };

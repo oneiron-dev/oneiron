@@ -26,6 +26,7 @@
 mod docx;
 mod fork;
 mod pptx;
+mod verbs;
 mod xlsx;
 
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
@@ -33,17 +34,24 @@ pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDi
 pub use oneiron_docedit::xlsx_body::{XlsxArea, XlsxBook, XlsxLock, XlsxStyle, XlsxValue};
 pub(crate) use pptx::live_refused;
 pub use pptx::{PptxBody, PptxExport, PptxReview};
+pub use verbs::{
+    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest,
+    OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
+    OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
+    OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyReadRequest, OfficeBodyView, XlsxBodyView,
+    XlsxSheetView,
+};
 pub use xlsx::{BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
 
 use crate::Vault;
-use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
+use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance, CalcEngineStamp};
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::provenance::text_commit::TextCommitReceipt;
-use crate::side_table::{self, Named, Raw, SideTable};
+use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::typed_body::{
@@ -66,13 +74,8 @@ use serde::{Deserialize, Serialize};
 /// Each artifact's office facts: its format and the version it imported.
 const SOURCES: SideTable<EntityId, OfficeBodySource, Named> =
     SideTable::new(&side_table::OFFICE_BODY_HEAD);
-/// Open deck forks, by fork id.
-const DOCS: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::OFFICE_BODY_DOC);
-/// Deck fork receipts by fork id, and those of the forks landed into a deck by
-/// artifact, each by sequence.
-const COMMITS: SideTable<Vec<u8>, TextCommitReceipt, Named> =
-    SideTable::new(&side_table::OFFICE_BODY_COMMIT);
-/// Deck forks, by artifact and fork.
+/// Deck forks' office records (the run each belongs to), by artifact and
+/// fork; the fork's document is its typed-body fork.
 const FORKS: SideTable<(EntityId, EntityId), OfficeBodyFork, Named> =
     SideTable::new(&side_table::OFFICE_BODY_FORK);
 const EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
@@ -121,7 +124,7 @@ pub struct OfficeBodyHead {
 
 /// One call's commit: the new frontier, the ids it minted in operation order
 /// (paragraphs, deck nodes; none for a workbook), and its receipt.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeBodyEdit {
     pub frontier: Vec<u8>,
     pub minted: Vec<String>,
@@ -154,6 +157,9 @@ pub struct OfficeBodyFork {
     pub commits: u64,
     pub opened_at: u64,
     pub state: ForkState,
+    /// The run a deck fork belongs to, whose approve-all scope covers it.
+    #[serde(default)]
+    pub run_root: Option<EntityId>,
 }
 
 pub struct OfficeBodyExportRequest<'a> {
@@ -161,6 +167,9 @@ pub struct OfficeBodyExportRequest<'a> {
     /// The revision author a DOCX export shows; recorded for every export.
     pub author: &'a str,
     pub run_ref: &'a str,
+    /// The envelope the export version carries; `None` gives it the
+    /// exporter's own.
+    pub made_by: Option<&'a MadeBy>,
 }
 
 /// An export version and the exact body it projects. The version keeps a
@@ -190,7 +199,7 @@ pub struct OfficeBodyExport {
 }
 
 /// The workbook an XLSX export would land now, recalculated, read back.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XlsxPreview {
     pub frontier: Vec<u8>,
     pub book: XlsxBook,
@@ -292,28 +301,14 @@ impl Vault {
         xlsx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Xlsx, at)?.1)
     }
 
-    /// Every commit receipt of the body, in commit order. A deck's are then
-    /// followed by the receipts of the machine forks landed into it, in
-    /// landing order.
+    /// Every commit receipt of the body, in commit order, a landed fork's
+    /// included.
     pub fn office_body_commits(&self, artifact: &EntityId) -> Result<Vec<TextCommitReceipt>> {
-        let landed: Vec<TextCommitReceipt> = {
-            let txn = self.store.env.read_txn()?;
-            match source(&self.store, &txn, artifact)?.kind {
-                OfficeBodyKind::Pptx => COMMITS
-                    .scan_from(&self.store, &txn, artifact.as_bytes())?
-                    .into_iter()
-                    .map(|(_, receipt)| receipt)
-                    .collect(),
-                _ => Vec::new(),
-            }
-        };
-        let mut receipts: Vec<TextCommitReceipt> = self
+        Ok(self
             .typed_body_receipts(artifact)?
             .into_iter()
             .flatten()
-            .collect();
-        receipts.extend(landed);
-        Ok(receipts)
+            .collect())
     }
 
     /// A person's operations on the live body. Operations read against an older
@@ -599,14 +594,20 @@ impl Vault {
             if self.head_in_txn(wtxn, artifact)?.frontier != head.frontier {
                 return Err(invalid("the body moved during the export; export again"));
             }
-            let version = self.append_blob_artifact_version_in_txn(
+            // The version carries the calculator that computed its cached
+            // values and the export's envelope (ARCH-0075 calculation;
+            // ARCH-0078 made_by).
+            let version = self.append_blob_artifact_version_with_engine_and_parent_in_txn(
                 wtxn,
                 artifact,
                 &bytes,
                 &provenance,
+                recalc.as_ref(),
                 request.actor,
                 TimeRange { start: at, end: at },
                 at,
+                None,
+                request.made_by,
             )?;
             let record = OfficeBodyExportRecord {
                 artifact: *artifact,
@@ -617,7 +618,7 @@ impl Vault {
                 author: request.author.to_owned(),
                 at,
                 changes: changes as u64,
-                recalc,
+                recalc: recalc.as_ref().map(recalc_label),
             };
             EXPORTS.put(
                 &self.store,
@@ -653,7 +654,7 @@ impl Vault {
         Ok(XlsxPreview {
             frontier: head.frontier,
             book,
-            recalc,
+            recalc: recalc.as_ref().map(recalc_label),
         })
     }
 
@@ -676,7 +677,7 @@ impl Vault {
         head: &OfficeBodyHead,
         author: &str,
         at: u64,
-    ) -> Result<Option<(Vec<u8>, usize, Option<String>)>> {
+    ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>)>> {
         if head.kind == OfficeBodyKind::Pptx {
             return Err(invalid(
                 "a deck export is a proposal until its export gate opens: use export_pptx_body",
@@ -771,31 +772,14 @@ impl Vault {
         typed_body_in_txn(&self.store, txn, artifact, kind.schema(), at)?
             .ok_or(Error::CorruptedIndex("office body document missing"))
     }
-
-    fn record_commit(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        owner: &EntityId,
-        sequence: &mut u64,
-        receipt: &TextCommitReceipt,
-    ) -> Result<()> {
-        COMMITS.put(&self.store, wtxn, &version_key(owner, *sequence), receipt)?;
-        *sequence += 1;
-        Ok(())
-    }
 }
 
-/// Removes `artifact`'s office rows: its format record, its deck forks with
-/// their receipts and the landed forks' receipts, and its export records. The
-/// body itself, a Loro document in every format, goes with the typed body's
-/// own eraser. Registered in `deletion/derived_rows.rs`.
+/// Removes `artifact`'s office rows: its format record, its deck forks'
+/// office records and its export records. The body itself, a Loro document in
+/// every format, goes with its forks in the typed body's own eraser.
+/// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
-    for (_, fork) in FORKS.scan_keys(store, txn, entity.as_bytes())? {
-        DOCS.delete(store, txn, &fork)?;
-        COMMITS.delete_from(store, txn, fork.as_bytes())?;
-    }
     FORKS.delete_from(store, txn, entity.as_bytes())?;
-    COMMITS.delete_from(store, txn, entity.as_bytes())?;
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
@@ -857,6 +841,7 @@ fn fork_view(record: TypedBodyFork) -> OfficeBodyFork {
             TypedForkState::Merged { by, at, head } => ForkState::Merged { by, at, head },
             TypedForkState::Discarded { by, at } => ForkState::Discarded { by, at },
         },
+        run_root: None,
     }
 }
 
@@ -941,7 +926,11 @@ fn three_way(
 /// projected package, so the result is deterministic in both and no vault
 /// frontier reaches the file (OF-491). A workbook the engine refuses is marked
 /// to recalculate when it is opened instead.
-fn recalc_xlsx(bytes: &[u8], limits: Limits, at: u64) -> Result<(Vec<u8>, Option<String>)> {
+fn recalc_xlsx(
+    bytes: &[u8],
+    limits: Limits,
+    at: u64,
+) -> Result<(Vec<u8>, Option<CalcEngineStamp>)> {
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&blake3::hash(bytes).as_bytes()[..8]);
     let clock = RecalcClock::new(timestamp(at)?, 0, u64::from_le_bytes(seed))
@@ -949,10 +938,10 @@ fn recalc_xlsx(bytes: &[u8], limits: Limits, at: u64) -> Result<(Vec<u8>, Option
     match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {
         Ok(report) => Ok((
             report.bytes,
-            Some(format!(
-                "{} {}",
-                report.engine.engine, report.engine.version
-            )),
+            Some(CalcEngineStamp::new(
+                report.engine.engine,
+                report.engine.version,
+            )?),
         )),
         Err(_) => Ok((
             mark_full_calc(bytes, limits).map_err(|_| {
@@ -961,6 +950,11 @@ fn recalc_xlsx(bytes: &[u8], limits: Limits, at: u64) -> Result<(Vec<u8>, Option
             None,
         )),
     }
+}
+
+/// The calculator as the export record and the preview name it.
+fn recalc_label(stamp: &CalcEngineStamp) -> String {
+    format!("{} {}", stamp.engine(), stamp.version())
 }
 
 fn timestamp(at: u64) -> Result<chrono::DateTime<chrono::Utc>> {

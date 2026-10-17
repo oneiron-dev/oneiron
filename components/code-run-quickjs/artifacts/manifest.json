@@ -8,7 +8,7 @@
   "toolchain": {
     "wit-bindgen": "wit-bindgen-cli 0.46.0",
     "wasm-tools": "wasm-tools 1.239.0 (35f8671bc 2025-09-09)",
-    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /home/fl-big-results-bpp-5c-ee7b97/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /home/fl-big-results-bpp-5c-ee7b97/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
+    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /home/fl-l13-qjs-c9e8c7/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /home/fl-l13-qjs-c9e8c7/fleet-work/tools/quickjs/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
@@ -16,7 +16,7 @@
   "sources": {
     "guest.c": "df292f54abcb0f2afe068ed663b3a41799ef77ed36e2c08fa077a90e7b14f512",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "b07fb0d96286dd18c2b43803ce47c30da6c5ab50f2903df588347e65c32037b9",
+    "bootstrap.js": "c05bc771aa9131681daf04b5033059a08fe2dcb41077759599c02313ffd3e19b",
     "reader_forks.js": "0da7b0ede6cd13a463e1fd19e2e20a607ece26d8cbe10b3931adf33fdea35200",
     "diff.js": "6268af5e130181e33866c6e34127e92a97c3544cef2850580d84541e74c23014",
     "hook_guest.c": "7e65ba8fce7db9d63991003b9430f3bd451669ab10daaf07788a797ac74d3816",
@@ -27,13 +27,13 @@
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "70d01ff1f2dcc74cf491b0ae121b3ab465ef1af8d55c19a4227fa6b42e9e5b73",
-      "bytes": 1081467
+      "sha256": "f6dd93070f959601a0361fed341a5c4c78a91f9c1f571b303ebc8d842ee77403",
+      "bytes": 1082411
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "1e466e9843f2c959fa299f63f55e89903c3eb786c7e3870a51ada62bf9767cb7",
-      "bytes": 1073918
+      "sha256": "2cd3ec89577abc794d20a178c172fc4f4d790ea0063811f287a35805e2c1437d",
+      "bytes": 1074862
     },
     "hook": {
       "file": "quickjs-hook.wasm",
