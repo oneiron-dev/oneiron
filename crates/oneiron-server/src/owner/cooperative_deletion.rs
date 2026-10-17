@@ -150,7 +150,7 @@ fn peer_url(field: &str, origin: &str, path: &str) -> OwnerResult<String> {
 }
 
 /// Runs `sign` with this host's authority key.
-fn with_issuer<T>(
+pub(super) fn with_issuer<T>(
     server: &SyncServer,
     sign: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> OwnerResult<T> {

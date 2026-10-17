@@ -49,6 +49,7 @@ mod decision_ask_routes;
 mod diary_routes;
 mod disclosure_routes;
 mod embedding_space_routes;
+mod federation_connect_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
@@ -128,6 +129,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
         .merge(cooperative_deletion_routes::routes())
+        .merge(federation_connect_routes::routes())
         .merge(decision_ask_routes::routes())
         .merge(peer_confidence_routes::routes())
         .merge(skill_judge_routes::routes())
