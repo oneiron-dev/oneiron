@@ -890,7 +890,7 @@ declare namespace Sdk {
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
   type WorkflowCheck = "solved" | "replay";
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
-  type LibraryRetireInput = { workflow: string };
+  type LibraryRetireInput = { workflow: string; reason?: string | null };
   type LibraryRetireOutput = { retired: LibraryCard };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
