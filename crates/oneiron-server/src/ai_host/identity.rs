@@ -28,8 +28,12 @@ const RESURFACE_EVERY: u32 = 30;
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
 
 /// Starts the worker. Each round runs on a blocking thread: the ladder's
-/// model rungs block on the server's runtime.
-pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+/// model rungs block on the server's runtime. A tick `admit` refuses is
+/// skipped; its pass holds what `admit` returns.
+pub(crate) fn spawn(
+    server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -40,9 +44,17 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             let Some(server) = weak.upgrade() else {
                 break;
             };
+            let Some(pass) = admit() else {
+                continue;
+            };
             let resurface = beat % RESURFACE_EVERY == 0;
             beat = beat.wrapping_add(1);
-            match tokio::task::spawn_blocking(move || round(&server, resurface)).await {
+            match tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                round(&server, resurface)
+            })
+            .await
+            {
                 // By kind only: an engine error can quote the vault.
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "identity asks wait for the next round");

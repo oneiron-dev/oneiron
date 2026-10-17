@@ -67,8 +67,12 @@ const DISTILL_SYSTEM: &str = "You are the Coach. The data you get is one ended \
     \"...\"}]}, at most 8 notes, each one or two general sentences of at most 300 characters.";
 
 /// Starts the worker. Each round runs on a blocking thread: the seat's calls
-/// block on the server's runtime.
-pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+/// block on the server's runtime. A tick `admit` refuses is skipped; its
+/// pass holds what `admit` returns.
+pub(crate) fn spawn(
+    server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -78,7 +82,15 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            match tokio::task::spawn_blocking(move || round(&server)).await {
+            let Some(pass) = admit() else {
+                continue;
+            };
+            match tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                round(&server)
+            })
+            .await
+            {
                 // By kind only: an engine error can quote the vault.
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "the Coach's host queue waits for the next round");
