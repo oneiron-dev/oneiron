@@ -43498,7 +43498,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SealedRelay"
@@ -44361,7 +44361,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SealedShelfEntry"
@@ -44369,8 +44369,8 @@
      "path": "src/sync/residence/sealed.rs",
      "purpose": "Home custody of private-world windows the home may not read (OF-534 G7, DEC-0005 world privacy fix 8)",
      "surface": {
-      "const": 1,
-      "fn": 3,
+      "const": 4,
+      "fn": 8,
       "struct": 1
      }
     },
