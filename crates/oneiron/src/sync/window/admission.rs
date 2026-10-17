@@ -100,7 +100,8 @@ fn validate_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
-    // OF-013: the withdrawn cutoffs the update carries, staged once it is admitted.
+    // OF-013: the withdrawn cutoffs and epoch floors the update carries,
+    // staged once it is admitted.
     let mut cutoffs = Vec::new();
     let carrier_refusal = |blob: &[u8]| -> Option<Error> {
         let header = EntityMetadataHeader::parse(blob)?;
@@ -209,7 +210,8 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
         )?;
-        // OF-013: every withdrawn cutoff the snapshot holds names its artifact.
+        // OF-013: every withdrawn cutoff the snapshot holds names its
+        // artifact, and every epoch floor its session (FIX 2867).
         cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
             &candidate.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
         )?);
