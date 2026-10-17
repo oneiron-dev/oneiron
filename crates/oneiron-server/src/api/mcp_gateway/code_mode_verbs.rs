@@ -43,7 +43,7 @@ use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
 use oneiron::browser_library::{
-    WorkflowRecord, file_workflow, record_workflow_run, site_workflows,
+    Retired, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow, site_workflows,
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -418,6 +418,19 @@ impl WorkflowLibrary for VaultLibrary {
             self.server.vault.now_recorded_at(),
         )
         .map_err(library_failed)
+    }
+
+    fn retire(&mut self, workflow: &str) -> Result<Option<LibraryCard>, BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(None);
+        };
+        match retire_workflow(&self.server.vault, id, self.by).map_err(library_failed)? {
+            Retired::Taken(record) => Ok(Some(record.card())),
+            Retired::NotFiled => Ok(None),
+            Retired::NotFiler => Err(BrowserError::Library(format!(
+                "workflow {workflow} was filed from another caller's run; only that caller retires it"
+            ))),
+        }
     }
 }
 
