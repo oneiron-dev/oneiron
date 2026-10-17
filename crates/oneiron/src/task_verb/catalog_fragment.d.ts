@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 258 code-mode rows (241 host rows, 17 run rows), 774 declarations.
-// Replies: 198 fully typed, 30 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 45; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 267 code-mode rows (250 host rows, 17 run rows), 791 declarations.
+// Replies: 201 fully typed, 36 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
+// Opaque serde_json::Value leaves: 51; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
@@ -287,7 +287,7 @@ declare namespace Sdk {
   type SharedMemberRoleRequest = { vault_id: number; member: string; role: FederationGrantRole };
   type SharedMemberRequest = { vault_id: number; member: string };
   type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } };
-  type SharedInvitation = { id: string; vault_id: number; inviter: string; invitee: string; role: FederationGrantRole; issued_at: number; expires_at: number; state: SharedInvitationState };
+  type SharedInvitation = { id: string; vault_id: number; inviter: string; invitee: string; role: FederationGrantRole; issued_at: number; expires_at: number; state: SharedInvitationState; founding: boolean };
   type SharedInvitationRequest = { vault_id: number; invitation: string };
   type SharedInvitationWithdrawRequest = { vault_id: number; member: string; invitation: string };
   type PendingActStarted = { act_id: string; vault_id: number; act: string; recipient: string; deadline: number };
@@ -353,6 +353,14 @@ declare namespace Sdk {
   type LearningSettingsView = { catalog: LearningSettingSpecView[]; rows: LearningSettingRowView[] };
   type LearningSettingPut = { key: string; mode: LearningSettingMode; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null };
   type LearningSettingClear = { key: string; mode: LearningSettingMode; project?: string | null; task_type?: string | null };
+  type WidenProposalState = "pending" | "approved" | "declined";
+  type WidenProposalsRequest = { state?: WidenProposalState | null };
+  type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
+  type WidenProposalsView = { proposals: WidenProposalView[] };
+  type WidenProposalAnswer = { proposal_id: string };
+  type WakePolicySetRequest = { policy: unknown; idempotency_key: string };
+  type PolicyActionOutcome = { outcome: unknown };
+  type InferenceDefaultsReplaceRequest = { defaults: unknown; idempotency_key: string };
   type LensSlot = { pack_name: string; skill_id: string };
   type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string };
   type LensApproval = "proposed";
@@ -375,6 +383,15 @@ declare namespace Sdk {
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
+  type RevealRequest = { handle: string; why: string };
+  type RevealPending = { reveal: string };
+  type RevealWaitRequest = { reveal: string };
+  type RevealDecision = "pending" | "granted" | "denied" | "expired";
+  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
+  type RevealWaitAnswer = { decision: RevealDecision; value?: string | null; value_base64?: string | null; receipt?: RevealReceipt | null };
+  type RevealDescribeRequest = { handle: string };
+  type RevealProvenance = { record: string; place: string; kind: string; masked_at: number };
+  type RevealHandleCard = { handle: string; label: string; class: string; status: string; band: string; provenance?: RevealProvenance | null; reveal: string; grant_ref?: string | null; refusal?: string | null };
   type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
   type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
@@ -640,7 +657,7 @@ declare namespace Sdk {
   type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
   type QuestionAudience = "asker";
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
-  type QuestionMedia = { images: boolean };
+  type QuestionMedia = { images?: boolean; audio?: boolean };
   type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null };
   type QuestionCreateRequest = { definition: QuestionDefinition };
   type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition; created_at: number };
@@ -828,6 +845,13 @@ declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.Reply<Sdk.Tas
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.Reply<Sdk.TaskAskPersonEvidence[]>>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
 declare function report(input: Sdk.ReportRequest): Promise<Sdk.Reply<Sdk.ReportReceipt>>;
+/** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.Reply<Sdk.RevealPending>>) & {
+  /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+  describe(input: Sdk.RevealDescribeRequest): Promise<Sdk.Reply<Sdk.RevealHandleCard>>;
+  /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
+  wait(input: Sdk.RevealWaitRequest): Promise<Sdk.Reply<Sdk.RevealWaitAnswer>>;
+};
 declare namespace self {
   const agents: {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.Reply<unknown>>;
@@ -1323,12 +1347,21 @@ declare const vault: {
     bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.LexicalHit[]>>>;
   };
   settings: {
+    /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */
+    inference_defaults: ((input: Sdk.EmptyRequest) => Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>) & {
+      /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
+      replace(input: Sdk.InferenceDefaultsReplaceRequest): Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>;
+    };
     /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
     learning: ((input: Sdk.LearningSettingsRequest) => Promise<Sdk.Reply<Sdk.LearningSettingsView>>) & {
       /** The owner clears one learned-setting row of a key, mode and scope. */
       clear(input: Sdk.LearningSettingClear): Promise<Sdk.Reply<Sdk.LearningSettingsView>>;
       /** The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope. */
       put(input: Sdk.LearningSettingPut): Promise<Sdk.Reply<Sdk.LearningSettingsView>>;
+    };
+    wake_policy: {
+      /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
+      set(input: Sdk.WakePolicySetRequest): Promise<Sdk.Reply<Sdk.PolicyActionOutcome>>;
     };
   };
   shared: {
@@ -1381,6 +1414,13 @@ declare const vault: {
     };
     /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
     report(input: Sdk.WeaveReportRequest): Promise<Sdk.Reply<Sdk.WeaveReportView>>;
+  };
+  /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
+  widen_proposals: ((input: Sdk.WidenProposalsRequest) => Promise<Sdk.Reply<Sdk.WidenProposalsView>>) & {
+    /** The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued. */
+    approve(input: Sdk.WidenProposalAnswer): Promise<Sdk.Reply<Sdk.WidenProposalView>>;
+    /** The owner, as the board above, declines one context-widen proposal for good; the decline stays on record. */
+    decline(input: Sdk.WidenProposalAnswer): Promise<Sdk.Reply<Sdk.WidenProposalView>>;
   };
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
   witness(input: Sdk.WitnessTurn): Promise<Sdk.Reply<Sdk.WitnessReceipt>>;
