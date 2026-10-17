@@ -20295,7 +20295,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 3,
-      "crate-vis": 14,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 13,
       "struct": 2
@@ -20318,10 +20318,10 @@
      "path": "src/embed/space_move.rs",
      "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
+      "const": 4,
+      "crate-vis": 3,
       "enum": 4,
-      "fn": 6,
+      "fn": 7,
       "struct": 4,
       "trait": 1
      }
@@ -32234,7 +32234,7 @@
      "path": "src/pipeline/budget.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -61745,7 +61745,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -64440,6 +64440,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EmbeddingConfig",
+      "EmbeddingSlotsConfig"
+     ],
+     "path": "src/config/embedding.rs",
+     "purpose": "`[embedding]`: the embedding spaces and kind slots a vault starts with (OF-370; ARCH-0019 `#default-bindings`)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FailureSignalsConfig"
      ],
      "path": "src/config/failure_signals.rs",
@@ -64553,7 +64568,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 11,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -68310,7 +68325,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 36,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68571,7 +68586,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 510,
+   "source_files": 511,
    "test_files": 182
   },
   "oneiron-spawn": {
