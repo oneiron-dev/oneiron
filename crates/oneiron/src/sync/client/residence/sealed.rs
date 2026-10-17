@@ -23,8 +23,7 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::sync::client::SyncClientConfig;
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::{
-    SEALED_PACKET_MAX, SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX,
-    discover_local_window_keys,
+    SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX, discover_local_window_keys,
 };
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
@@ -401,7 +400,6 @@ async fn read_sealed_packet(
         let reply: SealedReadReply = serde_json::from_value(reply).map_err(|_| refused())?;
         if reply.id != id
             || reply.window != window.as_str()
-            || reply.total > SEALED_PACKET_MAX
             || *total.get_or_insert(reply.total) != reply.total
         {
             return Err(refused());
