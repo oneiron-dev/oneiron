@@ -13,7 +13,9 @@
 //! `CascadeControl`. A banked voice renders only under its render consent
 //! for the TTS route's target and locality: it is bound when the bindings
 //! are built, again when each generation starts, and checked before each
-//! sentence is sent and before its audio comes back.
+//! sentence is sent and before its audio comes back. A roster change the
+//! owner reports stops a generation assembled for the old audience before
+//! the next audio plays.
 
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -54,6 +56,11 @@ pub enum VoiceMediaIn {
     /// A VAD observation: whether the person has been speaking since the
     /// last one. Sustained speech over the assistant's output stops it.
     Speaking(bool),
+    /// The voice roster changed: someone joined, a speaker was placed
+    /// differently, or the owner named one. The session reads its audience
+    /// again, and a changed one stops the live generation before the next
+    /// audio plays.
+    RosterChanged,
 }
 
 /// The media side of one served voice connection.
@@ -328,6 +335,11 @@ impl VoiceHost {
                         dispatch(&stop, outputs);
                     }
                 }),
+            VoiceMediaIn::RosterChanged => self.refresh_interlocutors().map(|stop| {
+                if let Some(stop) = stop {
+                    dispatch(&stop, outputs);
+                }
+            }),
         };
         if let Err(error) = handled {
             tracing::warn!(%error, "voice media input refused");
@@ -383,6 +395,12 @@ impl VoiceHost {
 
     fn observe_speech(&self, now: Duration, speaking: bool) -> Result<Option<OutputStop>, HostError> {
         Ok(self.lock()?.core.observe_speech(now, speaking)?)
+    }
+
+    /// The roster-change stop: the generation assembled for an audience
+    /// that changed.
+    fn refresh_interlocutors(&self) -> Result<Option<OutputStop>, HostError> {
+        Ok(self.lock()?.core.refresh_interlocutors()?.stop)
     }
 }
 
