@@ -44841,7 +44841,7 @@
      "surface": {
       "const": 9,
       "crate-vis": 1,
-      "fn": 15,
+      "fn": 16,
       "mod": 1,
       "struct": 4
      }
@@ -61978,7 +61978,7 @@
      "path": "src/remote/response.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -63655,6 +63655,16 @@
      "purpose": "The artifact family's public HTTP surface (ARCH-0078, OF-511): one contract over every blob kind",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_codec.rs",
+     "purpose": "Compressed bodies on the HTTP API (ARCH-0081 §8, OF-604)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -71380,7 +71390,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 294,
+     "files": 295,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71767,7 +71777,7 @@
    },
    "over_bar": 44,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 582,
+   "source_files": 583,
    "test_files": 182
   },
   "oneiron-spawn": {

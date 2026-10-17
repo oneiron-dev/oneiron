@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/mod.rs` | src | m | 10 crate-vis | — | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 | `src/remote/origin.rs` | src | s | 2 crate-vis | — | — |
 | `src/remote/pairing.rs` | src | s | 2 crate-vis | — | — |
-| `src/remote/response.rs` | src | s | 7 crate-vis | — | — |
+| `src/remote/response.rs` | src | s | 8 crate-vis | — | — |
 | `src/remote/tests.rs` | test | s | — | — | — |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
