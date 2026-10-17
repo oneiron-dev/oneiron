@@ -3782,7 +3782,7 @@
       "crate-vis": 9,
       "enum": 5,
       "fn": 15,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 15
      }
     },
@@ -3801,6 +3801,26 @@
       "enum": 1,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BranchBelief",
+      "PriorRung",
+      "PriorSeed",
+      "SelectionBenchmark",
+      "SelectionRanking"
+     ],
+     "path": "src/autoreason_campaign/research/estimator.rs",
+     "purpose": "The engine's parent-selection estimator (OF-351, ARCH-0053 \"DECIDE reward\")",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -3829,6 +3849,7 @@
      "notable": [
       "MeasuredBranch",
       "OracleSignal",
+      "ParentRanking",
       "SelectionDecision",
       "SelectionError",
       "SelectionPolicy",
@@ -3841,7 +3862,7 @@
      "purpose": "Read-only DECIDE floor for an experiment campaign over the durable run tree",
      "surface": {
       "crate-vis": 4,
-      "enum": 5,
+      "enum": 6,
       "fn": 2,
       "struct": 4
      }
@@ -52291,7 +52312,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -53735,7 +53756,7 @@
    },
    "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3261,
+   "source_files": 3262,
    "test_files": 902
   },
   "oneiron-android": {
