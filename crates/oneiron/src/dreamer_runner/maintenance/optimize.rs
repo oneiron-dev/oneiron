@@ -252,7 +252,21 @@ fn optimize(
         }
         // This gate owns its held-out read and revalidates it at commit. The
         // drafting author never receives the scores or reserved receipts.
-        score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at)?;
+        let verdict = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at)?;
+        // A scored edit is a held-out outcome for the Coach's own edit
+        // record: did the edited instructions beat the current ones. A
+        // refusal before scoring is none.
+        if !verdict.goal_axes.is_empty() {
+            super::coach_learning::record_coach_outcome(
+                vault,
+                super::coach_learning::COACH_SKILL_EDIT_AXIS,
+                format!("skill_edit:{}", proposal.to_hex()),
+                at,
+                crate::learning::Anchor::HeldOut,
+                verdict.after > verdict.before,
+                at,
+            )?;
+        }
     }
     Ok(DreamerAttemptExecution::Completed {
         // The host meters model calls separately. The wake counter charges
