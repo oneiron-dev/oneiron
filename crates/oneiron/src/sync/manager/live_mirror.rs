@@ -104,11 +104,18 @@ impl WindowManager {
     /// Mirrors `rows` into every loaded window that holds them, `edited`
     /// ones over the carrier a doc holds. Best effort: the rows are durable,
     /// and a window that misses them gets them at its next cold open.
+    ///
+    /// Each window's read of LMDB and write of its doc run under the
+    /// materializer lock (taken after the registry lock is released), so no
+    /// remote import of the same row lands in LMDB between the two. An import
+    /// that reached the doc first, and waits on the lock, finds the mirror's
+    /// carrier there and leaves LMDB alone (`carrier_superseded`).
     fn mirror_committed_rows(&self, rows: &BTreeSet<EntityId>, edited: &BTreeSet<EntityId>) {
         for key in self.loaded_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
             };
+            let _guard = self.materializer.lock();
             match super::super::window::reverse_rematerialize_rows(
                 &self.vault,
                 &window.doc,
