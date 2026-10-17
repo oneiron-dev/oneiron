@@ -41549,7 +41549,7 @@
      "purpose": "Skill judgments on the shared typed-decision ladder",
      "surface": {
       "crate-vis": 8,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -41861,6 +41861,7 @@
      "kind": "src",
      "notable": [
       "JudgeIncumbent",
+      "JudgeOutcomeLink",
       "JudgeShadowAnswer",
       "JudgeShadowCase",
       "JudgeShadowHost",
@@ -41877,7 +41878,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "enum": 3,
+      "enum": 4,
       "fn": 5,
       "struct": 7,
       "trait": 1
@@ -41894,7 +41895,7 @@
      "path": "src/skill_optimize/labels.rs",
      "purpose": "Human-calibrated judge asks and the append-only label anchor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "struct": 2
