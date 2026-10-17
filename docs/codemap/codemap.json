@@ -11052,7 +11052,7 @@
      "path": "src/code_run/dispatcher/fold_verbs.rs",
      "purpose": "The fold verbs (ARCH-0067 §2.2): `self.fold`, `self.compact`, `self.unfold`, `self.folds` and…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -14519,7 +14519,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/context_board/fanout.rs",
-     "purpose": "The fan-out launches that wait on the owner, as TASKS lead rows (OF-393): a held launch's pause row with the…",
+     "purpose": "The fan-out launches that wait on an approver, as TASKS lead rows (OF-393): a held launch's pause row with…",
      "surface": {
       "fn": 1
      }
@@ -16851,7 +16851,7 @@
      "path": "src/deletion/legal_hold/mod.rs",
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 14,
       "re-export": 1
      }
@@ -20663,7 +20663,7 @@
      "path": "src/edit_roundtrip/judgment_cells.rs",
      "purpose": "Independent OOXML reads for typed sheet answers",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -21264,7 +21264,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -23645,7 +23645,7 @@
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -43845,7 +43845,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 16,
       "struct": 1
      }
@@ -44437,7 +44437,7 @@
      "purpose": "Entity document access through the vault's canonical window/selector owner",
      "surface": {
       "crate-vis": 2,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -44447,7 +44447,7 @@
      "path": "src/sync/manager/live_mirror.rs",
      "purpose": "The live mirror: rows a local commit writes reach the window docs this manager has loaded",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -44545,7 +44545,7 @@
      "path": "src/sync/note/mirror.rs",
      "purpose": "Snapshot-consistent NOTE packing and selective-export closure",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -44619,7 +44619,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RematDrainReport"
@@ -44627,7 +44627,7 @@
      "path": "src/sync/quarantine/remat_markers.rs",
      "purpose": "rm: marker keys, setters/clears, pending scans plus drain",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2,
       "struct": 1
      }
@@ -44707,7 +44707,7 @@
      "path": "src/sync/queue/scrub.rs",
      "purpose": "Carrier scrubs plus test injection hook",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -44778,7 +44778,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 13,
       "re-export": 6,
       "struct": 2
@@ -44830,7 +44830,7 @@
      "path": "src/sync/residence/policy.rs",
      "purpose": "This machine's residence choice: sync every window it may read, or sync what it opened",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -44858,6 +44858,7 @@
      "purpose": "Home custody of private-world windows the home may not read (OF-534 G7, DEC-0005 world privacy fix 8)",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "fn": 8,
       "struct": 1
      }
@@ -44891,7 +44892,7 @@
      "path": "src/sync/room_turns.rs",
      "purpose": "OF-522: a room's turn rows on the window plane",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -46263,7 +46264,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "FanoutCheckChoice",
@@ -46274,7 +46275,7 @@
      "surface": {
       "crate-vis": 22,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -46384,7 +46385,7 @@
      "path": "src/task_verb/highway_types.rs",
      "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 6,
       "fn": 1,
       "struct": 10
@@ -46834,7 +46835,7 @@
      "purpose": "The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out…",
      "surface": {
       "enum": 1,
-      "fn": 5,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -46846,7 +46847,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 315
+      "fn": 316
      }
     },
     {
@@ -49540,7 +49541,7 @@
      "path": "src/workspace_roster/project/asks.rs",
      "purpose": "A project's asks queue (ARCH-0067 tasks and asks)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -50532,7 +50533,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "OpenedSealedContent",
@@ -50552,7 +50553,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SealedTake"
@@ -50561,7 +50562,7 @@
      "purpose": "The window side of sealed world content: what a reader seals from a private world's window, and how a reader…",
      "surface": {
       "enum": 1,
-      "fn": 5
+      "fn": 8
      }
     },
     {
@@ -53203,7 +53204,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 166,
+   "over_bar": 167,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3225,
    "test_files": 902
@@ -53211,28 +53212,39 @@
   "oneiron-android": {
    "files": [
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine.rs",
+     "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 4
+      "fn": 4,
+      "mod": 1
      }
     }
    ],
    "modules": {
-    "lib": {
+    "engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Minimal JNI/Kotlin ownership adapter"
+     "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…"
     }
    },
    "over_bar": 0,
    "purpose": "Minimal JNI/Kotlin ownership adapter",
-   "source_files": 1,
+   "source_files": 2,
    "test_files": 0
   },
   "oneiron-authority": {
@@ -55337,7 +55349,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "DesktopGuest",
@@ -55510,7 +55522,7 @@
     "desktop": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
@@ -58875,6 +58887,22 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "OneironAppHost",
+      "OneironEngine",
+      "OneironReply",
+      "OneironSecretSink"
+     ],
+     "path": "src/lib/engine.rs",
+     "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault…",
+     "surface": {
+      "fn": 8,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
@@ -58899,7 +58927,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -58957,7 +58985,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58966,7 +58994,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -61191,7 +61219,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 269
+      "fn": 270
      }
     },
     {
@@ -62208,7 +62236,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 270
+      "fn": 271
      }
     },
     {
@@ -64978,7 +65006,7 @@
      "path": "src/api/facade/fanout_doors.rs",
      "purpose": "The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -67215,7 +67243,7 @@
       "const": 1,
       "crate-vis": 6,
       "fn": 12,
-      "re-export": 19,
+      "re-export": 20,
       "struct": 1
      }
     },
@@ -67549,11 +67577,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "OpenedServedVault"
+     ],
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 11,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -68314,13 +68346,30 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embedded.rs",
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…",
      "surface": {
-      "fn": 1
+      "fn": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BlockingEngine",
+      "EmbeddedEngine",
+      "EmbeddedReply",
+      "EmbeddedRequest"
+     ],
+     "path": "src/embedded/engine.rs",
+     "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
+     "surface": {
+      "fn": 20,
+      "struct": 4
      }
     },
     {
@@ -69935,7 +69984,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -70114,8 +70163,8 @@
      "path": "src/models/router.rs",
      "purpose": "Every configured model and seat by id: the raw `/v1/llm` routes call whichever model they name, through its…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 4,
+      "crate-vis": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -71952,10 +72001,10 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "embedded": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
@@ -72199,7 +72248,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 588,
+   "source_files": 589,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -72343,6 +72392,25 @@
      "surface": {
       "enum": 7,
       "struct": 50
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AppHostCallbacks",
+      "EmbeddedEngine",
+      "EngineHeader",
+      "EngineLimits",
+      "EngineReply",
+      "EngineRequest"
+     ],
+     "path": "src/embedded_engine.rs",
+     "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…",
+     "surface": {
+      "fn": 6,
+      "struct": 5,
+      "trait": 1
      }
     },
     {
@@ -73239,7 +73307,7 @@
      "surface": {
       "const": 1,
       "fn": 9,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 1
      }
     }
@@ -73266,6 +73334,13 @@
      "layout": "file",
      "purpose": "The typed UniFFI records of the SDK surface"
     },
+    "embedded_engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…"
+    },
     "error": {
      "files": 1,
      "impl_vault": false,
@@ -73290,7 +73365,7 @@
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 0
   },
   "oneiron-vault-contract": {
@@ -73688,6 +73763,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/display.rs",
+     "purpose": "A cell as a person sees it in Excel: its stored value (a formula's cached result) under its number format…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -73724,8 +73809,8 @@
      "path": "src/lib.rs",
      "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
      "surface": {
-      "mod": 6,
-      "re-export": 8
+      "mod": 7,
+      "re-export": 9
      }
     },
     {
@@ -73841,6 +73926,13 @@
      "layout": "file",
      "purpose": "The document contract's recalculation port (ARCH-0075 section 2): a host serving `oneiron_docedit::contract`…"
     },
+    "display": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A cell as a person sees it in Excel: its stored value (a formula's cached result) under its number format…"
+    },
     "engine": {
      "files": 1,
      "impl_vault": false,
@@ -73900,7 +73992,7 @@
    },
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
-   "source_files": 15,
+   "source_files": 16,
    "test_files": 1
   }
  }

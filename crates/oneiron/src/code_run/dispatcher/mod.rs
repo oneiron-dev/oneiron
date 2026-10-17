@@ -97,6 +97,9 @@ pub struct HostSelfDispatcher<'a> {
     /// and every verb call's origin carries it. `None` when no ladder
     /// stamped the turn.
     pub(super) model_provider: RefCell<Option<String>>,
+    /// Whose log the fold verbs reach (OF-181): the executor call's own run,
+    /// unless a host action bound the live run it acts for.
+    fold_log: fold_verbs::FoldLog,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -216,6 +219,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_child: None,
             planner: None,
             model_provider: RefCell::new(None),
+            fold_log: fold_verbs::FoldLog::Site,
         })
     }
 
