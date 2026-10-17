@@ -8,10 +8,11 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use oneiron::skill_hub::pack_catalog::PackOrganBinary;
 use oneiron_organ_protocol::Hash32;
 
 use crate::error::HostError;
-use crate::spec::OrganSpec;
+use crate::spec::{OrganSpec, OrganTier};
 
 /// Writes a pinned organ binary under `dir`, in a folder named by its hash,
 /// executable and read-only, and returns the first-party spec that starts
@@ -56,5 +57,35 @@ pub fn install_pinned_binary(
     }
     let mut spec = OrganSpec::first_party(name, program);
     spec.program_hash = Some(pinned);
+    Ok(spec)
+}
+
+/// An organ from a pack's build for this host: the build written under
+/// `dir` by its blake3, and the install grant its `ORGAN.json` names (its
+/// verbs, media types, threads and memory), pinned to that binary and to
+/// the version the pack names. The seal sets its own grant
+/// ([`crate::seal::seal_spec_from_pack`]).
+///
+/// # Errors
+/// The build could not be written.
+pub fn pack_spec(
+    binary: &PackOrganBinary,
+    dir: &Path,
+    tier: OrganTier,
+) -> Result<OrganSpec, HostError> {
+    let organ = &binary.organ;
+    let mut spec = OrganSpec::first_party(&organ.name, binary.materialize(dir)?);
+    spec.tier = tier;
+    spec.program_hash = Some(Hash32::of(&binary.bytes));
+    spec.version_pin = organ.version.clone();
+    spec.verbs = organ.verbs.clone();
+    spec.media_types = organ.media_types.clone();
+    if let Some(threads) = organ.threads {
+        spec.threads = threads;
+    }
+    if let Some(memory) = organ.memory_bytes {
+        spec.memory_bytes = memory;
+        spec.call_memory_bytes = spec.call_memory_bytes.min(memory);
+    }
     Ok(spec)
 }

@@ -554,29 +554,27 @@ impl DesktopWorkers {
     }
 }
 
-/// Builds the hook sandbox off the runtime (it compiles and probes the
-/// component) and starts the fact-hook runner, each pass under `admit`. A
-/// sandbox that fails to load starts no runner. Managed serve starts it too.
+/// Takes the vault's one hook sandbox off the runtime (building it compiles
+/// and probes the component), so verb hooks, the fact-hook runner and
+/// `vault.hooks.replay` run on the same one, and starts the runner, each
+/// pass under `admit`. A sandbox that fails to load starts no runner.
+/// Managed serve starts it too.
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) async fn spawn_fact_hooks(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    use oneiron::runtime_hooks::{FactHookRunner, sandbox};
-    let built = crate::logging::off_runtime("hook sandbox", || {
-        let (bytes, pin) = sandbox::hook_component_bytes();
-        sandbox::HookSandbox::from_component(bytes, pin).map_err(anyhow::Error::from)
-    })
-    .await
-    .and_then(|built| built);
+    use oneiron::runtime_hooks::FactHookRunner;
+    let vault = Arc::clone(server.vault());
+    let built = crate::logging::off_runtime("hook sandbox", move || vault.hook_runtime())
+        .await
+        .and_then(|built| built.map_err(anyhow::Error::msg));
     match built {
-        Ok(sandbox) => {
-            let runtime: Arc<dyn oneiron::runtime_hooks::HookBodyRuntime> = Arc::new(sandbox);
-            // `vault.hooks.replay` replays on the runner's own sandbox.
+        Ok(runtime) => {
+            // `vault.hooks.replay` replays on the runner's own sandbox, the
+            // one verb hooks run on: one sandbox per process.
             let _ = server.hook_runtime.set(Arc::clone(&runtime));
-            // Verb hooks run on it too: one sandbox per process.
-            server.vault().install_hook_runtime(Arc::clone(&runtime));
             // A credential caller's settled verb-hook ask runs again through
             // the door it came in by, checked before the runner's first pass.
             server.vault().install_verb_ask_credential_check(Arc::new(
