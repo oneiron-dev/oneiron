@@ -9,7 +9,8 @@ use crate::attempt_queue::{
 };
 use crate::dreamer_runner::{
     CompleteDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION,
-    DreamerAdmittedAttempt, DreamerMilestoneClaim, DreamerMilestoneKind, ParkDreamerAttempt,
+    DreamerAdmittedAttempt, DreamerMilestoneClaim, DreamerMilestoneKind, DreamerParkCause,
+    ParkDreamerAttempt,
 };
 #[cfg(feature = "sync")]
 use crate::dreamer_runner::{DreamerAttemptProgressState, DreamerAttemptProgressUpdate};
@@ -209,12 +210,14 @@ impl DreamerWakeDriver<'_> {
         &mut self,
         attempt_id: AttemptId,
         reason: String,
+        cause: DreamerParkCause,
         park_owner: String,
         now: u64,
     ) -> Result<()> {
         let input = ParkDreamerAttempt {
             attempt_id,
             reason,
+            cause,
             park_owner,
             now,
         };
