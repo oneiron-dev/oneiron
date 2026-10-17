@@ -69506,7 +69506,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 16,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -69651,7 +69651,7 @@
      "purpose": "A role-bound call's model under the vault's live model manifest",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
