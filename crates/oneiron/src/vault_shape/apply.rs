@@ -6,10 +6,13 @@
 //! read as landed. The shape holds no authority: an owner's apply lands
 //! through the owner's doors, a widening only on the owner's word for that
 //! item, and an actor's apply lands nothing and leaves every item waiting.
+//! A new grant an actor declares also goes to the owner's widen inbox, filed
+//! under the actor's own credential.
 use super::live::world_name;
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
+use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -20,6 +23,10 @@ use crate::{EntityId, TimeRange, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// How long a grant an actor's apply files waits in the owner's widen inbox:
+/// the inbox's own ceiling. The item itself waits in the journal past it.
+const SHAPE_GRANT_PROPOSAL_SECS: u64 = 3600;
 
 /// Every apply's journal, keyed by the frontier of the plan it lands.
 const JOURNAL: SideTable<String, ShapeApplyReceipt, Named> =
@@ -48,6 +55,13 @@ pub enum ShapeItemState {
     /// Waits for the owner's word: an owner's apply that approves its `seq`
     /// lands it.
     Proposed,
+    /// A new grant an actor's apply filed to the owner's widen inbox, where
+    /// accepting `proposal_ref` mints it. Until the owner answers, it waits
+    /// as [`Self::Proposed`] does, and an owner's apply may land it.
+    Filed {
+        proposal_ref: String,
+        expires_at: u64,
+    },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
@@ -78,15 +92,22 @@ pub struct ShapeApplyReceipt {
     pub done: bool,
 }
 
-/// Who applies: the vault's owner, or another actor.
+/// Who applies: the vault's owner, or another actor with the credential it
+/// presented, if any.
 #[derive(Debug, Clone, Copy)]
 pub enum ShapeApplier<'a> {
     Owner(&'a AuthenticatedOwner),
-    Actor(EntityId),
+    Actor {
+        actor: EntityId,
+        credential: Option<&'a VerifiedSlip>,
+    },
 }
 
 const fn open(state: &ShapeItemState) -> bool {
-    matches!(state, ShapeItemState::Pending | ShapeItemState::Proposed)
+    matches!(
+        state,
+        ShapeItemState::Pending | ShapeItemState::Proposed | ShapeItemState::Filed { .. }
+    )
 }
 
 /// Where an item rests before anyone may land it.
@@ -161,7 +182,7 @@ impl Vault {
         // The owner's proof names the author; it must still hold.
         let author = match applier {
             ShapeApplier::Owner(owner) => owner.revalidate(self)?,
-            ShapeApplier::Actor(actor) => actor,
+            ShapeApplier::Actor { actor, .. } => actor,
         };
         let mut journal = if let Some(journal) = self.shape_apply(&request.plan.frontier)? {
             journal
@@ -192,17 +213,22 @@ impl Vault {
             journal
         };
 
-        let ShapeApplier::Owner(owner) = applier else {
-            // An actor holds none of the owner's doors, so its apply lands
-            // nothing: each item waits for the owner (DEC-0006 is unchanged).
-            for entry in &mut journal.items {
-                if entry.state == ShapeItemState::Pending {
-                    entry.state = held(&entry.item);
+        let owner = match applier {
+            ShapeApplier::Owner(owner) => owner,
+            ShapeApplier::Actor { credential, .. } => {
+                // An actor holds none of the owner's doors, so its apply
+                // lands nothing: each item waits for the owner (DEC-0006 is
+                // unchanged), and a new grant is also filed to the owner's
+                // widen inbox.
+                for entry in &mut journal.items {
+                    if entry.state == ShapeItemState::Pending {
+                        entry.state = self.file_shape_grant(credential, &entry.item);
+                    }
                 }
+                journal.done = !journal.items.iter().any(|entry| open(&entry.state));
+                self.put_shape_apply(&journal)?;
+                return Ok(journal);
             }
-            journal.done = !journal.items.iter().any(|entry| open(&entry.state));
-            self.put_shape_apply(&journal)?;
-            return Ok(journal);
         };
 
         let live: LiveByTarget = self
@@ -222,7 +248,11 @@ impl Vault {
                     if item.class == ShapeItemClass::Widening
                         && !request.approve.contains(&item.seq) =>
                 {
-                    ShapeItemState::Proposed
+                    match &entry.state {
+                        // A filing keeps its inbox reference while it waits.
+                        filed @ ShapeItemState::Filed { .. } => filed.clone(),
+                        _ => ShapeItemState::Proposed,
+                    }
                 }
                 ShapeItemState::Proposed => match self.land_shape_item(owner, item, &live, now) {
                     Ok(receipt) => ShapeItemState::Landed { at: now, receipt },
@@ -238,6 +268,46 @@ impl Vault {
         journal.done = !journal.items.iter().any(|entry| open(&entry.state));
         self.put_shape_apply(&journal)?;
         Ok(journal)
+    }
+
+    /// Where an actor's apply leaves `item`: a new grant it carries the bound
+    /// of is filed to the owner's widen inbox under `credential`, as an
+    /// action or a disclosure widening, for the vault's embedded owner to
+    /// answer. Anything else, or a filing the inbox refuses, rests where any
+    /// actor's item rests, waiting for the owner.
+    fn file_shape_grant(
+        &self,
+        credential: Option<&VerifiedSlip>,
+        item: &ShapePlanItem,
+    ) -> ShapeItemState {
+        let resting = held(item);
+        let (
+            Some(credential),
+            ShapeItemState::Proposed,
+            ShapeChange::Create,
+            Some(ShapeRow::Grant {
+                bound: Some(bound), ..
+            }),
+        ) = (credential, &resting, item.change, &item.after)
+        else {
+            return held(item);
+        };
+        let filed = bound.bound().and_then(|grant| {
+            let owner_ref = crate::vault::embedded_owner_actor_id()?.to_hex();
+            let expires_at = self.store.clock.peek_recorded_at() + SHAPE_GRANT_PROPOSAL_SECS;
+            if bound.is_action() {
+                self.propose_action_widen(credential, grant, &owner_ref, expires_at)
+            } else {
+                self.propose_disclosure_widen(credential, grant, &owner_ref, expires_at)
+            }
+        });
+        match filed {
+            Ok(proposal) => ShapeItemState::Filed {
+                proposal_ref: proposal.proposal_ref,
+                expires_at: proposal.expires_at,
+            },
+            Err(_) => resting,
+        }
     }
 
     /// Lands one item through its door, after checking the structure is
@@ -356,6 +426,16 @@ impl Vault {
             }
             (ShapeChange::Retire, ShapeTarget::Pack { name }, _) => {
                 Ok(self.remove_pack(owner, name)?.content_hash)
+            }
+            (
+                ShapeChange::Create,
+                ShapeTarget::Grant { grant_ref },
+                Some(ShapeRow::Grant {
+                    bound: Some(bound), ..
+                }),
+            ) => {
+                let _receipt = self.create_standing_grant(owner, bound.bound()?)?;
+                Ok(grant_ref.clone())
             }
             (ShapeChange::Retire, ShapeTarget::Grant { grant_ref }, _) => {
                 let _receipt = self.revoke_consent_grant(owner, grant_ref)?;
