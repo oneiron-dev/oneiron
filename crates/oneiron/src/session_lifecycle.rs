@@ -498,7 +498,10 @@ impl Vault {
                 "started_at": timestamp.effective_ms / 1_000,
             });
             if let Err(error) = self.post_verb_hooks(pre, result) {
-                tracing::warn!(?error, "host.session.open post-hooks failed on an opened sitting");
+                tracing::warn!(
+                    ?error,
+                    "host.session.open post-hooks failed on an opened sitting"
+                );
             }
         }
         Ok(outcome)
@@ -811,7 +814,10 @@ impl Vault {
                 "reason": end_reason_word(ended.reason),
             });
             if let Err(error) = self.post_verb_hooks(pre, result) {
-                tracing::warn!(?error, "host.session.close post-hooks failed on a closed sitting");
+                tracing::warn!(
+                    ?error,
+                    "host.session.close post-hooks failed on a closed sitting"
+                );
             }
         }
         Ok(ended)

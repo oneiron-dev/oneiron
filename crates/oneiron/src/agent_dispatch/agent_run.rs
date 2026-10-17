@@ -148,7 +148,8 @@ impl AgentDispatcher<'_> {
             root = parent?;
         }
         if let Ok(Some((agent, _))) = resident_run_input(&root)
-            && let Some((_, resident)) = self.vault.resident_binding_for_effect_in_txn(txn, agent)?
+            && let Some((_, resident)) =
+                self.vault.resident_binding_for_effect_in_txn(txn, agent)?
         {
             return Ok(resident.home_message_ref);
         }

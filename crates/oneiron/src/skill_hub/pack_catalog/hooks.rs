@@ -68,6 +68,25 @@ pub enum HookActorClass {
     System,
 }
 
+/// How a hook's body may spend model time (ARCH-0035 render classes;
+/// ARCH-0080 §4 Its shape).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookRenderClass {
+    /// No model call: the body stays deterministic inside its budget.
+    #[default]
+    DeterministicEager,
+    /// A fact hook that may call `ai.verdict`, paid from its pack's budget
+    /// line.
+    Generative,
+}
+
+impl HookRenderClass {
+    const fn is_deterministic(&self) -> bool {
+        matches!(self, Self::DeterministicEager)
+    }
+}
+
 /// The one outcome set; the phase decides which kinds apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,6 +140,15 @@ pub struct HookSelector {
     pub blocking: bool,
     /// The engine refuses any other kind from this hook.
     pub outcomes: Vec<HookOutcomeKind>,
+    /// A post-hook's served-row filter: it runs only on a call that served
+    /// rows (a recall's pack, a deadline's cut pack included) when one of
+    /// them matches, and reads only those. An entry is `<kind glob>:<predicate
+    /// glob>`, or a bare predicate glob over served claims.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub served: Vec<String>,
+    /// `generative` lets a fact hook call `ai.verdict`.
+    #[serde(default, skip_serializing_if = "HookRenderClass::is_deterministic")]
+    pub render_class: HookRenderClass,
 }
 
 /// One hook folder as the pack carries it.
@@ -173,6 +201,20 @@ impl PackHook {
         if selector.blocking {
             tokens.push(format!("{name}/blocking"));
         }
+        if selector.phase == HookPhase::Post {
+            if selector.served.is_empty() {
+                tokens.push(format!("{name}/served:*"));
+            }
+            tokens.extend(
+                selector
+                    .served
+                    .iter()
+                    .map(|entry| format!("{name}/served:{entry}")),
+            );
+        }
+        if !selector.render_class.is_deterministic() {
+            tokens.push(format!("{name}/render_class:{}", wire(&selector.render_class)));
+        }
         tokens
     }
 
@@ -202,6 +244,8 @@ impl PackHook {
                     | "budget_ms"
                     | "blocking"
                     | "outcomes"
+                    | "served"
+                    | "render_class"
             ) {
                 return Err(invalid("unknown HOOK.md field"));
             }
@@ -230,20 +274,24 @@ impl PackHook {
         // An entry is a verb glob, or `<fact kind>:<predicate glob>`; the
         // first ':' splits them.
         let verbs: Vec<String> = json_list(&fields, "verbs")?;
-        if verbs.is_empty()
-            || verbs.iter().any(|verb| {
-                verb.is_empty()
-                    || verb.len() > 256
-                    || verb.starts_with(':')
-                    || verb.ends_with(':')
-                    || !verb.bytes().all(|b| {
-                        b.is_ascii_lowercase()
-                            || b.is_ascii_digit()
-                            || matches!(b, b'.' | b'_' | b'-' | b'*' | b':')
-                    })
-            })
-        {
+        if verbs.is_empty() || !verbs.iter().all(|verb| selector_entry(verb)) {
             return Err(invalid("a hook selects one or more verb globs"));
+        }
+        // Served rows are a post-hook's to filter on.
+        let served: Vec<String> = json_list(&fields, "served")?;
+        if !served.iter().all(|entry| selector_entry(entry))
+            || (!served.is_empty() && phase != HookPhase::Post)
+        {
+            return Err(invalid("only a post-hook filters served rows, by row globs"));
+        }
+        let render_class = match scalar("render_class")? {
+            None => HookRenderClass::DeterministicEager,
+            Some(class) => serde_json::from_value(serde_json::Value::String(class))
+                .map_err(|_| invalid("hook render_class is deterministic_eager or generative"))?,
+        };
+        // A verb hook calls no model (ARCH-0080 §6).
+        if !render_class.is_deterministic() && phase != HookPhase::Fact {
+            return Err(invalid("only a fact hook may declare the generative class"));
         }
         let actors: Vec<HookActorClass> = json_list(&fields, "actors")?;
         let scope = scalar("scope")?;
@@ -286,11 +334,25 @@ impl PackHook {
                 budget_ms,
                 blocking,
                 outcomes,
+                served,
+                render_class,
             },
             intent,
             body_hash: *blake3::hash(body).as_bytes(),
         })
     }
+}
+
+/// A selector entry: a glob, or `<kind>:<glob>` split at the first ':';
+/// bounded and lowercase.
+fn selector_entry(entry: &str) -> bool {
+    !entry.is_empty()
+        && entry.len() <= 256
+        && !entry.starts_with(':')
+        && !entry.ends_with(':')
+        && entry.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-' | b'*' | b':')
+        })
 }
 
 /// A JSON string list, bounded and without repeats.
