@@ -68,7 +68,7 @@ pub(crate) use self::projector::{
     withdraw_edit_proposal_in_txn,
 };
 mod split;
-pub(crate) use self::split::{classify_split, classify_split_traced, settled_split, unclear_floor};
+pub(crate) use self::split::{classify_split_traced, settled_split, unclear_floor};
 mod types;
 mod unclear;
 pub use self::unclear::{UnclearAttribution, unclear_attributions};
