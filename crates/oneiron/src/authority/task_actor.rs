@@ -1,12 +1,37 @@
 //! Who may act on one TASK (OF-220): the authority rule the task highway asks
-//! before a verb moves a task. It reads only the TASK's immutable facts
-//! (Owner, Assigned, HumanAssigned, Accepted) through `task_standing_in`,
-//! never the body's display assignee.
+//! before a verb moves a task. It first proves the caller is the actor it
+//! names ([`TaskActorProof`]): by a live authority binding, or, for a caller
+//! no binding names (the owner on a hosted root, an ask guest), by its own
+//! slip or grant. Then it reads only the TASK's immutable facts (Owner,
+//! Assigned, HumanAssigned, Accepted) through `task_standing_in`, never the
+//! body's display assignee.
 
+use crate::authority::VerifiedSlip;
 use crate::error::{ClaimError, Error, Result};
 use crate::task_authority::TaskStanding;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+
+/// What proves the caller of a task verb is the actor it names.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TaskActorProof<'a> {
+    /// A writer with a live authority binding in this vault
+    /// (`verify_write_actor_in_txn`).
+    Bound(&'a WriteActor),
+    /// A caller no binding names, by the verified slip its request was
+    /// admitted on: still live in this snapshot (a grant-bound slip's grant
+    /// with it), and held by `actor` itself, or the host's own slip
+    /// (`holder_ref` "host") when `actor` is the vault's embedded owner, as a
+    /// hosted root's owner calls.
+    Slip {
+        actor: EntityId,
+        slip: &'a VerifiedSlip,
+    },
+    /// An ask guest no slip names, by its own FEDERATION_GRANT: live, not
+    /// withdrawn, an ask guest's grant whose member is `actor`, and
+    /// conferring now.
+    Grant { actor: EntityId, grant: EntityId },
+}
 
 /// The task verbs whose actor [`Vault::prove_task_actor_in_txn`] judges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,11 +89,23 @@ impl Vault {
         actor: &WriteActor,
         verb: TaskActorVerb,
     ) -> Result<TaskStanding> {
-        self.verify_write_actor_in_txn(txn, actor)?;
+        self.prove_task_actor_by_in_txn(txn, task, TaskActorProof::Bound(actor), verb)
+    }
+
+    /// [`Vault::prove_task_actor_in_txn`] for any caller: `proof` proves the
+    /// actor (a live binding, or the caller's own slip or grant), then the
+    /// TASK's facts judge it as there.
+    pub(crate) fn prove_task_actor_by_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task: EntityId,
+        proof: TaskActorProof<'_>,
+        verb: TaskActorVerb,
+    ) -> Result<TaskStanding> {
+        let actor = self.task_actor_proven_in_txn(txn, proof)?;
         let standing = self
             .task_standing_in(txn, task)?
             .ok_or(Error::EntityNotFound)?;
-        let actor = actor.entity_ref();
         if !TaskActorVerb::Status.admits(&standing, actor) {
             return Err(Error::EntityNotFound);
         }
@@ -79,5 +116,41 @@ impl Vault {
             return Err(refused("a cancelled task takes no more work"));
         }
         Ok(standing)
+    }
+
+    /// The actor `proof` proves in this snapshot.
+    fn task_actor_proven_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: TaskActorProof<'_>,
+    ) -> Result<EntityId> {
+        match proof {
+            TaskActorProof::Bound(writer) => {
+                self.verify_write_actor_in_txn(txn, writer)?;
+                Ok(writer.entity_ref())
+            }
+            TaskActorProof::Slip { actor, slip } => {
+                let claims = slip.claims();
+                let holder = claims.holder_ref == actor.to_hex()
+                    || (claims.holder_ref == "host"
+                        && actor == crate::vault::embedded_owner_actor_id()?);
+                let now = self.instant_in_txn(txn)?.secs();
+                if !holder
+                    || !self.capability_slip_is_live_in_txn(txn, slip)?
+                    || self
+                        .require_live_slip_grant_in_txn(txn, claims, now)
+                        .is_err()
+                {
+                    return Err(refused("the caller's slip does not prove this actor"));
+                }
+                Ok(actor)
+            }
+            TaskActorProof::Grant { actor, grant } => {
+                let now = self.instant_in_txn(txn)?.secs();
+                self.require_live_guest_grant_in_txn(txn, grant, &actor.to_hex(), now)
+                    .map_err(|_| refused("the caller's grant does not prove this actor"))?;
+                Ok(actor)
+            }
+        }
     }
 }
