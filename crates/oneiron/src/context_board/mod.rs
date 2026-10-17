@@ -13,10 +13,10 @@ mod fanout;
 pub use explain::{GateExplanation, MemoryExplanation};
 pub use fanout::fanout_action_rows;
 mod people;
-pub(crate) use people::ensure_agent_person;
 pub use people::{
     PEOPLE_PREFIX_BUDGET_TOK, People, PeoplePrefix, PeopleView, PersonKind, PersonRow,
 };
+pub(crate) use people::{ensure_agent_person, ensure_agent_person_in_txn};
 mod inbox;
 pub use inbox::assemble_inbox_section;
 mod observations;
@@ -69,12 +69,12 @@ mod readers;
 mod scratchpad;
 mod stream;
 
-pub(crate) use scratchpad::sealed_pad_review_text;
 pub use scratchpad::{
     SCRATCHPAD_LINE_MAX_BYTES, SCRATCHPAD_RECALL_LINES, ScratchpadAppendReceipt, ScratchpadBoard,
     ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine,
 };
 pub(crate) use scratchpad::{erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists};
+pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,

@@ -7,10 +7,17 @@ pub(in crate::workspace_roster) const PAGE_LIMIT: usize = 256;
 /// One HISTORY row: its `(room, at, turn)` key and the turn id.
 type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
 
+/// Inverse of each room turn's TASK bindings, so a TASK read finds the
+/// threads it is bound into without walking any room (FIX 3124). Key: id16
+/// (task) + id16 (binding turn).
+const TASK_TURN: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
+    SideTable::new(&side_table::ROOMS_TASK_TURN);
+
 pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTurn) -> Result<()> {
     let room = EntityId::from_hex(&turn.room_id)?;
     let id = EntityId::from_hex(&turn.turn_id)?;
     HISTORY.put(store, txn, &(room, turn.at, id), &id)?;
+    index_task_bindings(store, txn, turn)?;
     if let Some(parent) = &turn.thread_of {
         let parent = EntityId::from_hex(parent)?;
         THREAD_CHILDREN.put(store, txn, &(room, parent, id), &id)?;
@@ -19,6 +26,63 @@ pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTu
     }
     Ok(())
 }
+/// Files the inverse row for every TASK `row` binds. Rows only accrue: a
+/// binding turn's TASK set never shrinks.
+pub(in crate::workspace_roster) fn index_task_bindings(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &RoomTurn,
+) -> Result<()> {
+    let turn = EntityId::from_hex(&row.turn_id)?;
+    for task in &row.task_ids {
+        TASK_TURN.put(store, txn, &(EntityId::from_hex(task)?, turn), &[1])?;
+    }
+    Ok(())
+}
+
+/// The thread turns `task` is bound to, read from its own inverse rows. A
+/// row whose turn is gone is `EntityNotFound`, which the reader takes as a
+/// denial: a TASK bound into a thread that left never reads as public.
+pub(crate) fn task_binding_turns_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut turns = Vec::new();
+    for entry in TASK_TURN.iter_from(&vault.store, txn, task.as_bytes())? {
+        let ((_, turn), _) = entry?;
+        let row = TURNS
+            .get(&vault.store, txn, &turn)?
+            .ok_or(Error::EntityNotFound)?;
+        if !row.task_ids.contains(&task.to_hex()) {
+            return Err(Error::CorruptedIndex("thread task binding"));
+        }
+        if row.thread_of.is_some() {
+            turns.push(turn);
+        }
+    }
+    Ok(turns)
+}
+
+/// Deletes the inverse binding rows of an erased TASK. An erased room or
+/// turn leaves them standing, so the surviving TASK keeps denying.
+fn delete_task_bindings(store: &Store, txn: &mut heed::RwTxn<'_>, task: EntityId) -> Result<()> {
+    loop {
+        let keys: Vec<(EntityId, EntityId)> = TASK_TURN
+            .iter_from(store, txn, task.as_bytes())?
+            .take(PAGE_LIMIT)
+            .map(|row| row.map(|(key, _)| key))
+            .collect::<Result<Vec<_>>>()?;
+        if keys.is_empty() {
+            break;
+        }
+        for key in &keys {
+            TASK_TURN.delete(store, txn, key)?;
+        }
+    }
+    Ok(())
+}
+
 /// The complete selected thread in the conversion's own transaction. The
 /// caller names its root, while a card may sit on any reply inside it.
 pub(in crate::workspace_roster) fn thread_turns_in(
@@ -129,8 +193,9 @@ pub(in crate::workspace_roster) fn delete_thread_metadata(
 /// [`delete_room_metadata`] for a CONVERSATION whose record leaves, run by
 /// the shared erase doors (`deletion/derived_rows.rs`) before its body goes;
 /// [`delete_thread_metadata`] for a TURN that roots a thread, a project
-/// room's by its stored turn and an ordinary room's by its DAG topology; a
-/// no-op for any other entity. A project's home room reaches it from
+/// room's by its stored turn and an ordinary room's by its DAG topology;
+/// a TASK's inverse thread bindings for a TASK; a no-op for any other
+/// entity. A project's home room reaches it from
 /// `deindex_project_room` as well; the sweep is idempotent.
 pub(crate) fn erase_room_side_rows(
     store: &Store,
@@ -153,6 +218,7 @@ pub(crate) fn erase_room_side_rows(
                 delete_thread_metadata(store, txn, room, *id)?;
             }
         }
+        Some(crate::registry::ENTITY_TYPE_TASK) => delete_task_bindings(store, txn, *id)?,
         _ => {}
     }
     Ok(())

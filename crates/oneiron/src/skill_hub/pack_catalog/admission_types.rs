@@ -187,6 +187,9 @@ pub struct PackInstallReceipt {
     pub predicates: Vec<String>,
     pub kinds: Vec<String>,
     pub skills: Vec<String>,
+    /// The agent an active travelling AgentPack minted, hex (OF-491).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     pub installed_at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]

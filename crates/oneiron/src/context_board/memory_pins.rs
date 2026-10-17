@@ -166,6 +166,9 @@ pub(super) fn pinned_row(
         snippet: None,
         hook: None,
         source_revision,
+        question: claim
+            .as_ref()
+            .and_then(crate::context_pack::source_ranking::question_key),
     };
     if !foreign_row(&row)
         && let Some(claim) = claim
