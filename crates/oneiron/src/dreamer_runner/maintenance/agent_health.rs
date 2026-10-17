@@ -8,7 +8,8 @@
 //! cards and proposed moves, and an agent-health event never feeds the auto
 //! arm (`Vault::is_signed_tripwire`). It reads no diary. A card's recipient
 //! settles it (`self.inbox.concern.outcome`), as the owner does through
-//! `/v1/owner/inbox/concern/outcome`.
+//! `/v1/owner/inbox/concern/outcome`, and may ask the Coach for a proposal
+//! (`self.inbox.concern.move`, `ask`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,6 +43,15 @@ use crate::self_heal::{
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
+mod ask;
+mod check_repeat;
+mod run_loop;
+pub use ask::{
+    AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
+    AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
+    ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
+};
+
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.
 pub const COACH_AGENT_HEALTH_FACET: &str = "coach.agent_health";
@@ -62,7 +72,8 @@ pub const HEALTH_LOOP_REPEATS: SettingSpec = SettingSpec {
     seed: 3.0,
 };
 
-/// `failed_check_repeat`: the canon failure-ladder N. No capture reads it yet.
+/// `failed_check_repeat`: the same tool run failing the same way, the canon
+/// failure-ladder N.
 pub const HEALTH_CHECK_FAILS: SettingSpec = SettingSpec {
     key: "health.check.fails",
     min: 2.0,
@@ -94,7 +105,8 @@ pub const HEALTH_SILENT_MINUTES: SettingSpec = SettingSpec {
     seed: 30.0,
 };
 
-/// `misalignment`: widen denials in one attempt. No capture reads it yet.
+/// `misalignment`: widen proposals one attempt raised that the board has not
+/// approved.
 pub const HEALTH_WIDEN_DENIALS: SettingSpec = SettingSpec {
     key: "health.widen.denials",
     min: 1.0,
@@ -117,6 +129,16 @@ pub const HEALTH_ESCALATE_TTL_HOURS: SettingSpec = SettingSpec {
     min: 1.0,
     max: 720.0,
     seed: 24.0,
+};
+
+/// The lowest card impact that still makes a card: struggling 100, off
+/// course 150, concern 200, so a concern always does. A finding below it
+/// writes its DIAGNOSTIC and no card.
+pub const HEALTH_CARD_FLOOR: SettingSpec = SettingSpec {
+    key: "health.card.floor",
+    min: 0.0,
+    max: 200.0,
+    seed: 0.0,
 };
 
 /// How far back one review reads receipts and settled attempts.
@@ -306,6 +328,9 @@ pub struct AgentHealthCard {
     pub watermark: usize,
     pub opened_at: u64,
     pub updated_at: u64,
+    /// The newest ask of the Coach (`ask_coach`), and its answer once drafted.
+    #[serde(default)]
+    pub coach: Option<AgentHealthCoachAsk>,
 }
 
 impl AgentHealthCard {
@@ -345,11 +370,14 @@ type Traps = BTreeMap<[u8; 16], Vec<OpenTrapWait>>;
 /// The dials in force for one review.
 struct Dials {
     loop_repeats: u64,
+    check_fails: u64,
     wait_share: f64,
     wait_secs: u64,
     silent_secs: u64,
+    widen_denials: u64,
     cost_spike: f64,
     ttl_secs: u64,
+    card_floor: f64,
 }
 
 /// One review: detect, emit, merge, escalate. Returns the cards it touched.
@@ -362,11 +390,14 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         }
         Dials {
             loop_repeats: value(&HEALTH_LOOP_REPEATS)?.round() as u64,
+            check_fails: value(&HEALTH_CHECK_FAILS)?.round() as u64,
             wait_share: value(&HEALTH_WAIT_SHARE)?,
             wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
             silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
+            widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
             cost_spike: value(&HEALTH_COST_SPIKE)?,
             ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
+            card_floor: value(&HEALTH_CARD_FLOOR)?,
         }
     };
     let since = now.saturating_sub(LOOKBACK_SECS);
@@ -383,21 +414,64 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
 
     let mut traps = Traps::new();
     for wait in open_trap_waits(vault)? {
-        traps.entry(*wait.attempt.as_bytes()).or_default().push(wait);
+        traps
+            .entry(*wait.attempt.as_bytes())
+            .or_default()
+            .push(wait);
     }
 
     let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
-    findings.extend(silent_findings(vault, &calls, &dispatched, &attempts, &traps, &dials, now)?);
-    findings.extend(long_wait_findings(&dispatched, &attempts, &traps, &dials, since, now));
-    findings.extend(duplicate_findings(vault, &dispatched, &attempts, since, now)?);
+    findings.extend(run_loop::run_loop_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        dials.loop_repeats,
+        since,
+    )?);
+    findings.extend(check_repeat::check_repeat_findings(
+        vault,
+        &calls,
+        &dispatched,
+        &attempts,
+        dials.check_fails,
+        since,
+    )?);
+    findings.extend(silent_findings(
+        vault,
+        &calls,
+        &dispatched,
+        &attempts,
+        &traps,
+        &dials,
+        now,
+    )?);
+    findings.extend(long_wait_findings(
+        &dispatched,
+        &attempts,
+        &traps,
+        &dials,
+        since,
+        now,
+    ));
+    findings.extend(duplicate_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        since,
+        now,
+    )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
+    findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &dials, since)?);
+    findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
     findings.extend(cost_spike_findings(vault, &dispatched, &attempts, &dials, since, now)?);
     // What each agent said itself, for its card.
     for finding in &mut findings {
         let began = finding
             .attempt
             .and_then(|attempt| attempts.get(attempt.as_bytes()))
-            .map_or(finding.window.0, |record| record.claimed_at.unwrap_or(record.created_at));
+            .map_or(finding.window.0, |record| {
+                record.claimed_at.unwrap_or(record.created_at)
+            });
         finding.blocked = said_blocked(vault, finding.subject, finding.task, began)?;
     }
 
@@ -422,6 +496,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     vault.with_write_txn_grouped(|txn| {
         let mut touched = BTreeSet::new();
         for ((finding, diagnostic), route) in findings.iter().zip(&emitted).zip(&routes) {
+            if f64::from(AgentHealthTone::of(finding.signal).impact()) < dials.card_floor {
+                continue;
+            }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
             let card = merge(card, finding, *diagnostic, route, &owners, now);
@@ -548,7 +625,8 @@ fn live_attempt(
 
 /// `loop`: one actor's identical `(verb, request_digest)` calls in a row, with
 /// no other call by that actor between them. A call receipt names no attempt,
-/// so the card's task is none.
+/// so the card's task is none. An agent run's own calls leave no receipt and
+/// are judged per attempt (`run_loop`).
 fn loop_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
@@ -711,7 +789,10 @@ fn long_wait_findings(
         let mut evidence = vec![attempt];
         if live {
             for trap in traps.get(id).into_iter().flatten() {
-                if matches!(trap.kind, DreamerTrapKind::PeerResult | DreamerTrapKind::Budget) {
+                if matches!(
+                    trap.kind,
+                    DreamerTrapKind::PeerResult | DreamerTrapKind::Budget
+                ) {
                     spans.push((trap.opened_at_ms / 1000, now));
                     evidence.push(trap.anchor);
                 }
@@ -869,7 +950,10 @@ fn cost_spike_findings(
             task: task_of(record),
             attempt: Some(record.id),
             evidence: vec![attempt],
-            window: (record.created_at, if live { now } else { record.updated_at }),
+            window: (
+                record.created_at,
+                if live { now } else { record.updated_at },
+            ),
             // A live ratio moves on every review; the DIAGNOSTIC carries it in
             // halves, so it is written again only when it crosses one.
             actual: if live { permille / 500 * 500 } else { permille },
@@ -1068,6 +1152,100 @@ fn misalignment_findings(
     Ok(out)
 }
 
+/// `misalignment`: one attempt raised at least the dial's widen proposals
+/// that the board has not approved, pending or refused alike.
+fn widen_denial_findings(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    dials: &Dials,
+    since: u64,
+) -> Result<Vec<Finding>> {
+    let mut out = Vec::new();
+    for (id, denials) in crate::agent_dispatch::unlanded_widens_by_parent(vault)? {
+        if denials < dials.widen_denials {
+            continue;
+        }
+        let (Some(dispatch), Some(record)) = (dispatched.get(&id), attempts.get(&id)) else {
+            continue;
+        };
+        if settled(record.state) && record.updated_at < since {
+            continue;
+        }
+        let Some(attempt) = entity(record.id) else {
+            continue;
+        };
+        let count = denials as i64;
+        out.push(Finding {
+            subject: dispatch.actor,
+            signal: AgentHealthSignal::Misalignment,
+            task: task_of(record),
+            attempt: Some(record.id),
+            evidence: vec![attempt],
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            actual: count,
+            dial: dials.widen_denials as i64,
+            measured: count,
+            counter: Vec::new(),
+            confession: None,
+            blocked: false,
+        });
+    }
+    Ok(out)
+}
+
+/// `unsupported_done`: a Completed attempt whose TASK settled Done while an
+/// evidence ref its done-means names does not resolve to a live entity.
+/// Missing evidence, not deception: any one flags.
+fn unsupported_done_findings(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    since: u64,
+) -> Result<Vec<Finding>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for (id, dispatch) in dispatched {
+        let Some(record) = attempts.get(id) else {
+            continue;
+        };
+        if record.state != AttemptState::Completed || record.updated_at < since {
+            continue;
+        }
+        let (Some(task), Some(attempt)) = (task_of(record), entity(record.id)) else {
+            continue;
+        };
+        let Some(needed) = crate::task_verb::done_task_evidence_in(vault, &rtxn, task)? else {
+            continue;
+        };
+        let mut missing = BTreeSet::new();
+        for evidence in needed {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &evidence)?.is_live() {
+                missing.insert(evidence);
+            }
+        }
+        if missing.is_empty() {
+            continue;
+        }
+        let count = missing.len() as i64;
+        out.push(Finding {
+            subject: dispatch.actor,
+            signal: AgentHealthSignal::UnsupportedDone,
+            task: Some(task),
+            attempt: Some(record.id),
+            evidence: vec![attempt, task],
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            actual: count,
+            dial: 0,
+            measured: count,
+            counter: Vec::new(),
+            confession: None,
+            blocked: false,
+        });
+    }
+    Ok(out)
+}
+
 /// Writes the finding's DIAGNOSTIC once: the same evidence is the same body
 /// and the same id.
 fn emit(vault: &Vault, finding: &Finding) -> Result<EntityId> {
@@ -1240,6 +1418,7 @@ fn merge(
         watermark: 0,
         opened_at: now,
         updated_at: now,
+        coach: None,
     });
     keep_newest(&mut card.evidence, &finding.evidence, MAX_CARD_EVIDENCE);
     keep_newest(&mut card.diagnostics, &[diagnostic], MAX_CARD_DIAGNOSTICS);
@@ -1526,7 +1705,9 @@ impl Vault {
             let rtxn = self.store.env.read_txn()?;
             CARDS.get(&self.store, &rtxn, &key)?
         };
-        stored.map(|stored| card_view(self, &key, stored)).transpose()
+        stored
+            .map(|stored| card_view(self, &key, stored))
+            .transpose()
     }
 
     /// The cards a digest period carries (agent-mind §3.5: a card that does
@@ -1592,8 +1773,9 @@ impl Memory<'_> {
     /// for one of its recipients or a vault owner.
     pub fn concern_card(&self, input: &ConcernCardRequest) -> MemoryResult<AgentHealthCardView> {
         crate::memory::verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
-        let key = parse_card_ref(&input.card)
-            .ok_or_else(|| MemoryError::bad_request("card is a health: handle from a concern row"))?;
+        let key = parse_card_ref(&input.card).ok_or_else(|| {
+            MemoryError::bad_request("card is a health: handle from a concern row")
+        })?;
         let card = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let card = CARDS
@@ -1614,8 +1796,9 @@ impl Memory<'_> {
         &self,
         input: &ConcernOutcomeRequest,
     ) -> MemoryResult<ConcernCardSummary> {
-        let key = parse_card_ref(&input.card)
-            .ok_or_else(|| MemoryError::bad_request("card is a health: handle from a concern row"))?;
+        let key = parse_card_ref(&input.card).ok_or_else(|| {
+            MemoryError::bad_request("card is a health: handle from a concern row")
+        })?;
         let at = self.vault().store.clock.now_recorded_at();
         self.with_verified_actor_write_txn(|txn| {
             let mut card = CARDS

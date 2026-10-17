@@ -23,6 +23,8 @@ pub struct HeldLadder {
     pub human: Arc<dyn HumanDecisionQueue>,
     pub human_pin: ProviderPin,
     pub person: Option<DecisionQuestion>,
+    /// The host's presence question; see [`DecisionLadder::presence`].
+    pub presence: Option<DecisionQuestion>,
 }
 
 impl HeldLadder {
@@ -43,6 +45,7 @@ impl HeldLadder {
                 version: "1".into(),
             },
             person: None,
+            presence: None,
         }
     }
 
@@ -58,6 +61,7 @@ impl HeldLadder {
             human: self.human.as_ref(),
             human_pin: self.human_pin.clone(),
             person: self.person.as_ref(),
+            presence: self.presence.as_ref(),
         }
     }
 }

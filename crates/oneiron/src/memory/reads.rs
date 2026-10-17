@@ -55,6 +55,10 @@ pub struct ClaimView {
     pub salience: Option<f32>,
     /// Stale marker.
     pub stale: bool,
+    /// The claim as a typed record ref (OF-063), built from the id and body
+    /// this read already admitted: labelled with its served value.
+    #[serde(default)]
+    pub claim: Option<crate::lens::RecordRef>,
 }
 
 /// Filter for [`Memory::claim_list`].
@@ -81,6 +85,10 @@ pub struct LexicalHit {
     pub score: f32,
     /// Content preview, when the body carries a `content` field.
     pub snippet: Option<String>,
+    /// The hit as a typed record ref (OF-063), built from the id and row this
+    /// read already admitted.
+    #[serde(default)]
+    pub record: Option<crate::lens::RecordRef>,
 }
 
 /// Options for [`Memory::neighbors`].
@@ -107,6 +115,11 @@ pub struct NeighborHit {
     pub weight: f32,
     /// `out` (edge from the anchor) or `in` (edge into the anchor).
     pub direction: String,
+    /// The neighbor as a typed record ref (OF-063), built from the edge's
+    /// target and the peer's admitted type, with no read; `None` when the
+    /// peer's type is unknown.
+    #[serde(default)]
+    pub record: Option<crate::lens::RecordRef>,
 }
 
 impl Memory<'_> {
@@ -407,6 +420,10 @@ impl Memory<'_> {
                 actor_ref: record.actor_ref,
                 content_kind: record.content_kind,
                 claim_ref: record.claim_id.map(|id| hex_string(&id)),
+                claim: record
+                    .claim_id
+                    .and_then(|id| EntityId::from_bytes(id).ok())
+                    .map(|id| crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None)),
                 fields: std::collections::BTreeMap::new(),
             })
             .collect())
@@ -432,7 +449,7 @@ impl Memory<'_> {
                 MemoryError::bad_request_with(
                     format!("unknown receipt kind {name:?}"),
                     &[
-                        "Use one of: outbound, gate, identity_lifecycle, scoped_read, share, artifact_settle, proposal_outcome, commitment_lifecycle, extraction, served_form, hook.",
+                        "Use one of: outbound, gate, identity_lifecycle, scoped_read, share, artifact_settle, proposal_outcome, commitment_lifecycle, extraction, served_form, hook, reference_refusal.",
                     ],
                 )
             })?;
@@ -499,17 +516,21 @@ impl Memory<'_> {
         )?;
         let mut out = Vec::with_capacity(ranked.len());
         for ((hit, row, _), score) in ranked.into_iter().zip(scores) {
-            let snippet = row
-                .body
-                .as_deref()
-                .and_then(decode_body_json)
-                .and_then(|body| {
-                    body.get("content")
-                        .and_then(serde_json::Value::as_str)
-                        .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
-                });
+            let body = row.body.as_deref().and_then(decode_body_json);
+            let snippet = body.as_ref().and_then(|body| {
+                body.get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
+            });
+            let short = self.short_ref_of(&hit.id)?;
             out.push(LexicalHit {
-                short_id: self.short_ref_or_hex(&hit.id)?,
+                record: Some(crate::lens::RecordRef::from_body(
+                    row.entity_type,
+                    &hit.id,
+                    short.as_deref(),
+                    body.as_ref(),
+                )),
+                short_id: short.unwrap_or_else(|| hit.id.to_hex()),
                 kind: kind_string_for_type(row.entity_type),
                 score,
                 snippet,
@@ -560,10 +581,16 @@ impl Memory<'_> {
                     .into_iter()
                     .map(|neighbor| {
                         let edge = neighbor.edge;
+                        let short = self.short_ref_of_in_txn(txn, &edge.target)?;
                         Ok(NeighborHit {
-                            short_id: self
-                                .short_ref_of_in_txn(txn, &edge.target)?
-                                .unwrap_or_else(|| edge.target.to_hex()),
+                            record: neighbor.peer_type.map(|peer_type| {
+                                crate::lens::RecordRef::from_id(
+                                    peer_type,
+                                    &edge.target,
+                                    short.as_deref(),
+                                )
+                            }),
+                            short_id: short.unwrap_or_else(|| edge.target.to_hex()),
                             kind: neighbor
                                 .peer_type
                                 .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type),
@@ -597,16 +624,25 @@ impl Memory<'_> {
                 served_value_json(value)
             }
         };
+        let short_ref = self.short_ref_of(id)?;
+        let value = served(&body.value);
+        let claim = crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, id, short_ref.as_deref());
+        // The label is the value this view serves: redacted for a secret.
+        let claim = match &value {
+            serde_json::Value::String(text) => claim.with_label(text),
+            other => claim.with_label(&other.to_string()),
+        };
         Ok(ClaimView {
+            claim: Some(claim),
             claim_ref: id.to_hex(),
-            short_ref: self.short_ref_of(id)?,
+            short_ref,
             predicate: if secret {
                 "[redacted]".to_owned()
             } else {
                 body.predicate.clone()
             },
             subject_ref: subject_ref_string(&body.subject),
-            value: served(&body.value),
+            value,
             confidence: body.confidence,
             approval: body.approval.as_str().to_owned(),
             lifecycle: body.lifecycle.as_str().to_owned(),
@@ -620,9 +656,34 @@ impl Memory<'_> {
         })
     }
 
+    /// The receipt of a structural write of `id`, whose kind the caller does
+    /// not name: its `record` is `None`. A door that knows the kind it wrote
+    /// calls [`Self::entity_ref_receipt_of`].
     pub(crate) fn entity_ref_receipt(&self, id: &EntityId) -> MemoryResult<EntityRefReceipt> {
         Ok(EntityRefReceipt {
             entity_ref: self.short_ref_or_hex(id)?,
+            id_hex: id.to_hex(),
+            receipt_ref: format!("put:{}", id.to_hex()),
+            record: None,
+        })
+    }
+
+    /// The receipt of a structural write of `id` as `entity_type`, the kind
+    /// the writing door just wrote: with its typed record ref (OF-063),
+    /// built with no read.
+    pub(crate) fn entity_ref_receipt_of(
+        &self,
+        id: &EntityId,
+        entity_type: u8,
+    ) -> MemoryResult<EntityRefReceipt> {
+        let short = self.short_ref_of(id)?;
+        Ok(EntityRefReceipt {
+            record: Some(crate::lens::RecordRef::from_id(
+                entity_type,
+                id,
+                short.as_deref(),
+            )),
+            entity_ref: short.unwrap_or_else(|| id.to_hex()),
             id_hex: id.to_hex(),
             receipt_ref: format!("put:{}", id.to_hex()),
         })
@@ -649,6 +710,10 @@ fn family_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
         .as_deref()
         .and_then(|reference| reference.strip_prefix("claim:"))
         .map(str::to_owned);
+    let claim = claim_ref
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        .map(|id| crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None));
     for (key, value) in [
         ("trigger_ref", trigger_ref),
         ("job_ref", job_ref),
@@ -668,6 +733,7 @@ fn family_receipt(record: crate::receipt::ReceiptRecord) -> MemoryReceipt {
         actor_ref: actor,
         content_kind: fields.get("content_kind").cloned().unwrap_or_default(),
         claim_ref,
+        claim,
         fields,
     }
 }

@@ -217,7 +217,9 @@ async fn durable_step(
 
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
-        Err(BudgetDenied::Exhausted) => return budget_trap(ctx, step_hash),
+        Err(BudgetDenied::Exhausted) => {
+            return budget_trap(ctx, step_hash).inspect(|_| step_budget_hit(ctx, guard, &request));
+        }
         Err(denied) => {
             let source = LlmError::from(denied);
             return Err(classified_failure(ctx.vault, source)?);
@@ -245,6 +247,15 @@ async fn durable_step(
     // A corrective call failed: an earlier response was already answered and
     // paid, whatever usage it reported.
     let answered = matches!(generated, Err(DurableStepError::SpentLlm { .. }));
+    // A correction's admission found the budget spent: the step fails as a
+    // spent correction does, and the hit still runs its hooks.
+    if let Err(DurableStepError::SpentLlm {
+        source: LlmError::BudgetDenied(BudgetDenied::Exhausted),
+        ..
+    }) = &generated
+    {
+        step_budget_hit(ctx, guard, &request);
+    }
     let (generated, failed_usage) = match generated {
         Err(DurableStepError::SpentLlm { source, usage }) => {
             (Err(DurableStepError::Llm(source)), *usage)
@@ -284,7 +295,7 @@ async fn durable_step(
             if !answered =>
         {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
-            return budget_trap(ctx, step_hash);
+            return budget_trap(ctx, step_hash).inspect(|_| step_budget_hit(ctx, guard, &request));
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
@@ -466,6 +477,7 @@ fn budget_trap(
             crate::dreamer_runner::ParkDreamerAttempt {
                 attempt_id: ctx.attempt_id,
                 reason: "durable step budget exhausted".to_owned(),
+                cause: crate::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
                 now: ctx.now_s(),
             },
@@ -477,6 +489,17 @@ fn budget_trap(
         trap,
         failure_policy,
     })
+}
+
+/// `host.budget.hit` for a step whose budget is spent, once the host acted
+/// on it: the request's model is the seat, the step's actor paid for it.
+fn step_budget_hit(ctx: &DurableStepContext<'_>, guard: &BudgetGuard, request: &LlmRequest) {
+    ctx.vault.budget_denied_hooks(
+        &BudgetDenied::Exhausted,
+        guard,
+        request.model.as_str(),
+        Some(ctx.envelope_actor.entity_ref()),
+    );
 }
 
 fn classified_failure(
