@@ -5,11 +5,12 @@ use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
 use crate::outbound::{FrozenDispatchIdentity, OutboundDispatchOutcome, OutboundDispatchResult};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
-use crate::store::Store;
 use serde::{Deserialize, Serialize};
 
 const OBSERVATIONS: SideTable<DispatchObservationKey, DispatchObservation, Raw> =
     SideTable::new(&side_table::DISPATCH_OBSERVATION);
+/// Where the side-row wall says it found a secret in an observation (OF-067).
+const OBSERVATION_PLACE: &str = "side:DISPATCH_OBSERVATION";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DispatchObservationKey {
@@ -117,18 +118,19 @@ pub(crate) fn read_dispatch_observation(
         .transpose()
 }
 pub(crate) fn append_dispatch_observation_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: DispatchObservationKey,
     identity: Option<FrozenDispatchIdentity>,
     result: &OutboundDispatchResult,
 ) -> Result<()> {
+    let store = &vault.store;
     if OBSERVATIONS.contains(store, txn, &key)? {
         return Err(Error::ConcurrentWrite(
             "dispatch observation already stored",
         ));
     }
-    let row = DispatchObservation {
+    let mut row = DispatchObservation {
         version: 1,
         attempt_ref: crate::entity_id::bytes_to_hex_lower(key.attempt_id.as_bytes()),
         attempt_count: key.attempt_count,
@@ -139,6 +141,10 @@ pub(crate) fn append_dispatch_observation_in_txn(
         gate_reason_codes: result.gate_reason_codes.clone(),
         receipt: result.receipt.clone(),
     };
+    // OF-067: the receipt's free text as the side-row wall keeps it.
+    let full = OBSERVATIONS.key_bytes(&key);
+    row.receipt
+        .admit_free_text(vault, txn, (OBSERVATION_PLACE, full.as_slice()), &[])?;
     OBSERVATIONS.put(store, txn, &key, &row)?;
     Ok(())
 }

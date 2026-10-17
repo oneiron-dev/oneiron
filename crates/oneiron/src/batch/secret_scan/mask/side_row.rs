@@ -259,6 +259,32 @@ pub(crate) fn admit_side_row(
     }
 }
 
+/// A typed authored row a module writes outside a declared authored table,
+/// admitted whole at its write: `value` takes the handles the wall placed, and
+/// `true` says it placed one. The masked copy must read back as a `T`.
+pub(crate) fn admit_typed<T: Serialize + DeserializeOwned>(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    at: (&str, &[u8]),
+    value: &mut T,
+) -> Result<bool> {
+    let mut parts = [SidePart::Value(named_tree(&*value)?)];
+    let reads_back = |parts: &[SidePart]| {
+        matches!(parts, [SidePart::Value(tree)] if from_named_tree::<T>(tree).is_some())
+    };
+    if !admit_side_parts(dbs, wtxn, at, &mut parts, reads_back)? {
+        return Ok(false);
+    }
+    *value = match &parts {
+        [SidePart::Value(tree)] => from_named_tree(tree),
+        _ => None,
+    }
+    .ok_or(Error::InvariantViolation(
+        "a masked side row does not read back",
+    ))?;
+    Ok(true)
+}
+
 /// Whether `held`, a value the wall may have masked, is what admitting `raw`
 /// stored: a replay that compares a held row with the value offered again.
 /// Each handle on either side reads as the plan's one stand-in, so a secret

@@ -135,7 +135,7 @@ impl Vault {
     /// Persists the replay record for `record.run_id`.
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        REPLAY_RECORDS.put(&self.store, &mut wtxn, &record.run_id, record)?;
+        REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -176,7 +176,8 @@ impl Vault {
                 Ok::<_, Error>((key, next))
             })
             .transpose()?;
-        REPLAY_RECORDS.put(&self.store, &mut wtxn, &record.run_id, record)?;
+        let record = record.over_held(current.as_ref());
+        REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, &record)?;
         if let Some((key, count)) = next_heal_count {
             MODEL_HEAL_COUNTS.put(&self.store, &mut wtxn, &key, &HealCount(count))?;
         }

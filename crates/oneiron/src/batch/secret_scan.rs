@@ -7,7 +7,8 @@ use heed::{RoTxn, RwTxn};
 
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::side_row::{
-    SidePart, admit_side_parts, admit_side_row, admitted_from, from_named_tree, named_tree,
+    SidePart, admit_side_parts, admit_side_row, admit_typed, admitted_from, from_named_tree,
+    named_tree,
 };
 use self::shapes::Door;
 pub(crate) use self::whole_read::{

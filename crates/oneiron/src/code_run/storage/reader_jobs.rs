@@ -194,9 +194,9 @@ impl ReaderTxn<'_, '_> {
         key: &K,
         value: &V,
     ) -> Result<()> {
-        table.put(&self.write, self.txn, key, value)?;
-        self.staged
-            .insert(table.key_bytes(key), Some(table.encode_value(value)?));
+        // Staged as stored: a row the side-row wall masked reads back with its handles.
+        let stored = table.put_as_stored(&self.write, self.txn, key, value)?;
+        self.staged.insert(table.key_bytes(key), Some(stored));
         Ok(())
     }
 
@@ -359,8 +359,15 @@ impl ReaderTxn<'_, '_> {
             set.settled_at_ms = Some(now_ms);
             set.settled = Some(result.clone());
             self.put_wait(&set)?;
+            // The reduction as the row keeps it, so the reply and every later call carry the
+            // handles the side-row wall placed, and the reply mints nothing again.
+            let result = self
+                .wait(set.id)?
+                .and_then(|held| held.settled)
+                .unwrap_or(result);
             self.delete_index(&due_key(set.until_ms, set.id))?;
             self.deliver_settled_task_wait(set.id, &result, now_ms)?;
+            return Ok(result);
         }
         Ok(result)
     }
@@ -467,8 +474,8 @@ impl ExecutorStorage<'_> {
                 vault.with_write_txn_grouped(|txn| {
                     f(&mut ReaderTxn {
                         txn,
-                        read: RoutedDbs::Base(&vault.store),
-                        write: RoutedDbs::Base(&vault.store),
+                        read: RoutedDbs::Base(vault),
+                        write: RoutedDbs::Base(vault),
                         spend: SpendBook::new(vault),
                         staged: BTreeMap::new(),
                         vault: Some(vault),
@@ -508,7 +515,7 @@ impl ExecutorStorage<'_> {
         match self {
             Self::Canonical(vault) => {
                 let txn = vault.store.env.read_txn()?;
-                f(&txn, RoutedDbs::Base(&vault.store))
+                f(&txn, RoutedDbs::Base(vault))
             }
             Self::Session(binding) => binding.answered(|| binding.session.routed_side_read(f)),
         }
