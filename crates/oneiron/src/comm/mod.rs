@@ -7,12 +7,14 @@
 //! deterministic claim writes; `consent` the human gates, send overrides and
 //! standing opt-out folds; `opt_out_slots` the opt-out slot and clear-gate
 //! reads the human clear takes across a party's redirect shells;
+//! `descriptor` the synced ARCH-0057 claim-class descriptors;
 //! `thread_membership` the alias-aware membership reads. This file keeps the seam (module declarations and the re-exports
 //! that preserve every `crate::comm::` path), the projector's pass index,
 //! and the test-only scan counters.
 
 mod claims;
 mod consent;
+mod descriptor;
 mod opt_out_slots;
 mod parties;
 mod projection_writes;
@@ -31,9 +33,7 @@ pub use self::claims::{
     PREDICATE_COMM_THREAD_MEMBER, SendOverrideMatch, SendOverrideScope, claim_class_descriptors,
     is_comm_claim_predicate,
 };
-pub(crate) use self::claims::{
-    guard_send_override_put, is_restrictive_comm_predicate, validate_comm_claim_structure,
-};
+pub(crate) use self::claims::{guard_send_override_put, validate_comm_claim_structure};
 pub use self::consent::{
     approve_pending_opt_out_clear, count_active_comm_claims, count_active_thread_member_claims,
     count_contact_record_claim_entries, count_opt_out_clear_receipts,
@@ -44,6 +44,11 @@ pub(crate) use self::consent::{
     send_override_for_send_in_txn, standing_opt_out_heads_in_txn,
     supersede_party_opt_out_head_in_txn,
 };
+pub use self::descriptor::{
+    CLAIM_CLASS_DESCRIPTOR_BODY_KEYS, ClaimClassDescriptor, ClaimWriteClass, EnforcementStamp,
+    claim_class_descriptor_id, decode_claim_class_descriptor, encode_claim_class_descriptor,
+};
+pub(crate) use self::descriptor::{is_restrictive_comm_predicate, seed_claim_class_descriptors};
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
     CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,

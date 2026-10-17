@@ -483,6 +483,56 @@ fn reads_back(
                 return fault("the runs do not read as written");
             }
         }
+        ValueEdit::SetRunProps {
+            target,
+            paragraph,
+            range: (start, end),
+            expected,
+            props,
+        } => {
+            type Marks = (Option<u32>, Option<bool>, Option<bool>, Option<String>);
+            let chars = |view: &DeckView| -> Result<Vec<(char, Marks)>, EditRefusal> {
+                let shape = shape_in(view, target.slide, target.shape)?;
+                let held = shape
+                    .text
+                    .as_ref()
+                    .and_then(|body| body.paragraphs.get(paragraph))
+                    .ok_or(EditRefusal::ReadBack("the paragraph is gone"))?;
+                Ok(held
+                    .runs
+                    .iter()
+                    .flat_map(|run| {
+                        let marks = (
+                            run.size.value,
+                            run.bold.value,
+                            run.italic.value,
+                            run.latin.value.as_ref().map(|font| font.typeface.clone()),
+                        );
+                        run.text.chars().map(move |c| (c, marks.clone()))
+                    })
+                    .collect())
+            };
+            let (old, new) = (chars(before)?, chars(after)?);
+            let text: String = new.iter().map(|(c, _)| c).collect();
+            let good = text == expected
+                && old.len() == new.len()
+                && old
+                    .iter()
+                    .zip(&new)
+                    .enumerate()
+                    .all(|(at, ((_, was), (_, now)))| {
+                        if at < start || at >= end {
+                            return was == now;
+                        }
+                        now.0 == props.size.or(was.0)
+                            && now.1 == props.bold.or(was.1)
+                            && now.2 == props.italic.or(was.2)
+                            && now.3 == props.latin.map(str::to_owned).or_else(|| was.3.clone())
+                    });
+            if !good {
+                return fault("the run properties do not read as written");
+            }
+        }
         ValueEdit::SetXfrm { target, xfrm } => {
             let (old, new) = (
                 &shape_in(before, target.slide, target.shape)?.geometry,

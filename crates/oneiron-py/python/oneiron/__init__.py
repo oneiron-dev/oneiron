@@ -190,6 +190,17 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
+    def last_receipt_ref(self) -> str | None:
+        """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
+
+        It is stated whether the call answered or refused, and
+        ``vault.receipts.get`` resolves it for the same actor or the vault's
+        owner. Typed returns keep their shape; the ref rides beside them here.
+        ``None`` for an embedded handle, before any call, after a call that
+        reached no server, and for an anonymous off-record call.
+        """
+        return self._client.last_receipt_ref()
+
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
@@ -640,6 +651,27 @@ class Oneiron:
         def deletion(self, spec=None):
             """The executed delete-the-vault act, if any."""
             return json.loads(_translate(lambda: self._client.vault_shared_deletion(json.dumps({} if spec is None else spec))))
+        def object(self, spec):
+            """A holder of a pending shared act's objector role objects inside its veto window."""
+            return json.loads(_translate(lambda: self._client.vault_shared_object(json.dumps(spec))))
+        def withdraw_objection(self, spec):
+            """The holder withdraws their objection; past the deadline the last withdrawal releases the act."""
+            return json.loads(_translate(lambda: self._client.vault_shared_withdraw_objection(json.dumps(spec))))
+        def started(self, spec):
+            """The caller's own notices of shared acts started in the vault."""
+            return json.loads(_translate(lambda: self._client.vault_shared_started(json.dumps(spec))))
+        def matured(self, spec):
+            """The caller's own notices of shared acts whose veto window has passed."""
+            return json.loads(_translate(lambda: self._client.vault_shared_matured(json.dumps(spec))))
+        def erase_ask(self, spec):
+            """A Member requests, or an Admin proposes, that the Owners erase a record; it erases nothing."""
+            return json.loads(_translate(lambda: self._client.vault_shared_erase_ask(json.dumps(spec))))
+        def erase_asks(self, spec):
+            """The erase asks the caller may see: every ask for an Owner, their own for anyone else."""
+            return json.loads(_translate(lambda: self._client.vault_shared_erase_asks(json.dumps(spec))))
+        def close_erase_ask(self, spec):
+            """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
+            return json.loads(_translate(lambda: self._client.vault_shared_close_erase_ask(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -17,10 +17,12 @@ use super::types::{
 };
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
+use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use rmpv::Value;
 
@@ -101,6 +103,180 @@ pub(crate) fn supersede_family_owned_claim_in_txn(
         true,
     )?;
     crate::claim::supersession_diff::store_in_txn(vault, wtxn, *old_id, *new_id, revisions)
+}
+
+/// The write handles a family head close needs. A `Vault` holds them, and so
+/// does the batch pipeline, which has no `Vault`.
+#[derive(Clone, Copy)]
+pub(crate) struct ClaimHeadWriter<'a> {
+    pub(crate) store: &'a Store,
+    pub(crate) config: &'a crate::config::VaultConfig,
+    pub(crate) analyzer: &'a crate::analyzer::MultilingualAnalyzer,
+    pub(crate) text_index_trusted: bool,
+}
+
+impl ClaimHeadWriter<'_> {
+    /// Retracts every ACTIVE head of one family that `subject` carries, in
+    /// the caller's write transaction, on the engine-owned setting the family
+    /// writer closes old heads with: each is closed `retracted` with
+    /// `valid_to = now` and its envelope end refreshed, no successor. Heads
+    /// are found by their `claim_of` edges, so a delete calls this BEFORE it
+    /// tears them. Returns how many heads closed.
+    pub(crate) fn retract_subject_heads_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        subject: &EntityId,
+        in_family: fn(&str) -> bool,
+        now: u64,
+    ) -> Result<usize> {
+        let mut ops = Vec::new();
+        for entry in crate::ports::EdgeStoreRead::port_edges(
+            self.store,
+            &*wtxn,
+            subject,
+            crate::ports::EdgeDirection::In,
+            Some(crate::edge::EdgeKind::ClaimOf),
+            None,
+        )? {
+            let claim_id = entry?.target;
+            let Some(raw) = self.store.port_entity_record(&*wtxn, &claim_id)? else {
+                continue;
+            };
+            if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let mut body = crate::claim::decode_claim_body(&raw.body, true)?;
+            if !in_family(&body.predicate)
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || !matches!(&body.subject, ClaimSubject::Entity(of) if of == subject)
+            {
+                continue;
+            }
+            body.lifecycle = ClaimLifecycleStatus::Retracted;
+            body.valid_to = Some(now);
+            ops.push(BatchOp::Put {
+                id: claim_id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: raw.occurred.start,
+                    end: now.max(raw.occurred.start),
+                },
+                learned_at: raw.learned_at,
+                data: crate::claim::encode_claim_body(&body)?,
+                allow_maintenance: false,
+                allow_reserved_predicate: true,
+                hub_sync_imported: false,
+            });
+        }
+        let closed = ops.len();
+        if closed > 0 {
+            apply_ops(
+                self.store,
+                self.config,
+                self.analyzer,
+                wtxn,
+                ops,
+                self.text_index_trusted,
+                false,
+                true,
+            )?;
+        }
+        Ok(closed)
+    }
+}
+
+/// Closes the own claim heads of the ChannelIdentity or contact a delete of
+/// `id` removes, in the delete's write transaction and BEFORE it tears the
+/// `claim_of` edges (OF-272): a ChannelIdentity's `channel_identity.*` heads,
+/// a contact's `counterparty_contact.*` heads. An id with no row is asked for
+/// contact heads, since a cache drop removes a contact's row and leaves its
+/// claims. Any other kind is left alone. Returns how many contact heads
+/// closed.
+pub(crate) fn close_family_claims_for_delete_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    now: u64,
+    text_index_trusted: bool,
+) -> Result<usize> {
+    let writer = ClaimHeadWriter {
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+    };
+    match store
+        .port_entity_record(&*wtxn, id)?
+        .map(|row| row.entity_type)
+    {
+        Some(ENTITY_TYPE_CHANNEL_IDENTITY) => {
+            crate::channel_identity::close_claim_heads_for_delete_in_txn(
+                &writer,
+                wtxn,
+                id,
+                ENTITY_TYPE_CHANNEL_IDENTITY,
+                now,
+            )?;
+            Ok(0)
+        }
+        Some(ENTITY_TYPE_COUNTERPARTY_CONTACT) | None => writer.retract_subject_heads_in_txn(
+            wtxn,
+            id,
+            is_counterparty_contact_claim_predicate,
+            now,
+        ),
+        Some(_) => Ok(0),
+    }
+}
+
+/// The batch `BatchOp::Delete` hook for the channel-actor families (OF-272),
+/// run in the batch's write transaction before the delete tears any edge.
+///
+/// It closes the deleted id's own family heads
+/// ([`close_family_claims_for_delete_in_txn`]) and, for a contact, stages the
+/// hard-erasure marker the physical delete otherwise leaves out: the
+/// permanent `dt:` marker readers and sync ingest consult, and the `pt:`
+/// propagation intent in the row's window (its `learned_at`, or `now` for a
+/// contact whose cache row was already dropped).
+pub(crate) fn retire_family_claims_for_batch_delete_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    now: u64,
+    text_index_trusted: bool,
+) -> Result<()> {
+    let row = store
+        .port_entity_record(&*wtxn, id)?
+        .map(|row| (row.entity_type, row.learned_at));
+    let contact_heads_closed = close_family_claims_for_delete_in_txn(
+        store,
+        config,
+        analyzer,
+        wtxn,
+        id,
+        now,
+        text_index_trusted,
+    )?;
+    let window = match row {
+        Some((ENTITY_TYPE_COUNTERPARTY_CONTACT, learned_at)) => learned_at,
+        None if contact_heads_closed > 0 => now,
+        _ => return Ok(()),
+    };
+    crate::deletion::stage_engine_row_hard_erasure_in_txn(
+        store,
+        wtxn,
+        id,
+        window,
+        &crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: now,
+            request_id: *id.as_bytes(),
+        },
+    )
 }
 
 /// Re-derives the type-132 cache row for `contact_id` from claims, inside the
