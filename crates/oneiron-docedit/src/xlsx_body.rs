@@ -13,9 +13,10 @@ use crate::ooxml::{
 };
 use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
+use crate::xlsx_shift::shift_formula;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Excel's ceiling on one cell's text.
 pub const MAX_TEXT_CHARS: usize = 32_767;
@@ -85,7 +86,9 @@ pub enum XlsxValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum XlsxLock {
-    /// A shared formula's anchor or member: one text serves the whole range.
+    /// A shared formula member whose anchor's text, moved to its cell, would
+    /// leave the sheet, or one of a group with no anchor. Readable members
+    /// carry their own text and are writable.
     SharedFormula,
     /// Inside an array formula's range, a dynamic array's spill included.
     ArrayFormula,
@@ -100,6 +103,19 @@ pub enum XlsxLock {
     /// A built-in name: a print area, a filter range.
     BuiltinName,
 }
+
+/// One shared formula group of a worksheet: its anchor, whose text the
+/// members are written from, and every cell in it. `complete` when every
+/// member's own text could be read, so the group can be written out cell by
+/// cell.
+struct SharedGroup {
+    anchor: (u32, u32),
+    cells: Vec<(u32, u32)>,
+    complete: bool,
+}
+
+/// A worksheet's shared formula groups by `si`.
+type SharedGroups = BTreeMap<u32, SharedGroup>;
 
 /// A rectangular range, 1-based `(column, row)` corners.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -200,7 +216,7 @@ pub fn read_xlsx_cells(bytes: &[u8], limits: Limits) -> Result<XlsxBook> {
     let mut sheets = Vec::with_capacity(book.worksheets.len());
     for name in &book.order {
         if let Some(part) = book.worksheets.get(name) {
-            let (cells, locked) = book.sheet(part)?;
+            let (cells, locked, _) = book.sheet(part)?;
             sheets.push(XlsxSheet {
                 name: name.clone(),
                 cells,
@@ -226,9 +242,10 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
         return Ok(source.to_vec());
     }
     let mut book = Book::open(source, limits)?;
+    let unshared = unshare_written_anchors(&book, changes)?;
     let mut by_sheet: BTreeMap<&str, BTreeMap<u32, BTreeMap<u32, &XlsxChange>>> = BTreeMap::new();
     let mut names = Vec::new();
-    for change in changes {
+    for change in changes.iter().chain(&unshared) {
         let XlsxChange::Cell {
             sheet,
             col,
@@ -266,7 +283,7 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             .get(*sheet)
             .ok_or(refused("no such worksheet"))?
             .clone();
-        let (cells, areas) = book.sheet(&part)?;
+        let (cells, areas, _) = book.sheet(&part)?;
         let stored: BTreeMap<(u32, u32), &XlsxCell> = cells
             .iter()
             .map(|cell| ((cell.col, cell.row), cell))
@@ -306,6 +323,64 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
         book.package.unrelate(&book.part, &chain.id)?;
     }
     Ok(book.package.export()?)
+}
+
+/// The cells a write to a shared formula's anchor must also write: every
+/// other member of its group not already written, as its own formula with
+/// its format kept. The anchor holds the group's only text, so once it is
+/// rewritten the members carry theirs. A group with a member whose text
+/// could not be read refuses.
+fn unshare_written_anchors(book: &Book, changes: &[XlsxChange]) -> Result<Vec<XlsxChange>> {
+    let mut written: BTreeMap<&str, HashSet<(u32, u32)>> = BTreeMap::new();
+    for change in changes {
+        if let XlsxChange::Cell {
+            sheet, col, row, ..
+        } = change
+        {
+            written
+                .entry(sheet.as_str())
+                .or_default()
+                .insert((*col, *row));
+        }
+    }
+    let mut out = Vec::new();
+    for (sheet, cells_written) in &written {
+        let Some(part) = book.worksheets.get(*sheet) else {
+            continue;
+        };
+        let (cells, _, groups) = book.sheet(part)?;
+        let stored: HashMap<(u32, u32), &XlsxCell> = cells
+            .iter()
+            .map(|cell| ((cell.col, cell.row), cell))
+            .collect();
+        for group in groups.values() {
+            if !cells_written.contains(&group.anchor) {
+                continue;
+            }
+            if !group.complete {
+                return Err(refused(
+                    "a shared formula's anchor whose members cannot all be written out",
+                ));
+            }
+            for at in &group.cells {
+                if *at == group.anchor || cells_written.contains(at) {
+                    continue;
+                }
+                let cell = stored
+                    .get(at)
+                    .ok_or(refused("a shared formula member is missing"))?;
+                out.push(XlsxChange::Cell {
+                    sheet: (*sheet).to_owned(),
+                    col: at.0,
+                    row: at.1,
+                    value: cell.value.clone(),
+                    formula: cell.formula.clone(),
+                    style: cell.style,
+                });
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Have the opening application recalculate every formula on load: the
@@ -500,12 +575,20 @@ impl Book {
         })
     }
 
-    /// A worksheet's stored cells and its read-only ranges.
-    fn sheet(&self, part: &str) -> Result<(Vec<XlsxCell>, Vec<XlsxArea>)> {
+    /// A worksheet's stored cells, its read-only ranges and its shared
+    /// formula groups. A shared formula's anchor keeps its own text and each
+    /// member reads the anchor's text moved to its cell, so both are
+    /// writable; a member whose moved text would leave the sheet stays
+    /// read-only.
+    fn sheet(&self, part: &str) -> Result<(Vec<XlsxCell>, Vec<XlsxArea>, SharedGroups)> {
         let tree = parse(&self.package, part)?;
         let mut cells = Vec::new();
         let mut areas = Vec::new();
         let mut seen = HashSet::new();
+        // Each shared group's anchor (cell and text) by `si`, and every
+        // shared cell by its index in `cells`.
+        let mut anchors: HashMap<u32, ((u32, u32), String)> = HashMap::new();
+        let mut sharing: Vec<(usize, u32)> = Vec::new();
         let rows = match tree.child(0, SML, "sheetData")? {
             Some((data, _)) => tree
                 .children(data)
@@ -525,6 +608,7 @@ impl Book {
                 }
                 let mut locked = None;
                 let mut formula = None;
+                let mut shared = None;
                 if let Some((_, f)) = tree.child(index, SML, "f")? {
                     let text = (!f.text.trim().is_empty()).then(|| ui_form(&f.text));
                     let lock = match f.attr("t").unwrap_or("normal") {
@@ -541,6 +625,13 @@ impl Book {
                             XlsxArea::parse(reference, lock)
                                 .ok_or(refused("an unreadable formula range"))?,
                         );
+                    }
+                    if lock == Some(XlsxLock::SharedFormula) {
+                        shared = f.attr("si").and_then(|si| si.trim().parse::<u32>().ok());
+                        // The anchor is the one cell naming the group's range.
+                        if let (Some(si), Some(text), Some(_)) = (shared, &text, f.attr("ref")) {
+                            anchors.insert(si, ((col, row), text.clone()));
+                        }
                     }
                     formula = text;
                     locked = lock;
@@ -591,6 +682,9 @@ impl Book {
                             .map_err(|_| refused("an unreadable cell format"))
                     })
                     .transpose()?;
+                if let Some(si) = shared {
+                    sharing.push((cells.len(), si));
+                }
                 cells.push(XlsxCell {
                     col,
                     row,
@@ -599,6 +693,39 @@ impl Book {
                     style,
                     locked,
                 });
+            }
+        }
+        let mut groups = SharedGroups::new();
+        for (index, si) in sharing {
+            let cell = &mut cells[index];
+            let Some(((col, row), text)) = anchors.get(&si) else {
+                continue;
+            };
+            let group = groups.entry(si).or_insert_with(|| SharedGroup {
+                anchor: (*col, *row),
+                cells: Vec::new(),
+                complete: true,
+            });
+            group.cells.push((cell.col, cell.row));
+            if cell.locked != Some(XlsxLock::SharedFormula) {
+                group.complete = false;
+                continue;
+            }
+            let own = if (cell.col, cell.row) == (*col, *row) {
+                Some(text.clone())
+            } else {
+                shift_formula(
+                    text,
+                    i64::from(cell.row) - i64::from(*row),
+                    i64::from(cell.col) - i64::from(*col),
+                )
+            };
+            match own {
+                Some(own) => {
+                    cell.formula = Some(own);
+                    cell.locked = None;
+                }
+                None => group.complete = false,
             }
         }
         for rel in self
@@ -646,7 +773,7 @@ impl Book {
                     .map(|area| area.lock);
             }
         }
-        Ok((cells, areas))
+        Ok((cells, areas, groups))
     }
 
     /// Rebuild `definedNames` with the changed names replaced, added or

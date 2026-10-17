@@ -388,6 +388,7 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         Ok(())
     }
 
@@ -449,6 +450,9 @@ impl Vault {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
+        // A closed head moves what the host's timers read; the mark fires
+        // only if this transaction commits.
+        crate::batch::queue_proactivity_change(self, wtxn);
 
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
@@ -643,6 +647,7 @@ impl Vault {
         }
         self.retract_claim_in_txn(&mut wtxn, id, now)?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         Ok(())
     }
 
@@ -671,6 +676,9 @@ impl Vault {
         now: u64,
         actor: Option<crate::WriteActor>,
     ) -> Result<Option<GateDecisionRecord>> {
+        // A retracted head moves what the host's timers read; the mark fires
+        // only if this transaction commits.
+        crate::batch::queue_proactivity_change(self, wtxn);
         // The NAMED target, guarded before the pending-consent closure and the
         // gate receipt below: a stale retract must leave the consent row and
         // every receipt exactly as it found them.

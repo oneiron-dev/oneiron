@@ -88,6 +88,37 @@ fn reaches(ask: &SkillTradeoffAsk, project: EntityId) -> bool {
         )
 }
 
+/// Whether a route already carries this exact question to `project`, open or
+/// settled (the Coach's tradeoff router, FIX-LIST 817). A void route does not:
+/// its question moved.
+pub(crate) fn project_tradeoff_routed_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    proposal: EntityId,
+    project: EntityId,
+    question_digest: &str,
+) -> crate::Result<bool> {
+    Ok(ROUTES
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .any(|(_, route)| {
+            route.proposal == proposal
+                && route.project == project
+                && route.question_digest == question_digest
+                && !matches!(route.state, RouteState::Void { .. })
+        }))
+}
+
+/// When `task` was created; `None` when it names no TASK. The Coach's
+/// tradeoff router picks the newest TASK of a project by it.
+pub(crate) fn task_created_at_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> crate::Result<Option<u64>> {
+    Ok(super::wire_decode::task_verb_body_in(vault, txn, task)?.map(|body| body.created_at))
+}
+
 /// Whether admitting `new` voids the open route `old`: the same proposal
 /// asked again under another question digest, on any TASK or project. The
 /// one supersession rule for routed tradeoff asks.

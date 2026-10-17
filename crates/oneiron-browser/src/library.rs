@@ -9,7 +9,8 @@
 //! first: opening a page lists the site's programs. A library run is live:
 //! every effect in it still crosses its gated door, and a run that misses
 //! its postcondition goes back to the planner with the checks it missed and
-//! the page it left.
+//! the page it left. A program that stops working leaves by retire, and a
+//! later solved run that passes both checks files it afresh.
 //!
 //! A program's `{{name}}` slots take the run's arguments as data, in the
 //! batch's own fields; nothing is spliced into code.
@@ -148,6 +149,20 @@ pub struct LibraryRunOutput {
     pub batch: BatchOutput,
 }
 
+/// Takes a program out of the library: no later `open` or `find` lists it,
+/// and no run can start it.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryRetireInput {
+    pub workflow: String,
+}
+
+/// The program a retire took out, as its card read then.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LibraryRetireOutput {
+    pub retired: LibraryCard,
+}
+
 /// Where library programs are kept: the engine's vault, behind the session.
 pub trait WorkflowLibrary: Send {
     /// The programs filed for `site`, those whose subgoal holds `subgoal`.
@@ -163,6 +178,9 @@ pub trait WorkflowLibrary: Send {
     ) -> Result<String, BrowserError>;
     /// Counts one library run, and whether it met its postcondition.
     fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError>;
+    /// Takes a program out of the library; `None` when none is filed under
+    /// `workflow`.
+    fn retire(&mut self, workflow: &str) -> Result<Option<LibraryCard>, BrowserError>;
 }
 
 impl WorkflowProgram {
