@@ -615,23 +615,39 @@ The Dreamer's own maintenance applies at once too, with one receipt each, and yo
 it here, effect and all (`/v1/owner/dreamer/revert` above only retracts its finding). Its curator
 moves one of the Dreamer's own consolidations one rung (decay, weaken, mark stale, retract) as the
 Dreamer; its harness audit files a retune finding, which deploys nothing; its action-mode refresh
-files an advisory mode, which grants nothing; and a Dreamer-born digest cadence and presentation
-request sets both rows. Each lands as an `auto` finding, and the inbox's finding notice tells you.
-The Coach's and the healer's findings still wait in the run tray. So does any Dreamer finding the
-Gate holds, and every curator rung on a critical claim: that waits for your approval in the run
-tray and applies on the next curator pass.
+files an advisory mode, which grants nothing; a Dreamer-born digest cadence and presentation
+request sets both rows; a keep-in-touch rule that fell due files a reach-out; and a follow-up the
+host drafted for it is saved as a plan for your send review. Each lands as an `auto` finding, and
+the inbox's finding notice tells you. The Coach's and the healer's findings still wait in the run
+tray. So does any Dreamer finding the Gate holds, and every curator rung on a critical claim: that
+waits for your approval in the run tray and applies on the next curator pass.
+
+A saved plan never sends on its own. `GET /v1/owner/representation?proposal=<id>` shows it,
+`POST /v1/owner/representation/approve` records your send review (a receipt naming its exact
+content and sources) and schedules the send through the channel's usual dial and the outbound gate,
+and `/representation/decline` withdraws it, as a revert would. When the nightly identity check
+cannot tell who a name is, it no longer asks you: it keeps the names separate for now (nothing
+merges, nothing is confirmed), leaves the ask open in `/v1/owner/identity/asks` with
+`kept_separate_at` set, and decides it again only once its candidates change. You can still answer
+it there. An agent about to send, pay, invite or share on that name is still stopped and shown the
+choice card first.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
-  reverted ones too, newest first, with its finding, kind (`finding`, `curator` or
-  `proactivity_policy`), facet, attempt, receipt and your revert once made.
-- `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` undoes its effect,
-  retracts its finding as yours and leaves one receipt. A curator rung's claim comes back at its
-  prior confidence and rung: in place when a weakening closed a claim with no signed history,
-  else as the Dreamer's fresh copy born of it, since a signed claim's history never reopens (the
-  copy carries the default `ClaimOf` weight). A digest request puts back the rows it replaced, or
-  the defaults. Anything a later write changed is left as it is. The reply lists what stood
-  again, what was copied, what was closed, the settings put back and what was left alone. A
-  second revert returns the first one's reply, and the Dreamer never applies that finding again.
+  reverted ones too, newest first, with its finding (or, for a name kept separate, its `ask`),
+  kind (`finding`, `curator`, `proactivity_policy`, `reach_out`, `representation_plan` or
+  `identity_provisional`), facet, attempt, receipt and your revert once made.
+- `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` (or
+  `{"ask": "<64 hex>"}` for a name kept separate) undoes its effect, retracts its finding as yours
+  and leaves one receipt. A curator rung's claim comes back at its prior confidence and rung: in
+  place when a weakening closed a claim with no signed history, else as the Dreamer's fresh copy
+  born of it, since a signed claim's history never reopens (the copy carries the default `ClaimOf`
+  weight). A digest request puts back the rows it replaced, or the defaults. A reach-out's revert
+  withdraws every plan drafted from it, and a draft still queued lands nothing; a plan's revert
+  stops a send not yet made. A message already sent cannot be unsent. A name kept separate comes
+  back to you as an identity ask, with its inbox notice and choice card. Anything a later write
+  changed is left as it is. The reply lists what stood again, what was copied, what was closed,
+  the settings put back, the asks put to you and what was left alone. A second revert returns the
+  first one's reply, and the Dreamer never applies that finding again.
 
 ## Review cleanup
 
