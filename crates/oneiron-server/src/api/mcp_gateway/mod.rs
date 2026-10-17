@@ -9,6 +9,7 @@ mod exec_board_verbs;
 mod memory_response;
 mod stream_reads;
 mod tasks_response;
+mod verb_hooks;
 mod wakes;
 
 pub(crate) use self::actor_dispatch::{

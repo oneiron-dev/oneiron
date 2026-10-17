@@ -63,6 +63,8 @@ impl Vault {
             scope: None,
             board_epoch: None,
             domain: VerbDomain::Write,
+            // A host's own call reads as its actor.
+            reader: None,
         };
         let check = |rewritten: &Value| added_pins(&args, rewritten, window, fits).map(|_| ());
         match self.pre_verb_hooks(call, args.clone(), &check) {

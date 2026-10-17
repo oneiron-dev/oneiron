@@ -4,6 +4,7 @@ use super::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call,
     mcp_error_response, mcp_params, mcp_validated_call_args, resolve_mcp_gateway_actor,
 };
+use crate::api::facade::{self, DoorClaim};
 use crate::auth::Locality;
 use crate::mcp::McpCacheHint;
 use crate::mcp::McpPageBudget;
@@ -14,10 +15,13 @@ use crate::mcp::McpSurfaceMode;
 use crate::server::SyncServer;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::header::AUTHORIZATION;
+use axum::http::{HeaderMap, HeaderValue};
 use axum::response::IntoResponse;
 use axum::response::Json;
 use oneiron::claim::CallerLocality;
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::runtime_hooks::verb::InvocationOutcome;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -275,6 +279,47 @@ async fn mcp_endpoint(
     // instead, so their ORIGINAL spelling is read back out of the request bytes
     // and carried to that decoder unrounded (ONE-1704 repair).
     let raw_arguments = crate::mcp::mcp_raw_call_arguments(&body);
+    // A `tools/call` that names its invocation claims it for the whole
+    // request (OF-580): a second call naming it for the same call waits for
+    // this one's reply and gets it, under its own id; one naming it for
+    // another call is refused at once.
+    let claim = match mcp_named_invocation(&request) {
+        None => None,
+        Some(invocation) => {
+            let call =
+                mcp_invocation_body(mode, locality, &headers, &request, raw_arguments.as_deref());
+            match facade::claim_door_invocation(&server, invocation, call).await {
+                DoorClaim::Run(claim) => Some(claim),
+                DoorClaim::Answered(outcome) => {
+                    let mut reply = outcome.body;
+                    if let Some(reply) = reply.as_object_mut() {
+                        reply.insert("id".to_owned(), id);
+                    }
+                    return Json(reply);
+                }
+                DoorClaim::InFlight => {
+                    return Json(mcp_error_response(
+                        id,
+                        McpGatewayError::new(
+                            -32020,
+                            facade::INVOCATION_IN_FLIGHT,
+                            "another request is still running this invocation; retry with it once the first call returns",
+                        ),
+                    ));
+                }
+                DoorClaim::Conflict => {
+                    return Json(mcp_error_response(
+                        id,
+                        McpGatewayError::new(
+                            -32020,
+                            facade::INVOCATION_CONFLICT,
+                            "this invocation id names a different call",
+                        ),
+                    ));
+                }
+            }
+        }
+    };
     let result = handle_mcp_request(
         mode,
         &headers,
@@ -284,14 +329,69 @@ async fn mcp_endpoint(
         raw_arguments.as_deref(),
     )
     .await;
-    Json(match result {
+    let reply = match result {
         Ok(result) => json!({
             "jsonrpc": "2.0",
             "id": id,
             "result": result,
         }),
         Err(error) => mcp_error_response(id, error),
-    })
+    };
+    if let Some(claim) = claim {
+        let mut saved = reply.clone();
+        if let Some(saved) = saved.as_object_mut() {
+            saved.remove("id");
+        }
+        claim.finish(InvocationOutcome {
+            status: 200,
+            body: saved,
+        });
+    }
+    Json(reply)
+}
+
+/// The invocation a `tools/call` names in `_meta`, when it names a valid
+/// one; a malformed one is left to the call's own refusal.
+fn mcp_named_invocation(request: &McpJsonRpcRequest) -> Option<InvocationId> {
+    if request.method != "tools/call" {
+        return None;
+    }
+    request
+        .params
+        .as_ref()?
+        .get("_meta")?
+        .get(MCP_INVOCATION_META)?
+        .as_str()
+        .and_then(InvocationId::parse_hex)
+}
+
+/// The call a claimed MCP invocation names: the endpoint, the credential
+/// headers and session the actor resolves from, where the caller sits, and
+/// the call itself.
+fn mcp_invocation_body(
+    mode: McpSurfaceMode,
+    locality: CallerLocality,
+    headers: &HeaderMap,
+    request: &McpJsonRpcRequest,
+    raw_arguments: Option<&str>,
+) -> [u8; 32] {
+    let header = |name: &str| headers.get(name).map_or(&[][..], HeaderValue::as_bytes);
+    let params =
+        oneiron::receipt::call_json_digest(request.params.as_ref().unwrap_or(&Value::Null));
+    facade::invocation_body(
+        None,
+        locality,
+        &[
+            b"mcp".as_slice(),
+            mode.as_str().as_bytes(),
+            header(MCP_CREDENTIAL_HEADER),
+            header(AUTHORIZATION.as_str()),
+            header(crate::api::write_facet::SESSION_HEADER),
+            request.method.as_bytes(),
+            params.as_bytes(),
+            raw_arguments.unwrap_or_default().as_bytes(),
+        ],
+    )
 }
 
 /// OF-538's one MCP door: records a `tools/call` once it has answered, in its

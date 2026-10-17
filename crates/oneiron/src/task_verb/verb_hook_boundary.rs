@@ -28,28 +28,38 @@ pub fn row_domain(verb: &str) -> VerbDomain {
 }
 
 /// The call of row `verb` on `memory`: its actor and class, the invocation
-/// its host bound or a fresh one, and the room a room turn runs in, as
-/// `room:<hex>` (the `<axis>:<value>` form a hook's scope names).
-#[must_use]
-pub fn row_call(memory: &Memory<'_>, verb: &str) -> VerbCall {
-    let mut call = VerbCall::for_memory(memory, verb, row_domain(verb));
+/// its host bound or a fresh one, the caller's read key when a hook may run,
+/// and the room a room turn runs in, as `room:<hex>` (the `<axis>:<value>`
+/// form a hook's scope names).
+///
+/// # Errors
+///
+/// When a hook may run and the handle's read key does not build.
+pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
+    let mut call = VerbCall::for_memory(memory, verb, row_domain(verb))?;
     call.scope = memory
         .room_turn()
         .map(|turn| format!("room:{}", turn.room.to_hex()));
-    call
+    Ok(call)
 }
 
 /// Runs the pre chain of row `verb` over its JSON `args`: the args to run it
-/// with. A rewrite must pass the row's own input check.
+/// with. A rewrite must pass the row's own input check, then the admission
+/// its door bound on `memory`.
 ///
 /// # Errors
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    let check = |args: &Value| validate_input(verb, args).map_err(|error| error.to_string());
+    let check = |args: &Value| {
+        validate_input(verb, args).map_err(|error| error.to_string())?;
+        memory
+            .rewrite_admit()
+            .map_or(Ok(()), |admit| admit(verb, args))
+    };
     memory
         .vault()
-        .pre_verb_hooks(row_call(memory, verb), args, &check)?
+        .pre_verb_hooks(row_call(memory, verb)?, args, &check)?
         .map_err(stopped)
 }
 

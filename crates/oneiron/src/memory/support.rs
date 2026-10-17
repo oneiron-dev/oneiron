@@ -426,7 +426,17 @@ pub struct Memory<'v> {
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
+    /// The door's own admission of a hook's rewritten args
+    /// (`with_rewrite_admit`).
+    pub(super) rewrite_admit: Option<RewriteAdmit>,
 }
+
+/// A door's admission of a verb hook's rewritten args, run on the verb's name
+/// and the new args after the row's own input check, as if the caller sent
+/// them (ARCH-0080 §3). The reason refuses the rewrite.
+pub type RewriteAdmit = std::sync::Arc<
+    dyn Fn(&str, &serde_json::Value) -> std::result::Result<(), String> + Send + Sync,
+>;
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
 /// surface's claim doors stamp in place of the caller's declared source.
@@ -479,6 +489,7 @@ impl Vault {
             owner_authorship: None,
             invocation: None,
             task_host: None,
+            rewrite_admit: None,
         }
     }
 
@@ -513,6 +524,7 @@ impl Vault {
             owner_authorship: None,
             invocation: None,
             task_host: None,
+            rewrite_admit: None,
         }
     }
 }
@@ -556,6 +568,7 @@ impl<'v> Memory<'v> {
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
                 task_host: self.task_host.clone(),
+                rewrite_admit: self.rewrite_admit.clone(),
             },
         })
     }
@@ -613,6 +626,20 @@ impl Memory<'_> {
     #[must_use]
     pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
         self.invocation
+    }
+
+    /// Binds the door's admission of a hook's rewritten args: a rewrite the
+    /// door would refuse from the caller is refused from a hook too. A room
+    /// turn opened on this surface keeps it.
+    #[must_use]
+    pub fn with_rewrite_admit(mut self, admit: RewriteAdmit) -> Self {
+        self.rewrite_admit = Some(admit);
+        self
+    }
+
+    /// The door's admission of rewritten args a host bound, if any.
+    pub(crate) fn rewrite_admit(&self) -> Option<&RewriteAdmit> {
+        self.rewrite_admit.as_ref()
     }
 
     /// Binds the running agent attempt whose TASK creates this surface makes
