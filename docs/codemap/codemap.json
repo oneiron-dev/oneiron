@@ -644,6 +644,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AgentRun"
+     ],
+     "path": "src/agent_dispatch/agent_run.rs",
+     "purpose": "The agent run pump's view (OF-533): every agent-def dispatch no other host runs",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/attenuation.rs",
      "purpose": "Live-ceiling attenuation and deterministic attenuated-fork registration",
@@ -791,7 +804,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 4,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -853,6 +866,7 @@
      "path": "src/agent_dispatch/resident.rs",
      "purpose": "Persistent resident bindings",
      "surface": {
+      "crate-vis": 3,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -9489,8 +9503,8 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 8,
+      "crate-vis": 6,
+      "re-export": 9,
       "struct": 1
      }
     },
@@ -9675,9 +9689,9 @@
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 7,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -9688,6 +9702,24 @@
      "path": "src/claim/scoped_read/weave_digest/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveLensPlan",
+      "WeaveLensPlanLine",
+      "WeaveLensPlanSection",
+      "WeaveLensRender"
+     ],
+     "path": "src/claim/scoped_read/weave_lens.rs",
+     "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 4
+     }
     },
     {
      "bucket": "m",
@@ -9724,20 +9756,23 @@
       "WeaveDigestRequest",
       "WeaveDigestView",
       "WeaveItemView",
+      "WeaveLinkCorrectionView",
       "WeaveReaderKind",
       "WeaveReaderRef",
       "WeaveReportRequest",
       "WeaveReportView",
       "WeaveScheduleView",
       "WeaveSectionInput",
-      "WeaveSectionView"
+      "WeaveSectionView",
+      "WeaveWrongLinkRequest"
      ],
      "path": "src/claim/scoped_read/weave_serve.rs",
      "purpose": "The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 5,
-      "struct": 8
+      "fn": 6,
+      "struct": 10
      }
     },
     {
@@ -16516,7 +16551,7 @@
      "surface": {
       "crate-vis": 16,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -17060,6 +17095,20 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveLensModel"
+     ],
+     "path": "src/dreamer_consolidation/weave_lens.rs",
+     "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): one saved digest period rendered through the shipped…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -17261,7 +17310,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 20
+      "fn": 21
      }
     },
     {
@@ -17392,7 +17441,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 23,
+      "const": 24,
       "crate-vis": 34
      }
     },
@@ -17729,8 +17778,8 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 19,
-      "fn": 14,
+      "crate-vis": 20,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -23905,7 +23954,7 @@
      "purpose": "OF-221: background events as NOTIFICATION records (type 42)",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -24685,7 +24734,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)",
      "surface": {
       "enum": 3,
-      "fn": 26,
+      "fn": 27,
       "struct": 4
      }
     },
@@ -26042,7 +26091,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 33,
+      "const": 34,
       "fn": 1,
       "struct": 1
      }
@@ -43441,7 +43490,7 @@
      "path": "src/task_verb/highway_report.rs",
      "purpose": "The highway's Report arm (OF-220): progress, blocked, done, failed and release against a fenced handle, the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -43451,7 +43500,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -43528,7 +43577,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 2,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -43734,6 +43783,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RunnerDoneAnswer",
+      "RunnerDoneQuestion"
+     ],
+     "path": "src/task_verb/runner_done.rs",
+     "purpose": "A runner's \"Done means met?\", answered before it settles (OF-533)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/task_verb/scheduling.rs",
      "purpose": "Live TASK dependency and symbol readiness at every attempt-claim door",
@@ -43843,7 +43907,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 175
+      "fn": 176
      }
     },
     {
@@ -45555,6 +45619,7 @@
      "kind": "src",
      "notable": [
       "AsrUpdate",
+      "AudienceRefresh",
       "SafeguardUpdate",
       "VoiceCascadeSession",
       "VoiceSessionConfig"
@@ -45563,9 +45628,9 @@
      "purpose": "Session transitions only",
      "surface": {
       "enum": 1,
-      "fn": 19,
+      "fn": 20,
       "re-export": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -45835,7 +45900,7 @@
      "path": "src/voice_identity/math_keys.rs",
      "purpose": "Vector-math door (normalize/cosine/same-space check) and the digest helper the typed side tables' keys are…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -45940,7 +46005,7 @@
       "const": 3,
       "crate-vis": 3,
       "enum": 7,
-      "fn": 17,
+      "fn": 18,
       "struct": 12
      }
     },
@@ -48238,7 +48303,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48413,7 +48478,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48686,7 +48751,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49540,7 +49605,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 106,
+     "files": 107,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -49696,7 +49761,7 @@
    },
    "over_bar": 111,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3000,
+   "source_files": 3004,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57376,7 +57441,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 152
+      "fn": 153
      }
     },
     {
@@ -58389,7 +58454,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 153
+      "fn": 154
      }
     },
     {
@@ -60848,7 +60913,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -60878,7 +60943,7 @@
      "path": "src/api/facade/shared_act_doors.rs",
      "purpose": "The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -60898,6 +60963,16 @@
      "path": "src/api/facade/tests/call_mode.rs",
      "purpose": "Call mode at the HTTP recall door (retrieval hub #call-mode)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/weave_doors.rs",
+     "purpose": "The weave lens's human doors (OF-499): the one-tap wrong control a person uses on a link in their own report",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -63432,7 +63507,7 @@
      "path": "src/decision_host.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7,
       "struct": 1
      }
@@ -64647,7 +64722,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -64662,7 +64737,7 @@
      "path": "src/mcp/mod.rs",
      "purpose": "MCP connector actor registry",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 2,
       "re-export": 12
      }
@@ -65979,7 +66054,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/server/resident_pump.rs",
-     "purpose": "The resident run pump (OF-533): runs each resident agent's dispatches bound to their own leased attempts, so…",
+     "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
       "crate-vis": 1
      }
@@ -66650,7 +66725,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 250,
+     "files": 251,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66946,7 +67021,7 @@
    },
    "over_bar": 27,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 472,
+   "source_files": 473,
    "test_files": 182
   },
   "oneiron-spawn": {
