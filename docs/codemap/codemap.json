@@ -11327,7 +11327,7 @@
      "path": "src/code_run/dispatcher/team_submit_output.rs",
      "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
