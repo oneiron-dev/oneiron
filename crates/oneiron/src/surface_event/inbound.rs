@@ -566,6 +566,9 @@ pub(crate) fn route_inbound_surface_event_admitting_in_txn(
     admit: &dyn Fn(&EntityId) -> Result<bool>,
 ) -> Result<InboundSurfaceRouteReceipt> {
     input.validate()?;
+    // A built-in channel's events arrive through its engine pack (OF-519),
+    // whichever door routes them.
+    vault.require_builtin_channel_pack_in_txn(txn, &input.channel)?;
     // Everything this door routes came in through an adapter, so it is claims
     // and never instructions (OF-347 R6). The payload's own flag is not
     // authority: a relayed message cannot declare itself the owner's.
