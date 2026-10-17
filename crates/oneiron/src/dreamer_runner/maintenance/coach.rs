@@ -75,16 +75,21 @@ pub const COACH_ISSUES_FACET: &str = "coach.issues";
 /// heal for, an invented example of the failure and the shadow result of its
 /// own candidate fix, each verified in the vault before either may leave.
 pub const COACH_CODE_FIX_FACET: &str = "coach.code_fix";
+/// Judge-swap upkeep (ARCH-0053, OF-184): the incumbent judge's retests on
+/// its own kept judgments, or another judge's shadow pass over them, which
+/// rules whether that judge takes over.
+pub const COACH_JUDGE_SWAP_FACET: &str = "coach.judge_swap";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 4] = [
+const HOST_FACETS: [&str; 5] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
     COACH_TRAINING_OFFER_FACET,
+    COACH_JUDGE_SWAP_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 7] = [
@@ -217,6 +222,19 @@ impl Vault {
     ) -> Result<AttributionSweepReport> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISCOVERY_FACET)?;
         run_task_attribution_sweep_with_decisions(self, limit, source, decisions)
+    }
+
+    /// Judge-swap upkeep as the Coach under a leased `coach.judge_swap`
+    /// attempt: the incumbent's retests, or another judge's shadow pass, over
+    /// the judgments `host` kept.
+    pub fn run_coach_judge_swap(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        host: &dyn crate::skill_optimize::JudgeShadowHost,
+        now: u64,
+    ) -> Result<crate::skill_optimize::JudgeSwapReport> {
+        self.require_coach_attempt(attempt, COACH_JUDGE_SWAP_FACET)?;
+        crate::skill_optimize::run_judge_swap(self, host, now)
     }
 
     /// Keeps one case where a person changed the ladder's answer (from

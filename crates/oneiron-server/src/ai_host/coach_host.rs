@@ -15,7 +15,8 @@ use oneiron::actor_claims::{
     SessionActorDistiller, SessionDistillBrief,
 };
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_PERSON_THRESHOLD_FACET, COACH_SKILL_DISTILL_FACET, PersonThresholdPolicy,
+    COACH_JUDGE_SWAP_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_SKILL_DISTILL_FACET,
+    PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -132,6 +133,7 @@ fn run_one(
     let vault = server.vault();
     match admitted.status.payload.attempt_type.as_str() {
         COACH_SKILL_DISTILL_FACET => distill(server, admitted),
+        COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_PERSON_THRESHOLD_FACET => {
             // Tune from the row an accept may have just changed.
             server.decision_host().refresh_person_threshold(vault)?;
