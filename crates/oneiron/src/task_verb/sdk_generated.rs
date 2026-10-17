@@ -152,6 +152,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.fanout.resume_as",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutResumeRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.ack",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutAckRequest,
@@ -1450,7 +1456,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.preview",
                 crate::code_run::vault_read::request_schema::<
-                    crate::office_body::OfficeBodyArtifactRequest,
+                    crate::office_body::OfficeBodyPreviewRequest,
                 >(),
             ),
             (
@@ -1847,6 +1853,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.fanout.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.resume_as" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3642,6 +3655,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
+        "vault.fanout.resume_as" => {
+            let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
+        }
         "vault.fanout.ack" => {
             let _input: crate::task_verb::sdk::FanoutAckRequest = decode(value.clone())?;
         }
@@ -4480,7 +4496,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.preview" => {
-            let _input: crate::office_body::OfficeBodyArtifactRequest = decode(value.clone())?;
+            let _input: crate::office_body::OfficeBodyPreviewRequest = decode(value.clone())?;
         }
         "vault.artifacts.body.deck.review" => {
             let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
@@ -4590,6 +4606,7 @@ pub fn invoke(
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
+        "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
@@ -5385,6 +5402,12 @@ pub fn vault_fanout_resume(
     input: crate::task_verb::sdk::FanoutResumeRequest,
 ) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
     crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
+}
+pub fn vault_fanout_resume_as(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutResumeRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)
 }
 pub fn vault_fanout_ack(
     memory: &Memory<'_>,
@@ -7496,7 +7519,7 @@ pub fn vault_artifacts_body_export(
 }
 pub fn vault_artifacts_body_preview(
     memory: &Memory<'_>,
-    input: crate::office_body::OfficeBodyArtifactRequest,
+    input: crate::office_body::OfficeBodyPreviewRequest,
 ) -> MemoryResult<crate::office_body::XlsxPreview> {
     crate::gate::record_references::admit_row_references(
         memory,
