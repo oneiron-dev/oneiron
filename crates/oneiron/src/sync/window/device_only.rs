@@ -1,7 +1,8 @@
 //! Export-time withholding for worlds flagged device-only.
 //!
 //! Rows in a device-local world never leave the device that holds the flag
-//! (DEC-0005). Packing skips them, but a row packed while its world was
+//! (DEC-0005). Packing skips them outside the world's own windows
+//! ([`canonical_withheld_worlds`]), and a row packed while its world was
 //! still portable stays resident in the stored window. Every claim of a world,
 //! and every edge naming one, lives in that world's own windows
 //! (`edge_worlds_match`), so an export door reads the flag when it runs and
@@ -89,6 +90,22 @@ impl Withhold<'_> {
             }
         }
     }
+}
+
+/// The worlds a canonical window doc leaves out of `key`'s packing: those
+/// withheld from an unknown destination, less a world window's own world.
+/// Its rows live only in its own windows, which each export door withholds
+/// whole, by key, from a destination that may not read it; a machine that may
+/// read it gets them live.
+pub(super) fn canonical_withheld_worlds(
+    vault: &Vault,
+    key: &WindowKey,
+) -> Result<BTreeSet<EntityId>> {
+    let mut worlds = Withhold::Unknown.worlds(vault)?;
+    if let Some(world) = key.world() {
+        worlds.remove(&world);
+    }
+    Ok(worlds)
 }
 
 /// Whether `key` is a window of a world flagged device-only on this device,

@@ -46,8 +46,12 @@ pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool
     )
 }
 
+/// LMDB → CRDT for a canonical window doc: every row the window holds except
+/// those of a world withheld from an unknown destination, a world window's
+/// own world excepted (`canonical_withheld_worlds`).
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
-    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Unknown)
+    let withheld = super::device_only::canonical_withheld_worlds(vault, window_key)?;
+    reverse_rematerialize_with(vault, doc, window_key, super::Withhold::Worlds(&withheld))
 }
 
 /// [`reverse_rematerialize`] into a sealed window's own mirror document
@@ -75,11 +79,12 @@ pub(crate) fn reverse_rematerialize_rows(
     rows: &std::collections::BTreeSet<EntityId>,
     edited: &std::collections::BTreeSet<EntityId>,
 ) -> Result<u32> {
+    let withheld = super::device_only::canonical_withheld_worlds(vault, window_key)?;
     reverse_rematerialize_scan(
         vault,
         doc,
         window_key,
-        super::Withhold::Unknown,
+        super::Withhold::Worlds(&withheld),
         Some((rows, edited)),
     )
 }

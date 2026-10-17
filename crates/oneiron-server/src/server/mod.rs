@@ -33,7 +33,6 @@ pub(crate) use self::reader_runner::{
     READER_CHILD_READ_ONLY, ReaderRunner, ReaderSeats, run_launch_scope,
 };
 pub(crate) use self::recall::blocking;
-pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]
 mod housekeeping_tests;
