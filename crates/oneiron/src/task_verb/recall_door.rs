@@ -150,6 +150,11 @@ fn recall_within_ceiling(
     let limit = input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT);
     crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(limit)?;
+    // Refused before the query embeds, as every free check is.
+    let query_affect = input
+        .query_affect
+        .map(super::sdk::QueryAffect::vad)
+        .transpose()?;
     let host = match door.rerank {
         RecallRerank::Host(host) if effort.requires_rerank() => Some(host),
         _ => None,
@@ -165,6 +170,7 @@ fn recall_within_ceiling(
         host.map(RecallRerankHost::lease),
         &crate::retrieval_depth::RecallExecution {
             as_of: input.as_of,
+            query_affect,
             reranker: host.map(|_| &preflight as &dyn crate::rerank::Reranker),
             rerank_unavailable: unreranked,
             ..Default::default()
@@ -206,6 +212,7 @@ fn recall_within_ceiling(
             budget,
             embedding,
             &media,
+            query_affect,
             door,
             fallback.as_ref(),
             host,
@@ -236,6 +243,7 @@ fn recall_within_ceiling(
             embedding,
             media: &media,
             as_of: input.as_of,
+            query_affect,
             on_cut: on_cut
                 .as_ref()
                 .map(|on_cut| on_cut as &(dyn Fn(crate::memory::MemoryPack) + Sync)),

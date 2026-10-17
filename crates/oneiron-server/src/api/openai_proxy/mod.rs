@@ -256,6 +256,7 @@ async fn recall(
         as_of: None,
         deadline_ms: None,
         media: None,
+        query_affect: None,
     };
     let (pack, listed) = server
         .recall_off_runtime_listing(

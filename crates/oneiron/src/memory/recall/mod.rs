@@ -785,6 +785,9 @@ impl Memory<'_> {
                 if let Some(as_of) = execution.as_of {
                     pipeline = pipeline.with_temporal_now(as_of);
                 }
+                if let Some(vad) = execution.query_affect {
+                    pipeline = pipeline.query_affect(vad);
+                }
                 pipeline = pipeline
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope)
@@ -881,6 +884,9 @@ impl Memory<'_> {
                     .fold_messages_into_turns(turn_fold);
                 if let Some(as_of) = execution.as_of {
                     builder = builder.with_temporal_now(as_of);
+                }
+                if let Some(vad) = execution.query_affect {
+                    builder = builder.query_affect(vad);
                 }
                 builder = builder
                     .limit(limit)

@@ -259,7 +259,7 @@ pub(crate) struct ContextPackQueryAffect {
 
 impl ContextPackQueryAffect {
     /// The affect as the engine takes it, refused out of range.
-    pub(super) fn vad(self) -> Result<oneiron::Vad, crate::error::ApiError> {
+    pub(crate) fn vad(self) -> Result<oneiron::Vad, crate::error::ApiError> {
         let vad = oneiron::Vad {
             valence: self.valence,
             arousal: self.arousal,
