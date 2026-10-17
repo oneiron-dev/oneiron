@@ -37,7 +37,10 @@ class OneironError(RuntimeError):
     ``code`` is the engine's own stable string — ``BAD_REQUEST``,
     ``FORBIDDEN``, ``NOT_FOUND``, ``LEASE_REQUIRED``,
     ``VAULT_LOCKED_SINGLE_WRITER``, and any future code — carried verbatim.
-    ``suggestions`` is never empty.
+    ``suggestions`` is never empty. ``hook`` is the verb hook's stop when one
+    stopped the call: on ``PENDING_ASK`` it is ``{"status": "pending",
+    "invocation", "ask"}``, and :meth:`Oneiron.retry` resends the call under
+    that invocation.
     """
 
     def __init__(
@@ -46,6 +49,7 @@ class OneironError(RuntimeError):
         message: str,
         suggestions: list[str],
         wrong_root: dict[str, str] | None = None,
+        hook: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -53,6 +57,8 @@ class OneironError(RuntimeError):
         self.suggestions = tuple(suggestions)
         # A ``WRONG_ROOT`` refusal's ``{attempted, replacement, schemaRef}``.
         self.wrong_root = wrong_root
+        # The verb hook's stop (ARCH-0080 §3), as the engine's MemoryError names it.
+        self.hook = hook
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -76,7 +82,9 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         ]
         correction = {key: payload.get(key) for key in ("attempted", "replacement", "schemaRef")}
         wrong_root = correction if all(isinstance(value, str) for value in correction.values()) else None
-        return OneironError(payload["code"], payload["message"], suggestions, wrong_root)
+        hook = payload.get("hook")
+        hook = hook if isinstance(hook, dict) and isinstance(hook.get("status"), str) else None
+        return OneironError(payload["code"], payload["message"], suggestions, wrong_root, hook)
     return OneironError(
         "INTERNAL_SERVER_ERROR",
         fallback,
@@ -200,6 +208,31 @@ class Oneiron:
         reached no server, and for an anonymous off-record call.
         """
         return self._client.last_receipt_ref()
+
+    def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
+        """Resends the call a ``PENDING_ASK`` refusal answered, under its invocation.
+
+        Pass the caught :class:`OneironError`, the verb's SDK name
+        (``vault.claims.upsert``) and the same input (ARCH-0080 §3). While the
+        ask is open it raises the same ``PENDING_ASK``; once the ask is
+        answered proceed, the saved call runs once and this returns its
+        result. Any other refusal is refused before a call is made. Run one
+        retry of a pending call at a time.
+
+        The reply is the verb's shared wire JSON, not the projection the
+        verb's own method returns (``vault.recall`` keeps
+        ``confidenceAdjustment``, for one).
+        """
+        refusal: dict[str, Any] = {
+            "code": pending.code,
+            "message": pending.message,
+            "suggestions": list(pending.suggestions),
+        }
+        if pending.hook is not None:
+            refusal["hook"] = pending.hook
+        return json.loads(
+            _translate(lambda: self._client.retry(json.dumps(refusal), verb, json.dumps(input)))
+        )
 
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
@@ -1144,11 +1177,20 @@ class Oneiron:
             """The owner's tap that confirms a host-held project card; only the host's own door can complete it."""
             return json.loads(_translate(lambda: self._client.vault_projects_confirm(json.dumps(spec))))
         @property
+        def roster(self) -> "Oneiron._VaultProjectsRosterVerbs":
+            return Oneiron._VaultProjectsRosterVerbs(self._client)
+        @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs":
             return Oneiron._VaultProjectsGoalVerbs(self._client)
         def route_tradeoff(self, spec):
             """Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."""
             return json.loads(_translate(lambda: self._client.vault_projects_route_tradeoff(json.dumps(spec))))
+    class _VaultProjectsRosterVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def write(self, spec):
+            """Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."""
+            return json.loads(_translate(lambda: self._client.vault_projects_roster_write(json.dumps(spec))))
     class _VaultProjectsGoalVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
