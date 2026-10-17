@@ -1019,6 +1019,45 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_settings_wake_policy_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.wake_policy.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.wake_policy.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_inference_defaults(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.inference_defaults")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.inference_defaults", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_inference_defaults_replace(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.settings.inference_defaults.replace")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.inference_defaults.replace", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_lenses_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.lenses.propose")?;
         let output = py

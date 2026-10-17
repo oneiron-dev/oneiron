@@ -338,9 +338,15 @@ declare const vault: {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
   };
   settings: {
+    inference_defaults: ((input: object) => Promise<unknown>) & {
+      replace(input: { defaults: unknown; idempotency_key: string }): Promise<unknown>;
+    };
     learning: ((input: { key?: string | null }) => Promise<unknown>) & {
       clear(input: { key: string; mode: "seed" | "pin"; project?: string | null; task_type?: string | null }): Promise<unknown>;
       put(input: { key: string; mode: "seed" | "pin"; value: number; weight_runs?: number | null; why: string; project?: string | null; task_type?: string | null }): Promise<unknown>;
+    };
+    wake_policy: {
+      set(input: { policy: unknown; idempotency_key: string }): Promise<unknown>;
     };
   };
   shape: {

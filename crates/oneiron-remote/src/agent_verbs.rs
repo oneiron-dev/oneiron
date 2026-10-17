@@ -335,6 +335,17 @@ impl OneironClient {
                 "vault.settings.learning.clear" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
+                "vault.settings.wake_policy.set" => remote_agent_verb_output::<
+                    oneiron::policy_setting_doors::PolicyActionOutcome,
+                >(client, verb, &input),
+                "vault.settings.inference_defaults" => remote_agent_verb_output::<
+                    oneiron::policy_setting_doors::PolicyActionOutcome,
+                >(client, verb, &input),
+                "vault.settings.inference_defaults.replace" => {
+                    remote_agent_verb_output::<oneiron::policy_setting_doors::PolicyActionOutcome>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.lenses.propose" => remote_agent_verb_output::<
                     oneiron::receipt::LensProposalReceipt,
                 >(client, verb, &input),
@@ -1905,6 +1916,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.settings.learning.clear", value)
+    }
+    pub fn vault_settings_wake_policy_set(
+        &self,
+        input: &oneiron::policy_setting_doors::WakePolicySetRequest,
+    ) -> Result<oneiron::policy_setting_doors::PolicyActionOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.wake_policy.set", value)
+    }
+    pub fn vault_settings_inference_defaults(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_setting_doors::PolicyActionOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.inference_defaults", value)
+    }
+    pub fn vault_settings_inference_defaults_replace(
+        &self,
+        input: &oneiron::policy_setting_doors::InferenceDefaultsReplaceRequest,
+    ) -> Result<oneiron::policy_setting_doors::PolicyActionOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.inference_defaults.replace", value)
     }
     pub fn vault_lenses_propose(
         &self,

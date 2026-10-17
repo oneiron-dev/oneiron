@@ -14,6 +14,7 @@ use oneiron::dreamer_runner::maintenance::code_fix::{
 };
 use oneiron::failure_signals::{InventedMessage, InventedRole};
 use oneiron::llm::decision::DecisionRung;
+use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
@@ -22,6 +23,7 @@ use oneiron::{
 use serde::Deserialize;
 
 use super::CHAT_ROLE;
+use super::coach_health::coach_role;
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
 
@@ -115,10 +117,19 @@ impl<'a> HostModels<'a> {
         })
     }
 
-    /// One tool-less call's text; `Ok(None)` when no seat serves it or the
-    /// seat refused it.
-    pub(super) fn generate(&self, messages: Vec<LlmMessage>) -> oneiron::Result<Option<String>> {
-        let Some(seat) = self.runtime.seat(CHAT_ROLE) else {
+    /// The Coach's own seat, for its drafts and distill (`coach_role`).
+    pub(super) fn coach(&self) -> ModelRole {
+        coach_role(self.runtime)
+    }
+
+    /// One tool-less call's text on `role`'s seat; `Ok(None)` when no seat
+    /// serves it or the seat refused it.
+    pub(super) fn generate(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<String>> {
+        let Some(seat) = self.runtime.seat(role) else {
             return Ok(None);
         };
         let purpose = CallPurpose::Other {
@@ -140,7 +151,7 @@ impl<'a> HostModels<'a> {
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         };
-        let Ok(call) = self.runtime.admit_role(self.vault, CHAT_ROLE, request) else {
+        let Ok(call) = self.runtime.admit_role(self.vault, role, request) else {
             return Ok(None);
         };
         let response = self
@@ -173,10 +184,13 @@ impl CodeFixHost for HostModels<'_> {
             "briefing": source.briefing.as_deref().map(|text| clip(text, SOURCE_BYTES)),
             "task": source.task.as_deref().map(|text| clip(text, SOURCE_BYTES)),
         });
-        let Some(text) = self.generate(vec![
-            message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
-            message(LlmMessageRole::User, data.to_string()),
-        ])?
+        let Some(text) = self.generate(
+            self.coach(),
+            vec![
+                message(LlmMessageRole::System, DRAFT_SYSTEM.to_owned()),
+                message(LlmMessageRole::User, data.to_string()),
+            ],
+        )?
         else {
             return Ok(None);
         };
@@ -203,7 +217,8 @@ impl CodeFixHost for HostModels<'_> {
                 }
             });
         }
-        self.generate(messages)
+        // The failing agent's replay stays on the agent's chat seat.
+        self.generate(CHAT_ROLE, messages)
     }
 }
 
