@@ -409,6 +409,21 @@ export_facade! {
     let output = client.vault_settings_learning_clear(&input)?;
     crate::codec::encode("vault.settings.learning.clear", &output)
 };
+"vault.widen_proposals" => fn vault_widen_proposals(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::agent_dispatch::widen_doors::WidenProposalsRequest = crate::codec::decode("vault.widen_proposals", &input)?;
+    let output = client.vault_widen_proposals(&input)?;
+    crate::codec::encode("vault.widen_proposals", &output)
+};
+"vault.widen_proposals.approve" => fn vault_widen_proposals_approve(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::agent_dispatch::widen_doors::WidenProposalAnswer = crate::codec::decode("vault.widen_proposals.approve", &input)?;
+    let output = client.vault_widen_proposals_approve(&input)?;
+    crate::codec::encode("vault.widen_proposals.approve", &output)
+};
+"vault.widen_proposals.decline" => fn vault_widen_proposals_decline(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::agent_dispatch::widen_doors::WidenProposalAnswer = crate::codec::decode("vault.widen_proposals.decline", &input)?;
+    let output = client.vault_widen_proposals_decline(&input)?;
+    crate::codec::encode("vault.widen_proposals.decline", &output)
+};
 "vault.lenses.propose" => fn vault_lenses_propose(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::lens::LensProposeRequest = crate::codec::decode("vault.lenses.propose", &input)?;
     let output = client.vault_lenses_propose(&input)?;

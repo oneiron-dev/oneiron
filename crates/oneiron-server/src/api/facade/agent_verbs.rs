@@ -159,6 +159,15 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.settings.learning.clear",
             post(vault_settings_learning_clear),
         )
+        .route("/vault.widen_proposals", post(vault_widen_proposals))
+        .route(
+            "/vault.widen_proposals.approve",
+            post(vault_widen_proposals_approve),
+        )
+        .route(
+            "/vault.widen_proposals.decline",
+            post(vault_widen_proposals_decline),
+        )
         .route("/vault.lenses.propose", post(vault_lenses_propose))
         .route("/vault.lenses.activate", post(vault_lenses_activate))
         .route("/vault.lenses.deactivate", post(vault_lenses_deactivate))
@@ -2213,6 +2222,82 @@ async fn vault_settings_learning_clear(
     .await?;
     let output = facade_output(
         super::host_doors::vault_settings_learning_clear(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_widen_proposals(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.widen_proposals")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.widen_proposals", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "vault.widen_proposals", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_widen_proposals(&server, &auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_widen_proposals_approve(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.widen_proposals.approve")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.widen_proposals.approve", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.widen_proposals.approve",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_widen_proposals_approve(
+            &server,
+            &auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
+}
+async fn vault_widen_proposals_decline(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "vault.widen_proposals.decline")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("vault.widen_proposals.decline", &value)?;
+    let hooks = facade_hooks_pre(
+        &server,
+        &headers,
+        &auth,
+        "vault.widen_proposals.decline",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_widen_proposals_decline(
             &server,
             &auth,
             facade_input(hooks.args.clone())?,

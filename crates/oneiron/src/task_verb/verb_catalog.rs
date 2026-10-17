@@ -86,6 +86,9 @@ pub enum AgentVerb {
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
+    VaultWidenProposals,
+    VaultWidenProposalsApprove,
+    VaultWidenProposalsDecline,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -315,6 +318,9 @@ impl AgentVerb {
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
+        Self::VaultWidenProposals,
+        Self::VaultWidenProposalsApprove,
+        Self::VaultWidenProposalsDecline,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -549,6 +555,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
+            Self::VaultWidenProposals => "vault.widen_proposals",
+            Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
+            Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -777,6 +786,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1013,6 +1025,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1268,6 +1283,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1460,6 +1478,8 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesDelete
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1638,6 +1658,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultWidenProposals => &["spec"],
+            Self::VaultWidenProposalsApprove => &["spec"],
+            Self::VaultWidenProposalsDecline => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1868,6 +1891,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultWidenProposals => &["spec"],
+            Self::VaultWidenProposalsApprove => &["spec"],
+            Self::VaultWidenProposalsDecline => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -2238,6 +2264,15 @@ impl AgentVerb {
             }
             Self::VaultSettingsLearningClear => {
                 "The owner clears one learned-setting row of a key, mode and scope."
+            }
+            Self::VaultWidenProposals => {
+                "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."
+            }
+            Self::VaultWidenProposalsApprove => {
+                "The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."
+            }
+            Self::VaultWidenProposalsDecline => {
+                "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
             }
             Self::VaultLensesPropose => {
                 "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."

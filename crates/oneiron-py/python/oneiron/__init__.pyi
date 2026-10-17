@@ -344,6 +344,8 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
+        def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs": ...
+        @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs": ...
         @property
         def disclosure(self) -> "Oneiron._VaultDisclosureVerbs": ...
@@ -545,6 +547,13 @@ class Oneiron:
             """The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."""
         def clear(self, spec: Facade.LearningSettingClear) -> Facade.LearningSettingsView:
             """The owner clears one learned-setting row of a key, mode and scope."""
+    class _VaultWidenProposalsVerbs:
+        def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
+            """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
+        def approve(self, spec: Facade.WidenProposalAnswer) -> Facade.WidenProposalView:
+            """The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."""
+        def decline(self, spec: Facade.WidenProposalAnswer) -> Facade.WidenProposalView:
+            """The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."""
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""

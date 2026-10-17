@@ -54,6 +54,7 @@ mod team_stamp;
 mod types;
 mod widen;
 mod widen_record;
+pub mod widen_doors;
 mod workflow;
 mod workflow_host;
 mod workflow_pump;

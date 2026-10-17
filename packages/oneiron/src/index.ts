@@ -357,6 +357,13 @@ export class Oneiron {
         clear: (input: Facade.LearningSettingClear): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearningClear(input) as Facade.LearningSettingsView),
       }),
     },
+    /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
+    widen_proposals: Object.assign((input: Facade.WidenProposalsRequest): Facade.WidenProposalsView => this.#call(() => this.#client.vaultWidenProposals(input) as Facade.WidenProposalsView), {
+      /** The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued. */
+      approve: (input: Facade.WidenProposalAnswer): Facade.WidenProposalView => this.#call(() => this.#client.vaultWidenProposalsApprove(input) as Facade.WidenProposalView),
+      /** The owner, as the board above, declines one context-widen proposal for good; the decline stays on record. */
+      decline: (input: Facade.WidenProposalAnswer): Facade.WidenProposalView => this.#call(() => this.#client.vaultWidenProposalsDecline(input) as Facade.WidenProposalView),
+    }),
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),

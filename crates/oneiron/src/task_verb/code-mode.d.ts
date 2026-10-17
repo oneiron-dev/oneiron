@@ -352,6 +352,10 @@ declare const vault: {
     };
     report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };
+  widen_proposals: ((input: { state?: 'pending' | 'approved' | 'declined' | null }) => Promise<unknown>) & {
+    approve(input: { proposal_id: string }): Promise<unknown>;
+    decline(input: { proposal_id: string }): Promise<unknown>;
+  };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; quote?: object | null; turn_ref?: string | null }): Promise<unknown>;
   workspace: {
     work_companion: {

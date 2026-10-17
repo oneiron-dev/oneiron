@@ -109,6 +109,9 @@ vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
+vaultWidenProposals(input: unknown): unknown
+vaultWidenProposalsApprove(input: unknown): unknown
+vaultWidenProposalsDecline(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
