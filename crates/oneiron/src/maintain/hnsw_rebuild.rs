@@ -4,10 +4,11 @@ use crate::Vault;
 use crate::entity_id::{EntityId, parse_entity_id};
 use crate::error::{Error, Result};
 use crate::hnsw::{
-    COUNT_KEY, LinkDiscipline, build_hnsw_graph_from_snapshot, hnsw_is_dropped,
-    read_link_discipline, read_vector_version, write_rebuilt_hnsw,
+    LinkDiscipline, build_hnsw_graph_from_snapshot, hnsw_is_dropped, read_link_discipline,
+    read_vector_version, write_rebuilt_hnsw,
 };
 use crate::le_bytes_to_f32_vec;
+use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 
 pub(super) struct PreparedHnswRebuild {
     old_count: u64,
@@ -50,15 +51,22 @@ fn prepare_rebuild_hnsw_with_discipline(
     mode: RebuildDiscipline,
 ) -> Result<PreparedHnswRebuild> {
     let rtxn = vault.store.env.read_txn()?;
-    let old_count =
-        decode_u64_opt(vault.store.hnsw_meta.get(&rtxn, COUNT_KEY)?.as_deref())?.unwrap_or(0);
+    let old_count = vault
+        .store
+        .port_index_meta_with_raw(&rtxn, IndexMetaKey::Count, |raw| decode_u64_opt(Some(raw)))?
+        .flatten()
+        .unwrap_or(0);
     let vector_version = read_vector_version(&vault.store, &rtxn)?;
     let mut vector_ids = Vec::<EntityId>::with_capacity(old_count.min(1_000_000) as usize);
     let mut invalid_vectors_skipped = 0_u64;
 
-    for entry in vault.store.vectors.iter(&rtxn)? {
-        let (id_bytes, vector_bytes) = entry?;
-        let validation = validate_rebuild_vector(vault, &id_bytes, &vector_bytes);
+    for entry in vault
+        .store
+        .port_vector_rows(&rtxn, |id_bytes, vector_bytes| {
+            validate_rebuild_vector(vault, id_bytes, vector_bytes)
+        })?
+    {
+        let validation = entry?;
         match validation {
             Ok(id) => vector_ids.push(id),
             Err(error) if heal_invalid_vectors && is_healable_rebuild_error(&error) => {

@@ -25,7 +25,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{
     EdgeDirection, EdgeStoreRead, EdgeStoreStaging, EntityStoreRead, EntityStoreStaging,
-    ShortIdStoreRead, TimelineQuery,
+    ShortIdStoreRead, TimelineQuery, WindowAddress, WindowDeletionRows,
 };
 use crate::registry;
 use crate::side_table::{self, Raw, SideTable};
@@ -37,8 +37,8 @@ use crate::sync::loro_support::{
 };
 use crate::sync::residence::residence_window_for_blob;
 use crate::sync::window_rows::{
-    OFF_RECORD_PROMOTE_PICKUP, PENDING_TOMBSTONE, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT,
-    WINDOW_STATE_VECTOR, WINDOW_UPDATE, WindowEntityHexKey, WindowEntityKey,
+    OFF_RECORD_PROMOTE_PICKUP, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
+    WINDOW_UPDATE, WindowEntityKey,
 };
 use crate::temporal::TimeRange;
 
@@ -326,16 +326,15 @@ impl<'a> Census<'a> {
     /// Local intent the window document does not hold yet.
     fn pending(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let window = self.window.as_str().to_owned();
-        let tombstone = WindowEntityHexKey {
-            window: window.clone(),
-            id: *id,
-        };
         let pickup = WindowEntityKey {
             window,
             entity: *id,
         };
-        if PENDING_TOMBSTONE.contains(self.store, txn, &tombstone)?
-            || OFF_RECORD_PROMOTE_PICKUP.contains(self.store, txn, &pickup)?
+        if self.store.port_pending_tombstone_present(
+            txn,
+            WindowAddress::new(self.window.as_str()),
+            id,
+        )? || OFF_RECORD_PROMOTE_PICKUP.contains(self.store, txn, &pickup)?
         {
             return Ok(true);
         }

@@ -19,11 +19,17 @@ mod maintenance;
 pub(crate) use maintenance::*;
 mod lmdb_phonetic;
 mod lmdb_query;
+mod lmdb_retrieval_inventory;
 mod lmdb_staging;
 mod lmdb_timeline;
 mod lmdb_visibility;
+mod lmdb_window_rows;
 mod query;
 pub use query::*;
+mod retrieval_index;
+pub(crate) use retrieval_index::{IndexMetaKey, IndexRows, RetrievalIndexInventory};
+mod window_rows;
+pub(crate) use window_rows::{WindowAddress, WindowDeletionRows};
 mod dependent_walk;
 pub use dependent_walk::{
     DEFAULT_DEPENDENT_WALK_BATCH, DEFAULT_DEPENDENT_WALK_CHECK_THRESHOLD, DependentWalkCheck,

@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ports::RetrievalIndexInventory;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Result, Vault};
@@ -142,7 +143,11 @@ impl Vault {
     /// with no record reads as [`EmbeddingProvenance::unknown`].
     pub fn embedding_provenance(&self, id: &EntityId) -> Result<Option<EmbeddingProvenance>> {
         let txn = self.store.env.read_txn()?;
-        if self.store.vectors.get(&txn, id.as_bytes())?.is_none() {
+        if self
+            .store
+            .port_vector_with_raw(&txn, id, |_| Ok(()))?
+            .is_none()
+        {
             return Ok(None);
         }
         Ok(Some(

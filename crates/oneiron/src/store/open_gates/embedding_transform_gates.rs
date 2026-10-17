@@ -8,11 +8,11 @@
 //! opened with: until a host declared one, its vectors came from the model's
 //! own transform. A host that supplies no descriptor is not checked.
 
-use heed::{Env, RwTxn};
+use heed::RwTxn;
 
 use super::hnsw_model_gates::parse_utf8_bytes;
 use crate::error::{Error, Result, StoreError};
-use crate::overlay_db::OverlayDb;
+use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::store::{ManifestDbs, Store};
 
 pub(crate) const EMBEDDING_TRANSFORM_KEY: &[u8] = b"embedding_transform";
@@ -20,17 +20,20 @@ pub(crate) const EMBEDDING_TRANSFORM_KEY: &[u8] = b"embedding_transform";
 /// Refuses a requested descriptor that disagrees with the stored one. `true`
 /// when none is stored yet and the requested one should be written.
 pub(super) fn preflight_embedding_transform(
-    env: &Env,
-    hnsw_meta: &OverlayDb,
+    store: &Store,
     requested: Option<&str>,
 ) -> Result<bool> {
     let Some(requested) = requested else {
         return Ok(false);
     };
-    let rtxn = env.read_txn()?;
-    match hnsw_meta.get(&rtxn, EMBEDDING_TRANSFORM_KEY)? {
-        Some(raw) => {
-            refuse_unless_equal(parse_utf8_bytes(&raw)?, requested)?;
+    let rtxn = store.env.read_txn()?;
+    match store.port_index_meta_with_raw(
+        &rtxn,
+        IndexMetaKey::EmbeddingTransform,
+        parse_utf8_bytes,
+    )? {
+        Some(stored) => {
+            refuse_unless_equal(stored, requested)?;
             Ok(false)
         }
         None => Ok(true),
@@ -39,15 +42,17 @@ pub(super) fn preflight_embedding_transform(
 
 /// Writes the requested descriptor where none is stored, re-checking under
 /// its own write transaction.
-pub(super) fn persist_embedding_transform_if_missing(
-    env: &Env,
-    hnsw_meta: &OverlayDb,
-    requested: &str,
-) -> Result<()> {
-    let mut wtxn = env.write_txn()?;
-    match hnsw_meta.get(&wtxn, EMBEDDING_TRANSFORM_KEY)? {
-        Some(raw) => refuse_unless_equal(parse_utf8_bytes(&raw)?, requested)?,
-        None => hnsw_meta.put(&mut wtxn, EMBEDDING_TRANSFORM_KEY, requested.as_bytes())?,
+pub(super) fn persist_embedding_transform_if_missing(store: &Store, requested: &str) -> Result<()> {
+    let mut wtxn = store.env.write_txn()?;
+    match store.port_index_meta_with_raw(
+        &wtxn,
+        IndexMetaKey::EmbeddingTransform,
+        parse_utf8_bytes,
+    )? {
+        Some(stored) => refuse_unless_equal(stored, requested)?,
+        None => store
+            .hnsw_meta
+            .put(&mut wtxn, EMBEDDING_TRANSFORM_KEY, requested.as_bytes())?,
     }
     wtxn.commit()?;
     Ok(())
@@ -60,8 +65,12 @@ pub(crate) fn admit_embedding_transform_in_txn(
     wtxn: &mut RwTxn<'_>,
     requested: &str,
 ) -> Result<()> {
-    match store.hnsw_meta().get(&*wtxn, EMBEDDING_TRANSFORM_KEY)? {
-        Some(raw) => refuse_unless_equal(parse_utf8_bytes(&raw)?, requested),
+    match store.port_index_meta_with_raw(
+        &*wtxn,
+        IndexMetaKey::EmbeddingTransform,
+        parse_utf8_bytes,
+    )? {
+        Some(stored) => refuse_unless_equal(stored, requested),
         None => store
             .hnsw_meta()
             .put(wtxn, EMBEDDING_TRANSFORM_KEY, requested.as_bytes()),
@@ -78,10 +87,9 @@ pub(super) fn verify_existing_embedding_transform(
         return Ok(());
     };
     let rtxn = store.env.read_txn()?;
-    let stored = match store.hnsw_meta.get(&rtxn, EMBEDDING_TRANSFORM_KEY)? {
-        Some(raw) => parse_utf8_bytes(&raw)?,
-        None => super::open_version_keys::MODEL_ID_NONE.to_owned(),
-    };
+    let stored = store
+        .port_index_meta_with_raw(&rtxn, IndexMetaKey::EmbeddingTransform, parse_utf8_bytes)?
+        .unwrap_or_else(|| super::open_version_keys::MODEL_ID_NONE.to_owned());
     refuse_unless_equal(stored, requested)
 }
 

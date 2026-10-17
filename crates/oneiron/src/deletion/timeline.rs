@@ -7,12 +7,12 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{ManifestDbs, Store};
 
 use super::tombstone::{
-    ARCHIVE_MARKER, PENDING_TOMBSTONE, PendingTombstoneKey, decode_tombstone_value,
-    window_label_from_timestamp,
+    ARCHIVE_MARKER, PendingTombstoneKey, decode_tombstone_value, window_label_from_timestamp,
 };
 use crate::side_table::HexId;
 
@@ -129,12 +129,7 @@ fn world_pending_tombstone_exists(
     txn: &heed::RoTxn<'_>,
     month: &str,
 ) -> Result<bool> {
-    let worlds = format!("{month}@");
-    Ok(PENDING_TOMBSTONE
-        .iter_from(dbs, txn, worlds.as_bytes())?
-        .next()
-        .transpose()?
-        .is_some())
+    dbs.port_has_world_pending_tombstone(txn, WindowAddress::new(month))
 }
 
 /// Stable deletion reason surfaced by short-id hydrate.
@@ -421,7 +416,10 @@ impl Vault {
             window: deletion_window_label(&self.store, txn, id, learned_at)?,
             id: *id,
         };
-        if let Some(value) = PENDING_TOMBSTONE.get(&self.store, txn, &pending_key)? {
+        if let Some(value) =
+            self.store
+                .port_pending_tombstone(txn, WindowAddress::new(&pending_key.window), id)?
+        {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
                 HydratedShortIdDeletionSource::PendingTombstone,
                 &value,
@@ -432,20 +430,18 @@ impl Vault {
             use crate::sync::loro_support::{
                 doc_from_snapshot, import_doc, tombstone_values_for_id,
             };
-            let window_label = &pending_key.window;
-            let snapshot_key = format!("d:w:{window_label}");
-            let Some(snapshot) = self.store.sync_state.get(txn, snapshot_key.as_str())? else {
+            let window_label = WindowAddress::new(&pending_key.window);
+            let Some(doc) =
+                self.store
+                    .port_window_doc_with_raw(txn, window_label, doc_from_snapshot)?
+            else {
                 return Ok(None);
             };
-            let doc = doc_from_snapshot(&snapshot)?;
-            let update_prefix = format!("u:w:{window_label}:");
             for entry in self
                 .store
-                .sync_state
-                .prefix_iter(txn, update_prefix.as_str())?
+                .port_window_updates_raw(txn, window_label, |_, update| import_doc(&doc, update))?
             {
-                let (_, update) = entry?;
-                import_doc(&doc, &update)?;
+                entry??;
             }
             Ok(
                 Self::select_tombstone_metadata_value(&tombstone_values_for_id(
@@ -477,7 +473,10 @@ impl Vault {
             window: deletion_window_label(&self.store, txn, id, learned_at)?,
             id: *id,
         };
-        if let Some(raw) = PENDING_TOMBSTONE.get(&self.store, txn, &pending_key)? {
+        if let Some(raw) =
+            self.store
+                .port_pending_tombstone(txn, WindowAddress::new(&pending_key.window), id)?
+        {
             return Ok(Some(Self::deletion_metadata_from_tombstone_value(
                 HydratedShortIdDeletionSource::PendingTombstone,
                 &raw,
@@ -488,16 +487,18 @@ impl Vault {
             use crate::sync::loro_support::{
                 doc_from_snapshot, import_doc, tombstone_values_for_id,
             };
-            let label = &pending_key.window;
-            let key = format!("d:w:{label}");
-            let Some(snapshot) = self.store.sync_state.get(txn, key.as_str())? else {
+            let label = WindowAddress::new(&pending_key.window);
+            let Some(doc) = self
+                .store
+                .port_window_doc_with_raw(txn, label, doc_from_snapshot)?
+            else {
                 return Ok(None);
             };
-            let doc = doc_from_snapshot(&snapshot)?;
-            let prefix = format!("u:w:{label}:");
-            for row in self.store.sync_state.prefix_iter(txn, prefix.as_str())? {
-                let (_, update) = row?;
-                import_doc(&doc, &update)?;
+            for row in self
+                .store
+                .port_window_updates_raw(txn, label, |_, update| import_doc(&doc, update))?
+            {
+                row??;
             }
             let values = tombstone_values_for_id(&doc.get_map("tombstones"), id);
             Ok(Self::select_tombstone_metadata_value(&values).map(|raw| {
@@ -610,7 +611,7 @@ impl Store {
             window: deletion_window_label(self, txn, id, learned_at)?,
             id: *id,
         };
-        if PENDING_TOMBSTONE.contains(self, txn, &pending_key)? {
+        if self.port_pending_tombstone_present(txn, WindowAddress::new(&pending_key.window), id)? {
             return Ok(true);
         }
 
@@ -619,21 +620,20 @@ impl Store {
             use crate::sync::loro_support::{
                 doc_from_snapshot, import_doc, tombstone_map_contains_id,
             };
-            let window_label = &pending_key.window;
+            let window_label = WindowAddress::new(&pending_key.window);
 
             // The window doc is rebuilt from the rows THIS transaction sees
             // (`d:w:` snapshot plus the pending `u:w:` updates applied on top,
             // exactly as `sync::window::load_window_from_state` composes it),
             // so the read stays inside the caller's transaction.
-            let snapshot_key = format!("d:w:{window_label}");
-            let Some(snapshot) = self.sync_state.get(txn, snapshot_key.as_str())? else {
+            let Some(doc) = self.port_window_doc_with_raw(txn, window_label, doc_from_snapshot)?
+            else {
                 return Ok(false);
             };
-            let doc = doc_from_snapshot(&snapshot)?;
-            let update_prefix = format!("u:w:{window_label}:");
-            for entry in self.sync_state.prefix_iter(txn, update_prefix.as_str())? {
-                let (_key, update) = entry?;
-                import_doc(&doc, &update)?;
+            for entry in self
+                .port_window_updates_raw(txn, window_label, |_, update| import_doc(&doc, update))?
+            {
+                entry??;
             }
             Ok(tombstone_map_contains_id(&doc.get_map("tombstones"), id))
         }

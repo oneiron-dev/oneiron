@@ -17,6 +17,7 @@ use crate::Vault;
 use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_FULL_RESYNC_MARKER, WINDOW_UPDATE};
 use loro::{CommitOptions, LoroDoc};
 
@@ -276,11 +277,18 @@ pub fn replay_pending_tombstones(
     let mut markers: Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)> = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for entry in
-            PENDING_TOMBSTONE.iter_from(&vault.store, &rtxn, format!("{window_key}:").as_bytes())?
+        for entry in vault
+            .store
+            .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(window_key.as_str()))?
         {
             match entry {
-                Ok((key, value)) => markers.push((key, value)),
+                Ok(row) => markers.push((
+                    crate::sync::window_rows::WindowEntityHexKey {
+                        window: row.window_label,
+                        id: row.id,
+                    },
+                    row.raw,
+                )),
                 Err(error) => {
                     tracing::warn!(
                         %error,

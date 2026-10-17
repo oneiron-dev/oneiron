@@ -1,5 +1,6 @@
 //! Provenance of a filled vector, written atomically with the fill.
 use super::EmbedderLocality;
+use crate::ports::RetrievalIndexInventory;
 use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -50,7 +51,10 @@ impl Vault {
     /// vectors and pending/stale fills carry no inferred locality.
     pub fn embedding_locality(&self, id: &EntityId) -> Result<Option<EmbedderLocality>> {
         let txn = self.store.env.read_txn()?;
-        if self.store.vectors.get(&txn, id.as_bytes())?.is_none()
+        if self
+            .store
+            .port_vector_with_raw(&txn, id, |_| Ok(()))?
+            .is_none()
             || self.store.pending_embedding_token(&txn, id)?.is_some()
         {
             return Ok(None);
