@@ -102,8 +102,8 @@ fn sort_key(key: &TurnKey) -> (u64, [u8; 16]) {
 }
 
 /// A readable MESSAGE view as a transcript message, with its completion;
-/// `None` for one that is hidden, or holds no text and is complete. An empty
-/// incomplete message stays: Continue and Retry act on it.
+/// `None` for one that is hidden. An empty message stays, complete or not:
+/// Continue and Retry act on it, and a history leaves its empty text out.
 fn transcript_message(
     view: &EntityView,
     completion: impl FnOnce() -> MemoryResult<MessageCompletion>,
@@ -117,9 +117,6 @@ fn transcript_message(
     }
     let text = field("content").unwrap_or_default();
     let completion = completion()?;
-    if text.is_empty() && !completion.incomplete {
-        return Ok(None);
-    }
     let order = body
         .get("order")
         .and_then(serde_json::Value::as_u64)
