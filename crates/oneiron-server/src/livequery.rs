@@ -1,7 +1,9 @@
 //! App-tier framing and coarse live-query state, separate from WindowSync.
 //!
 //! Facade construction uses only verified CoreAuth claims. No payload actor,
-//! token re-parser, or default class can cross this boundary. Reads run in the
+//! token re-parser, or default class can cross this boundary. An `rpc.req`
+//! names any facade verb, and it runs through the facade's one generated
+//! dispatch under the connection's bound credential (OF-489), from the
 //! deferred owner loop, never in Observer B or through a second materializer.
 
 #[cfg(test)]
@@ -17,13 +19,12 @@ use crate::protocol::{ProtocolError, TAG_RPC, TAG_SUB};
 mod budget;
 mod error;
 mod history;
-mod reads;
 mod residence;
 pub(crate) use residence::ResidenceIndexCache;
 mod routing;
+mod rpc;
 mod wire;
 use error::AppError;
-use reads::{Read, read_method};
 
 /// RPC ids never index the subscription table.
 #[derive(Debug, Deserialize)]
@@ -93,8 +94,8 @@ impl RpcCall {
     }
 }
 
-/// A read RPC's reply frames, and the rows its result carries as its
-/// producer named them: `None` when it could not.
+/// An RPC's reply frames, and the rows its result carries as its producer
+/// named them: `None` when it could not.
 pub(crate) struct RpcReply {
     request_id: u64,
     frames: Vec<Vec<u8>>,
@@ -138,7 +139,10 @@ impl RpcReply {
                 oneiron::receipt::CallOutcome::Refused {
                     code: error.code().to_owned(),
                 },
-                None,
+                Some(oneiron::receipt::call_refusal_digest(
+                    error.code(),
+                    error.message(),
+                )),
                 Vec::new(),
             ),
         };
@@ -252,29 +256,54 @@ pub(crate) fn bound_rpc(
     bound_rpc_reply(server, auth, request).map(|reply| reply.frames)
 }
 
+/// [`rpc_reply`] from the app tier's synchronous RPC door, through the
+/// blocking bridge ([`rpc::blocking`]) until L03's owner loop completes calls
+/// off the loop. The facade's server and host doors take the served handle,
+/// which this door finds through the socket's hub.
 pub(crate) fn bound_rpc_reply(
     server: &crate::server::SyncServer,
     auth: &CoreAuth,
     request: RpcRequest,
 ) -> Result<RpcReply, ProtocolError> {
+    let Some(served) = connection::Hub::served(server) else {
+        let call = RpcCall::of(&request);
+        let unserved = AppError::internal_server_error("no live-query hub serves this server");
+        return RpcReply::answer(server, auth, call, request.request_id, Err(unserved));
+    };
+    rpc::blocking(rpc_reply(&served, auth, request))
+}
+
+/// One verb RPC on a held socket, answered through OF-538's WS door: the
+/// facade verb it names runs through the facade's generated dispatch under
+/// the connection's bound credential, with the admission its HTTP route
+/// applies, and its answer carries the rows it was derived from to the send
+/// door. A name that is no facade verb is refused before any check, with its
+/// correction when it is a canonical verb under the wrong root.
+pub(crate) async fn rpc_reply(
+    server: &std::sync::Arc<crate::server::SyncServer>,
+    auth: &CoreAuth,
+    request: RpcRequest,
+) -> Result<RpcReply, ProtocolError> {
     let call = RpcCall::of(&request);
-    let result = (|| {
-        if !read_method(&request.method) {
-            // A canonical verb under the wrong root is refused with its
-            // correction, before scope, identity or any engine call.
-            if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(&request.method) {
-                return Err(refusal.into());
-            }
-            return Err(AppError::bad_request("unknown read RPC", Some("method")));
-        }
-        // HTTP order: scope, request/limit validation, identity, engine call.
-        auth.require(CoreScope::Read)?;
-        auth.require_unrestricted_record_scope()?;
-        let read = Read::parse(&request.method, request.params)?;
-        let memory = bound_memory(server.vault(), auth)?;
-        read.run(server, auth, &memory)
-    })();
+    let result = rpc::run(server, auth, &request.method, request.params).await;
     RpcReply::answer(server, auth, call, request.request_id, result)
+}
+
+/// A page size a scoped view asks for, or `default`, within the facade's
+/// list ceiling.
+fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, AppError> {
+    let limit = requested.unwrap_or(default);
+    if limit == 0 || limit > crate::api::CORE_MAX_LIST_LIMIT {
+        return Err(AppError::new(
+            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+            format!(
+                "limit must be between 1 and {}",
+                crate::api::CORE_MAX_LIST_LIMIT
+            ),
+            ["Request a smaller page and paginate."],
+        ));
+    }
+    Ok(limit)
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
