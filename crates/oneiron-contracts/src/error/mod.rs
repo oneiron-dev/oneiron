@@ -18,7 +18,7 @@ mod secret;
 mod store;
 mod sync;
 
-pub use self::artifact::ArtifactError;
+pub use self::artifact::{ArtifactError, LiveDeckRefusal};
 pub use self::claim::ClaimError;
 pub use self::code::CodeError;
 pub use self::gate::{GateDenial, GateDenialOutcome, GateDenialReason, GateError};
@@ -120,6 +120,8 @@ pub enum ErrorKind {
     AnnotationThreadNotFound,
     InvalidEditManifest,
     EditRoundtripFailed,
+    /// The live deck body refused; the error carries the docedit refusal.
+    LiveDeckRefused,
     EditProposalAlreadySettled,
     EditProposalStale,
     SettleNotAuthorized,
@@ -608,6 +610,12 @@ impl Error {
             Self::Artifact(
                 ArtifactError::SkillEditGateRetry(_) | ArtifactError::OverlayLimit { .. },
             ) => true,
+            // The deck head moved past the preflight: a fresh preflight is the
+            // whole remedy.
+            Self::Artifact(ArtifactError::LiveDeckRefused {
+                refusal: LiveDeckRefusal::HeadAdvanced,
+                ..
+            }) => true,
             // Transient by construction: the refusal clears once the last
             // external window handle drops (ONE-1150).
             #[cfg(feature = "sync")]

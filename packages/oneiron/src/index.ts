@@ -290,7 +290,7 @@ export class Oneiron {
       deletion: (input: Facade.EmptyRequest = {}): Facade.SharedVaultDeletion | null => this.#call(() => this.#client.vaultSharedDeletion(input) as Facade.SharedVaultDeletion | null),
     },
     members: {
-      /** An Admin adds a live person to a shared vault at a non-root role. */
+      /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedActExecutionReceipt),
       /** An Admin assigns another non-root role to a member who is not an Owner. */
       change: (input: Facade.SharedMemberRoleRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersChange(input) as Facade.SharedActExecutionReceipt),
@@ -298,6 +298,14 @@ export class Oneiron {
       remove: (input: Facade.SharedMemberRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersRemove(input) as Facade.SharedActExecutionReceipt),
       /** A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead. */
       leave: (input: Facade.SharedVaultRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersLeave(input) as Facade.SharedActExecutionReceipt),
+      /** The caller's own pending invitations into a shared vault. */
+      invitations: (input: Facade.SharedVaultRequest): Facade.SharedInvitation[] => this.#call(() => this.#client.vaultMembersInvitations(input) as Facade.SharedInvitation[]),
+      /** The invitee accepts their own invitation and joins the shared vault at its role. */
+      accept: (input: Facade.SharedInvitationRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersAccept(input) as Facade.SharedActExecutionReceipt),
+      /** The invitee declines their own invitation; nothing is granted. */
+      decline: (input: Facade.SharedInvitationRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersDecline(input) as Facade.SharedActExecutionReceipt),
+      /** An Admin with the add_member power takes back a pending invitation. */
+      withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersWithdrawInvitation(input) as Facade.SharedActExecutionReceipt),
     },
     guests: {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),

@@ -5,7 +5,10 @@ use super::graph_ask::{self, GraphAnswerer, GraphDecision, GraphUnitContext};
 use super::{arrival, records::*, store::*};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
-use crate::llm::decision::{DecisionReceipt, PairedReading, TypedDecision};
+use crate::llm::decision::{
+    AskAct, AskRole, AskRoleResolver, AskTo, DecisionReceipt, HolderKind, PairedReading, RoleRank,
+    TypedDecision,
+};
 use crate::side_table::SideKey;
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -277,6 +280,13 @@ fn refresh_with(
                 answered_at: now,
             };
             land(vault, txn, actor, principal, &answer, &raw, rows.as_deref())?;
+            arrival::watch_sources(
+                &vault.store,
+                txn,
+                question,
+                answer.unit,
+                &answer.decision.evidence,
+            )?;
             QUESTION_ANSWER.put(
                 &vault.store,
                 txn,
@@ -377,11 +387,83 @@ pub fn refresh_due_questions(
 pub fn refresh_due_questions_with<A: GraphAnswerer>(
     vault: &Vault,
     now: u64,
+    answerer_for: impl FnMut(&QuestionRecord, WriteActor) -> Result<A>,
+) -> Result<RefreshBatch> {
+    refresh_due_as(
+        vault,
+        now,
+        |principal| principal_actor(vault, principal),
+        answerer_for,
+    )
+}
+
+/// [`refresh_due_questions_with`] under the responsible-role chain (OF-516).
+/// Each due question's person ask goes to its principal as the responsible
+/// actor ([`standing_ask_route`]) and climbs to the vault's owners. The run
+/// is written by the first live holder of the first role on that chain, so a
+/// question whose principal is gone runs as an owner, while its ladder call
+/// and answers stay the principal's. With no live holder up to the owners the
+/// question is held, unanswered, and tried again after
+/// [`FAILED_REFRESH_HOLD_SECS`]. `answerer_for` makes each question's
+/// answerer from its record, the run's writer and the ask's route.
+pub fn refresh_due_questions_by_role<A: GraphAnswerer>(
+    vault: &Vault,
+    now: u64,
+    mut answerer_for: impl FnMut(&QuestionRecord, WriteActor, AskTo) -> Result<A>,
+) -> Result<RefreshBatch> {
+    refresh_due_as(
+        vault,
+        now,
+        |principal| role_runner(vault, &standing_ask_route(principal)),
+        |record, actor| answerer_for(record, actor, standing_ask_route(record.principal)),
+    )
+}
+
+/// Where a standing question's person asks go: to its principal as the
+/// responsible actor, climbing to the vault's owners, for a judgment.
+#[must_use]
+pub fn standing_ask_route(principal: EntityId) -> AskTo {
+    AskTo {
+        role: AskRole::Responsible {
+            actor: principal,
+            project: None,
+        },
+        ceiling: RoleRank::Owner,
+        act: AskAct::Judgment,
+    }
+}
+
+/// The run's writer for `to`: the first live holder of the first role on its
+/// chain that has one, a person as a human and a bound agent as an agent.
+fn role_runner(vault: &Vault, to: &AskTo) -> Result<WriteActor> {
+    let holder = vault
+        .next_role(to, None)?
+        .and_then(|role| role.holders.into_iter().next())
+        .ok_or_else(|| {
+            Error::InvalidConfig(
+                "no live holder up to the vault's owners runs this standing question".into(),
+            )
+        })?;
+    Ok(WriteActor::new(
+        holder.actor,
+        match holder.kind {
+            HolderKind::Person => crate::EdgeActorClass::Human,
+            HolderKind::Agent => crate::EdgeActorClass::Agent,
+        },
+    ))
+}
+
+/// Every due question, run by the writer `runner` names for its principal,
+/// through the answerer `answerer_for` makes once per question.
+fn refresh_due_as<A: GraphAnswerer>(
+    vault: &Vault,
+    now: u64,
+    mut runner: impl FnMut(EntityId) -> Result<WriteActor>,
     mut answerer_for: impl FnMut(&QuestionRecord, WriteActor) -> Result<A>,
 ) -> Result<RefreshBatch> {
     let mut batch = RefreshBatch::default();
     for (principal, question, trigger) in due_work(vault, now)? {
-        let answered = principal_actor(vault, principal).and_then(|actor| {
+        let answered = runner(principal).and_then(|actor| {
             let mut answerer: Option<A> = None;
             refresh_with(
                 vault,

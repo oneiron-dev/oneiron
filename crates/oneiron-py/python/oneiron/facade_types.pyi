@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 171 facade rows, 640 declarations.
-Inputs: 147 of 171 fully typed, 24 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 145 of 171 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 175 facade rows, 644 declarations.
+Inputs: 151 of 175 fully typed, 24 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 149 of 175 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 40; unread shapes: 0.
 """
 
@@ -744,7 +744,11 @@ class WeaveItemViewDreamProgress(TypedDict):
     resident_ref: str
     dreamed_at: int
     entries: int
-WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress
+class WeaveItemViewAgentHealth(TypedDict):
+    item: Literal["agent_health"]
+    card_ref: str
+    card: AgentHealthCard
+WeaveItemView = WeaveItemViewClaim | WeaveItemViewProject | WeaveItemViewBudget | WeaveItemViewLink | WeaveItemViewDreamProgress | WeaveItemViewAgentHealth
 class WeaveSectionView(TypedDict):
     kind: WeaveSectionKind
     items: list[WeaveItemView]
@@ -1361,6 +1365,29 @@ class SharedVaultChangeMemberAddedBody(TypedDict):
     role: FederationGrantRole
 class SharedVaultChangeMemberAdded(TypedDict):
     member_added: SharedVaultChangeMemberAddedBody
+class SharedVaultChangeMemberInvitedBody(TypedDict):
+    invitation: str
+    member: str
+    role: FederationGrantRole
+    expires_at: int
+class SharedVaultChangeMemberInvited(TypedDict):
+    member_invited: SharedVaultChangeMemberInvitedBody
+class SharedVaultChangeInvitationAcceptedBody(TypedDict):
+    invitation: str
+    member: str
+    role: FederationGrantRole
+class SharedVaultChangeInvitationAccepted(TypedDict):
+    invitation_accepted: SharedVaultChangeInvitationAcceptedBody
+class SharedVaultChangeInvitationDeclinedBody(TypedDict):
+    invitation: str
+    member: str
+class SharedVaultChangeInvitationDeclined(TypedDict):
+    invitation_declined: SharedVaultChangeInvitationDeclinedBody
+class SharedVaultChangeInvitationWithdrawnBody(TypedDict):
+    invitation: str
+    member: str
+class SharedVaultChangeInvitationWithdrawn(TypedDict):
+    invitation_withdrawn: SharedVaultChangeInvitationWithdrawnBody
 SharedVaultChangeMemberRoleChangedBody = TypedDict("SharedVaultChangeMemberRoleChangedBody", {"member": str, "from": FederationGrantRole, "to": FederationGrantRole})
 class SharedVaultChangeMemberRoleChanged(TypedDict):
     member_role_changed: SharedVaultChangeMemberRoleChangedBody
@@ -1375,7 +1402,7 @@ class SharedVaultChangeMemberLeft(TypedDict):
 SharedVaultChangeOwnerRecoveredBody = TypedDict("SharedVaultChangeOwnerRecoveredBody", {"from": str, "to": str})
 class SharedVaultChangeOwnerRecovered(TypedDict):
     owner_recovered: SharedVaultChangeOwnerRecoveredBody
-SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
+SharedVaultChange = SharedVaultChangeVaultDeleted | SharedVaultChangeOwnershipTransferred | SharedVaultChangeOwnerRemoved | SharedVaultChangeMemberAdded | SharedVaultChangeMemberInvited | SharedVaultChangeInvitationAccepted | SharedVaultChangeInvitationDeclined | SharedVaultChangeInvitationWithdrawn | SharedVaultChangeMemberRoleChanged | SharedVaultChangeMemberRemoved | SharedVaultChangeMemberLeft | SharedVaultChangeOwnerRecovered
 class ExportDiaryRead(TypedDict):
     agent: str
     diaries: int
@@ -1395,6 +1422,7 @@ class SharedActExecutionReceipt(TypedDict):
     grants: list[str]
     revoked_slips: list[str]
     export: NotRequired[SharedActExport | None]
+    authority_entry: NotRequired[str | None]
     completed_at: int
 class SharedActExecuted(TypedDict):
     receipt: SharedActExecutionReceipt
@@ -1427,6 +1455,36 @@ class SharedMemberRoleRequest(TypedDict):
 class SharedMemberRequest(TypedDict):
     vault_id: int
     member: str
+class SharedInvitationStateAcceptedBody(TypedDict):
+    at: int
+class SharedInvitationStateAccepted(TypedDict):
+    accepted: SharedInvitationStateAcceptedBody
+class SharedInvitationStateDeclinedBody(TypedDict):
+    at: int
+class SharedInvitationStateDeclined(TypedDict):
+    declined: SharedInvitationStateDeclinedBody
+class SharedInvitationStateWithdrawnBody(TypedDict):
+    by: str
+    at: int
+class SharedInvitationStateWithdrawn(TypedDict):
+    withdrawn: SharedInvitationStateWithdrawnBody
+SharedInvitationState = Literal["pending"] | SharedInvitationStateAccepted | SharedInvitationStateDeclined | SharedInvitationStateWithdrawn
+class SharedInvitation(TypedDict):
+    id: str
+    vault_id: int
+    inviter: str
+    invitee: str
+    role: FederationGrantRole
+    issued_at: int
+    expires_at: int
+    state: SharedInvitationState
+class SharedInvitationRequest(TypedDict):
+    vault_id: int
+    invitation: str
+class SharedInvitationWithdrawRequest(TypedDict):
+    vault_id: int
+    member: str
+    invitation: str
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
