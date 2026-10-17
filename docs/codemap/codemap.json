@@ -70251,7 +70251,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "JournalRow",
@@ -70263,7 +70263,7 @@
      "purpose": "The serve host's skill judge (OF-495)",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -71749,7 +71749,7 @@
     "replay_judge": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The serve host's skill judge (OF-495)"
     },
@@ -71838,7 +71838,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 46,
+   "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 584,
    "test_files": 182
