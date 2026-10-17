@@ -228,7 +228,13 @@ impl Memory<'_> {
     /// Only the task's owner dismisses its failure: the bit takes the row off
     /// every board, so another actor's dismissal is a typed refusal. A task
     /// this handle's credential does not read is absent, as in `describe`.
-    pub(super) fn tasks_ack_core(&self, task_ref: EntityId) -> MemoryResult<TaskUpdateReceipt> {
+    /// `witness` writes beside a dismissal, in its transaction, and runs only
+    /// when there is one (the highway's lifecycle receipt, OF-220).
+    pub(super) fn tasks_ack_core(
+        &self,
+        task_ref: EntityId,
+        witness: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<TaskUpdateReceipt> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::TasksUpdate));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         if self.credential_withholds(task_ref)? {
@@ -271,7 +277,8 @@ impl Memory<'_> {
                 None => return Err(MemoryError::from(Error::EntityNotFound)),
             }
             ack_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)
-                .map_err(MemoryError::from)
+                .map_err(MemoryError::from)?;
+            witness(wtxn)
         })?;
         Ok(TaskUpdateReceipt {
             task_ref,
@@ -781,7 +788,7 @@ impl Memory<'_> {
 
     /// One Proposed task CLAIM, and whatever `witness` writes beside it under
     /// its id in the same transaction, before the claim lands.
-    fn persist_proposal_claim(
+    pub(super) fn persist_proposal_claim(
         &self,
         predicate: &str,
         value: Value,

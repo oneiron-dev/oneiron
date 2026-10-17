@@ -277,7 +277,9 @@ pub struct TaskCallReceipt {
     pub handle: TaskHandle,
     pub related: Vec<TaskHandle>,
     pub outcome: TaskOutcome,
-    /// The persisted lifecycle receipt's id, once the receipt store keeps it.
+    /// The id of the `TaskLifecycle` receipt this call's write kept (its
+    /// replay names the first call's). `None` for a read, a fence refusal or
+    /// a take another holds, and in an anonymous off-record session.
     pub receipt_ref: Option<String>,
     /// What happened, asked and resolved and why: the `TaskLifecycle`
     /// receipt body this call owes. `None` for a read.

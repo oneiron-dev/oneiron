@@ -36,7 +36,9 @@ use super::consts::{
     TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE, TASK_POST_ID_DOMAIN,
     TASK_POST_STAMP_KEY, TASK_SETTLE_ID_DOMAIN,
 };
-use super::create_origin::{TaskCreateOrigin, proposal_origin_in, task_create_origin_in_txn};
+use super::create_origin::{
+    TaskCreateOrigin, proposal_origin_in, put_proposal_origin_in_txn, task_create_origin_in_txn,
+};
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 use super::create_validation::{
     task_body_in_txn, task_create_proposal_value, validate_task_create, validate_task_create_in,
@@ -47,6 +49,7 @@ use super::highway::{
     stamp_fields,
 };
 use super::highway_types::{TaskCall, TaskCallReceipt, TaskHandle, TaskOutcome, TaskPost, TaskVia};
+use super::lifecycle_receipt;
 use super::rate_limit::{record_task_create, task_actor_ceiling};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
@@ -95,8 +98,11 @@ struct BriefRevision {
 
 /// What the Auto branch of one post found.
 enum PostDirect {
-    Created(TaskRouteOutcome),
-    Replay(Option<TaskAssignee>),
+    /// The TASK landed: its receipt, its lifecycle kept beside it.
+    Created(Box<TaskCallReceipt>),
+    /// An earlier landing of the same post: its assignee, and the receipt
+    /// the first landing kept.
+    Replay(Option<TaskAssignee>, Option<String>),
     Gated,
 }
 
@@ -162,7 +168,7 @@ fn request_digest(actor: EntityId, key: &str, post: &TaskPost) -> MemoryResult<[
 /// project (the team-shape skill's data) to the node whose id it is, at the
 /// version the brief read. A node that tree does not hold leaves the stamp
 /// unset, and the create places it.
-fn brief_type_ref_in(
+pub(super) fn brief_type_ref_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     brief: &QueueTaskBrief,
@@ -412,11 +418,44 @@ impl Memory<'_> {
         )?;
         let provenance = post_provenance(&key, &digest, None);
         let rate_now = self.vault().store.clock.now_recorded_at();
+        let keep = self.keeps_lifecycle();
+
+        let mut lifecycle =
+            self.lifecycle_record(via, "post", "created", Some(task_ref), None, now);
+        stamp_fields(&mut lifecycle.fields, Some(&stored));
+        lifecycle
+            .fields
+            .insert("intent_key".to_owned(), key.clone());
+        lifecycle
+            .fields
+            .insert("assignee".to_owned(), post.assignee.as_str().to_owned());
+        if let Some(composed) = &post.brief.composed {
+            lifecycle
+                .fields
+                .insert("composer_seat".to_owned(), composed.seat.clone());
+            lifecycle.fields.insert(
+                "one_liner_digest".to_owned(),
+                crate::entity_id::bytes_to_hex_lower(&composed.one_liner_digest),
+            );
+            lifecycle.fields.insert(
+                "lens_refs".to_owned(),
+                composed
+                    .lens_refs
+                    .iter()
+                    .map(EntityId::to_hex)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+        }
+        // The landed TASK's id is the post's identity, so its receipt's is too.
+        let receipt_id = lifecycle_receipt::receipt_id("post", &[task_ref.as_bytes()])?;
 
         let direct = self.with_verified_actor_write_txn(|wtxn| {
             if let Some(body) = task_verb_body_in(self.vault(), &*wtxn, task_ref)? {
                 return if provenance_digest(&body.provenance) == Some(digest) {
-                    Ok(PostDirect::Replay(body.assignee))
+                    let kept =
+                        lifecycle_receipt::replayed_in(self.vault(), &*wtxn, receipt_id.clone())?;
+                    Ok(PostDirect::Replay(body.assignee, kept))
                 } else {
                     Err(changed_arguments())
                 };
@@ -466,53 +505,37 @@ impl Memory<'_> {
                 now,
             )?;
             self.witness_human_assignment_in_txn(wtxn, task_ref, &validated, self.actor(), now)?;
-            Ok(PostDirect::Created(route))
+            // The lifecycle lands with the TASK, in this transaction.
+            let mut created = lifecycle.clone();
+            created
+                .fields
+                .insert("route".to_owned(), format!("{:?}", route.lane()));
+            let mut receipt = TaskCallReceipt {
+                handle: TaskHandle::Task { task_ref },
+                related: Vec::new(),
+                outcome: TaskOutcome::Created { route: Some(route) },
+                receipt_ref: None,
+                lifecycle: Some(created),
+                idempotent_replay: false,
+            };
+            if keep {
+                lifecycle_receipt::stamp_in(
+                    self.vault(),
+                    wtxn,
+                    &mut receipt,
+                    receipt_id.clone(),
+                    Some(&post.brief),
+                )?;
+            }
+            Ok(PostDirect::Created(Box::new(receipt)))
         })?;
 
-        let mut lifecycle =
-            self.lifecycle_record(via, "post", "created", Some(task_ref), None, now);
-        stamp_fields(&mut lifecycle.fields, Some(&stored));
-        lifecycle
-            .fields
-            .insert("intent_key".to_owned(), key.clone());
-        lifecycle
-            .fields
-            .insert("assignee".to_owned(), post.assignee.as_str().to_owned());
-        if let Some(composed) = &post.brief.composed {
-            lifecycle
-                .fields
-                .insert("composer_seat".to_owned(), composed.seat.clone());
-            lifecycle.fields.insert(
-                "one_liner_digest".to_owned(),
-                crate::entity_id::bytes_to_hex_lower(&composed.one_liner_digest),
-            );
-            lifecycle.fields.insert(
-                "lens_refs".to_owned(),
-                composed
-                    .lens_refs
-                    .iter()
-                    .map(EntityId::to_hex)
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
-        }
-
         match direct {
-            PostDirect::Created(route) => {
-                lifecycle
-                    .fields
-                    .insert("route".to_owned(), format!("{:?}", route.lane()));
+            PostDirect::Created(receipt) => {
                 self.vault().store.notify_attempt_observers();
-                Ok(TaskCallReceipt {
-                    handle: TaskHandle::Task { task_ref },
-                    related: Vec::new(),
-                    outcome: TaskOutcome::Created { route: Some(route) },
-                    receipt_ref: None,
-                    lifecycle: Some(lifecycle),
-                    idempotent_replay: false,
-                })
+                Ok(*receipt)
             }
-            PostDirect::Replay(assignee) => {
+            PostDirect::Replay(assignee, kept) => {
                 lifecycle.outcome = "replayed".to_owned();
                 lifecycle
                     .fields
@@ -523,7 +546,7 @@ impl Memory<'_> {
                     outcome: TaskOutcome::Created {
                         route: self.replayed_route(task_ref, assignee)?,
                     },
-                    receipt_ref: None,
+                    receipt_ref: kept,
                     lifecycle: Some(lifecycle),
                     idempotent_replay: true,
                 })
@@ -534,7 +557,7 @@ impl Memory<'_> {
                     TaskVia::Wire => None,
                 };
                 self.park_post(
-                    &post, &spec, &key, digest, now, decisions, lifecycle, creator,
+                    &post, &spec, &key, digest, now, decisions, lifecycle, creator, keep,
                 )
             }
         }
@@ -576,10 +599,12 @@ impl Memory<'_> {
     /// a new one; then, for a guest addressing a non-pre-admitted agent, ask
     /// whether the agent takes it. A host's key is qualified by its creator,
     /// so a replay is always the same creator's; a new proposal witnesses
-    /// that creator beside it (OF-532).
+    /// that creator beside it (OF-532), and its lifecycle receipt beside
+    /// that, in the proposal's own transaction. What the gate and the take
+    /// then add rewrites the same receipt once they have committed.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the parked post's request, its identity, the surface's decisions and its creator"
+        reason = "the parked post's request, its identity, the surface's decisions, its creator and whether it keeps a receipt"
     )]
     fn park_post(
         &self,
@@ -591,6 +616,7 @@ impl Memory<'_> {
         decisions: Option<&TaskDecisions<'_>>,
         mut lifecycle: super::highway_types::TaskLifecycleRecord,
         creator: Option<&super::highway_types::HostBinding>,
+        keep: bool,
     ) -> MemoryResult<TaskCallReceipt> {
         if let Some(held) = self.held_proposal(TASK_CREATE_PROPOSAL_PREDICATE, key)? {
             if held.digest != digest {
@@ -621,13 +647,17 @@ impl Memory<'_> {
                     },
                 ),
             };
+            let kept = lifecycle_receipt::replayed(
+                self.vault(),
+                lifecycle_receipt::receipt_id("post", &[held.proposal_ref.as_bytes()])?,
+            )?;
             return Ok(TaskCallReceipt {
                 handle: TaskHandle::Proposed {
                     proposal_ref: held.proposal_ref,
                 },
                 related,
                 outcome,
-                receipt_ref: None,
+                receipt_ref: kept,
                 lifecycle: Some(lifecycle),
                 idempotent_replay: true,
             });
@@ -648,16 +678,38 @@ impl Memory<'_> {
             )));
         };
         entries.push((Value::from(TASK_POST_STAMP_KEY), typed_value(&stamp)?));
-        let (proposal_ref, decision_ref) = self.persist_task_proposal_with_origin(
+        lifecycle.outcome = "proposed".to_owned();
+        lifecycle.trigger_ref = None;
+        // The proposal's id is the parked post's identity, so its receipt's is
+        // too; both are written in the proposal's transaction.
+        let mut kept: Option<(String, super::highway_types::TaskLifecycleRecord)> = None;
+        let (proposal_ref, decision_ref) = self.persist_proposal_claim(
             TASK_CREATE_PROPOSAL_PREDICATE,
             Value::Map(entries),
             self.actor(),
             now,
             post_provenance(key, &digest, None),
-            creator,
+            |wtxn, proposal_ref| {
+                if let Some(origin) = task_create_origin_in_txn(self, &*wtxn, creator)? {
+                    put_proposal_origin_in_txn(self.vault(), wtxn, proposal_ref, &origin)?;
+                }
+                if keep {
+                    let mut proposed = lifecycle.clone();
+                    proposed
+                        .fields
+                        .insert("proposal_ref".to_owned(), proposal_ref.to_hex());
+                    let id = lifecycle_receipt::stamp_record_in(
+                        self.vault(),
+                        wtxn,
+                        &proposed,
+                        lifecycle_receipt::receipt_id("post", &[proposal_ref.as_bytes()])?,
+                        Some(&post.brief),
+                    )?;
+                    kept = Some((id, proposed));
+                }
+                Ok(())
+            },
         )?;
-        lifecycle.outcome = "proposed".to_owned();
-        lifecycle.trigger_ref = None;
         lifecycle
             .fields
             .insert("proposal_ref".to_owned(), proposal_ref.to_hex());
@@ -734,11 +786,28 @@ impl Memory<'_> {
             }
         }
 
+        // The gate's decision and the take committed after the proposal: the
+        // receipt it kept takes them in one more write.
+        let receipt_ref = match kept {
+            Some((id, proposed)) if proposed != lifecycle => {
+                Some(self.vault().try_with_write_txn_grouped(|wtxn| {
+                    lifecycle_receipt::stamp_record_in(
+                        self.vault(),
+                        wtxn,
+                        &lifecycle,
+                        id,
+                        Some(&post.brief),
+                    )
+                })?)
+            }
+            Some((id, _)) => Some(id),
+            None => None,
+        };
         Ok(TaskCallReceipt {
             handle: TaskHandle::Proposed { proposal_ref },
             related,
             outcome,
-            receipt_ref: None,
+            receipt_ref,
             lifecycle: Some(lifecycle),
             idempotent_replay: false,
         })
@@ -906,6 +975,10 @@ impl Memory<'_> {
                 return Err(changed_arguments());
             }
             lifecycle.outcome = "replayed".to_owned();
+            let kept = lifecycle_receipt::replayed(
+                self.vault(),
+                lifecycle_receipt::receipt_id("brief", &[held.proposal_ref.as_bytes()])?,
+            )?;
             return Ok(TaskCallReceipt {
                 handle: TaskHandle::Task { task_ref },
                 related: vec![TaskHandle::Proposed {
@@ -915,7 +988,7 @@ impl Memory<'_> {
                     decision_ref: None,
                     reason_codes: Vec::new(),
                 },
-                receipt_ref: None,
+                receipt_ref: kept,
                 lifecycle: Some(lifecycle),
                 idempotent_replay: true,
             });
@@ -927,12 +1000,32 @@ impl Memory<'_> {
             actor_class: self.actor_class() as u8,
             brief: next,
         };
-        let (proposal_ref, decision_ref) = self.persist_task_proposal(
+        let keep = self.keeps_lifecycle();
+        // The revision's lifecycle is kept beside its proposal, in the
+        // proposal's transaction, under the id the proposal derives.
+        let mut receipt_ref = None;
+        let (proposal_ref, decision_ref) = self.persist_proposal_claim(
             TASK_BRIEF_PROPOSAL_PREDICATE,
             typed_value(&revision)?,
             self.actor(),
             now,
             crate::memory::facade_provenance("tasks.update"),
+            |wtxn, proposal_ref| {
+                if keep {
+                    let mut proposed = lifecycle.clone();
+                    proposed
+                        .fields
+                        .insert("proposal_ref".to_owned(), proposal_ref.to_hex());
+                    receipt_ref = Some(lifecycle_receipt::stamp_record_in(
+                        self.vault(),
+                        wtxn,
+                        &proposed,
+                        lifecycle_receipt::receipt_id("brief", &[proposal_ref.as_bytes()])?,
+                        None,
+                    )?);
+                }
+                Ok(())
+            },
         )?;
         lifecycle
             .fields
@@ -944,7 +1037,7 @@ impl Memory<'_> {
                 decision_ref,
                 reason_codes: Vec::new(),
             },
-            receipt_ref: None,
+            receipt_ref,
             lifecycle: Some(lifecycle),
             idempotent_replay: false,
         })

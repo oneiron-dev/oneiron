@@ -207,6 +207,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_CREATE_ORIGIN, CONTENT),
     (&t::TASK_FACT_SUPPRESSED, LIVE),
     (&t::TASK_FOLLOW_UP_MARKER, CONTENT),
+    // Narrative of what each highway call did, like the report journal: not authority.
+    (&t::TASK_LIFECYCLE_RECEIPT, CONTENT),
     (&t::TASK_OWNER_FACT_REVERSE, CONTENT),
     (&t::TASK_PEER_HANDLE, CONTENT),
     (&t::TASK_PROJECT_TRADEOFF_ASK, CONTENT),

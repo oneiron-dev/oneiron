@@ -310,6 +310,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     if query.includes_kind(ReceiptKind::Hook) {
         records.extend(crate::runtime_hooks::hook_receipts(vault, query)?);
     }
+    // OF-220: each mutating task-highway call's lifecycle, kept in that
+    // call's own transaction. Its own kind and store; its own read txn, so it
+    // runs before the shared `rtxn` below.
+    if query.includes_kind(ReceiptKind::TaskLifecycle) {
+        records.extend(crate::task_verb::task_lifecycle_receipts(vault, query)?);
+    }
 
     // The settle projection opens its own read txn, so it runs before the shared
     // `rtxn` below to avoid a nested read transaction on this thread. It applies
