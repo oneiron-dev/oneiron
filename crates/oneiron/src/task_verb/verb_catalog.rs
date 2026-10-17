@@ -221,6 +221,7 @@ pub enum AgentVerb {
     SelfBrowserBatch,
     SelfBrowserLibraryFind,
     SelfBrowserLibraryPropose,
+    SelfBrowserLibraryRetire,
     SelfBrowserLibraryRun,
     SelfDesktopOpen,
     SelfDesktopObserve,
@@ -264,6 +265,18 @@ pub enum AgentVerb {
     VaultConversationsRecordsAppend,
     VaultBatch,
     VaultArtifactsPut,
+    VaultArtifactsBodyImport,
+    VaultArtifactsBodyHead,
+    VaultArtifactsBodyRead,
+    VaultArtifactsBodyCommits,
+    VaultArtifactsBodyEdit,
+    VaultArtifactsBodyForkOpen,
+    VaultArtifactsBodyForkEdit,
+    VaultArtifactsBodyForkDiff,
+    VaultArtifactsBodyForkMerge,
+    VaultArtifactsBodyForkDiscard,
+    VaultArtifactsBodyExport,
+    VaultArtifactsBodyPreview,
     VaultArtifactsAppend,
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
@@ -273,6 +286,8 @@ pub enum AgentVerb {
     VaultNotesCreate,
     VaultNotesFromEntity,
     VaultNotesEdit,
+    VaultNotesSeal,
+    VaultNotesLifecycle,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -496,6 +511,7 @@ impl AgentVerb {
         Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryPropose,
+        Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRun,
         Self::SelfDesktopOpen,
         Self::SelfDesktopObserve,
@@ -539,6 +555,18 @@ impl AgentVerb {
         Self::VaultConversationsRecordsAppend,
         Self::VaultBatch,
         Self::VaultArtifactsPut,
+        Self::VaultArtifactsBodyImport,
+        Self::VaultArtifactsBodyHead,
+        Self::VaultArtifactsBodyRead,
+        Self::VaultArtifactsBodyCommits,
+        Self::VaultArtifactsBodyEdit,
+        Self::VaultArtifactsBodyForkOpen,
+        Self::VaultArtifactsBodyForkEdit,
+        Self::VaultArtifactsBodyForkDiff,
+        Self::VaultArtifactsBodyForkMerge,
+        Self::VaultArtifactsBodyForkDiscard,
+        Self::VaultArtifactsBodyExport,
+        Self::VaultArtifactsBodyPreview,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
@@ -548,6 +576,8 @@ impl AgentVerb {
         Self::VaultNotesCreate,
         Self::VaultNotesFromEntity,
         Self::VaultNotesEdit,
+        Self::VaultNotesSeal,
+        Self::VaultNotesLifecycle,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -778,6 +808,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
+            Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfDesktopOpen => "self.desktop.open",
             Self::SelfDesktopObserve => "self.desktop.observe",
@@ -821,6 +852,18 @@ impl AgentVerb {
             Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
             Self::VaultBatch => "vault.batch",
             Self::VaultArtifactsPut => "vault.artifacts.put",
+            Self::VaultArtifactsBodyImport => "vault.artifacts.body.import",
+            Self::VaultArtifactsBodyHead => "vault.artifacts.body.head",
+            Self::VaultArtifactsBodyRead => "vault.artifacts.body.read",
+            Self::VaultArtifactsBodyCommits => "vault.artifacts.body.commits",
+            Self::VaultArtifactsBodyEdit => "vault.artifacts.body.edit",
+            Self::VaultArtifactsBodyForkOpen => "vault.artifacts.body.fork.open",
+            Self::VaultArtifactsBodyForkEdit => "vault.artifacts.body.fork.edit",
+            Self::VaultArtifactsBodyForkDiff => "vault.artifacts.body.fork.diff",
+            Self::VaultArtifactsBodyForkMerge => "vault.artifacts.body.fork.merge",
+            Self::VaultArtifactsBodyForkDiscard => "vault.artifacts.body.fork.discard",
+            Self::VaultArtifactsBodyExport => "vault.artifacts.body.export",
+            Self::VaultArtifactsBodyPreview => "vault.artifacts.body.preview",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
@@ -830,6 +873,8 @@ impl AgentVerb {
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesEdit => "vault.notes.edit",
+            Self::VaultNotesSeal => "vault.notes.seal",
+            Self::VaultNotesLifecycle => "vault.notes.lifecycle",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -1059,6 +1104,18 @@ impl AgentVerb {
                 | Self::VaultConversationsRecordsAppend
                 | Self::VaultBatch
                 | Self::VaultArtifactsPut
+                | Self::VaultArtifactsBodyImport
+                | Self::VaultArtifactsBodyHead
+                | Self::VaultArtifactsBodyRead
+                | Self::VaultArtifactsBodyCommits
+                | Self::VaultArtifactsBodyEdit
+                | Self::VaultArtifactsBodyForkOpen
+                | Self::VaultArtifactsBodyForkEdit
+                | Self::VaultArtifactsBodyForkDiff
+                | Self::VaultArtifactsBodyForkMerge
+                | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyExport
+                | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1068,6 +1125,8 @@ impl AgentVerb {
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
+                | Self::VaultNotesSeal
+                | Self::VaultNotesLifecycle
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -1089,6 +1148,7 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
@@ -1341,6 +1401,18 @@ impl AgentVerb {
                 | Self::VaultConversationsRecordsAppend
                 | Self::VaultBatch
                 | Self::VaultArtifactsPut
+                | Self::VaultArtifactsBodyImport
+                | Self::VaultArtifactsBodyHead
+                | Self::VaultArtifactsBodyRead
+                | Self::VaultArtifactsBodyCommits
+                | Self::VaultArtifactsBodyEdit
+                | Self::VaultArtifactsBodyForkOpen
+                | Self::VaultArtifactsBodyForkEdit
+                | Self::VaultArtifactsBodyForkDiff
+                | Self::VaultArtifactsBodyForkMerge
+                | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyExport
+                | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1350,6 +1422,8 @@ impl AgentVerb {
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
+                | Self::VaultNotesSeal
+                | Self::VaultNotesLifecycle
         )
     }
     pub const fn is_section(self) -> bool {
@@ -1405,6 +1479,7 @@ impl AgentVerb {
                 | Self::VaultCommit
                 | Self::VaultForget
                 | Self::VaultWritesPending
+                | Self::VaultArtifactsBodyCommits
                 | Self::VaultClaimsSeed
         )
     }
@@ -1641,6 +1716,7 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
@@ -1676,6 +1752,18 @@ impl AgentVerb {
                 | Self::VaultConversationsRecordsAppend
                 | Self::VaultBatch
                 | Self::VaultArtifactsPut
+                | Self::VaultArtifactsBodyImport
+                | Self::VaultArtifactsBodyHead
+                | Self::VaultArtifactsBodyRead
+                | Self::VaultArtifactsBodyCommits
+                | Self::VaultArtifactsBodyEdit
+                | Self::VaultArtifactsBodyForkOpen
+                | Self::VaultArtifactsBodyForkEdit
+                | Self::VaultArtifactsBodyForkDiff
+                | Self::VaultArtifactsBodyForkMerge
+                | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyExport
+                | Self::VaultArtifactsBodyPreview
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1685,6 +1773,8 @@ impl AgentVerb {
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
+                | Self::VaultNotesSeal
+                | Self::VaultNotesLifecycle
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -1817,6 +1907,7 @@ impl AgentVerb {
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
@@ -1840,6 +1931,13 @@ impl AgentVerb {
                 | Self::VaultConversationsRecordsAppend
                 | Self::VaultBatch
                 | Self::VaultArtifactsPut
+                | Self::VaultArtifactsBodyImport
+                | Self::VaultArtifactsBodyEdit
+                | Self::VaultArtifactsBodyForkOpen
+                | Self::VaultArtifactsBodyForkEdit
+                | Self::VaultArtifactsBodyForkMerge
+                | Self::VaultArtifactsBodyForkDiscard
+                | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultClaimsSeed
@@ -1847,6 +1945,7 @@ impl AgentVerb {
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
+                | Self::VaultNotesSeal
         )
     }
     pub const fn proposes(self) -> bool {
@@ -2090,6 +2189,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
@@ -2133,6 +2233,18 @@ impl AgentVerb {
             Self::VaultConversationsRecordsAppend => &["spec"],
             Self::VaultBatch => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
+            Self::VaultArtifactsBodyImport => &["spec"],
+            Self::VaultArtifactsBodyHead => &["spec"],
+            Self::VaultArtifactsBodyRead => &["spec"],
+            Self::VaultArtifactsBodyCommits => &["spec"],
+            Self::VaultArtifactsBodyEdit => &["spec"],
+            Self::VaultArtifactsBodyForkOpen => &["spec"],
+            Self::VaultArtifactsBodyForkEdit => &["spec"],
+            Self::VaultArtifactsBodyForkDiff => &["spec"],
+            Self::VaultArtifactsBodyForkMerge => &["spec"],
+            Self::VaultArtifactsBodyForkDiscard => &["spec"],
+            Self::VaultArtifactsBodyExport => &["spec"],
+            Self::VaultArtifactsBodyPreview => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2142,6 +2254,8 @@ impl AgentVerb {
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesEdit => &["spec"],
+            Self::VaultNotesSeal => &["spec"],
+            Self::VaultNotesLifecycle => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -2366,6 +2480,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
@@ -2409,6 +2524,18 @@ impl AgentVerb {
             Self::VaultConversationsRecordsAppend => &["spec"],
             Self::VaultBatch => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
+            Self::VaultArtifactsBodyImport => &["spec"],
+            Self::VaultArtifactsBodyHead => &["spec"],
+            Self::VaultArtifactsBodyRead => &["spec"],
+            Self::VaultArtifactsBodyCommits => &["spec"],
+            Self::VaultArtifactsBodyEdit => &["spec"],
+            Self::VaultArtifactsBodyForkOpen => &["spec"],
+            Self::VaultArtifactsBodyForkEdit => &["spec"],
+            Self::VaultArtifactsBodyForkDiff => &["spec"],
+            Self::VaultArtifactsBodyForkMerge => &["spec"],
+            Self::VaultArtifactsBodyForkDiscard => &["spec"],
+            Self::VaultArtifactsBodyExport => &["spec"],
+            Self::VaultArtifactsBodyPreview => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2418,6 +2545,8 @@ impl AgentVerb {
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesEdit => &["spec"],
+            Self::VaultNotesSeal => &["spec"],
+            Self::VaultNotesLifecycle => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -2991,6 +3120,9 @@ impl AgentVerb {
             Self::SelfBrowserLibraryPropose => {
                 "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition."
             }
+            Self::SelfBrowserLibraryRetire => {
+                "Takes a program out of the replay library for every later run, and returns the card it had."
+            }
             Self::SelfBrowserLibraryRun => {
                 "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."
             }
@@ -3094,6 +3226,42 @@ impl AgentVerb {
             Self::VaultArtifactsPut => {
                 "Registers one blob artifact; its bytes ride vault.artifacts.append."
             }
+            Self::VaultArtifactsBodyImport => {
+                "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document."
+            }
+            Self::VaultArtifactsBodyHead => {
+                "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none."
+            }
+            Self::VaultArtifactsBodyRead => {
+                "Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history."
+            }
+            Self::VaultArtifactsBodyCommits => {
+                "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by."
+            }
+            Self::VaultArtifactsBodyEdit => {
+                "A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head."
+            }
+            Self::VaultArtifactsBodyForkOpen => {
+                "Opens a fork of the live body at its head for machine work, in an optional run."
+            }
+            Self::VaultArtifactsBodyForkEdit => {
+                "The opener's typed DOCX or XLSX operations on its open fork of a live body."
+            }
+            Self::VaultArtifactsBodyForkDiff => {
+                "A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show."
+            }
+            Self::VaultArtifactsBodyForkMerge => {
+                "A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses."
+            }
+            Self::VaultArtifactsBodyForkDiscard => {
+                "Abandons an open fork's unlanded work and returns its record."
+            }
+            Self::VaultArtifactsBodyExport => {
+                "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator."
+            }
+            Self::VaultArtifactsBodyPreview => {
+                "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands."
+            }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."
             }
@@ -3118,6 +3286,12 @@ impl AgentVerb {
             }
             Self::VaultNotesEdit => {
                 "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."
+            }
+            Self::VaultNotesSeal => {
+                "Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays."
+            }
+            Self::VaultNotesLifecycle => {
+                "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one."
             }
         }
     }

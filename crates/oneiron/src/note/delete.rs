@@ -31,6 +31,7 @@ pub(crate) fn delete_document_in_txn(
         NOTE_HEAD_DOC.delete(store, txn, &(note, head))?;
     }
     NOTE_HEAD.delete(store, txn, id)?;
+    super::lifecycle::NOTE_SEAL.delete(store, txn, id)?;
     store.port_document_updates_delete(txn, own)?;
     let key_prefix = format!("{}:", id.to_hex()).into_bytes();
     SYNC_QD_E.delete_from(store, txn, &key_prefix)?;
