@@ -20,14 +20,14 @@ use super::doors::world_recovery_state_in;
 use super::root_doors::this_machine_only;
 use super::{
     ActivatedRoot, KitConfirmation, RecoveryRoot, RecoveryRootId, RecoveryRootSeed, RootRestore,
-    VaultKeyWrapInfo, WorldRecoveryState, refused,
+    VaultKeyStatus, VaultKeyWrapInfo, WorldRecoveryState, refused,
 };
 use crate::authority::EditOrigin;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::recovery::{
-    KitCoverage, KitError, KitId, KitIssue, KitManifest, KitPassphrase, KitPiece, KitSecretKind,
-    PieceHome, issue_recovery_root_kit, restore_kit,
+    CodeKeeping, KitCoverage, KitError, KitId, KitIssue, KitMachine, KitManifest, KitPassphrase,
+    KitPiece, KitSecretKind, PieceHome, issue_recovery_root_kit, restore_kit,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -98,7 +98,7 @@ pub struct ConfirmedWorldKit {
     /// The kits this one replaced.
     pub replaced: Vec<KitId>,
     /// The vault key's `world-kit` escrow wrap, sealed to this kit's root;
-    /// `None` when this handle does not hold the vault key.
+    /// `None` when the vault has no data key yet.
     pub escrow: Option<VaultKeyWrapInfo>,
 }
 
@@ -155,6 +155,28 @@ fn kit_refused(error: KitError) -> Error {
     })
 }
 
+/// The homes with this machine's own id read as this machine, before the
+/// kit judges placement and coverage: a code file on `me` is a file here,
+/// and another machine's home never names `me`. Otherwise one machine under
+/// two names would pass for two machines.
+fn resolve_homes(homes: &[PieceHome; 3], me: Option<EntityId>) -> Result<[PieceHome; 3]> {
+    let mut resolved = homes.clone();
+    for home in &mut resolved {
+        match *home {
+            PieceHome::OtherMachine(id) if Some(id) == me => {
+                return Err(refused("an other-machine home names this machine"));
+            }
+            PieceHome::RecoveryCode(CodeKeeping::FileOn(KitMachine::Other(id)))
+                if Some(id) == me =>
+            {
+                *home = PieceHome::RecoveryCode(CodeKeeping::FileOn(KitMachine::ThisMachine));
+            }
+            _ => {}
+        }
+    }
+    Ok(resolved)
+}
+
 /// The row a confirm finishes: this vault's, still pending, and naming the
 /// root the pieces rebuild.
 fn pending_row(row: Option<StoredKit>, root: &RecoveryRoot) -> Result<StoredKit> {
@@ -182,15 +204,16 @@ impl Vault {
 
     /// Issues a world kit: a fresh root's seed, split 2-of-3 over the homes
     /// the owner picked. `only_machine` is decided here from the machine
-    /// roster, never taken from the caller. Nothing is published; the
-    /// inventory keeps a pending row until [`Self::confirm_world_kit`].
+    /// roster, never taken from the caller, and a home naming this machine's
+    /// own id is read as this machine. Nothing is published; the inventory
+    /// keeps a pending row until [`Self::confirm_world_kit`].
     pub fn issue_world_kit(
         &self,
         owner: &AuthenticatedOwner,
         issue: &KitIssue<'_>,
     ) -> Result<IssuedWorldKit> {
         let prepared = self.prepare_owner_root(owner)?;
-        let (vault_id, only_machine) = {
+        let (vault_id, only_machine, me) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let me = crate::identity::read_machine_id_in_txn(self, &txn)?;
@@ -201,16 +224,17 @@ impl Vault {
                 .machines
                 .keys()
                 .any(|machine| Some(*machine) != me && fold.trusted_machine(*machine).is_some());
-            (vault_id, !others)
+            (vault_id, !others, me)
         };
         if issue.vault_id != vault_id {
             return Err(refused("the kit names another vault"));
         }
+        let homes = resolve_homes(&issue.homes, me)?;
         let root = prepared.seed().public(&vault_id)?.id;
         let kit = issue_recovery_root_kit(
             &KitIssue {
                 vault_id,
-                homes: issue.homes.clone(),
+                homes,
                 passphrase: issue.passphrase,
                 cost: issue.cost,
                 only_machine,
@@ -255,7 +279,9 @@ impl Vault {
     /// pending row names. That root then goes live as
     /// [`Self::activate_owner_root`] makes it, with `carry` and every refusal
     /// there. The row, the kits it replaces and the vault key's `world-kit`
-    /// escrow wrap commit in the activation's transaction.
+    /// escrow wrap commit in the activation's transaction. A vault with a
+    /// data key needs it held on this handle: the new wrap replaces the old
+    /// kit's, so a locked key refuses the confirm before anything is written.
     pub fn confirm_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -278,6 +304,10 @@ impl Vault {
         {
             let txn = self.store.env.read_txn()?;
             pending_row(KITS.get(&self.store, &txn, &key)?, &root)?;
+        }
+        // The escrow wrap's transaction checks the key again.
+        if self.vault_key_status()? == VaultKeyStatus::Locked {
+            return Err(refused("unlock the vault key first"));
         }
         let prepared = self.prepare_owner_root_from_seed(owner, seed)?;
         let (activated, (replaced, escrow)) =
@@ -309,8 +339,9 @@ impl Vault {
     /// seed, then [`Self::restore_world_keys`] runs with `confirm` and every
     /// rule there. A seed it cannot authenticate is refused as
     /// `UnverifiedKitRestore`, unchanged, and no setting is edited. The
-    /// inventory is neither read nor written, so a fresh host restores
-    /// without it.
+    /// inventory is never written. The root door reads it only to refuse a
+    /// kit it lists as pending, which [`Self::confirm_world_kit`] finishes
+    /// instead; a fresh host with no row for the kit restores without it.
     pub fn restore_world_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -337,6 +368,20 @@ impl Vault {
             keys,
             reissue_advised,
         })
+    }
+
+    /// Whether a kit this vault issued for `root` still waits for its
+    /// confirm, read in `txn`. Only that confirm publishes the root: a seed
+    /// door refuses it, so a pending kit never becomes coverage.
+    pub(super) fn kit_root_pending_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        root: RecoveryRootId,
+    ) -> Result<bool> {
+        Ok(KITS
+            .scan(&self.store, txn)?
+            .into_iter()
+            .any(|(_, kit)| kit.root == root.0 && kit.confirmed_at.is_none()))
     }
 
     /// Every kit this vault issued, the current one, and each private world's

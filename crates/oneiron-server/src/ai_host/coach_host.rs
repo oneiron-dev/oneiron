@@ -24,8 +24,8 @@ use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshol
 use oneiron::{EntityId, Error, LlmMessageRole};
 use serde::Deserialize;
 
-use super::CHAT_ROLE;
 use super::coach_heal::{LEASE_OWNER, settle};
+use super::coach_health::coach_role;
 use super::code_fix::{HostModels, clip, message};
 use crate::server::SyncServer;
 
@@ -121,6 +121,8 @@ fn run_one(
     match admitted.status.payload.attempt_type.as_str() {
         COACH_SKILL_DISTILL_FACET => distill(server, admitted),
         COACH_PERSON_THRESHOLD_FACET => {
+            // Tune from the row an accept may have just changed.
+            server.decision_host().refresh_person_threshold(vault)?;
             let current = server.decision_host().bands().person_threshold();
             let proposal = vault.run_coach_person_threshold(
                 admitted,
@@ -145,7 +147,8 @@ fn run_one(
 /// One bounded pass of the session-end distill on the generative seat.
 fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::Result<()> {
     // With no seat the sittings stay pending for a night that has one.
-    if server.ai.model_runtime().seat(CHAT_ROLE).is_none() {
+    let runtime = server.ai.model_runtime();
+    if runtime.seat(coach_role(runtime)).is_none() {
         return Ok(());
     }
     let vault = server.vault();
@@ -227,10 +230,13 @@ impl SessionActorDistiller for HostDistiller<'_> {
         });
         let text = self
             .models
-            .generate(vec![
-                message(LlmMessageRole::System, DISTILL_SYSTEM.to_owned()),
-                message(LlmMessageRole::User, data.to_string()),
-            ])?
+            .generate(
+                self.models.coach(),
+                vec![
+                    message(LlmMessageRole::System, DISTILL_SYSTEM.to_owned()),
+                    message(LlmMessageRole::User, data.to_string()),
+                ],
+            )?
             .ok_or_else(|| Error::InvalidConfig("no seat took the Coach's distill".into()))?;
         let wire = parse_notes(&text).ok_or_else(|| {
             Error::InvalidConfig("the Coach's distill answer holds no notes".into())

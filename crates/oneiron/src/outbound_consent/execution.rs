@@ -27,6 +27,31 @@ pub struct ScopedMcpDispatchResult {
     pub scrubbable_result_fields: usize,
     pub scrubbed_result_fields: usize,
     checked_bytes: Vec<u8>,
+    gate_decision_ref: Option<String>,
+    gate_outcome: Option<String>,
+    gate_reasons: Vec<String>,
+}
+
+impl ScopedMcpDispatchResult {
+    /// The gate decision this dispatch recorded (`gate:<hex>`), when the
+    /// gate ran on this call; a ledger replay records none.
+    #[must_use]
+    pub fn gate_decision_ref(&self) -> Option<&str> {
+        self.gate_decision_ref.as_deref()
+    }
+
+    /// The gate's outcome (`allow`, `pending` or `deny`), or the hold a
+    /// replay of an admitted row met (`pending`). `None` when neither ran.
+    #[must_use]
+    pub fn gate_outcome(&self) -> Option<&str> {
+        self.gate_outcome.as_deref()
+    }
+
+    /// The gate's receipt reasons, then its reason codes, as recorded.
+    #[must_use]
+    pub fn gate_reasons(&self) -> &[String] {
+        &self.gate_reasons
+    }
 }
 
 impl fmt::Debug for ScopedMcpDispatchResult {
@@ -43,6 +68,9 @@ impl fmt::Debug for ScopedMcpDispatchResult {
                 "checked_bytes",
                 &format_args!("[{} bytes redacted]", self.checked_bytes.len()),
             )
+            .field("gate_decision_ref", &self.gate_decision_ref)
+            .field("gate_outcome", &self.gate_outcome)
+            .field("gate_reasons", &self.gate_reasons)
             .finish()
     }
 }
@@ -137,6 +165,11 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         || effect.dispatch.send_outcome.is_some()
         || effect.dispatch.replayed)
         .then_some(effect.dispatch);
+    let gate_reasons = effect
+        .gate_receipt_reasons
+        .into_iter()
+        .chain(effect.gate_reason_codes)
+        .collect();
     Ok(ScopedMcpDispatchResult {
         decision,
         dispatch,
@@ -146,6 +179,9 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         scrubbable_result_fields: transport.scrubbable_result_fields,
         scrubbed_result_fields: transport.scrubbed_result_fields,
         checked_bytes: transport.checked_bytes,
+        gate_decision_ref: effect.gate_decision_id,
+        gate_outcome: effect.gate_outcome,
+        gate_reasons,
     })
 }
 

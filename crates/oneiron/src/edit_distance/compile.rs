@@ -12,7 +12,9 @@
 //! starting at the principal whose preferences it compiles and ending at the
 //! vault owner; an accepted revision is the published, cited text the
 //! charter's or brief's owner applies. Nothing here edits a charter, a brief
-//! or a skill, and no answer widens a Grant.
+//! or a skill, and no answer widens a Grant. The owner's apply door marks
+//! the revision Applied in the transaction that writes its text, so a re-run
+//! never applies it twice.
 //!
 //! Per-principal scoping and decay come from the read boundary
 //! ([`super::miner::mined_preferences_for_principal`]): a preference outside
@@ -114,6 +116,15 @@ pub enum RevisionStatus {
     },
     /// Replaced, before an answer, by a newer compilation.
     Superseded { by_revision: String, at: u64 },
+    /// Accepted, then applied by `by` at `at`: `version` of its target is
+    /// the first that carries its text.
+    Applied {
+        accepted_by: EntityId,
+        accepted_at: u64,
+        by: EntityId,
+        at: u64,
+        version: String,
+    },
 }
 
 /// One compiled acting revision.
@@ -402,6 +413,69 @@ pub fn accepted_acting_revisions(
         matches!(row.status, RevisionStatus::Accepted { .. })
             && target.is_none_or(|target| row.target == *target)
     })
+}
+
+/// One acting revision in the caller's snapshot: what an apply door reads
+/// before it writes the revision's text.
+///
+/// # Errors
+///
+/// Storage errors.
+#[allow(dead_code, reason = "L09's apply_agent_acting_revision door calls it")]
+pub(crate) fn acting_revision_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision_id: &str,
+) -> Result<Option<ActingRevision>> {
+    ACTING_REVISION.get(&vault.store, txn, &revision_id.to_owned())
+}
+
+/// Marks an accepted revision applied, in the transaction that wrote its
+/// text into `version` of its target, by `by`. Only an accepted revision
+/// takes the mark. The same mark again (same `by` and `version`) is a no-op
+/// that returns the row, so a retried apply finds its own mark.
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] for an unknown revision;
+/// [`Error::InvalidClaimBody`] for a revision that is not accepted, or that
+/// another apply already marked; storage errors.
+#[allow(dead_code, reason = "L09's apply_agent_acting_revision door calls it")]
+pub(crate) fn mark_acting_revision_applied_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    revision_id: &str,
+    by: EntityId,
+    version: &str,
+    at: u64,
+) -> Result<ActingRevision> {
+    let mut row = ACTING_REVISION
+        .get(&vault.store, txn, &revision_id.to_owned())?
+        .ok_or(Error::EntityNotFound)?;
+    match &row.status {
+        RevisionStatus::Accepted {
+            by: accepted_by,
+            at: accepted_at,
+        } => {
+            row.status = RevisionStatus::Applied {
+                accepted_by: *accepted_by,
+                accepted_at: *accepted_at,
+                by,
+                at,
+                version: version.to_owned(),
+            };
+            ACTING_REVISION.put(&vault.store, txn, &row.id, &row)?;
+            Ok(row)
+        }
+        RevisionStatus::Applied {
+            by: applied_by,
+            version: applied,
+            ..
+        } if *applied_by == by && applied == version => Ok(row),
+        _ => Err(Error::InvalidClaimBody(
+            "only an accepted acting revision is applied, once",
+        )),
+    }
 }
 
 fn acting_revisions_where(

@@ -302,8 +302,8 @@ struct Confirmed {
     narrowed: Vec<String>,
     /// The kits this one replaced. Their pieces still rebuild their own roots.
     replaced: Vec<String>,
-    /// The vault key's `world-kit` escrow wrap to this kit's root; none while
-    /// the vault key is locked.
+    /// The vault key's `world-kit` escrow wrap to this kit's root; none when
+    /// the vault has no key yet.
     vault_key_wrap: Option<WrapView>,
 }
 
@@ -319,12 +319,15 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
         .collect::<anyhow::Result<BTreeSet<_>>>()?;
     let vault = open(&args.serve)?;
     let owner = local_owner(&vault)?;
-    // The escrow wrap needs the vault key held: this device's wrap opens it
-    // when it can. A vault with no key gets no wrap.
-    if vault.vault_key_status()? == VaultKeyStatus::Locked
-        && let Err(error) = vault.unlock_vault_key()
-    {
-        tracing::warn!(%error, "the vault key stays locked, so the kit gets no world-kit wrap");
+    // Confirm replaces the vault key's world-kit wrap, so a vault with a key
+    // needs it held: this device's wrap opens it, or nothing is confirmed. A
+    // vault with no key gets no wrap.
+    if vault.vault_key_status()? == VaultKeyStatus::Locked {
+        vault.unlock_vault_key().map_err(|error| {
+            anyhow::anyhow!(
+                "the vault key stays locked, and confirm must replace its world-kit wrap: {error}"
+            )
+        })?;
     }
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let confirmed = vault.confirm_world_kit(
