@@ -475,7 +475,8 @@ impl Memory<'_> {
                         now,
                     },
                     // OF-540: a created TASK carries no team-run stamp to its route yet.
-                    AgentSpawnContext::default(),
+                    // OF-541: its route keeps the type the TASK was placed at.
+                    AgentSpawnContext::default().with_type_ref(validated.type_ref.clone()),
                 )?;
                 // Dispatched and deduped-existing are ONE idempotent outcome: a
                 // retried route returns the attempt already realizing the task.
