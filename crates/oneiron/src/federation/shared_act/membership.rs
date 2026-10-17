@@ -7,7 +7,7 @@ use super::{
     Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
     invalid, live_owners, non_root,
 };
-use crate::authority::HostSlipIssuer;
+use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -400,6 +400,82 @@ impl Vault {
             },
         )
     }
+    /// Proof-of-control recovery (ARCH-0043): a shared vault with no live
+    /// Owner left takes `claimant` as its Owner. The host judges, outside the
+    /// engine, the claimant's proof that they control the organization owning
+    /// the vault, and signs the handover with `issuer`. The engine checks
+    /// what it holds: no live Owner remains, `from` still holds the Owner
+    /// role here, and `claimant` is a live person. `from` leaves with its
+    /// slips revoked, the claimant takes the Owner role, and the host's
+    /// `OwnerHandover` (cause `proof_of_control`) lands in the authority log
+    /// in the same writer as the receipt and its notices.
+    pub fn recover_shared_owner(
+        &self,
+        issuer: &HostSlipIssuer,
+        vault_id: u64,
+        from: EntityId,
+        claimant: EntityId,
+    ) -> Result<SharedActExecutionReceipt> {
+        let mut txn = self.store.env.write_txn()?;
+        super::check_vault(self, &txn, vault_id)?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
+        let owners = live_owners(&self.live_act_holders(&txn, vault_id, now)?, None);
+        if !owners.is_empty()
+            || claimant == from
+            || !crate::consent::person_is_live_in_txn(self, &txn, &claimant)?
+            || self.member_role_in_txn(&txn, vault_id, from)? != Some(Role::Owner)
+        {
+            return Err(invalid());
+        }
+        let mut grants =
+            self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
+        let (moved, revoked_slips) = self.move_member_in_txn(
+            &mut txn,
+            vault_id,
+            from,
+            Role::Owner,
+            None,
+            Some(issuer),
+            now,
+        )?;
+        grants.extend(moved);
+        let id = self.store.clock.entity_id()?.to_hex();
+        self.append_owner_handover_in_txn(
+            &mut txn,
+            issuer,
+            OwnerHandover {
+                shared_vault: vault_id,
+                cause: OwnerHandoverCause::ProofOfControl,
+                from,
+                to: Some(claimant),
+                from_keeps: None,
+                act: None,
+                receipt: id.clone(),
+            },
+        )?;
+        let receipt = self.record_shared_change_in_txn(
+            &mut txn,
+            id,
+            vault_id,
+            None,
+            claimant,
+            owners,
+            Effect {
+                change: SharedVaultChange::OwnerRecovered {
+                    from: from.to_hex(),
+                    to: claimant.to_hex(),
+                },
+                grants,
+                revoked_slips,
+                notify: BTreeSet::from([from]),
+            },
+            None,
+            now,
+        )?;
+        txn.commit()?;
+        Ok(receipt)
+    }
+
     /// Leave the vault. Leave covers access only: the personal vault goes
     /// with the person and company-scoped claims stay. An Owner leaves
     /// through the `remove_owner` act, naming a successor when last.
