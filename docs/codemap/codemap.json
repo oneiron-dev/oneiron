@@ -1796,12 +1796,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HoldAttemptForFanout"
+     ],
+     "path": "src/attempt_queue/fanout_hold.rs",
+     "purpose": "OF-393: the fan-out launch hold",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 18,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -32454,7 +32469,7 @@
      "path": "src/outbound_chokepoint/fanout.rs",
      "purpose": "Pre-execution fan-out admission",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1
      }
     },
@@ -45402,7 +45417,7 @@
      "path": "src/task_verb/consult_fanout_admission.rs",
      "purpose": "Meter, state and admit consult fan-outs before any TASK exists",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 12
      }
     },
@@ -45427,13 +45442,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/consult_fanout_store.rs",
      "purpose": "Node-local frozen fan-out plans and transaction-owned surface sink",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -45617,9 +45632,25 @@
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/fanout_check.rs",
-     "purpose": "The exceptional-width check of fan-outs the engine never holds: a `tasks.ask` census and a wave plan (OF-393)",
+     "purpose": "The exceptional-width check of fan-outs that go out with no hold: a `tasks.ask` census and a wave plan…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "FanoutCheckChoice",
+      "FanoutLaunchReceipt"
+     ],
+     "path": "src/task_verb/fanout_launch.rs",
+     "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -45768,7 +45799,7 @@
      "surface": {
       "crate-vis": 28,
       "mod": 2,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -46055,7 +46086,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 19,
+      "re-export": 20,
       "struct": 36
      }
     },
@@ -46164,6 +46195,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FanoutAckRequest",
+      "FanoutLaunchHold",
+      "FanoutLaunchRequest",
+      "FanoutLaunchRuling",
+      "FanoutLaunchView",
+      "FanoutResumeRequest"
+     ],
+     "path": "src/task_verb/sdk_fanout_launch.rs",
+     "purpose": "The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -46171,7 +46221,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 301
+      "fn": 304
      }
     },
     {
@@ -46658,7 +46708,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VaultWaveTaskPort",
@@ -46668,8 +46718,9 @@
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -48594,11 +48645,13 @@
       "BlockedByEdgeWrite",
       "PlannedTask",
       "ValidatedWavePlan",
+      "WaveApplyOutcome",
       "WaveOrchestrator",
       "WavePlan",
       "WavePlanReceipt",
       "WavePlanRequest",
       "WavePlanner",
+      "WaveTaskApplyOutcome",
       "WaveTaskPort",
       "WaveTaskWrite"
      ],
@@ -48606,7 +48659,8 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)",
      "surface": {
       "const": 3,
-      "fn": 17,
+      "enum": 2,
+      "fn": 18,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -51009,7 +51063,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52297,7 +52351,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 122,
+     "files": 124,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52458,9 +52512,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 150,
+   "over_bar": 152,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3173,
+   "source_files": 3176,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60390,7 +60444,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 255
+      "fn": 258
      }
     },
     {
@@ -61406,7 +61460,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 256
+      "fn": 259
      }
     },
     {
@@ -71549,6 +71603,13 @@
       "ExportDiaryRead",
       "FactKind",
       "FactSource",
+      "FanoutAckRequest",
+      "FanoutCheckChoice",
+      "FanoutLaunchHold",
+      "FanoutLaunchRequest",
+      "FanoutLaunchRuling",
+      "FanoutLaunchView",
+      "FanoutResumeRequest",
       "FanoutStatement",
       "FatalLlmError",
       "FederationGrantRole",
@@ -72114,8 +72175,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 223,
-      "struct": 568
+      "enum": 225,
+      "struct": 573
      }
     },
     {
