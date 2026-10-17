@@ -735,7 +735,7 @@ fn restore_over_with(
     let named = match &sealed_swap {
         Some(sealed_swap) => sealed_swap
             .mirror_archive(&previous)
-            .map_err(std::io::Error::other),
+            .map_err(|error| std::io::Error::other(error.to_string())),
         None => Ok(()),
     }
     .and_then(|()| std::fs::rename(&restored_path, &previous));

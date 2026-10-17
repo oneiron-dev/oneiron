@@ -883,8 +883,10 @@ pub(super) fn restore_fresh(
     let (vault, restored) = backup::restore_fresh(backup, path, target, &key, |vault| {
         let installed = config.keystore.install_on(vault, path);
         unlock.unlock_live(vault)?;
-        // A device unlock wraps the key to this install on its own.
-        if installed && !matches!(unlock, HostUnlock::Device) {
+        // A device unlock of a plain vault wraps the key to this install on
+        // its own; a sealed vault's key is already held from its page seal.
+        let sealed = vault.vault_pages_sealed();
+        if installed && (sealed || !matches!(unlock, HostUnlock::Device)) {
             vault.add_vault_key_device()?;
         }
         vault.check_page_custody()
