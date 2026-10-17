@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 303 facade rows, 1086 generated types.
+// UniFFI census: 303 facade rows, 1087 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 271.
 // WireJson rows: none.
-// WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -15931,6 +15931,25 @@ pub struct XlsxArea {
     pub lock: XlsxLock,
 }
 
+/// `oneiron_docedit::xlsx_body::XlsxTable`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct XlsxTable {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "first")]
+    pub first: crate::WireJson,
+    #[serde(rename = "last")]
+    pub last: crate::WireJson,
+    #[serde(rename = "header_rows")]
+    pub header_rows: u32,
+    #[serde(rename = "totals_rows")]
+    pub totals_rows: u32,
+    #[serde(rename = "columns")]
+    pub columns: Vec<String>,
+    #[serde(rename = "worksheet")]
+    pub worksheet: bool,
+}
+
 /// `oneiron::office_body::verbs::XlsxSheetView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxSheetView {
@@ -15940,6 +15959,8 @@ pub struct XlsxSheetView {
     pub cells: Vec<BodyCell>,
     #[serde(rename = "locked")]
     pub locked: Vec<XlsxArea>,
+    #[serde(rename = "tables")]
+    pub tables: Vec<XlsxTable>,
 }
 
 /// `oneiron::office_body::xlsx::BodyName`.
@@ -17208,6 +17229,8 @@ pub struct XlsxSheet {
     pub cells: Vec<XlsxCell>,
     #[serde(rename = "locked")]
     pub locked: Vec<XlsxArea>,
+    #[serde(rename = "tables")]
+    pub tables: Vec<XlsxTable>,
 }
 
 /// `oneiron_docedit::xlsx_body::XlsxName`.

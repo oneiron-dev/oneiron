@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 303 facade rows, 1172 declarations.
+Census: 303 facade rows, 1173 declarations.
 Inputs: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 261 of 303 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -5426,10 +5426,19 @@ class XlsxArea(TypedDict):
     first: tuple[int, int]
     last: tuple[int, int]
     lock: XlsxLock
+class XlsxTable(TypedDict):
+    name: str
+    first: tuple[int, int]
+    last: tuple[int, int]
+    header_rows: int
+    totals_rows: int
+    columns: list[str]
+    worksheet: bool
 class XlsxSheetView(TypedDict):
     name: str
     cells: list[BodyCell]
     locked: list[XlsxArea]
+    tables: list[XlsxTable]
 class BodyName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
@@ -5934,6 +5943,7 @@ class XlsxSheet(TypedDict):
     name: str
     cells: list[XlsxCell]
     locked: list[XlsxArea]
+    tables: list[XlsxTable]
 class XlsxName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
