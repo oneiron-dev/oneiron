@@ -128,7 +128,8 @@ is `POST /v1/core/lens-frames/{cardId}/events` with the
 `{ event, idempotencyKey }` body (`LensFrameEventRequest`), and
 `client.closeLensFrame(cardId, init?)` is `DELETE
 /v1/core/lens-frames/{cardId}`. Both return the original `Response`;
-`LensFrameEventReply` (`{ $state }` or `{ outcome, readReceipt }`) and
+`LensFrameEventReply` (`{ $state }`, `{ outcome, readReceipt }`, or a model
+round trip's `202` `{ queued, callbackId }`) and
 `CloseLensFrameReply` (`{ closed }`) type their 2xx bodies. Send them with the
 credential that rendered the card: the frame lives on that server, under that
 principal.

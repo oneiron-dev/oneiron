@@ -112,6 +112,8 @@ pub struct ShapePresetMember {
 #[serde(deny_unknown_fields)]
 pub struct ShapePresetPick {
     pub preset: ShapePreset,
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     #[serde(default)]
     pub members: Vec<ShapePresetMember>,
