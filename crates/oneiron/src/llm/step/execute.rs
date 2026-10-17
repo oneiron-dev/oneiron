@@ -477,6 +477,7 @@ fn budget_trap(
             crate::dreamer_runner::ParkDreamerAttempt {
                 attempt_id: ctx.attempt_id,
                 reason: "durable step budget exhausted".to_owned(),
+                cause: crate::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
                 now: ctx.now_s(),
             },
