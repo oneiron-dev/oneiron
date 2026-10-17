@@ -868,7 +868,7 @@ declare namespace Sdk {
   type PointInput = { image: string; x: number; y: number };
   type TypeInput = { ref: string; text: string; clear?: boolean };
   type SelectInput = { ref: string; option: string };
-  type WaitForInput = { role?: string | null; name?: string | null; timeout_ms?: number | null };
+  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null };
   type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null };
@@ -1209,7 +1209,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until some page row matches a role and name. */
+    /** Waits until a page row its refs name, or else some row matching a role and name, is there. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -1249,7 +1249,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until some window row matches a role and name. */
+    /** Waits until a window row its refs name, or else some row matching a role and name, is there. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Moves the session onto another desktop window and observes it. */
     window(input: Sdk.WindowInput): Promise<Sdk.Observation | StoredResult>;
