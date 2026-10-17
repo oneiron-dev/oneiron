@@ -609,6 +609,30 @@ change back:
   The reply lists what was retracted, reopened, restored, copied, left closed, archived and made
   current again. An archived summary or note comes back through `/v1/owner/cleanup/restore`.
 
+## Revert the Dreamer's maintenance
+
+The Dreamer's own maintenance applies at once too, with one receipt each, and you revert any of
+it here, effect and all (`/v1/owner/dreamer/revert` above only retracts its finding). Its curator
+moves one of the Dreamer's own consolidations one rung (decay, weaken, mark stale, retract) as the
+Dreamer; its harness audit files a retune finding, which deploys nothing; its action-mode refresh
+files an advisory mode, which grants nothing; and a Dreamer-born digest cadence and presentation
+request sets both rows. Each lands as an `auto` finding, and the inbox's finding notice tells you.
+The Coach's and the healer's findings still wait in the run tray. So does any Dreamer finding the
+Gate holds, and every curator rung on a critical claim: that waits for your approval in the run
+tray and applies on the next curator pass.
+
+- `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
+  reverted ones too, newest first, with its finding, kind (`finding`, `curator` or
+  `proactivity_policy`), facet, attempt, receipt and your revert once made.
+- `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` undoes its effect,
+  retracts its finding as yours and leaves one receipt. A curator rung's claim comes back at its
+  prior confidence and rung: in place when a weakening closed a claim with no signed history,
+  else as the Dreamer's fresh copy born of it, since a signed claim's history never reopens (the
+  copy carries the default `ClaimOf` weight). A digest request puts back the rows it replaced, or
+  the defaults. Anything a later write changed is left as it is. The reply lists what stood
+  again, what was copied, what was closed, the settings put back and what was left alone. A
+  second revert returns the first one's reply, and the Dreamer never applies that finding again.
+
 ## Review cleanup
 
 The cleanup job files away husks: a person an extraction minted and never learned anything
@@ -1172,9 +1196,11 @@ oneiron handoff-alarms list                     # every saved alarm, open or ack
 oneiron handoff-alarms acknowledge SUITE:HEX    # you have seen this key's alarm
 ```
 
-Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
+Routes: `GET /v1/owner/authority/handoff-alarms` and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
-signer is 404, and acknowledging an acknowledged alarm changes nothing.
+signer is 404, and acknowledging an acknowledged alarm changes nothing. The list, the CLI and the
+SDK's `vault.authority.handoff_alarms` answer one shape in one order: `raised_at` and an
+acknowledgement's `at` in unix seconds, oldest raised first, then by signer.
 
 ## Learned settings
 

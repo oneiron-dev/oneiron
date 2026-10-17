@@ -14,7 +14,8 @@ mod prune;
 mod sealed;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
-    AUTHORITY_TAIL_PAGE_MAX, AuthorityPageImport, authority_append_for, authority_range_for,
+    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
+    AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
 };
 pub use bundle::{

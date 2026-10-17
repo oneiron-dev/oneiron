@@ -34,7 +34,7 @@ use super::cooldown::{
 };
 use super::driven::Driven;
 use super::forward::{Ended, forward};
-use super::media::{HeldJob, MediaAnswer, MediaRung};
+use super::media::{HeldJob, MediaAnswer, MediaRung, RungVoices};
 use super::offer::ServedOffer;
 use super::served::served_receipt;
 use super::status::RungHealth;
@@ -105,7 +105,9 @@ pub(super) struct SeatScope {
 }
 
 /// What a call asks of a fallback (OF-305): the chat request as it is sent
-/// and whether it streams, or the whole media request.
+/// and whether it streams, or the whole media request. A speech call in a
+/// banked voice asks each rung for its live binding of the voice instead
+/// (FIX 1746), and no fallback serves it.
 #[derive(Clone, Copy)]
 enum Needs<'a> {
     Chat {
@@ -113,6 +115,7 @@ enum Needs<'a> {
         stream: bool,
     },
     Media(&'a MediaRequest),
+    Voiced(&'a RungVoices),
 }
 
 /// What a call met on the ladder it fell back from (OF-305): how many rungs
@@ -160,6 +163,27 @@ fn settle_failed(permit: RunPermit) -> bool {
         tracing::error!(%denied, "a failed rung's settlement was refused");
     }
     sent
+}
+
+/// `request` as the rung `rung` would send it: under its model and where it
+/// runs.
+fn rung_request(rung: &LadderRung, request: &MediaRequest) -> MediaRequest {
+    let mut bound = request.clone();
+    bound.model = rung.model.clone();
+    bound.envelope.locality = rung.offer.binding.locality;
+    bound
+}
+
+/// Whether a media call names a voice, typed or as a raw `voice` param.
+fn names_voice(request: &MediaRequest) -> bool {
+    request.voice.is_some() || request.params.contains_key("voice")
+}
+
+/// Whether `rung`'s row serves `request` as the rung would send it.
+fn serves_media(rung: &LadderRung, request: &MediaRequest) -> bool {
+    rung.media
+        .as_ref()
+        .is_some_and(|media| media.row.admit_media(&rung_request(rung, request)).is_ok())
 }
 
 /// How a model is reached: a seat's ladder, one rung of it alone, or a
@@ -379,13 +403,17 @@ impl OfferLadder {
             && !self.rests.world_may_leave(request)
     }
 
-    /// Whether the call passes the rung at `index` without sending it: a
-    /// fallback to it would take the work off the device and the call's
-    /// world stays on it, its offer rests from an earlier refusal, or its
-    /// offer is on probation with its one probation request out. The device
-    /// comes first, so a rung the call may not use is never one it waits
-    /// for.
+    /// Whether the call passes the rung at `index` without sending it: it
+    /// does not hold the call's voice (FIX 1746), a fallback to it would
+    /// take the work off the device and the call's world stays on it, its
+    /// offer rests from an earlier refusal, or its offer is on probation
+    /// with its one probation request out. The voice and the device come
+    /// first, so a rung the call may not use is never one it waits for.
     fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
+        if self.voice_not_held(call, index) {
+            walk.note(index, Passed::VoiceNotHeld);
+            return true;
+        }
         if self.kept_on_device(index, call.request) {
             self.hold(call, index, walk);
             return true;
@@ -468,11 +496,12 @@ impl OfferLadder {
     /// must accept the call as it would send it: a chat call passes the
     /// backend's own checks (streaming, tools, images, audio and the rest,
     /// with no I/O), and a media call passes the row's. A speech call that
-    /// names a voice falls back nowhere, since a voice is bound to its own
-    /// target and a fallback never clones one.
+    /// names a voice takes no owner's fallback (FIX 1746): a banked voice
+    /// goes only to the rungs of its own ladder that hold it, a stock or raw
+    /// one stays on its first rung, and a fallback never clones a voice.
     fn can_serve(&self, scope: &SeatScope, needs: Needs<'_>) -> bool {
-        if let Needs::Media(request) = needs
-            && (request.voice.is_some() || request.params.contains_key("voice"))
+        if matches!(needs, Needs::Voiced(..))
+            || matches!(needs, Needs::Media(request) if names_voice(request))
         {
             return false;
         }
@@ -488,12 +517,8 @@ impl OfferLadder {
                         .backend
                         .preflight(&rung.bind(request.clone()), stream)
                         .is_ok(),
-                    Needs::Media(request) => rung.media.as_ref().is_some_and(|media| {
-                        let mut bound = request.clone();
-                        bound.model = rung.model.clone();
-                        bound.envelope.locality = rung.offer.binding.locality;
-                        media.row.admit_media(&bound).is_ok()
-                    }),
+                    Needs::Media(request) => serves_media(rung, request),
+                    Needs::Voiced(..) => false,
                 }
             })
     }
@@ -612,6 +637,24 @@ impl OfferLadder {
         );
     }
 
+    /// Whether the call's voice keeps it from the rung at `index` (FIX 1746).
+    /// A banked voice goes only to a rung whose target held a live binding
+    /// of it when the call was admitted. A stock or raw voice is one
+    /// provider's name, so it goes only to the first rung whose row serves
+    /// the call: never to another provider, in another voice.
+    fn voice_not_held(&self, call: Call<'_>, index: usize) -> bool {
+        match call.needs {
+            Needs::Voiced(voices) => !voices.holds(&self.rungs[index].model),
+            Needs::Media(request) if names_voice(request) => {
+                self.rungs
+                    .iter()
+                    .position(|rung| serves_media(rung, request))
+                    != Some(index)
+            }
+            Needs::Media(_) | Needs::Chat { .. } => false,
+        }
+    }
+
     /// The first rung in order that this pass of the call has not `sent`
     /// and can use now. Each is asked again every time, so a rung whose rest
     /// ended while a later one was sent is the next one used.
@@ -712,7 +755,7 @@ impl OfferLadder {
             return None;
         }
         for index in 0..self.rungs.len() {
-            if self.kept_on_device(index, call.request) {
+            if !self.voice_not_held(call, index) && self.kept_on_device(index, call.request) {
                 self.hold(call, index, walk);
             }
         }
@@ -1040,14 +1083,25 @@ impl OfferLadder {
     /// whose parked offer has the owner's fallback goes there (OF-305). A job
     /// (`ai.video`) answers with its started permit held, to settle when the
     /// job ends.
+    /// A speech call in a banked voice carries each rung's live binding of
+    /// it in `voices`: it goes only to those rungs, each in its own binding
+    /// (FIX 1746).
     pub(super) async fn media(
         &self,
         run: &RunAdmission,
         request: MediaRequest,
         selector: Option<&str>,
+        voices: Option<&RungVoices>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(run, request, selector, self.rests.max_wait_secs(), true)
-            .await
+        self.media_from(
+            run,
+            request,
+            selector,
+            self.rests.max_wait_secs(),
+            true,
+            voices,
+        )
+        .await
     }
 
     /// [`Self::media`], waiting for offers back for at most `budget_secs` in
@@ -1061,6 +1115,7 @@ impl OfferLadder {
         selector: Option<&'a str>,
         budget_secs: u64,
         may_fall_back: bool,
+        voices: Option<&'a RungVoices>,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
@@ -1069,7 +1124,10 @@ impl OfferLadder {
                 run,
                 request: &admission,
                 selector,
-                needs: Needs::Media(&request),
+                needs: match voices {
+                    Some(voices) => Needs::Voiced(voices),
+                    None => Needs::Media(&request),
+                },
             };
             let mut walk = Walk::default();
             let mut budget = budget_secs;
@@ -1086,6 +1144,7 @@ impl OfferLadder {
                                 Some(selector.unwrap_or(self.name.as_str())),
                                 budget,
                                 false,
+                                voices,
                             )
                             .await;
                         if fell.is_err() {
@@ -1123,9 +1182,16 @@ impl OfferLadder {
         let Some(media) = &rung.media else {
             return Ok(None);
         };
-        let mut bound = request.clone();
-        bound.model = rung.model.clone();
-        bound.envelope.locality = rung.offer.binding.locality;
+        let mut bound = rung_request(rung, request);
+        // A banked voice goes out in this rung's own binding of it, while
+        // that is still current (FIX 1746).
+        if let Needs::Voiced(voices) = call.needs {
+            let Some(voice) = voices.send_on(&rung.model) else {
+                walk.note(index, Passed::VoiceNotHeld);
+                return Ok(None);
+            };
+            bound.voice = Some(voice);
+        }
         // A rung whose row does not serve the call (its inputs, its
         // references) is passed, unsent; a call no rung serves is refused.
         if media.row.admit_media(&bound).is_err() {
