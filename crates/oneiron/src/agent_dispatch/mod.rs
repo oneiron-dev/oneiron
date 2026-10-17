@@ -105,7 +105,8 @@ pub use self::planner::{
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
 pub(crate) use self::task_type_tree::load_team_type_tree_in_txn;
 pub use self::task_type_tree::{
-    TASK_TYPE_TREE_FILE, load_team_type_tree, store_team_type_tree, team_shape_skill_in_force,
+    TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at, store_team_type_tree,
+    team_shape_skill_in_force,
 };
 pub use self::team_shape::{
     CoordinationPattern, TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, team_shape_skill,

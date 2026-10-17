@@ -1027,7 +1027,7 @@ class Oneiron:
             """An artifact's live body head, or null."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_head(json.dumps(request, allow_nan=False))))
         def read(self, request: dict[str, Any]) -> dict[str, Any]:
-            """Reads a DOCX or XLSX live body, at its head or an earlier frontier."""
+            """Reads a live body, at its head or an earlier frontier."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_read(json.dumps(request, allow_nan=False))))
         def commits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
             """Every commit receipt of a live body, in commit order."""
@@ -1044,6 +1044,9 @@ class Oneiron:
         def preview(self, request: dict[str, Any]) -> dict[str, Any]:
             """The workbook an XLSX export would land now, recalculated."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_preview(json.dumps(request, allow_nan=False))))
+        @property
+        def deck(self) -> "Oneiron._VaultArtifactsBodyDeckVerbs":
+            return Oneiron._VaultArtifactsBodyDeckVerbs(self._client)
     class _VaultArtifactsBodyForkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1062,6 +1065,24 @@ class Oneiron:
         def discard(self, request: dict[str, Any]) -> dict[str, Any]:
             """Abandons an open fork's unlanded work."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_discard(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsBodyDeckVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def review(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A deck fork's merge preflight against the live head."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_review(json.dumps(request, allow_nan=False))))
+        def merge(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A person lands a reviewed deck fork."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_merge(json.dumps(request, allow_nan=False))))
+        def export(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Projects a deck, landing it as the next version when its export gate is open."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_export(json.dumps(request, allow_nan=False))))
+        def gate(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The deck export gate for a profile."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_gate(json.dumps(request, allow_nan=False))))
+        def oracle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Records the deck oracle's receipt for its export profile."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_oracle(json.dumps(request, allow_nan=False))))
     class _VaultCodeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
