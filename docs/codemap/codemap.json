@@ -9894,7 +9894,7 @@
      "path": "src/claim/lifecycle.rs",
      "purpose": "Claim lifecycle transitions: the supersession-chain walk, the write-verb validity guard, `supersede_claim` /…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 4
      }
     },
@@ -9925,7 +9925,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "re-export": 11
      }
     },
@@ -10471,7 +10471,7 @@
      "path": "src/claim/supersession_provenance.rs",
      "purpose": "Runner-owned companion claims; structural taint mirrors also run on replay",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -71296,6 +71296,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MediaDoor"
+     ],
+     "path": "src/server/media_door.rs",
+     "purpose": "The vault-bound media door (FIX-LIST 467): the one door engine code makes a media call through",
+     "surface": {
+      "crate-vis": 5,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71322,8 +71335,8 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 14,
-      "re-export": 3
+      "crate-vis": 15,
+      "re-export": 4
      }
     },
     {
@@ -72518,7 +72531,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72590,7 +72603,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 595,
+   "source_files": 596,
    "test_files": 182
   },
   "oneiron-spawn": {
