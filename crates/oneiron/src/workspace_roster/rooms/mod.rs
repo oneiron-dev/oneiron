@@ -210,7 +210,8 @@ pub(crate) fn project_room_audience_in(
     room: EntityId,
     audience: &[EntityId],
 ) -> Result<Option<bool>> {
-    let Some(raw) = vault.store.entities.get(txn, room.as_bytes())? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &room)?
+    else {
         return Ok(None);
     };
     let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
@@ -367,14 +368,13 @@ impl Memory<'_> {
             self.vault().store.clock.now_recorded_at(),
         )?;
         let mut result = Vec::new();
-        for row in self
-            .vault()
-            .store
-            .type_index
-            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_CONVERSATION])?
-        {
-            let (key, _) = row?;
-            let id = EntityId::from_bytes(key[1..].try_into().map_err(|_| invalid())?)?;
+        for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.vault().store,
+            &txn,
+            crate::registry::ENTITY_TYPE_CONVERSATION,
+            None,
+        )? {
+            let id = row?;
             if let Ok(room) = room_in(self.vault(), &txn, id)
                 && participation::reads_room_in_txn(
                     self.vault(),
