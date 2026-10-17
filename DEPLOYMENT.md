@@ -105,8 +105,9 @@ scheme and host with that port. Set a fixed port for links that outlive a
 restart. Behind a reverse proxy, publish that port on its own origin as well,
 and never list it in `allowed_origins`. Both listeners share the `[limits]`
 connection floor and each address's unauthenticated share. Managed serve
-(`--managed-by-hypnos`) binds no artifact listener and refuses the flag; its
-`/a/` is unchanged until the supervisor routes an artifact origin.
+(`--managed-by-hypnos`) refuses the port flag. Its artifact listener is the unix
+socket the supervisor names with `--artifact-http-socket` (an absolute path);
+without one, its `/a/` answers on the API socket alone.
 
 `artifact_domains` (flag `--artifact-domains`, env `ONEIRON_ARTIFACT_DOMAINS`,
 comma-separated) and `artifact_vault_name` (flag `--artifact-vault-name`, env
@@ -118,8 +119,9 @@ each domain's subdomains to the artifact port. A subdomain that names no vault
 here answers exactly as a forbidden artifact does (the artifact 404), and so
 does every refusal from this vault there. Other hosts keep plain `/a/`. A
 device publishes to this server by syncing: a pinned pointer reaches it once
-window sync has delivered the bytes and rows it names. Managed serve refuses
-both flags for now.
+window sync has delivered the bytes and rows it names. Managed serve takes
+`--artifact-domains` beside `--artifact-http-socket` and refuses
+`--artifact-vault-name`: its subdomain is always its own vault name.
 
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the
@@ -235,6 +237,20 @@ system install roots. The recommended local path is:
 ```
 
 Use `--dict-search-paths` or `ONEIRON_DICT_SEARCH_PATHS` for custom roots.
+
+## Slide Review Renders
+
+A held slide review whose slides change before Keep withdraws only the changed
+slides' answers. After the quiet interval the server asks those slides again
+over fresh renders of the head. It renders them itself with LibreOffice Impress
+headless (`soffice`, exported to PDF) and poppler's `pdftoppm` (one PNG per
+slide at 96 dpi). Both must be on the server's `PATH`. Each conversion uses its
+own temporary profile and a timeout. Install the review fonts beside them:
+Liberation for Arial, Times New Roman and Courier New; Carlito and Caladea for
+Calibri and Cambria.
+
+Without both tools the slides stay withdrawn, and their wake is held and tried
+again every five minutes. The rest of the review still lands on Keep.
 
 ## Service Templates
 
