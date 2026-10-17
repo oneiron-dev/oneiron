@@ -691,6 +691,25 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     });
+    // Failure signals reach our collector under the same admission (OF-380).
+    // Managed mode reads no environment, so the send carries no bearer.
+    let failure_signals = crate::ai_host::failure_signals::spawn(
+        &sync_server,
+        crate::ai_host::failure_signals::FailureSignalHost::new(
+            &config.failure_signals,
+            true,
+            None,
+        ),
+        {
+            let state = Arc::clone(&state);
+            Arc::new(move || {
+                state
+                    .admit_http_mutation()
+                    .ok()
+                    .map(|admission| Box::new(admission) as Box<dyn Send>)
+            })
+        },
+    );
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -719,6 +738,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = connector_sends.await;
     builtin_host.abort();
     let _ = builtin_host.await;
+    if let Some(failure_signals) = failure_signals {
+        failure_signals.abort();
+        let _ = failure_signals.await;
+    }
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 
