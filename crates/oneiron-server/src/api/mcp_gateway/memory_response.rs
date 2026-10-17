@@ -6,8 +6,8 @@ use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::{
     CoreContextPackRequest, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus,
-    EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient, VaultReadError,
-    VaultReadMethod, View,
+    EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient, VaultReadError, VaultReadMethod,
+    View,
 };
 use oneiron::context_board::CapabilityHit;
 use serde_json::{Value, json};
@@ -211,37 +211,53 @@ fn execute_read(
     })
 }
 
-/// A native context pack's `media` (OF-370), embedded before the read through
-/// the server's shared seed embedding, the one `POST /v1/core/context-pack`
-/// runs. The pack's own checks and the media's decoding come first and are
-/// free; the embed is the paid call. Any other method, or a pack without
-/// media, embeds nothing.
+/// A native context pack's media seeds (OF-370), embedded before the read
+/// through the server's shared seed embedding, the one `POST
+/// /v1/core/context-pack` runs: the pack's own `media`, and on the one-space
+/// preset (the text kind slot bound to a declared space) its text query
+/// through that space's text tower. The pack's own checks and the media's
+/// decoding come first and are free; the embed is the paid call. Any other
+/// method, or a pack that seeds nothing, embeds nothing.
 async fn context_pack_media(
     server: &SyncServer,
     args: &McpVerbToolArgs,
 ) -> Result<Option<Vec<EmbeddedMediaSeed>>, McpGatewayError> {
-    if !matches!(args.tool.memory_method(), Some(VaultReadMethod::ContextPack)) {
+    if !matches!(
+        args.tool.memory_method(),
+        Some(VaultReadMethod::ContextPack)
+    ) {
         return Ok(None);
     }
     let Some(body) = args.payload.arguments.request.as_ref() else {
         return Ok(None);
     };
-    if body.get("media").is_none_or(Value::is_null) {
+    let names_media = !body.get("media").is_none_or(Value::is_null);
+    let names_query = body
+        .get("query")
+        .and_then(Value::as_str)
+        .is_some_and(|query| !query.trim().is_empty());
+    if !names_media && !names_query {
         return Ok(None);
     }
     let pack: CoreContextPackRequest = request(body.clone())?;
     InProcessVaultReadAdapter::check_context_pack(&pack).map_err(native_error)?;
     InProcessVaultReadAdapter::context_pack_skill_query(&server.vault, &pack)
         .map_err(native_error)?;
-    let Some(media) = pack.media else {
-        return Ok(None);
-    };
-    let decoded = crate::api::ContextPackMediaQuery::from(media)
-        .decode(server.config.limits.retrieval_query_bytes)
+    let decoded = pack
+        .media
+        .map(|media| {
+            crate::api::ContextPackMediaQuery::from(media)
+                .decode(server.config.limits.retrieval_query_bytes)
+        })
+        .transpose()
         .map_err(media_error)?;
-    let seeds = crate::api::embed_media_seeds(server, Some(decoded), None)
+    let query = crate::api::non_empty_query(pack.query.as_deref());
+    let seeds = crate::api::embed_media_seeds(server, decoded, query)
         .await
         .map_err(media_error)?;
+    if seeds.is_empty() {
+        return Ok(None);
+    }
     Ok(Some(
         seeds
             .into_iter()

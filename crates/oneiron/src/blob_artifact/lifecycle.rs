@@ -23,8 +23,8 @@ pub(crate) struct BlobArtifactLifecycleCleanup {
     pub(crate) neighbors: Vec<EntityId>,
 }
 
-/// Removes an artifact's version chain, head record, and asset-reference
-/// rows, hard-deleting every ASSET entity this artifact was the LAST
+/// Removes an artifact's version chain, head record, born-from index rows and
+/// asset-reference rows, hard-deleting every ASSET entity this artifact was the LAST
 /// reference to — version bytes never outlive the last artifact that holds
 /// them, on the vault that wrote them or on any replica (H125).
 ///
@@ -55,6 +55,9 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     forget_claimed_hashes(store, wtxn, id)?;
     HEAD.delete(store, wtxn, id)?;
     for key in keys {
+        if let Some(version) = VERSIONS.get_lenient(store, wtxn, &key)? {
+            super::born_from::unindex_version_in_txn(store, wtxn, id, &version)?;
+        }
         VERSIONS.delete(store, wtxn, &key)?;
     }
     for content_hash in hashes {
