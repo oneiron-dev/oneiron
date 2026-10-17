@@ -57,6 +57,7 @@ mod import_order;
 mod ingest_observation;
 mod install_fold;
 mod invocation_slip;
+mod left_notices;
 mod log_budget;
 mod log_structure;
 mod machine_claims;
