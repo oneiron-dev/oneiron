@@ -372,7 +372,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
 
         match result {
             Ok(()) => {
-                let data = unsafe { crate::from_val(data_val.assume_init()) };
+                let data = unsafe { txn.stable(crate::from_val(data_val.assume_init())) };
                 let data = DC::bytes_decode(data).map_err(Error::Decoding)?;
                 Ok(Some(data))
             }
@@ -2144,7 +2144,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
             Ok(()) => Ok(None),
             // the key already exists: the previous value is stored in the data parameter
             Err(MdbError::KeyExist) => {
-                let bytes = unsafe { crate::from_val(data_val) };
+                let bytes = unsafe { txn.stable(crate::from_val(data_val)) };
                 let data = DC::bytes_decode(bytes).map_err(Error::Decoding)?;
                 Ok(Some(data))
             }
@@ -2156,7 +2156,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
     /// written to disk, or if a value already exists for the key, returns the previous value.
     ///
     /// The entry is always written with the [`NO_OVERWRITE`](PutFlags::NO_OVERWRITE) and
-    /// [`MDB_RESERVE`](lmdb_master_sys::MDB_RESERVE) flags.
+    /// [`MDB_RESERVE`](lmdb_master3_sys::MDB_RESERVE) flags.
     ///
     /// ```
     /// # use heed::EnvOpenOptions;
@@ -2219,7 +2219,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
     /// written to disk, or if a value already exists for the key, returns the previous value.
     ///
     /// The entry is written with the specified flags, in addition to
-    /// [`NO_OVERWRITE`](PutFlags::NO_OVERWRITE) and [`MDB_RESERVE`](lmdb_master_sys::MDB_RESERVE)
+    /// [`NO_OVERWRITE`](PutFlags::NO_OVERWRITE) and [`MDB_RESERVE`](lmdb_master3_sys::MDB_RESERVE)
     /// which are always used.
     ///
     /// ```
@@ -2283,7 +2283,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
 
         let mut key_val = unsafe { crate::into_val(&key_bytes) };
         let mut reserved = ffi::reserve_size_val(data_size);
-        let flags = (flags | PutFlags::NO_OVERWRITE).bits() | lmdb_master_sys::MDB_RESERVE;
+        let flags = (flags | PutFlags::NO_OVERWRITE).bits() | lmdb_master3_sys::MDB_RESERVE;
 
         let result = unsafe {
             mdb_result(ffi::mdb_put(
@@ -2308,7 +2308,7 @@ impl<KC, DC, C> Database<KC, DC, C> {
             }
             // the key already exists: the previous value is stored in the data parameter
             Err(MdbError::KeyExist) => {
-                let bytes = unsafe { crate::from_val(reserved) };
+                let bytes = unsafe { txn.stable(crate::from_val(reserved)) };
                 let data = DC::bytes_decode(bytes).map_err(Error::Decoding)?;
                 Ok(Some(data))
             }

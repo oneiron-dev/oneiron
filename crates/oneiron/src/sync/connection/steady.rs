@@ -263,8 +263,13 @@ impl SyncConnection {
                         sealed_task = Some(tokio::spawn(async move {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
-                            // (OF-469).
-                            if config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                            // (OF-469). Any machine whose rows name history it
+                            // lacks takes it too.
+                            if (config.residence_mode == crate::sync::SyncResidenceMode::Opened
+                                || !manager
+                                    .vault()
+                                    .authority_missing_history()
+                                    .is_ok_and(|missing| missing.is_complete()))
                                 && let Err(error) =
                                     crate::sync::client::catch_up_authority(manager.vault(), &config)
                                         .await
