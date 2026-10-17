@@ -15754,6 +15754,85 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CoreBatchCommit",
+      "CoreBatchEntityInput",
+      "CoreBatchEntityReceipt",
+      "CoreBatchWriteInput",
+      "CoreBatchWriteReceipt"
+     ],
+     "path": "src/core_write/batch.rs",
+     "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConversationCreateInput",
+      "ConversationTurnCreateInput",
+      "CoreEntityWriteReceipt"
+     ],
+     "path": "src/core_write/conversations.rs",
+     "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoreDagAddressMode",
+      "CoreDagQuoteInput",
+      "DagRecordAppendInput",
+      "DagRecordAppendReceipt"
+     ],
+     "path": "src/core_write/dag.rs",
+     "purpose": "`vault.conversations.records.append` (OF-181): one DAG record and its topology, the write `POST…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/core_write/mod.rs",
+     "purpose": "Core entity writes as typed rows (OF-181): the conversation container, a TURN under it, a DAG record and the…",
+     "surface": {
+      "mod": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CoreWriteRefusal",
+      "CoreWriteTextField",
+      "CoreWriteTimes"
+     ],
+     "path": "src/core_write/shape.rs",
+     "purpose": "The shape every core entity write shares: its id, its interval, its announcement-normalized body and its…",
+     "surface": {
+      "const": 6,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 11,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CorpusScope"
      ],
      "path": "src/corpus.rs",
@@ -26662,7 +26741,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 20,
-      "mod": 194,
+      "mod": 195,
       "re-export": 75
      }
     },
@@ -45591,7 +45670,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 269
+      "fn": 273
      }
     },
     {
@@ -50678,6 +50757,13 @@
      "layout": "dir",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution"
     },
+    "core_write": {
+     "files": 5,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Core entity writes as typed rows (OF-181): the conversation container, a TURN under it, a DAG record and the…"
+    },
     "corpus": {
      "files": 1,
      "impl_vault": false,
@@ -51773,7 +51859,7 @@
    },
    "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3129,
+   "source_files": 3134,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59646,7 +59732,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 224
+      "fn": 228
      }
     },
     {
@@ -60662,7 +60748,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 225
+      "fn": 229
      }
     },
     {
@@ -63079,7 +63165,7 @@
      "path": "src/api/core/batch.rs",
      "purpose": "Batch-write DTOs, route handler, and entity-put staging",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 9
      }
     },
     {
@@ -63143,13 +63229,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/core/write_shape.rs",
-     "purpose": "Create-entity DTOs, announcement normalization, and body field helpers",
+     "purpose": "Create-entity DTOs, and the HTTP face of the core write shape the engine owns…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 12
      }
     },
     {
@@ -63249,7 +63335,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -63270,6 +63356,16 @@
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/core_write_doors.rs",
+     "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -63339,7 +63435,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -69897,7 +69993,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 281,
+     "files": 282,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70242,7 +70338,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 555,
+   "source_files": 556,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70528,8 +70624,20 @@
       "ConsentStateMembershipConsent",
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
+      "ConversationCreateInput",
+      "ConversationTurnCreateInput",
+      "CoreBatchEntityInput",
+      "CoreBatchEntityReceipt",
+      "CoreBatchWriteInput",
+      "CoreBatchWriteReceipt",
+      "CoreDagAddressMode",
+      "CoreDagQuoteInput",
+      "CoreEntityWriteReceipt",
+      "CoreWriteTextField",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
+      "DagRecordAppendInput",
+      "DagRecordAppendReceipt",
       "DecisionAnswer",
       "DecisionAsk",
       "DecisionAskAnswerRequest",
@@ -71057,8 +71165,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 182,
-      "struct": 460
+      "enum": 183,
+      "struct": 471
      }
     },
     {
