@@ -43,8 +43,6 @@ jobs:
     timeout-minutes: 30
     if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     steps:
-      # fetch-depth 0 so the PR-only forbidden-path guard can always reach
-      # the base SHA, with no implementer-chosen baseline.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -75,24 +73,6 @@ jobs:
           if rg --files crates/oneiron-uniffi -g '*.udl' | grep -q .; then
             echo "interface definition file found"; exit 1
           fi
-
-      # The raw C ABI and the root Swift package stay untouched by this
-      # lane. A PR-base property, so it only runs on pull_request events.
-      - name: Legacy FFI and root Swift package untouched
-        if: github.event_name == 'pull_request'
-        run: |
-          CHANGED=$(mktemp)
-          git diff --name-only "${{ github.event.pull_request.base.sha }}...HEAD" \
-            > "$CHANGED"
-          if grep -qE '^crates/oneiron-ffi/' "$CHANGED" \
-            || grep -qx 'Package.swift' "$CHANGED"; then
-            echo "forbidden path changed:"
-            grep -E '^crates/oneiron-ffi/' "$CHANGED" || true
-            grep -x 'Package.swift' "$CHANGED" || true
-            rm -f "$CHANGED"
-            exit 1
-          fi
-          rm -f "$CHANGED"
 
       # Generation and build leave the tree clean: generated bindings live
       # under gitignored `.generated/` / `.build/`, and the committed

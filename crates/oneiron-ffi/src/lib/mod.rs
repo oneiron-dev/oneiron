@@ -80,9 +80,12 @@ mod tests;
 
 #[cfg(feature = "engine")]
 pub use self::engine::{
-    OneironAppHost, OneironEngine, OneironReply, OneironSecretSink, oneiron_engine_free,
-    oneiron_engine_reply_free, oneiron_engine_request, oneiron_engine_start, oneiron_engine_stop,
-    oneiron_engine_vault, oneiron_engine_wake, oneiron_secret_sink_write,
+    OneironAppHost, OneironEngine, OneironEngineConnection, OneironReply, OneironSecretSink,
+    oneiron_engine_connection_close, oneiron_engine_connection_free,
+    oneiron_engine_connection_open, oneiron_engine_connection_receive,
+    oneiron_engine_connection_send, oneiron_engine_free, oneiron_engine_reply_free,
+    oneiron_engine_request, oneiron_engine_start, oneiron_engine_stop, oneiron_engine_vault,
+    oneiron_engine_wake, oneiron_secret_sink_write,
 };
 pub use self::entity::{
     oneiron_buffer_free, oneiron_edge_info_array_free, oneiron_scored_entity_array_free,
