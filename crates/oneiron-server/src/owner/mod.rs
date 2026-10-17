@@ -19,6 +19,7 @@ pub(crate) mod house;
 pub(crate) mod imports;
 pub(crate) mod location;
 pub(crate) mod note_imports;
+pub(crate) mod note_tombstones;
 pub(crate) mod off_record;
 pub(crate) mod pack_drift;
 pub(crate) mod persona;
