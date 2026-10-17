@@ -2362,7 +2362,7 @@
     },
     {
       "name": "self.decisions.asks",
-      "input": "crate::receipt::DecisionAskListRequest",
+      "input": "EmptyRequest",
       "output": "Vec<crate::llm::decision::DecisionAsk>",
       "call": "crate::task_verb::sdk::host_only(memory, \"self.decisions.asks\", &input)?",
       "host_door": true,

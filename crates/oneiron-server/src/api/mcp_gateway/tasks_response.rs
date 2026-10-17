@@ -3276,7 +3276,7 @@ async fn execute_agent_verb_row(
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("self.decisions.asks", &input)
                 .map_err(mcp_facade_error)?;
-            let input: oneiron::receipt::DecisionAskListRequest =
+            let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::self_decisions_asks(server, auth, input)
                 .await

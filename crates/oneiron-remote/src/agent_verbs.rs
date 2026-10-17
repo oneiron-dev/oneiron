@@ -2457,7 +2457,7 @@ impl OneironClient {
     }
     pub fn self_decisions_asks(
         &self,
-        input: &oneiron::receipt::DecisionAskListRequest,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
     ) -> Result<Vec<oneiron::llm::decision::DecisionAsk>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(

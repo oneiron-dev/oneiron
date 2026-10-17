@@ -24,6 +24,7 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 mod decision_ask_doors;
+pub(super) mod decision_role_asks;
 mod graph_ask_doors;
 mod guest_doors;
 pub(super) mod host_doors;

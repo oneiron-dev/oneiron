@@ -1,8 +1,10 @@
-//! OF-493's role-holder doors (Q3 by role): a person or a bound agent that
-//! holds the role a decision ask is at answers it, passes it up its chain, or
-//! lists the open asks put to it. The owner's own doors stay under
-//! `/v1/owner/decisions/asks`. The generated HTTP facade handler and the MCP
-//! dispatcher both call these through `host_doors`.
+//! OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound
+//! agent that holds the role a decision ask is at lists those asks, answers
+//! one, or passes one up its chain. List and answer are the calls
+//! `GET /v1/core/decisions/asks` and `POST /v1/core/decisions/asks/answer`
+//! make (`decision_role_asks`); the climb is new here. The owner's own doors
+//! stay under `/v1/owner/decisions/asks`. The generated facade handler and
+//! the MCP dispatcher both call these through `host_doors`.
 //!
 //! Each acts as the caller: the slip's principal with its declared class,
 //! human or agent. No holder, role or kind comes from the request, and an
@@ -14,7 +16,8 @@ use std::sync::Arc;
 
 use oneiron::llm::decision::{DecisionAsk, ResolvedRole};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
-use oneiron::receipt::{DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskListRequest};
+use oneiron::receipt::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
+use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
 use super::host_doors::internal;
@@ -65,22 +68,18 @@ pub(crate) async fn vault_decisions_asks_climb(
     .map_err(|_| internal(VERB))?
 }
 
-/// `self.decisions.asks`: a page of the open asks put to the caller, oldest
-/// first: those whose role's holders, as the ask was queued or last climbed,
-/// name the caller.
+/// `self.decisions.asks`: the open asks at a role the caller holds now,
+/// oldest first, as `GET /v1/core/decisions/asks` lists them.
 pub(crate) async fn self_decisions_asks(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: DecisionAskListRequest,
+    _input: EmptyRequest,
 ) -> MemoryResult<Vec<DecisionAsk>> {
     const VERB: &str = "self.decisions.asks";
     let holder = holder(auth, VERB)?.entity_ref();
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || -> MemoryResult<Vec<DecisionAsk>> {
-        Ok(server
-            .decision_host()
-            .asks()
-            .open_for(holder, input.after, input.page_limit())?)
+        Ok(server.vault().decision_asks_held_by(holder)?)
     })
     .await
     .map_err(|_| internal(VERB))?

@@ -153,7 +153,7 @@ export interface FacadeInputs {
   "vault.questions.answers": Facade.QuestionAnswersRequest;
   "vault.decisions.asks.answer": Facade.DecisionAskAnswerRequest;
   "vault.decisions.asks.climb": Facade.DecisionAskClimbRequest;
-  "self.decisions.asks": Facade.DecisionAskListRequest;
+  "self.decisions.asks": Facade.EmptyRequest;
   "connector.list": Facade.ConnectorListRequest;
   "connector.status": Facade.ConnectorNameRequest;
   "vault.commit": Facade.CommitRequest;
@@ -612,7 +612,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         callables: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"self.skills.callables">[K] => invoke("self.skills.callables", input, options),
       },
       decisions: {
-        asks: (input: Facade.DecisionAskListRequest, options?: O): FacadeReturns<"self.decisions.asks">[K] => invoke("self.decisions.asks", input, options),
+        asks: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"self.decisions.asks">[K] => invoke("self.decisions.asks", input, options),
       },
     },
     vault: {

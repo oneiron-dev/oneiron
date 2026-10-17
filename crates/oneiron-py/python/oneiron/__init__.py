@@ -325,8 +325,8 @@ class Oneiron:
     class _SelfDecisionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def asks(self, spec):
-            return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps(spec))))
+        def asks(self, spec=None):
+            return json.loads(_translate(lambda: self._client.self_decisions_asks(json.dumps({} if spec is None else spec))))
     class _VaultVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

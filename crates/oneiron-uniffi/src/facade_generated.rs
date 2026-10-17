@@ -730,7 +730,7 @@ export_facade! {
     crate::codec::encode("vault.decisions.asks.climb", &output)
 };
 "self.decisions.asks" => fn self_decisions_asks(&self, input: WireJson) -> WireJson = |client| {
-    let input: oneiron::receipt::DecisionAskListRequest = crate::codec::decode("self.decisions.asks", &input)?;
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::decode("self.decisions.asks", &input)?;
     let output = client.self_decisions_asks(&input)?;
     crate::codec::encode("self.decisions.asks", &output)
 };

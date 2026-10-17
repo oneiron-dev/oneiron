@@ -196,34 +196,6 @@ impl Vault {
         limit: usize,
         open_only: bool,
     ) -> Result<Vec<DecisionAsk>> {
-        self.scan_decision_asks(after, limit, |ask| !open_only || ask.answer.is_none())
-    }
-
-    /// Up to `limit` open asks after arrival number `after`, oldest first, that were put to
-    /// `holder`: its actor is among the holders of the role each is at. The holders are the
-    /// ones the ask was queued or last climbed to; an answer reads them again.
-    pub fn open_decision_asks_for(
-        &self,
-        holder: EntityId,
-        after: Option<u64>,
-        limit: usize,
-    ) -> Result<Vec<DecisionAsk>> {
-        self.scan_decision_asks(after, limit, |ask| {
-            ask.answer.is_none()
-                && ask
-                    .role
-                    .as_ref()
-                    .is_some_and(|role| role.holders.iter().any(|held| held.actor == holder))
-        })
-    }
-
-    /// Up to `limit` asks after `after` that `keep` keeps, oldest first.
-    fn scan_decision_asks(
-        &self,
-        after: Option<u64>,
-        limit: usize,
-        keep: impl Fn(&DecisionAsk) -> bool,
-    ) -> Result<Vec<DecisionAsk>> {
         let txn = self.store.env.read_txn()?;
         let start = after.map_or(Bound::Unbounded, Bound::Excluded);
         let mut asks = Vec::new();
@@ -235,7 +207,7 @@ impl Vault {
             if ask.seq != seq {
                 return Err(Error::CorruptedIndex("decision ask identity"));
             }
-            if keep(&ask) {
+            if !open_only || ask.answer.is_none() {
                 asks.push(ask);
             }
         }
@@ -446,6 +418,67 @@ impl Vault {
             }
             Ok(next)
         })
+    }
+
+    /// The open asks at a role `actor` holds now, oldest first: what a role holder answers
+    /// at its own door ([`Self::answer_decision_ask_as`]).
+    pub fn decision_asks_held_by(&self, actor: EntityId) -> Result<Vec<DecisionAsk>> {
+        let txn = self.store.env.read_txn()?;
+        let mut held = Vec::new();
+        for row in ASKS.iter_range(&self.store, &txn, Bound::Unbounded, Bound::Unbounded)? {
+            let (_, ask) = row?;
+            let Some(at) = ask.role.as_ref().filter(|_| ask.answer.is_none()) else {
+                continue;
+            };
+            if self
+                .role_holders_in_txn(&txn, &at.role, ask.to.act)?
+                .iter()
+                .any(|holder| holder.actor == actor)
+            {
+                held.push(ask);
+            }
+        }
+        Ok(held)
+    }
+
+    /// Climbs each open ask no live actor holds now (OF-516): one whose role lost its last
+    /// holder, or one no role held when it was queued, moves to the next role on its chain
+    /// with a live holder, up to its ceiling, and stays where it is when none is left. The
+    /// asks climbed, each with the role it is at now. An ask answered meanwhile is skipped.
+    pub fn climb_unheld_decision_asks(&self) -> Result<Vec<(u64, ResolvedRole)>> {
+        let unheld = {
+            let txn = self.store.env.read_txn()?;
+            let mut unheld = Vec::new();
+            for row in ASKS.iter_range(&self.store, &txn, Bound::Unbounded, Bound::Unbounded)? {
+                let (seq, ask) = row?;
+                if ask.answer.is_some() {
+                    continue;
+                }
+                let held = match &ask.role {
+                    Some(at) => !self
+                        .role_holders_in_txn(&txn, &at.role, ask.to.act)?
+                        .is_empty(),
+                    None => false,
+                };
+                if !held {
+                    unheld.push(seq);
+                }
+            }
+            unheld
+        };
+        let mut climbed = Vec::new();
+        for seq in unheld {
+            let still_open = self
+                .decision_ask(seq)?
+                .is_some_and(|ask| ask.answer.is_none());
+            if !still_open {
+                continue;
+            }
+            if let Some(role) = self.climb_decision_ask(seq)? {
+                climbed.push((seq, role));
+            }
+        }
+        Ok(climbed)
     }
 
     /// [`AskRoleResolver::next_role`] in the caller's snapshot.
@@ -669,16 +702,6 @@ impl DecisionAsks {
     /// See [`Vault::climb_decision_ask_as`].
     pub fn climb_as(&self, by: &WriteActor, seq: u64) -> Result<Option<ResolvedRole>> {
         self.vault.climb_decision_ask_as(by, seq)
-    }
-
-    /// See [`Vault::open_decision_asks_for`].
-    pub fn open_for(
-        &self,
-        holder: EntityId,
-        after: Option<u64>,
-        limit: usize,
-    ) -> Result<Vec<DecisionAsk>> {
-        self.vault.open_decision_asks_for(holder, after, limit)
     }
 
     /// Waits for the answer to ask `seq`. An ask answered before the wait, or before a

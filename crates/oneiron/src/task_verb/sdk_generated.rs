@@ -733,8 +733,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "self.decisions.asks",
-                crate::code_run::vault_read::request_schema::<crate::receipt::DecisionAskListRequest>(
-                ),
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
                 "connector.list",
@@ -2799,7 +2798,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::receipt::DecisionAskClimbRequest = decode(value.clone())?;
         }
         "self.decisions.asks" => {
-            let _input: crate::receipt::DecisionAskListRequest = decode(value.clone())?;
+            let _input: EmptyRequest = decode(value.clone())?;
         }
         "connector.list" => {
             let _input: ConnectorListRequest = decode(value.clone())?;
@@ -4610,7 +4609,7 @@ pub fn vault_decisions_asks_climb(
 }
 pub fn self_decisions_asks(
     memory: &Memory<'_>,
-    input: crate::receipt::DecisionAskListRequest,
+    _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::llm::decision::DecisionAsk>> {
     crate::task_verb::sdk::host_only(memory, "self.decisions.asks", &input)
 }

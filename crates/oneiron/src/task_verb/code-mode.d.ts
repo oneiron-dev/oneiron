@@ -47,7 +47,7 @@ declare namespace self {
   };
   const compact: (input: { note?: string | null }) => Promise<unknown>;
   const decisions: {
-    asks(input: { after?: number | null; limit?: number | null }): Promise<unknown>;
+    asks(input: object): Promise<unknown>;
   };
   const desktop: {
     batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
