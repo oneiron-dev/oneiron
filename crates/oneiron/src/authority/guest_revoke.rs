@@ -103,8 +103,9 @@ impl Vault {
 
     /// A grant-bound slip (OF-232) stands only while its grant does: the
     /// FEDERATION_GRANT its claims name is live, not withdrawn, still an ask
-    /// guest's grant for the slip's holder, and confers at `now`. A slip that
-    /// names no grant passes. Every slip door reads this beside the fold's
+    /// guest's grant for the slip's holder, and confers at `now`; or it is
+    /// the holder's own-device grant (FIX 3134), live and conferring. A slip
+    /// that names no grant passes. Every slip door reads this beside the fold's
     /// revocation check.
     pub(super) fn require_live_slip_grant_in_txn(
         &self,
@@ -116,6 +117,9 @@ impl Vault {
             return Ok(());
         };
         let grant_ref = EntityId::from_hex(grant_ref).map_err(|_| invalid_authority())?;
+        if self.own_device_grant_stands_in_txn(txn, grant_ref, &claims.holder_ref, now)? {
+            return Ok(());
+        }
         self.require_live_guest_grant_in_txn(txn, grant_ref, &claims.holder_ref, now)
     }
 

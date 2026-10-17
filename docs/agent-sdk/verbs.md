@@ -172,6 +172,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_view`
 - `vault.code.repo_diff`
 - `vault.artifacts.export`
+- `vault.agents.export_pack`
 - `vault.artifacts.born_from`
 - `vault.artifacts.proposals`
 - `vault.artifacts.waits`
