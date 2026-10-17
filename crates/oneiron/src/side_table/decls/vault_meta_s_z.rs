@@ -533,6 +533,13 @@ side_tables! {
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;
+    /// What a standing answer rests on beyond its unit, as a source-to-root refresh watcher (an
+    /// edit to a neighbour queues the root's arrival). Key: id16(source) + id16(question) +
+    /// id16(unit).
+    TYPED_QUESTION_RESTS_ON: VaultMeta b"typed_question:rests_on:v1:" Raw;
+    /// The sources a unit's latest standing answer rests on, so the next answer replaces their
+    /// watchers. Key: id16(question) + id16(unit).
+    TYPED_QUESTION_ROOT_SOURCES: VaultMeta b"typed_question:root_sources:v1:" Named;
     /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
     TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
     TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
