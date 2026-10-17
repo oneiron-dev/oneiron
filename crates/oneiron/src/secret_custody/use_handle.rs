@@ -67,7 +67,7 @@ const USE_PACK: &str = "self.use";
 /// read-only provider checks the engine ships, each to one fixed provider
 /// endpoint. A call on the canon rows waits for its own entry (the FIX-LIST
 /// names them). One table, so a ruling changes one entry.
-pub const SECRET_USE_OPERATIONS: [SecretUseOperation; 4] = [
+pub static SECRET_USE_OPERATIONS: [SecretUseOperation; 4] = [
     SecretUseOperation {
         name: SLACK_AUTH_TEST_CHECK,
         effector: "connector:slack",

@@ -24,7 +24,7 @@ use super::{handle_record_in_txn, not_active, unknown};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::vault::Vault;
 
 /// The Gate reason code of an owner's binding.
@@ -103,20 +103,7 @@ impl Vault {
                 "only the vault owner binds a secret",
             )));
         }
-        let (handle, id) = match &request.target {
-            RevealTarget::Handle(handle) => handle_record_in_txn(&self.store, &wtxn, handle)?,
-            RevealTarget::Name(name) => {
-                let id = resolve_secret_ref_in_txn(&self.store, &wtxn, name)?
-                    .ok_or_else(|| unknown(name))?;
-                let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
-                    &self.store,
-                    &wtxn,
-                    &id,
-                )?
-                .map_or_else(|| name.clone(), |(short, _)| short);
-                (handle, id)
-            }
-        };
+        let (handle, id) = target_in_txn(&self.store, &wtxn, &request.target)?;
         let mut held = Held(
             read_secret_custody_in_txn(&self.store, &wtxn, &id)?.ok_or_else(|| unknown(&handle))?,
         );
@@ -176,6 +163,23 @@ impl Vault {
         #[cfg(not(feature = "sync"))]
         let _ = transition;
         Ok(bound)
+    }
+}
+
+/// The handle and record a bind request names, by its handle or its name.
+fn target_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: &RevealTarget,
+) -> Result<(String, EntityId)> {
+    match target {
+        RevealTarget::Handle(handle) => handle_record_in_txn(store, txn, handle),
+        RevealTarget::Name(name) => {
+            let id = resolve_secret_ref_in_txn(store, txn, name)?.ok_or_else(|| unknown(name))?;
+            let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, &id)?
+                .map_or_else(|| name.clone(), |(short, _)| short);
+            Ok((handle, id))
+        }
     }
 }
 

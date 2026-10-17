@@ -504,6 +504,20 @@ later ones carry only the receipt. The run's record keeps that answer without
 the value, so a resumed step must reveal again. The rows are `reveal`,
 `reveal.wait` and `reveal.describe` on every other door too.
 
+A run can also hand a secret to a trusted operation without reading it:
+`self.use({handle, operation, arguments})`. The operation presents the value
+at its own door and the run reads only what came back, with each copy of the
+value replaced by the handle. The v1 operations are the read-only provider
+checks `slack.auth_test`, `line.bot_info`, `gmail.profile` and
+`linkedin.session`, each answering the account the credential belongs to. The
+only grant is the secret's binding for the operation's effector (such as
+`connector:slack`): there is no ask, and a reveal's grant does not reach it. A
+secret the mask on write found has no binding, so `self.use` refuses it and
+names the owner door that adds one. Every use, and every refused one, leaves a
+Gate record with the handle, generation, effector, operation and send status.
+When the host's model ladder served the turn, each verb call the turn's
+program makes carries the provider that answered it.
+
 ### Reader children, summaries and fold receipts
 
 A run reads a result too big for its window with reader children
