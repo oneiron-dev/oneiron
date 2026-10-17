@@ -311,6 +311,23 @@ impl ScopedReadActorKey {
         Self::from_parts(actor_ref.into(), Some(actor_class.into()))
     }
 
+    /// A key that reads no row. It names its actor as
+    /// [`Self::with_actor_class`] does, under the same identity checks, and
+    /// carries an all-Bottom credential Scope that every read door meets, so
+    /// no grant the actor holds widens it. It holds no proof, no grant and no
+    /// owner binding or exemption, even for the vault owner's own id. A verb
+    /// hook whose caller's read key does not build reads under it, never on
+    /// the actor's own lane.
+    #[must_use]
+    pub fn read_nothing(
+        actor_ref: impl Into<String>,
+        actor_class: impl Into<String>,
+    ) -> Option<Self> {
+        let mut key = Self::from_parts(actor_ref.into(), Some(actor_class.into()))?;
+        key.authority = Some(Scope::default());
+        Some(key)
+    }
+
     fn from_parts(actor_ref: String, actor_class: Option<String>) -> Option<Self> {
         if actor_ref.trim().is_empty() {
             return None;
