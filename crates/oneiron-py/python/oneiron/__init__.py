@@ -782,6 +782,12 @@ class Oneiron:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs":
             return Oneiron._VaultSettingsLearningVerbs(self._client)
+        @property
+        def wake_policy(self) -> "Oneiron._VaultSettingsWakePolicyVerbs":
+            return Oneiron._VaultSettingsWakePolicyVerbs(self._client)
+        @property
+        def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs":
+            return Oneiron._VaultSettingsInferenceDefaultsVerbs(self._client)
     class _VaultSettingsLearningVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -794,6 +800,21 @@ class Oneiron:
         def clear(self, spec):
             """The owner clears one learned-setting row of a key, mode and scope."""
             return json.loads(_translate(lambda: self._client.vault_settings_learning_clear(json.dumps(spec))))
+    class _VaultSettingsWakePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_settings_wake_policy_set(json.dumps(spec))))
+    class _VaultSettingsInferenceDefaultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec=None):
+            """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
+            return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults(json.dumps({} if spec is None else spec))))
+        def replace(self, spec):
+            """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+            return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
     class _VaultLensesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
