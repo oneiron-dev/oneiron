@@ -972,12 +972,60 @@ class Oneiron:
         def put(self, input: dict[str, Any]) -> Any:
             """Registers one blob artifact; its bytes ride vault.artifacts.append."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_put(json.dumps(input, allow_nan=False))))
+        @property
+        def body(self) -> "Oneiron._VaultArtifactsBodyVerbs":
+            return Oneiron._VaultArtifactsBodyVerbs(self._client)
         def append(self, input: dict[str, Any]) -> Any:
             """Appends one version of bytes to a blob artifact's append-only chain."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_append(json.dumps(input, allow_nan=False))))
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_read(json.dumps(input, allow_nan=False))))
+    class _VaultArtifactsBodyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def import_(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Imports one office version as the artifact's live body."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_import(json.dumps(request, allow_nan=False))))
+        def head(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """An artifact's live body head, or null."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_head(json.dumps(request, allow_nan=False))))
+        def read(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Reads a DOCX or XLSX live body, at its head or an earlier frontier."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_read(json.dumps(request, allow_nan=False))))
+        def commits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+            """Every commit receipt of a live body, in commit order."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_commits(json.dumps(request, allow_nan=False))))
+        def edit(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A person's typed operations on the live body."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_edit(json.dumps(request, allow_nan=False))))
+        @property
+        def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs":
+            return Oneiron._VaultArtifactsBodyForkVerbs(self._client)
+        def export(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Exports the live body as the artifact's next version."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_export(json.dumps(request, allow_nan=False))))
+        def preview(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The workbook an XLSX export would land now, recalculated."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_preview(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsBodyForkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Opens a fork of the live body for machine work."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_open(json.dumps(request, allow_nan=False))))
+        def edit(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The opener's typed operations on its fork."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_edit(json.dumps(request, allow_nan=False))))
+        def diff(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A fork's three-way diff against the live head."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_diff(json.dumps(request, allow_nan=False))))
+        def merge(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A person lands a reviewed fork."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_merge(json.dumps(request, allow_nan=False))))
+        def discard(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Abandons an open fork's unlanded work."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_discard(json.dumps(request, allow_nan=False))))
     class _VaultCodeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1270,6 +1318,12 @@ class Oneiron:
         def edit(self, input: dict[str, Any]) -> Any:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
             return json.loads(_translate(lambda: self._client.vault_notes_edit(json.dumps(input, allow_nan=False))))
+        def seal(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Seals one NOTE: its document freezes, and a later edit opens a fork."""
+            return json.loads(_translate(lambda: self._client.vault_notes_seal(json.dumps(request, allow_nan=False))))
+        def lifecycle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."""
+            return json.loads(_translate(lambda: self._client.vault_notes_lifecycle(json.dumps(request, allow_nan=False))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
