@@ -101,6 +101,9 @@ pub struct SyncServer {
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
     pub(crate) mcp_code_host: Option<Arc<dyn crate::mcp::McpCodeExecutionHost>>,
+    /// Runs the reader children code runs spawn, on the code host once one
+    /// is bound, and keeps their clock (ARCH-0079 #reader-forks).
+    pub(crate) reader_runner: Arc<super::ReaderRunner>,
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
@@ -327,6 +330,11 @@ impl SyncServer {
         let questions: Arc<crate::wire_telemetry::LimitQuestions> =
             Arc::clone(wire_telemetry.limit_questions());
         vault.set_limit_ask(questions);
+        // Reader children wake this server's runner, which also keeps their
+        // cutoff.
+        let reader_runner = super::ReaderRunner::start(&vault, &config.limits);
+        let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
+        vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
@@ -335,6 +343,7 @@ impl SyncServer {
             config.limits.queue_wait(),
         );
         let decisions = crate::decision_host::DecisionHost::new(&vault);
+        let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
         let feedback_flood = crate::api::FloodCap::new(
             config.feedback_inbox.notes_per_sender,
             config.feedback_inbox.notes_per_hour,
@@ -372,6 +381,7 @@ impl SyncServer {
             account_keys: None,
             mcp_registry,
             mcp_code_host: None,
+            reader_runner,
             browser_guest: None,
             desktop_guest: None,
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
@@ -385,7 +395,7 @@ impl SyncServer {
             decisions,
             hook_runtime: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
-            run_receipts: Arc::default(),
+            run_receipts,
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
             extraction_egress: None,
@@ -444,11 +454,17 @@ impl SyncServer {
         runs: crate::mcp::CodeRunLimits,
     ) -> Self {
         let provider = provider.with_run_receipts(self.run_receipts());
-        self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
-            Arc::new(provider),
-            runs,
-            Arc::clone(self.wire_telemetry.limit_questions()),
-        )));
+        let host: Arc<dyn crate::mcp::McpCodeExecutionHost> = Arc::new(
+            crate::mcp::McpEngineNativeCodeHost::new(
+                Arc::new(provider),
+                runs,
+                Arc::clone(self.wire_telemetry.limit_questions()),
+            )
+            .with_reader_seats(self.reader_runner.seats()),
+        );
+        // Reader children run on the same provider and pool.
+        self.reader_runner.bind_host(Arc::clone(&host));
+        self.mcp_code_host = Some(host);
         self
     }
 
