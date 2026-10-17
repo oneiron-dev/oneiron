@@ -17941,14 +17941,15 @@
       "CodeFixHost",
       "CodeFixJob",
       "CodeFixSettled",
-      "CodeFixWork"
+      "CodeFixWork",
+      "PublisherCandidate"
      ],
      "path": "src/dreamer_runner/maintenance/code_fix.rs",
      "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
       "crate-vis": 1,
       "fn": 1,
-      "struct": 6,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -65093,15 +65094,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "FailureSignalsConfig"
+      "FailureSignalsConfig",
+      "PublisherCandidateConfig"
      ],
      "path": "src/config/failure_signals.rs",
      "purpose": "The `[failure_signals]` section: the publisher this deployment's failure signals go to (OF-380, DEC-0005…",
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 1,
-      "struct": 1
+      "fn": 2,
+      "struct": 2
      }
     },
     {
