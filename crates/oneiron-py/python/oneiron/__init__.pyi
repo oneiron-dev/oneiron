@@ -335,6 +335,8 @@ class Oneiron:
     class _VaultVerbs:
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
+        @property
+        def shape(self) -> "Oneiron._VaultShapeVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
@@ -433,6 +435,13 @@ class Oneiron:
             """One page of the people the caller reads, in handle order."""
         def get(self, spec: Facade.PersonRequest) -> Facade.PersonRow:
             """One person the vault knows, by their pr handle."""
+    class _VaultShapeVerbs:
+        def read(self, spec: Facade.EmptyRequest | None = None) -> Facade.ShapeRead:
+            """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
+        def plan(self, spec: Facade.ShapePlanRequest) -> Facade.ShapePlan:
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
+        def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
+            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
     class _VaultClaimsVerbs:
         def upsert(self, claim: ClaimInput) -> CommitReceipt: ...
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:

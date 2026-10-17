@@ -65,6 +65,21 @@ export_facade! {
     let output = client.vault_people_get(&input)?;
     crate::codec::lift_record("vault.people.get", &output)
 };
+"vault.shape.read" => fn vault_shape_read(&self) -> ShapeRead = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shape.read")?;
+    let output = client.vault_shape_read(&input)?;
+    crate::codec::lift_record("vault.shape.read", &output)
+};
+"vault.shape.plan" => fn vault_shape_plan(&self, input: ShapePlanRequest) -> ShapePlan = |client| {
+    let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::lower_record("vault.shape.plan", input)?;
+    let output = client.vault_shape_plan(&input)?;
+    crate::codec::lift_record("vault.shape.plan", &output)
+};
+"vault.shape.apply" => fn vault_shape_apply(&self, input: ShapeApplyRequest) -> ShapeApplyReceipt = |client| {
+    let input: oneiron::vault_shape::ShapeApplyRequest = crate::codec::lower_record("vault.shape.apply", input)?;
+    let output = client.vault_shape_apply(&input)?;
+    crate::codec::lift_record("vault.shape.apply", &output)
+};
 "self.message" => fn self_message(&self, input: MessagePersonRequest) -> MessagePersonReceipt = |client| {
     let input: oneiron::memory::MessagePersonRequest = crate::codec::lower_record("self.message", input)?;
     let output = client.self_message(&input)?;

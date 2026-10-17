@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 217 facade rows, 616 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 177.
+// UniFFI census: 220 facade rows, 632 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 180.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -878,6 +878,293 @@ pub struct PeoplePage {
 pub struct PersonRequest {
     #[serde(rename = "pr")]
     pub pr: String,
+}
+
+/// `oneiron::vault_shape::ShapeCeiling`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeCeiling {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "proposed")]
+    Proposed,
+}
+
+/// `oneiron::vault_shape::ShapeTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ShapeTarget {
+    #[serde(rename = "world")]
+    World {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "pack")]
+    Pack {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "actor")]
+    Actor {
+        #[serde(rename = "agent_id")]
+        agent_id: String,
+    },
+    #[serde(rename = "skill")]
+    Skill {
+        #[serde(rename = "skill_id")]
+        skill_id: String,
+    },
+    #[serde(rename = "channel")]
+    Channel {
+        #[serde(rename = "channel")]
+        channel: String,
+        #[serde(rename = "address")]
+        address: String,
+    },
+    #[serde(rename = "grant")]
+    Grant {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+    },
+    #[serde(rename = "sync")]
+    Sync {
+        #[serde(rename = "entity_kind")]
+        entity_kind: String,
+    },
+}
+
+/// `oneiron::vault_shape::ShapeRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ShapeRow {
+    #[serde(rename = "world")]
+    World {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "pack")]
+    Pack {
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    #[serde(rename = "actor")]
+    Actor {
+        #[serde(rename = "agent_id")]
+        agent_id: String,
+        #[serde(rename = "ceiling")]
+        ceiling: ShapeCeiling,
+        #[serde(rename = "enabled", default, skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+    },
+    #[serde(rename = "skill")]
+    Skill {
+        #[serde(rename = "skill_id")]
+        skill_id: String,
+        #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
+    },
+    #[serde(rename = "channel")]
+    Channel {
+        #[serde(rename = "channel")]
+        channel: String,
+        #[serde(rename = "address")]
+        address: String,
+    },
+    #[serde(rename = "grant")]
+    Grant {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+    },
+    #[serde(rename = "sync")]
+    Sync {
+        #[serde(rename = "entity_kind")]
+        entity_kind: String,
+        #[serde(rename = "on_wire")]
+        on_wire: bool,
+    },
+    #[serde(rename = "retire")]
+    Retire {
+        #[serde(rename = "target")]
+        target: ShapeTarget,
+    },
+}
+
+/// `oneiron::vault_shape::ShapeSeed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeSeed {
+    #[serde(rename = "rows")]
+    pub rows: Vec<ShapeRow>,
+}
+
+/// `oneiron::vault_shape::seed::StoredShapeSeed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StoredShapeSeed {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "written_at")]
+    pub written_at: u64,
+    #[serde(rename = "seed")]
+    pub seed: ShapeSeed,
+}
+
+/// `oneiron::vault_shape::plan::ShapeChange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeChange {
+    #[serde(rename = "create")]
+    Create,
+    #[serde(rename = "update")]
+    Update,
+    #[serde(rename = "retire")]
+    Retire,
+}
+
+/// `oneiron::vault_shape::plan::ShapeItemClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeItemClass {
+    #[serde(rename = "receipted")]
+    Receipted,
+    #[serde(rename = "widening")]
+    Widening,
+    #[serde(rename = "authority")]
+    Authority,
+}
+
+/// `oneiron::vault_shape::plan::ShapePlanItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapePlanItem {
+    #[serde(rename = "seq")]
+    pub seq: u32,
+    #[serde(rename = "target")]
+    pub target: ShapeTarget,
+    #[serde(rename = "change")]
+    pub change: ShapeChange,
+    #[serde(rename = "class")]
+    pub class: ShapeItemClass,
+    #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<ShapeRow>,
+    #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<ShapeRow>,
+    #[serde(rename = "door", default, skip_serializing_if = "Option::is_none")]
+    pub door: Option<String>,
+}
+
+/// `oneiron::vault_shape::apply::ShapeItemState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum ShapeItemState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "landed")]
+    Landed {
+        #[serde(rename = "at")]
+        at: u64,
+        #[serde(rename = "receipt")]
+        receipt: String,
+    },
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "ceremony")]
+    Ceremony,
+    #[serde(rename = "no_door")]
+    NoDoor,
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::vault_shape::apply::ShapeApplyItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeApplyItem {
+    #[serde(rename = "item")]
+    pub item: ShapePlanItem,
+    #[serde(rename = "state")]
+    pub state: ShapeItemState,
+}
+
+/// `oneiron::vault_shape::apply::ShapeApplyReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeApplyReceipt {
+    #[serde(rename = "frontier")]
+    pub frontier: String,
+    #[serde(rename = "seed_id")]
+    pub seed_id: String,
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "started_at")]
+    pub started_at: u64,
+    #[serde(rename = "items")]
+    pub items: Vec<ShapeApplyItem>,
+    #[serde(rename = "done")]
+    pub done: bool,
+}
+
+/// `oneiron::vault_shape::ShapeRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeRead {
+    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<StoredShapeSeed>,
+    #[serde(rename = "live")]
+    pub live: ShapeSeed,
+    #[serde(rename = "applies")]
+    pub applies: Vec<ShapeApplyReceipt>,
+}
+
+/// `oneiron::vault_shape::ShapePlanRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapePlanRequest {
+    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<ShapeSeed>,
+}
+
+/// `oneiron::vault_shape::plan::ShapePlanSummary`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapePlanSummary {
+    #[serde(rename = "changes")]
+    pub changes: u32,
+    #[serde(rename = "needs_word")]
+    pub needs_word: u32,
+    #[serde(rename = "ceremonies")]
+    pub ceremonies: u32,
+    #[serde(rename = "no_door")]
+    pub no_door: u32,
+}
+
+/// `oneiron::vault_shape::plan::ShapePlan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapePlan {
+    #[serde(rename = "seed_id", default, skip_serializing_if = "Option::is_none")]
+    pub seed_id: Option<String>,
+    #[serde(rename = "seed")]
+    pub seed: ShapeSeed,
+    #[serde(rename = "frontier")]
+    pub frontier: String,
+    #[serde(rename = "items")]
+    pub items: Vec<ShapePlanItem>,
+    #[serde(rename = "undeclared")]
+    pub undeclared: Vec<ShapeRow>,
+    #[serde(rename = "summary")]
+    pub summary: ShapePlanSummary,
+}
+
+/// `oneiron::vault_shape::apply::ShapeApplyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeApplyRequest {
+    #[serde(rename = "plan")]
+    pub plan: ShapePlan,
+    #[serde(rename = "approve", default, skip_serializing_if = "Option::is_none")]
+    pub approve: Option<Vec<u32>>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::identity::MentionProvenance`.

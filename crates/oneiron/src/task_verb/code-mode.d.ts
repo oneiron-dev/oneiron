@@ -365,6 +365,11 @@ declare const vault: {
       set(input: { policy: unknown; idempotency_key: string }): Promise<unknown>;
     };
   };
+  shape: {
+    apply(input: { approve?: number[]; plan: object }): Promise<unknown>;
+    plan(input: { seed?: object | null }): Promise<unknown>;
+    read(input: object): Promise<unknown>;
+  };
   shared: {
     close_erase_ask(input: { act_id?: string | null; ask_id: string; erased: boolean }): Promise<unknown>;
     deletion(input: object): Promise<unknown>;

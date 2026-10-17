@@ -607,6 +607,9 @@ fn mcp_agent_verb_input(
         "self.inbox.concern.move" => a.spec.clone().ok_or_else(invalid),
         "vault.people.list" => a.spec.clone().ok_or_else(invalid),
         "vault.people.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.shape.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.shape.plan" => a.spec.clone().ok_or_else(invalid),
+        "vault.shape.apply" => a.spec.clone().ok_or_else(invalid),
         "self.message" => a.spec.clone().ok_or_else(invalid),
         "self.grants.ask" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.query" => a.spec.clone().ok_or_else(invalid),
@@ -1028,6 +1031,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.people.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shape.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shape.plan" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shape.apply" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.message" => {
@@ -1993,6 +2005,34 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::PersonRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_people_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shape.read" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_shape_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shape.plan" => {
+            let input: oneiron::vault_shape::ShapePlanRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_shape_plan(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shape.apply" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shape.apply", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::vault_shape::ShapeApplyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_shape_apply(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
