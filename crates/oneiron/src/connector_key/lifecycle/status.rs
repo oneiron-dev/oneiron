@@ -14,7 +14,7 @@ use super::super::txn::{
     rewrite_connector_key_in_txn, suspend_connector_key_in_txn,
     write_connector_key_generation_in_txn,
 };
-use super::tool_grant::is_held;
+use super::tool_grant::{CATALOG_HOLD_REASON, is_held};
 
 impl Vault {
     /// Suspends an Active key (owner op). A catalog key's per-grant keys are
@@ -30,6 +30,9 @@ impl Vault {
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status != ConnectorKeyStatus::Active {
             return Err(invalid_body("illegal status transition"));
+        }
+        if reason == CATALOG_HOLD_REASON {
+            return Err(invalid_body("that suspension reason is the catalog's own"));
         }
         let suspended = suspend_connector_key_in_txn(
             &self.store,

@@ -380,7 +380,7 @@ impl Vault {
                     .row(&entry.name)
                     .is_some_and(|row| row.enabled())
                     && tool_snapshot(&admitted.slate, &entry.name).ok().as_ref() == Some(snapshot)
-                    && approved_manifest_pins(catalog, entry))
+                    && approved_manifest_pins(catalog, &admitted.slate, &entry.name))
                 .then(|| (admitted, entry.name.clone()))
             });
             let Some((admitted, tool)) = carried else {
@@ -601,13 +601,21 @@ pub(in crate::connector_key) fn is_held(record: &ConnectorKeyRecord) -> bool {
 }
 
 /// The catalog's approved manifest, when it pins one, still lists the tool
-/// with the schema the per-grant key holds.
-fn approved_manifest_pins(catalog: &ConnectorKeyRecord, entry: &ConnectorToolSchema) -> bool {
+/// with the resolved schema the stamped slate holds for it: the one both
+/// were built from at admission.
+fn approved_manifest_pins(
+    catalog: &ConnectorKeyRecord,
+    slate: &ConnectorGrantSlate,
+    tool: &str,
+) -> bool {
+    let schema = slate
+        .tool(tool)
+        .and_then(|entry| entry.resolved_input_schema.as_ref());
     catalog.retained_manifest.as_ref().is_none_or(|approved| {
         approved
             .tools()
             .iter()
-            .any(|tool| tool.name == entry.name && tool.input_schema == entry.input_schema)
+            .any(|entry| entry.name == tool && Some(&entry.input_schema) == schema)
     })
 }
 
