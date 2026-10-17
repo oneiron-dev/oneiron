@@ -69936,7 +69936,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
