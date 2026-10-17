@@ -14,6 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/artifact_origin.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 const | ArtifactHost, ArtifactHostRead | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
 | `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
 | `src/lib/ctl.rs` | src | s | 1 struct · 4 enum · 2 fn | CtlRequest, CtlResponse, ShedBlockerWire, ShedCause, ShedStatus | Supervisor ctl request/response wire types and shed/slim validation |
+| `src/lib/escrow.rs` | src | s | 1 struct · 2 fn · 2 const | EscrowCapsuleReport | The vault's data-key escrow on its way to the registry (CROSS-ARCH-0022 #ov-custody, invariant 03: escrow is… |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |
 | `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 4 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
 | `src/lib/host_adapters/desktop.rs` | src | m | 4 struct · 4 enum · 13 fn | ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost, SecretSource, SystemdHost | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
@@ -23,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
 | `src/lib/managed_holder.rs` | src | s | 1 struct · 2 fn | ManagedWidenAction | Host-attested account action for one managed widen request |
-| `src/lib/mod.rs` | src | s | 7 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 8 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/preview.rs` | src | s | 3 struct · 1 enum · 2 fn | PreviewEndpoint, PreviewPortDeclaration, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
 | `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
 | `src/lib/tenancy.rs` | src | s | 2 struct · 1 enum · 16 fn | VaultBinding, VaultHost, VaultTenancy | Single-vault identity and lifecycle for account and organization hosts |
