@@ -146,9 +146,9 @@ fn open_row(
     Ok(record.id)
 }
 
-/// Completes a row with `reference`. A row already settled is left as it
-/// is; a row the claim does not hand over stays paused, and the journal
-/// still says how its item landed.
+/// Completes a row with `reference`. A row already settled, or pruned, is
+/// left as it is; a row the claim does not hand over stays paused. Either
+/// way the journal still says how its item landed.
 fn complete_row(
     queue: &AttemptQueue<'_>,
     txn: &mut heed::RwTxn<'_>,
@@ -156,9 +156,9 @@ fn complete_row(
     reference: String,
     now: u64,
 ) -> Result<()> {
-    let record = queue
-        .get_in_write_txn(txn, id)?
-        .ok_or_else(|| invalid("an apply's run row is missing"))?;
+    let Some(record) = queue.get_in_write_txn(txn, id)? else {
+        return Ok(());
+    };
     match record.state {
         AttemptState::Paused => {
             intervene(queue, txn, id, AttemptInterventionKind::Resume, None, now)?;
@@ -209,9 +209,9 @@ fn cancel_row(
     note: &str,
     now: u64,
 ) -> Result<()> {
-    let record = queue
-        .get_in_write_txn(txn, id)?
-        .ok_or_else(|| invalid("an apply's run row is missing"))?;
+    let Some(record) = queue.get_in_write_txn(txn, id)? else {
+        return Ok(());
+    };
     if !matches!(
         record.state,
         AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled
