@@ -11,6 +11,8 @@ use oneiron::llm::media::{AiOperation, MediaJobState, MediaPart, MediaRequest};
 use oneiron::{ModelId, Vault};
 use serde::{Deserialize, Serialize};
 
+use crate::models::ladder::PendingReceipt;
+
 /// The rows' prefix: the declared `MODEL_MEDIA_JOB` family.
 const JOB: &str = "models:media-job:v1:";
 
@@ -28,6 +30,10 @@ pub(super) struct JobRow {
     /// Where the job ended, once a poll saw it.
     #[serde(default)]
     pub(super) ended: Option<MediaJobState>,
+    /// The served receipt its answer carries, when its ladder stamped one:
+    /// a job taken up again still says which rung served it.
+    #[serde(default)]
+    pub(super) receipt: Option<PendingReceipt>,
 }
 
 /// The vault's job rows.

@@ -272,6 +272,57 @@ pub fn tournament_team_stamp(run_id: &str) -> Result<TeamRunStamp> {
     TeamRunStamp::new(format!("autoreason:{run_id}"), TeamPattern::Market)
 }
 
+/// How far up its run tree a team leader is looked for in a campaign.
+const LINEAGE_LIMIT: usize = 256;
+
+/// The experiment a tournament runs as: its run id is that experiment
+/// attempt's id, as hex.
+fn tournament_attempt(run_id: &str) -> Option<AttemptId> {
+    let id = EntityId::from_hex(run_id).ok()?;
+    AttemptId::from_bytes(id.as_bytes()).ok()
+}
+
+/// Whether `leader` may start a team in tournament `run_id`, before any
+/// member spawns: the run id must name an experiment of the claim-authoring
+/// campaign the leader works in (the nearest bound root up its run tree),
+/// and the leader must be that experiment, work under it, or be the
+/// campaign's root. So a team never joins another campaign's tournament.
+/// # Errors
+/// Storage errors.
+pub(crate) fn tournament_start_check(
+    vault: &Vault,
+    leader: AttemptId,
+    run_id: &str,
+) -> Result<std::result::Result<(), &'static str>> {
+    let Some(run) = tournament_attempt(run_id) else {
+        return Ok(Err("team_start_tournament_unknown"));
+    };
+    let queue = crate::attempt_queue::AttemptQueue::new(vault);
+    let mut at = leader;
+    let mut under_run = false;
+    for _ in 0..LINEAGE_LIMIT {
+        under_run |= at == run;
+        if authoring_campaign(vault, at)?.is_some() {
+            let experiment = research_nodes(vault, at)?
+                .iter()
+                .any(|node| node.attempt == run);
+            return Ok(if experiment && (under_run || at == leader) {
+                Ok(())
+            } else {
+                Err("team_start_tournament_foreign")
+            });
+        }
+        let Some(record) = queue.get(at)? else {
+            break;
+        };
+        let Some(parent) = crate::run_tree::effective_parent(&record) else {
+            break;
+        };
+        at = parent;
+    }
+    Ok(Err("team_start_tournament_unbound"))
+}
+
 /// Finalize one tournament run after the unchanged gated writer landed its
 /// winner: check the run's branch evidence and the winner claim, record the
 /// run's team receipt (a Market team decided by its pre-signed ranking rule)
@@ -292,6 +343,11 @@ pub fn finalize_claim_tournament(
 ) -> Result<AuthoringFinalization> {
     let campaign = campaign(vault, root)?;
     bounded(run_id, "a tournament run names a bounded run id")?;
+    if tournament_attempt(run_id) != Some(attempt) {
+        return Err(invalid(
+            "a tournament's run id is its experiment attempt's id",
+        ));
+    }
     if !research_nodes(vault, root)?
         .iter()
         .any(|node| node.attempt == attempt)

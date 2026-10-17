@@ -4,15 +4,15 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::field_set::{
-    append_pack_attribution_fields, append_pack_manifest_fields, append_task_type_fields,
-    append_team_receipt_fields,
+    FIELD_EXECUTOR_SEAT, append_pack_attribution_fields, append_pack_manifest_fields,
+    append_task_type_fields, append_team_receipt_fields,
 };
 #[cfg(test)]
 use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
-    FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, MAX_RECEIPT_QUERY_SCAN,
-    ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
+    FIELD_MODEL, FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED,
+    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
 };
 #[cfg(test)]
 use super::send_receipt_txn::persist_send_receipt_in_txn;
@@ -127,6 +127,16 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
             return Err(Error::InvalidClaimBody(
                 "skill-bearing attempt requires executor model",
             ));
+        }
+        // OF-541: what ran the attempt, beside the template seat its host
+        // configured, whether or not a host bound attribution.
+        if let Some(model) = &record.executor_model {
+            receipt.fields.insert(FIELD_MODEL.to_owned(), model.clone());
+        }
+        if let Some(seat) = &record.executor_seat {
+            receipt
+                .fields
+                .insert(FIELD_EXECUTOR_SEAT.to_owned(), seat.clone());
         }
         append_pack_manifest_fields(&mut receipt, record.manifest())?;
         if attributed {

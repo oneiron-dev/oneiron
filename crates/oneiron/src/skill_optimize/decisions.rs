@@ -41,6 +41,42 @@ fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
 
+/// Every wording key but `axis.<name>`, which names its axis in the state.
+const JUDGMENT_KINDS: [&str; 8] = [
+    "score",
+    "structural",
+    "contrastive",
+    "preference",
+    "task_success",
+    "honesty",
+    "tradeoff",
+    "live_axis",
+];
+
+/// The wording key a kept judgment was asked under: the one whose question,
+/// rebuilt from the kept revision and wording, has the kept id. `None` for a
+/// question no key rebuilds.
+#[must_use]
+pub fn judgment_kind(revision: &str, question: &DecisionQuestion, state: &Value) -> Option<String> {
+    let named = state
+        .get("axis")
+        .and_then(Value::as_str)
+        .map(|axis| format!("axis.{axis}"));
+    JUDGMENT_KINDS
+        .iter()
+        .map(|kind| (*kind).to_owned())
+        .chain(named)
+        .find(|kind| {
+            SKILL_OPTIMIZE_JUDGMENT
+                .question(
+                    &[revision.as_bytes(), kind.as_bytes()],
+                    question.text.clone(),
+                    question.contract.clone(),
+                )
+                .is_ok_and(|rebuilt| rebuilt.id == question.id)
+        })
+}
+
 impl SkillOptimizeDecisions<'_> {
     pub(crate) fn decide(
         &self,
@@ -158,10 +194,22 @@ impl dyn HeldOutReplayNotes + '_ {
         {
             return comparison.score_case(case);
         }
-        // The axis rides in the state, so a kept judgment says what it scored.
+        // The axis and its declared kind ride in the state, so a kept
+        // judgment says what it scored, and whether that was a floor.
         let mut state = case_state(self, case)?;
         state["axis"] = json!(axis);
+        state["axis_kind"] = json!(self.axis_kind(case, axis));
         score(self, &format!("axis.{axis}"), &[case.skill], &state)
+    }
+
+    /// The kind `case`'s skill goal declares `axis`; `None` when the goal
+    /// can't be read or doesn't name it.
+    fn axis_kind(&self, case: &HeldOutReplayCase<'_>, axis: &str) -> Option<super::GoalAxisKind> {
+        self.goal_axes(case)
+            .ok()?
+            .into_iter()
+            .find(|spec| spec.name == axis)
+            .map(|spec| spec.kind)
     }
 
     pub(crate) fn structural_audit(&self, task: &str, instructions: &str) -> Result<f32> {
@@ -268,11 +316,15 @@ impl dyn HeldOutReplayNotes + '_ {
             instructions: &arm.desc,
             held_out_receipts: &receipts,
         };
+        let kind = criterion
+            .get("name")
+            .and_then(Value::as_str)
+            .and_then(|name| self.axis_kind(&case, name));
         let decision = ask(
             self,
             "live_axis",
             &[skill],
-            &json!({"case": case_state(self, &case)?, "axis": criterion}),
+            &json!({"case": case_state(self, &case)?, "axis": criterion, "axis_kind": kind}),
             AnswerContract::Noul,
         )?;
         match decision.answer {
@@ -305,6 +357,7 @@ impl dyn HeldOutReplayNotes + '_ {
                         "honesty",
                         &[case.skill],
                         &json!({
+                            "skill": case.skill.to_hex(),
                             "skill_id": case.skill_id, "version": case.version,
                             "instructions": case.instructions, "receipt": replay.receipt,
                             "replay": replay.state, "objective": objective,
