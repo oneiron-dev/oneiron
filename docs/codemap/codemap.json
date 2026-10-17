@@ -28795,7 +28795,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "re-export": 2,
       "struct": 5
      }
@@ -61058,7 +61058,7 @@
      "purpose": "Which models a node offers the owner's other nodes, and the row a node writes for each one it hears of (FIX…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }

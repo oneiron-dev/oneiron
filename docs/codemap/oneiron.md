@@ -2247,7 +2247,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/model_trials.rs` | src | m | 9 fn · 1 re-export | — | Per-question held-out trials nominated by external benchmark scores |
 | `src/llm/model_trials/evidence.rs` | src | s | 4 crate-vis | — | Freeze the question's own labels, check backend reads and bind the sufficiency card |
 | `src/llm/model_trials/types.rs` | src | s | 15 struct · 3 enum | BackendQualityPin, FrozenTrialCase, HeldOutSelection, ModelTrial, ModelTrialAction, ModelTrialPolicy, ModelTrialReceipt, ModelTrialRequest +10 | The held-out selection and sufficiency card are supplied by eval authoring |
-| `src/llm/registry.rs` | src | m | 5 struct · 1 enum · 12 fn · 2 re-export · 4 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |
+| `src/llm/registry.rs` | src | m | 5 struct · 1 enum · 13 fn · 2 re-export · 4 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |
 | `src/llm/registry/backend.rs` | src | s | 3 struct · 5 fn | ModelBackendPin, ModelCostReceipt, PricedModelBackend | Backend-specific serving identities and prices |
 | `src/llm/registry/description.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 crate-vis | DescriptionClass, DescriptionContribution, ModelDescription | Ranked, source-attributed model descriptions; absent evidence stays absent |
 | `src/llm/registry/installed_pack.rs` | src | s | 2 fn · 2 crate-vis | — | The shipped catalog is read from an installed first-party hub pack |
