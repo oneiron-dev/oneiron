@@ -67,6 +67,7 @@
 mod codec;
 mod doors;
 mod floor;
+mod known_values;
 mod masked_files;
 mod owner_door;
 mod reveal;
@@ -95,6 +96,8 @@ pub(crate) use self::doors::{
     restore_secret_custody_in_txn,
 };
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
+pub(crate) use self::known_values::{KnownSweep, KnownValues, handle_text};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys, MemberStep, filled,

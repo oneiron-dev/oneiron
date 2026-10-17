@@ -50,6 +50,15 @@ side_tables! {
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
+    /// Each custody record's known values, one entry per generation it held: the value's length,
+    /// a keyed fingerprint of it and a keyed tag of its first bytes, never the value (OF-560 C).
+    /// Derived and node-local: no checkpoint image or sync carries it. Key: id16 (custody record
+    /// id).
+    SECRET_KNOWN_VALUE: VaultMeta b"secret_known:value:v1:" Named Custody;
+    /// Random 32-byte key over every fingerprint and tag the known-value index holds, minted with
+    /// its first value. Node-local, never synced, exported or carried by a checkpoint image, so no
+    /// reader of the index can test a guess at a short value offline. Key: ().
+    SECRET_KNOWN_VALUE_KEY_LOCAL: VaultMeta b"secret_known:key:local:v1" Raw;
     /// T1/T2 secret-materialization lease row (escalation ladder to local registration). Key:
     /// hex32(lease id).
     SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw;

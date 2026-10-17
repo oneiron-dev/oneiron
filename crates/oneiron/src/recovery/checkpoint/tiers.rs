@@ -29,6 +29,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // The key over stored fork hashes stays with the node, like
                 // the telemetry it keys.
                 b"retrieval_trace_key:",
+                // The known-value index and its key stay with the node: the
+                // index is derived from custody here (OF-560 C).
+                b"secret_known:",
                 b"tasks.create.rate.",
                 b"own_rate.",
                 b"vault_cleanup.scan",
