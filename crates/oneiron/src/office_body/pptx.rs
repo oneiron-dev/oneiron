@@ -207,6 +207,14 @@ impl Vault {
                 work.record(stamped);
             }
             let receipt = log_receipt(*artifact, start, work.ops.len(), made_by)?;
+            // The fork's operation log is its receipt ledger, as a typed
+            // body's history is: the write door reads it whole and a hit
+            // refuses the call, unless the fork read the same way before it
+            // (OF-067).
+            let logged = serde_json::to_vec(&work).map_err(|_| invalid("deck fork encoding"))?;
+            crate::batch::secret_scan::scan_document_in_txn(&self.store, wtxn, &logged, || {
+                DOCS.get(&self.store, wtxn, fork)
+            })?;
             store_fork(&self.store, wtxn, fork, &work)?;
             self.record_commit(wtxn, fork, &mut record.commits, &receipt)?;
             FORKS.put(&self.store, wtxn, &key, &record)?;
