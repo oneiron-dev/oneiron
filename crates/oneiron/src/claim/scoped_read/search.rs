@@ -147,13 +147,19 @@ impl ScopedRead<'_> {
 
     /// [`Self::search`] over any of its seeds within this actor's resolved read authority: a
     /// text query, a vector into the vault's own index, and media queries into declared
-    /// embedding spaces (OF-370), each `(space id, the tower that encoded it, its vector)` and
-    /// each its own ranked list beside the others.
+    /// embedding spaces (OF-370), each `(space id, the tower that encoded it, its vector, the
+    /// kinds its list keeps)` (every kind the space holds when empty) and each its own ranked
+    /// list beside the others.
     pub fn search_seeded(
         &self,
         query: Option<&str>,
         vector: Option<&[f32]>,
-        media: &[(&str, crate::embed::InputKind, &[f32])],
+        media: &[(
+            &str,
+            crate::embed::InputKind,
+            &[f32],
+            &[crate::embed::InputKind],
+        )],
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
@@ -179,8 +185,8 @@ impl ScopedRead<'_> {
         if let Some(vector) = vector {
             pipeline = pipeline.search_vector(vector, limit);
         }
-        for (space, kind, vector) in media {
-            pipeline = pipeline.search_media(space, *kind, vector, &[], limit);
+        for (space, kind, vector, kinds) in media {
+            pipeline = pipeline.search_media(space, *kind, vector, kinds, limit);
         }
         let results = pipeline.limit(limit).run_for_pack()?;
         self.filter_search_results(

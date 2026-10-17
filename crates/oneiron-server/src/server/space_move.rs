@@ -7,7 +7,8 @@
 //! once. The engine swaps the candidate in, keeps the incumbent, or leaves the
 //! move open, and leaves the result note.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
@@ -44,6 +45,28 @@ const PROBE_INSTRUCTION: &str = "You write search queries for a retrieval check.
     stored item, write one short query, at most twenty words, that a person would type to find \
     it again later. Use your own words: describe it, never copy its phrases. Answer with the \
     query alone.";
+
+/// Each move's check lock, by candidate: one check of a move runs at a time
+/// in this process. A caller that finds one running waits for it and answers
+/// with the reading it left, so a door's check that outlived its answer and
+/// the backfill's own never pay the probes twice.
+static MOVE_CHECKS: Mutex<BTreeMap<String, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
+
+/// The kinds whose probes last failed to be written, so a refused or failing
+/// author warns once and its recovery shows once, not every pass.
+static PROBE_AUTHORS_FAILING: Mutex<BTreeSet<InputKind>> = Mutex::new(BTreeSet::new());
+
+/// Records whether `kind`'s probe author is failing; true when that changed.
+fn probe_author_failing(kind: InputKind, failing: bool) -> bool {
+    let mut kinds = PROBE_AUTHORS_FAILING
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if failing {
+        kinds.insert(kind)
+    } else {
+        kinds.remove(&kind)
+    }
+}
 
 /// One media backfill pass's result per space.
 pub(super) type SpacePasses = Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)>;
@@ -344,20 +367,40 @@ impl SyncServer {
             .collect();
         for kind in kinds {
             let Some(author) = self.probe_author(kind, runtime) else {
+                if probe_author_failing(kind, true) {
+                    tracing::warn!(
+                        ?kind,
+                        "an open embedding space move has no seat to write this kind's probes (text: the chat seat; image: a captioner or local-vision seat; audio: the chat seat and a media transcribe seat), so it stays undecided"
+                    );
+                }
                 continue;
             };
             match self
                 .vault
                 .author_space_probes(kind, &author, PROBE_AUTHOR_BATCH)
             {
-                Ok(report) if report.written > 0 => tracing::info!(
-                    ?kind,
-                    written = report.written,
-                    held = report.held,
-                    "space probes written"
-                ),
-                Ok(_) => {}
-                Err(error) => tracing::debug!(?kind, %error, "space probes not written"),
+                Ok(report) => {
+                    if probe_author_failing(kind, false) {
+                        tracing::info!(?kind, "space probes are written again");
+                    }
+                    if report.written > 0 {
+                        tracing::info!(
+                            ?kind,
+                            written = report.written,
+                            held = report.held,
+                            "space probes written"
+                        );
+                    }
+                }
+                Err(error) => {
+                    if probe_author_failing(kind, true) {
+                        tracing::warn!(
+                            ?kind,
+                            %error,
+                            "space probes not written; an open embedding space move stays undecided until they are"
+                        );
+                    }
+                }
             }
         }
     }
@@ -420,12 +463,28 @@ impl SyncServer {
     }
 
     /// Runs one open move's paired probes now, through both spaces' towers.
-    /// Blocking.
+    /// When a check of the move is already running, waits for it and answers
+    /// with its reading instead ([`MOVE_CHECKS`]). Blocking.
     pub(crate) fn check_space_move(
         &self,
         runtime: &tokio::runtime::Handle,
         moving: &SpaceMove,
     ) -> Result<SpaceMoveOutcome, MediaEmbedRefusal> {
+        let lock = Arc::clone(
+            MOVE_CHECKS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(moving.candidate.clone())
+                .or_default(),
+        );
+        let _checking = match lock.try_lock() {
+            Ok(held) => held,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                drop(lock.lock().unwrap_or_else(PoisonError::into_inner));
+                return self.checked_move_outcome(moving);
+            }
+        };
         let candidate = self
             .media_embedder(&moving.candidate)?
             .on_runtime(runtime.clone());
@@ -440,5 +499,38 @@ impl SyncServer {
             runtime,
         };
         Ok(self.vault.check_space_move(&moving.candidate, &encoder)?)
+    }
+
+    /// The reading the check that just finished left on `moving`, for a
+    /// caller that waited on it: the move's close, a check newer than the one
+    /// the caller read, or, with neither, a candidate still filling.
+    fn checked_move_outcome(
+        &self,
+        moving: &SpaceMove,
+    ) -> Result<SpaceMoveOutcome, MediaEmbedRefusal> {
+        let now = self
+            .vault
+            .space_moves()?
+            .into_iter()
+            .find(|now| now.candidate == moving.candidate)
+            .ok_or_else(|| {
+                Error::InvalidConfig(format!("embedding space move {} is gone", moving.candidate))
+            })?;
+        let fresh = now
+            .last_check
+            .filter(|check| Some(check) != moving.last_check.as_ref());
+        Ok(match (now.state, fresh) {
+            (SpaceMoveState::SwappedIn { .. }, Some(check)) => SpaceMoveOutcome::SwappedIn(check),
+            (SpaceMoveState::Kept { .. }, Some(check)) => SpaceMoveOutcome::Kept(check),
+            (SpaceMoveState::Open, Some(check)) => SpaceMoveOutcome::Undecided(check),
+            (SpaceMoveState::Open, None) => SpaceMoveOutcome::Filling,
+            (_, _) => {
+                return Err(Error::InvalidConfig(format!(
+                    "embedding space move {} closed while its check ran",
+                    moving.candidate
+                ))
+                .into());
+            }
+        })
     }
 }
