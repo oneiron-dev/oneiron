@@ -40571,7 +40571,9 @@
      "kind": "src",
      "notable": [
       "BornWithField",
+      "ExportTarget",
       "ExportTravel",
+      "OmittedKnowledge",
       "TravelChoice",
       "TravelKind"
      ],
@@ -40579,12 +40581,12 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
-      "enum": 2,
+      "crate-vis": 9,
+      "enum": 3,
       "fn": 7,
       "mod": 1,
-      "re-export": 1,
-      "struct": 2,
+      "re-export": 2,
+      "struct": 3,
       "type": 1
      }
     },
@@ -40619,6 +40621,21 @@
       "enum": 8,
       "fn": 8,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentPackExport",
+      "AgentPackExportFile",
+      "AgentPackExportRequest"
+     ],
+     "path": "src/share_travel/agent_pack_export.rs",
+     "purpose": "`vault.agents.export_pack` (OF-491, FIX 2042): the sharing door for an agent",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -47538,7 +47555,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 349
+      "fn": 350
      }
     },
     {
@@ -53747,7 +53764,7 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -54043,7 +54060,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3281,
+   "source_files": 3282,
    "test_files": 902
   },
   "oneiron-android": {
@@ -62141,7 +62158,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 302
+      "fn": 303
      }
     },
     {
@@ -63159,7 +63176,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 303
+      "fn": 304
      }
     },
     {
@@ -73635,6 +73652,9 @@
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
+      "AgentPackExport",
+      "AgentPackExportFile",
+      "AgentPackExportRequest",
       "AiAnswer",
       "AiCallRequest",
       "AiOperation",
@@ -74183,6 +74203,7 @@
       "OfficeBodyReadRequest",
       "OfficeBodyReviewedFork",
       "OfficeBodyView",
+      "OmittedKnowledge",
       "OpaqueChange",
       "OracleReceipt",
       "OrganWaitView",
@@ -74705,7 +74726,7 @@
      "purpose": "—",
      "surface": {
       "enum": 300,
-      "struct": 782
+      "struct": 786
      }
     },
     {
