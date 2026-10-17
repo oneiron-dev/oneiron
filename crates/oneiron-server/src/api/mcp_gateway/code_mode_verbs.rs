@@ -734,6 +734,7 @@ impl McpCodeModeVerbs {
             self.actor.actor_ref,
             self.actor.actor_class,
         )
+        .at(self.actor.locality())
         .with_invocation(invocation);
         // Each routine decision is a verb call of its own, under a fresh
         // invocation.

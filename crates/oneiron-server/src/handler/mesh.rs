@@ -121,9 +121,7 @@ mod host {
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
         PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
     };
-    use oneiron_organ_host::{
-        AskHandlers, HostConfig, ORGAN_ALPN, OrganHost, OrganRouter, OrganService,
-    };
+    use oneiron_organ_host::{AskHandlers, ORGAN_ALPN, OrganRouter, OrganService};
     use tokio::sync::Semaphore;
     use tokio::task::JoinHandle;
 
@@ -171,9 +169,10 @@ mod host {
         server: &Arc<crate::server::SyncServer>,
     ) -> MeshRoutes {
         let vault = &server.vault;
-        // This machine's organ host serves the owner's other nodes, and its
-        // calls that wait for a node are re-driven on the tick (OF-575).
-        let organs = Arc::new(OrganHost::new(HostConfig::default()));
+        // This machine's organ host (the server's one, which the seal worker
+        // shares) serves the owner's other nodes, and its calls that wait for
+        // a node are re-driven on the tick (OF-575).
+        let organs = Arc::clone(&server.organs);
         let router = Arc::new(OrganRouter::new().with_local(Arc::clone(&organs)));
         MeshRoutes::default()
             .route(
@@ -246,6 +245,11 @@ mod host {
             .ok_or_else(|| {
                 anyhow::anyhow!("the mesh listener needs this install enrolled as a machine")
             })?;
+        // The installed packs' organs go on the host before it is offered.
+        let installing = Arc::clone(&server);
+        tokio::task::spawn_blocking(move || installing.install_pack_organs())
+            .await
+            .map_err(|error| anyhow::anyhow!("pack organ install: {error}"))?;
         let routes = Arc::new(mesh_routes(app, limits, &server));
         let policy = AcceptPolicy {
             roster: Arc::new(VaultMachineRoster(Arc::clone(&vault))),

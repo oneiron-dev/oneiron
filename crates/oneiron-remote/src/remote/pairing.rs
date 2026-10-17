@@ -1,3 +1,5 @@
+use oneiron::authority::AuthorityCheckpointPin;
+
 use super::*;
 
 /// What a paired client stores, in one string:
@@ -53,14 +55,24 @@ fn lower_hex(bytes: &[u8]) -> String {
 #[derive(serde::Deserialize)]
 struct Paired {
     token: String,
+    /// The checkpoint pin the link kept, when the vault has an attested
+    /// checkpoint (OF-469).
+    #[serde(default)]
+    pin: Option<AuthorityCheckpointPin>,
 }
 
-/// Redeems a pairing link once and returns `(origin, credential)`.
+/// Redeems a pairing link once and returns `(origin, credential, pin)`.
 ///
-/// A fresh connection key signs the link's code and holder; the request
-/// carries no `Authorization` header, because the link is the enrollment. It
-/// builds no handle: the caller connects with what it returns.
-pub(crate) fn pair(link: &str) -> Result<(String, String), MemoryError> {
+/// A fresh connection key signs the link's code and holder, and the link's
+/// checkpoint challenge and pin digest when it carries them; the request
+/// carries no `Authorization` header, because the link is the enrollment. A
+/// pin the server returns must be exactly the one the owner-delivered link
+/// names, and a link that names one must get it back; any mismatch refuses
+/// the pairing. It builds no handle and stores no pin: the caller connects
+/// with what it returns.
+pub(crate) fn pair(
+    link: &str,
+) -> Result<(String, String, Option<AuthorityCheckpointPin>), MemoryError> {
     use ed25519_dalek::Signer;
     // The link and its code are never echoed: the code is the enrollment grant
     // until it is spent.
@@ -70,14 +82,18 @@ pub(crate) fn pair(link: &str) -> Result<(String, String), MemoryError> {
             &["Pass the one-line link the server owner created, exactly as printed."],
         )
     };
-    let (origin, code, holder_ref) =
-        oneiron::authority::parse_pairing_link(link).map_err(|_| malformed())?;
+    let (origin, code, holder_ref, pin_ref) =
+        oneiron::authority::parse_pinned_pairing_link(link).map_err(|_| malformed())?;
     let base_url = normalize_origin(&origin)?;
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
-    let transcript =
-        oneiron::authority::pairing_binding_transcript(&code, &binding_key, &holder_ref)
-            .map_err(|_| malformed())?;
+    let transcript = oneiron::authority::pairing_binding_transcript_pinned(
+        &code,
+        &binding_key,
+        &holder_ref,
+        pin_ref.as_ref(),
+    )
+    .map_err(|_| malformed())?;
     let body = serialize_request(&serde_json::json!({
         "code": code,
         "holder_ref": holder_ref,
@@ -103,12 +119,26 @@ pub(crate) fn pair(link: &str) -> Result<(String, String), MemoryError> {
     }
     let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES)
         .map_err(|_| transport_error("the server's pairing reply was truncated or oversized"))?;
-    let slip = serde_json::from_slice::<Paired>(&bytes)
-        .ok()
-        .and_then(|paired| paired.token.strip_prefix("v2.slip.").map(str::to_owned))
+    let paired = serde_json::from_slice::<Paired>(&bytes)
+        .map_err(|_| transport_error(format!("the server answered {status} with no slip")))?;
+    let slip = paired
+        .token
+        .strip_prefix("v2.slip.")
+        .map(str::to_owned)
         .ok_or_else(|| transport_error(format!("the server answered {status} with no slip")))?;
+    let pinned = match (&pin_ref, &paired.pin) {
+        (None, None) => true,
+        (Some(named), Some(pin)) => named.names(pin),
+        _ => false,
+    };
+    if !pinned {
+        return Err(transport_error(
+            "the server's checkpoint pin is not the one the pairing link names; pair again with a link from the owner",
+        ));
+    }
     Ok((
         origin,
         format!("{CREDENTIAL_PREFIX}{slip}.{}", lower_hex(key.as_bytes())),
+        paired.pin,
     ))
 }

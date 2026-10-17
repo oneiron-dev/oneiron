@@ -4,7 +4,8 @@
 //! hook depth 0, so the row boundary runs the pre chain, finds the settled
 //! proceed and resumes after the asking hook. The saved args are checked
 //! again and the verb's own gate runs as on any call. What the call returned
-//! waits in the saved row for the caller's retry.
+//! waits in the saved row for the caller's retry, up to 64 KiB of JSON; past
+//! it the row keeps only that the call completed.
 //!
 //! Only a call the drain can make as its caller made it has a target: a
 //! memory row the generated dispatcher runs, for an on-device caller with no
@@ -177,15 +178,10 @@ impl Vault {
                 }
             }
         };
+        let failed = ran.is_err();
         let (outcome, transient) = match ran {
-            Ok(value) => (
-                ask::SavedOutcome::Ok {
-                    result: serde_json::to_string(&value).map_err(|_| {
-                        crate::Error::InvariantViolation("verb hook ask outcome encode")
-                    })?,
-                },
-                false,
-            ),
+            // A result over the cap saves that it completed, not the result.
+            Ok(value) => (ask::SavedOutcome::result(&value)?, false),
             Err(error) => match error.hook.as_deref() {
                 // A later hook asked: its own ask now stands under the key,
                 // or this one no longer reads as settled.
@@ -201,20 +197,18 @@ impl Vault {
                 hook => {
                     let transient = hook.is_none() && error.code == MEMORY_CODE_INTERNAL;
                     (
-                        ask::SavedOutcome::Err {
-                            code: error.code,
-                            message: error.message,
-                            receipt: None,
-                        },
+                        ask::SavedOutcome::error(error.code, &error.message),
                         transient,
                     )
                 }
             },
         };
         // A credential call that ends refused or failed leaves one receipt,
-        // committed with its outcome.
+        // committed with its outcome; one that completed leaves none.
         let receipt = match (receipt, &outcome) {
-            (Some(receipt), ask::SavedOutcome::Err { code, message, .. }) if !transient => {
+            (Some(receipt), ask::SavedOutcome::Err { code, message, .. })
+                if failed && !transient =>
+            {
                 Some(receipt.refused(code, message))
             }
             _ => None,
