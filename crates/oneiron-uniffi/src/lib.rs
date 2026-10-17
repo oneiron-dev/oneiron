@@ -19,8 +19,7 @@
 //! express (a `serde_json::Value`, a recursive type) stays a [`WireJson`]
 //! field inside its record, and a row whose type the inventory could not read
 //! crosses as [`WireJson`] whole. There is no generic `call(name, json)`.
-//! Definition rows the table has not made callable fail closed with a typed
-//! `INVALID_STATE` error.
+//! Every exported row is callable: the table names no definition-only row.
 //!
 //! This surface exports no foreign callback interface and no subscription
 //! verb: streaming belongs to the transport lane, not to a second socket minted
@@ -40,10 +39,10 @@ pub use dto::{
     FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
     MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
     OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, QuoteSpan,
-    ReadReceipt, ReadScope, RecallScope, RerankReport, RerankSkip, RetrievalDegradation,
-    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec,
-    StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor, WitnessMessage,
-    WitnessReceipt, WitnessTurn,
+    ReadReceipt, ReadScope, RecallMedia, RecallScope, RerankReport, RerankSkip,
+    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
+    StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 pub use error::OneironError;
 pub use facade_types_generated::*;
@@ -68,23 +67,6 @@ pub const HEAD_MEMORY_PACK_SCHEMA_VERSION: u32 = oneiron::MEMORY_PACK_VERSION;
 #[derive(uniffi::Object)]
 pub struct Oneiron {
     inner: oneiron_remote::OneironClient,
-}
-
-/// Fails closed for a definition row the verb table has not made callable.
-///
-/// Calling one produces exactly the typed error shape every other refusal
-/// has, rather than a panic, a sentinel or a silent no-op.
-fn definition_only<T>(entrypoint: &str) -> Result<T, OneironError> {
-    Err(OneironError::Failure {
-        code: oneiron::MEMORY_CODE_INVALID_STATE.to_owned(),
-        message: format!("{entrypoint} is defined but has no callable verb row yet"),
-        suggestions: vec![
-            "Use the verb table's callable rows; this one waits for its typed row.".to_owned(),
-        ],
-        attempted: None,
-        replacement: None,
-        schema_ref: None,
-    })
 }
 
 #[uniffi::export]

@@ -106,6 +106,18 @@ export type RecallScope = {
   kinds?: string[]
 }
 
+/** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */
+export type RecallMedia = {
+  /** Declared embedding space id: an `ai.embed` rung id, then `@where`. */
+  space: string
+  /** Media type of the bytes: `image/*`, `audio/*` or `text/*`. */
+  mime: string
+  /** The bytes, standard base64. */
+  bytesB64: string
+  /** The kinds of item the space's list keeps; every kind the space holds when unset. */
+  kinds?: ("text" | "image" | "audio")[]
+}
+
 /** Options for `vault.recall` on {@link Oneiron}. */
 export type RecallOptions = {
   /** Defaults to `medium`. */
@@ -120,6 +132,8 @@ export type RecallOptions = {
   asOf?: number
   /** A hard deadline in milliseconds, 1 to 60000: recall answers with the best results ready, marked `partial`. Omitted, recall runs to the end, except `call`, which takes the vault's call-mode deadline. */
   deadlineMs?: number
+  /** A media query the server embeds into its declared space and searches beside the query. */
+  media?: RecallMedia
 }
 
 /** Where one recalled item came from. */
@@ -160,6 +174,20 @@ export type MemoryItem = {
 export type CitedMessage = {
   shortId: string
   valueText: string
+  /** The message as a typed record ref, the one the reader's read of it admitted. It carries no revision pin. */
+  record?: RecordRef
+}
+
+/** A typed record ref: a record the reader's own read admitted, with its display label. Display data only, never authority. */
+export type RecordRef = {
+  /** Registry kind string (`CLAIM`, `MESSAGE`, `PERSON`, ...). */
+  kind: string
+  /** 32-hex entity id. */
+  id: string
+  /** The vault's short id, when one is assigned; never revision-pinned. */
+  shortId?: string
+  /** A bounded, single-line display label. */
+  label: string
 }
 
 /** What the requested scope excluded. */

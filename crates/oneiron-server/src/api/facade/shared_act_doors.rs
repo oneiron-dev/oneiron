@@ -29,8 +29,8 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest, SharedReceiptRequest,
-    SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
+    SharedMemberAddRequest, SharedMemberInvited, SharedMemberRequest, SharedMemberRoleRequest,
+    SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
 use super::host_doors::internal;
@@ -42,7 +42,8 @@ use crate::server::SyncServer;
 /// rechecks in the acting writer; any other person gets their own proof from
 /// their verified human slip, and the engine's roster, power and role checks
 /// decide. A managed vault is owned through its supervisor and refuses, as
-/// `/v1/owner` does there.
+/// `/v1/owner` does there. An invitee's own slip (FIX 1925) is a person's
+/// proof only at its invitation's doors (`auth::INVITEE_DOORS`).
 pub(super) fn person(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -68,7 +69,9 @@ pub(super) fn person(
     let principal = auth.principal_ref().ok_or_else(refused)?;
     let actor = oneiron::EntityId::from_hex(principal).map_err(|_| refused())?;
     // The slip is the person's own, as the owner's bound proof requires.
-    if slip.claims().holder_ref != actor.to_hex() {
+    if slip.claims().holder_ref != actor.to_hex()
+        || (slip.claims().invitation_ref.is_some() && !crate::auth::INVITEE_DOORS.contains(&verb))
+    {
         return Err(refused());
     }
     server
@@ -217,16 +220,22 @@ pub(crate) async fn vault_shared_deletion(
 }
 
 /// `vault.members.add`: an Admin's `add_member` power, checked by the engine
-/// against the live roster.
+/// against the live roster. Given the invitee's own device key, the host's
+/// slip issuer signs the invitee's slip for the invitation (FIX 1925).
 pub(crate) async fn vault_members_add(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedMemberAddRequest,
-) -> MemoryResult<SharedActExecutionReceipt> {
+) -> MemoryResult<SharedMemberInvited> {
     const VERB: &str = "vault.members.add";
     let admin = person(server, auth, VERB)?;
     off_runtime(server, VERB, move |server| {
-        sdk::add_shared_member_as(server.vault(), &admin, input)
+        if input.holder_key.is_none() {
+            return sdk::add_shared_member_as(server.vault(), &admin, None, input);
+        }
+        with_slips(server, VERB, |slips| {
+            sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
+        })
     })
     .await
 }
@@ -316,19 +325,21 @@ pub(crate) async fn vault_authority_handoff_alarms_acknowledge(
 /// the claimant's proof that they control the organization owning the vault.
 /// The engine checks only what it holds (no live Owner left, `from` still an
 /// Owner, `claimant` a live person) and signs the handover with the host's
-/// slip issuer. It answers the receipt the membership doors answer.
+/// slip issuer, keeping `proof` (the BLAKE3 of the judged proof note, never
+/// the note) with it. It answers the receipt the membership doors answer.
 pub(crate) async fn operator_recover_shared_owner(
     server: &Arc<SyncServer>,
     vault_id: u64,
     from: oneiron::EntityId,
     claimant: oneiron::EntityId,
+    proof: Option<[u8; 32]>,
 ) -> MemoryResult<SharedActExecutionReceipt> {
     const VERB: &str = "operator.shared.recover_owner";
     off_runtime(server, VERB, move |server| {
         with_slips(server, VERB, |issuer| {
             Ok(server
                 .vault()
-                .recover_shared_owner(issuer, vault_id, from, claimant)?)
+                .recover_shared_owner_with_proof(issuer, vault_id, from, claimant, proof)?)
         })
     })
     .await

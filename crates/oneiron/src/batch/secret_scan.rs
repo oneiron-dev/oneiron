@@ -6,6 +6,9 @@ mod wordlist;
 use heed::{RoTxn, RwTxn};
 
 pub(super) use self::mask::mask_batch_ops;
+pub(crate) use self::mask::side_row::{
+    SidePart, admit_side_parts, admit_side_row, admitted_from, from_named_tree, named_tree,
+};
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
     Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,
@@ -385,6 +388,18 @@ pub(crate) fn scan_joined_text(text: &str) -> Option<&'static str> {
 pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
     let _secrets_nulled = scan_payload(data)?;
     Ok(())
+}
+
+/// [`scan_write_payload`] for a reader that marks a hit rather than refusing a
+/// write: the reason it would refuse with, the rule's own code.
+pub(crate) fn write_payload_hit(data: &[u8]) -> Option<&'static str> {
+    match scan_payload(data) {
+        Ok(_) => None,
+        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+            Some(reason_codes.last().copied().unwrap_or(REASON_DETECTED))
+        }
+        Err(_) => Some(REASON_DETECTED),
+    }
 }
 
 /// Apply the same raw/structured scan as ordinary non-custody batch puts to

@@ -14,8 +14,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/uniffi_bindgen.rs` | src | s | — | — | Local bindgen entry point, behind the `bindgen-cli` feature |
 | `src/codec.rs` | src | L | 7 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
-| `src/dto.rs` | src | L | 48 struct · 7 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews +47 | The typed UniFFI records of the SDK surface |
+| `src/dto.rs` | src | L | 49 struct · 7 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews +48 | The typed UniFFI records of the SDK surface |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/facade_generated.rs` | src | L | — | — | — |
-| `src/facade_types_generated.rs` | src | XL | 407 struct · 170 enum | ActExecution, AdmissionBasis, AdmissionConsent, AgentHealthCard, AgentHealthCardView, AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft +569 | — |
+| `src/facade_types_generated.rs` | src | XL | 434 struct · 173 enum | ActExecution, AdmissionBasis, AdmissionConsent, AgentHealthCard, AgentHealthCardView, AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft +599 | — |
 | `src/lib.rs` | src | s | 1 struct · 6 fn · 1 const · 3 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |

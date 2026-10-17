@@ -177,6 +177,7 @@ impl ReadBounds<'_> {
 /// reader's grant and the rows it was served from are the caller's to check
 /// before it is made.
 pub(crate) struct ResultRead {
+    owner: EntityId,
     output: CodeRunRawOutput,
     name: Option<String>,
     range: Option<(u64, u64)>,
@@ -204,6 +205,7 @@ impl ResultRead {
         }
         let (state, secret) = storage.code_run_result_taint(Some(owner), &output)?;
         Ok(Ok(Self {
+            owner,
             output,
             name,
             range,
@@ -215,6 +217,11 @@ impl ResultRead {
     /// The result read.
     pub(crate) fn output(&self) -> &CodeRunRawOutput {
         &self.output
+    }
+
+    /// The run whose occurrence of the result is read.
+    pub(crate) fn owner(&self) -> EntityId {
+        self.owner
     }
 
     /// The range of its body the read is narrowed to, if any.
@@ -278,6 +285,16 @@ impl ResultRead {
             card["preview"] = json!(String::from_utf8_lossy(&head[..cut]));
         }
         card["shape"] = shape::shape(&head, body.kind(), head.len() as u64 == body.len());
+        if let Some(reason) = unmarked_secret(&json!([card["preview"], card["shape"]])) {
+            card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
+            card["taint"] = json!({
+                "state": taint_word(ArtifactTaintState::TaintedLive),
+                "secret": reason,
+            });
+            if let Some(fields) = card.as_object_mut() {
+                fields.remove("shape");
+            }
+        }
         Ok(card)
     }
 
@@ -309,15 +326,20 @@ impl ResultRead {
 
     /// What any facet of a body that is not clean answers: its size and
     /// taint, none of its content.
-    fn withheld(&self) -> Value {
+    pub(crate) fn withheld(&self) -> Value {
+        self.withheld_as(self.state, self.secret.as_deref())
+    }
+
+    /// [`Self::withheld`] under `state`, whose hit was `secret`.
+    fn withheld_as(&self, state: ArtifactTaintState, secret: Option<&str>) -> Value {
         let (start, end) = self.range.unwrap_or((0, self.output.raw_len));
         json!({
-            "withheld": taint_word(self.state),
+            "withheld": taint_word(state),
             "ref": self.reference(),
             "bytes": end - start,
             "lines": self.range.is_none().then_some(self.output.lines),
             "kind": kind_word(self.output.kind),
-            "taint": {"state": taint_word(self.state), "secret": self.secret},
+            "taint": {"state": taint_word(state), "secret": secret},
             "reason": WITHHELD_REASON,
         })
     }
@@ -340,7 +362,7 @@ impl ResultRead {
             watch: storage.limit_watch(),
         };
         let reference = self.reference();
-        match facet {
+        let reply = match facet {
             ResultFacet::Slice => slice::slice(&body, &reference, input, &bounds),
             ResultFacet::Search => search::search(&body, &reference, input, &bounds),
             ResultFacet::Query => query::query(
@@ -354,8 +376,26 @@ impl ResultRead {
             ResultFacet::Chunks => {
                 chunks::chunks(&body, &reference, &self.output.handle, input, &bounds)
             }
-        }
+        }?;
+        // A spilled selection is a new body, which its own sink's scan marks.
+        Ok(match reply {
+            Reply::Output(answer) => match unmarked_secret(&answer) {
+                None => Reply::Output(answer),
+                Some(reason) => {
+                    Reply::Output(self.withheld_as(ArtifactTaintState::TaintedLive, Some(reason)))
+                }
+            },
+            other => other,
+        })
     }
+}
+
+/// What the write door's rules find in what a read of a clean body shows
+/// (OF-067): a body stored before its scan read every rule may hold a secret
+/// no mark names, so a card or an answer that shows one is withheld as a
+/// marked body's is. The body's row keeps its taint as it was.
+fn unmarked_secret(shown: &Value) -> Option<&'static str> {
+    crate::batch::secret_scan::write_payload_hit(shown.to_string().as_bytes())
 }
 
 /// A result's card in run `owner`, its taint read now (see

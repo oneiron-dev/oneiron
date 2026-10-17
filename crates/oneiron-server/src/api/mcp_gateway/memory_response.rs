@@ -5,8 +5,9 @@ use crate::mcp::{McpResolvedActor, McpVerbToolArgs};
 use crate::server::SyncServer;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::{
-    CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus, InProcessVaultReadAdapter,
-    VaultReadClient, VaultReadError, VaultReadMethod, View,
+    CoreContextPackRequest, CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus,
+    EmbeddedMediaSeed, InProcessVaultReadAdapter, VaultReadClient, VaultReadError, VaultReadMethod,
+    View,
 };
 use oneiron::context_board::CapabilityHit;
 use serde_json::{Value, json};
@@ -21,7 +22,8 @@ pub(super) async fn execute(
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<(Value, Vec<CapabilityHit>, Vec<oneiron::EntityId>), McpGatewayError> {
-    let mut produced = execute_read(server, args, actor)?;
+    let media = context_pack_media(server, args).await?;
+    let mut produced = execute_read(server, args, actor, media.as_deref())?;
     if !produced.served.is_empty() {
         let mut target = super::board_observations::read_set(server, actor).await;
         let reader = mcp_scoped_read(&server.vault, actor)?;
@@ -99,6 +101,7 @@ fn execute_read(
     server: &SyncServer,
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
+    media: Option<&[EmbeddedMediaSeed]>,
 ) -> Result<MemoryRead, McpGatewayError> {
     let Some(method) = args.tool.memory_method() else {
         return Err(super::mcp_verb_family_error(args));
@@ -132,6 +135,10 @@ fn execute_read(
     let producers = oneiron::memory::ProducerRows::default();
     let adapter = InProcessVaultReadAdapter::new(&server.vault, reader.actor_key().clone())
         .listing_producers(&producers);
+    let adapter = match media {
+        Some(seeds) => adapter.with_media_seeds(seeds),
+        None => adapter,
+    };
     let mut served = Vec::new();
     let mut capabilities = Vec::new();
     macro_rules! call {
@@ -202,6 +209,80 @@ fn execute_read(
         capabilities,
         producers: producers.take(),
     })
+}
+
+/// A native context pack's media seeds (OF-370), embedded before the read
+/// through the server's shared seed embedding, the one `POST
+/// /v1/core/context-pack` runs: the pack's own `media`, and on the one-space
+/// preset (the text kind slot bound to a declared space) its text query
+/// through that space's text tower. The pack's own checks and the media's
+/// decoding come first and are free; the embed is the paid call. Any other
+/// method, or a pack that seeds nothing, embeds nothing.
+async fn context_pack_media(
+    server: &SyncServer,
+    args: &McpVerbToolArgs,
+) -> Result<Option<Vec<EmbeddedMediaSeed>>, McpGatewayError> {
+    if !matches!(
+        args.tool.memory_method(),
+        Some(VaultReadMethod::ContextPack)
+    ) {
+        return Ok(None);
+    }
+    let Some(body) = args.payload.arguments.request.as_ref() else {
+        return Ok(None);
+    };
+    let names_media = !body.get("media").is_none_or(Value::is_null);
+    let names_query = body
+        .get("query")
+        .and_then(Value::as_str)
+        .is_some_and(|query| !query.trim().is_empty());
+    if !names_media && !names_query {
+        return Ok(None);
+    }
+    let pack: CoreContextPackRequest = request(body.clone())?;
+    InProcessVaultReadAdapter::check_context_pack(&pack).map_err(native_error)?;
+    let decoded = pack
+        .media
+        .map(|media| {
+            crate::api::ContextPackMediaQuery::from(media)
+                .decode(server.config.limits.retrieval_query_bytes)
+        })
+        .transpose()
+        .map_err(media_error)?;
+    let query = crate::api::non_empty_query(pack.query.as_deref());
+    let seeds = crate::api::embed_media_seeds(server, decoded, query)
+        .await
+        .map_err(media_error)?;
+    if seeds.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(
+        seeds
+            .into_iter()
+            .map(|seed| EmbeddedMediaSeed {
+                space: seed.space,
+                kind: seed.kind,
+                vector: seed.vector,
+                kinds: seed.kinds,
+            })
+            .collect(),
+    ))
+}
+
+/// A media query's refusal as the native tool's error, its field named under
+/// `arguments.request`.
+fn media_error(error: crate::error::ApiError) -> McpGatewayError {
+    let field = match error.details() {
+        crate::error::ApiErrorDetails::BadRequest { field: Some(field) } => {
+            Some(format!("arguments.request.{field}"))
+        }
+        _ => None,
+    };
+    let gateway = super::mcp_api_error(error);
+    match field {
+        Some(field) => gateway.with_field(field),
+        None => gateway,
+    }
 }
 
 struct ReadObservation {
