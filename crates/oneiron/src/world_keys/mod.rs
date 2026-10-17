@@ -57,12 +57,14 @@ pub(crate) use self::pads::{
     destroy_world_keys_in_txn, late_pad_in_txn, pad_body_world, validate_pad_put_in_txn,
     world_keys_destroyed_in_txn,
 };
+pub(crate) use self::page_seal::{
+    OpenedDataKey, admit_new_vault, page_seal_open_error, read_sealed, seal_read_only,
+};
 pub use self::page_seal::{
-    PAGE_SEAL_WARNING, VaultPageSeal, new_delivered_page_seal, new_page_seal,
+    PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
     page_seal_custody_path, page_seal_vault_id, reopen_delivered_page_seal, unlock_page_seal,
     vault_is_sealed,
 };
-pub(crate) use self::page_seal::{admit_new_vault, page_seal_open_error, seal_read_only};
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};

@@ -33,6 +33,7 @@ mod decision_ask_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
+mod fanout_doors;
 mod graph_ask_doors;
 mod guest_doors;
 pub(super) mod host_doors;
