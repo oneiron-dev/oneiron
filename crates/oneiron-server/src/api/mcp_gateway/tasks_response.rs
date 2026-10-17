@@ -429,6 +429,9 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
         VerbHookStop::Skipped { .. } => "verb_hook_skipped",
         VerbHookStop::Pending { .. } => "verb_hook_pending",
         VerbHookStop::Hidden { .. } => "verb_hook_hidden",
+        // The call ran once its ask settled; the stop carries its outcome.
+        VerbHookStop::Completed { .. } => "verb_hook_completed",
+        VerbHookStop::CompletedWithError { .. } => "verb_hook_completed_with_error",
     };
     let mut error = McpGatewayError::new(-32020, kind, stop.to_string());
     error.hook = Some(Box::new(stop));

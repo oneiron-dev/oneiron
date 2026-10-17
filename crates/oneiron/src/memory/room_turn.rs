@@ -191,6 +191,7 @@ impl<'v> Memory<'v> {
                 owner_authorship: None,
                 invocation: self.invocation,
                 task_host: None,
+                credential: self.credential,
             },
         })
     }

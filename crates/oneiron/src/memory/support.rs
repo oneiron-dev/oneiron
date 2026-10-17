@@ -426,6 +426,9 @@ pub struct Memory<'v> {
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
+    /// A host bound this surface for a caller its credential admitted
+    /// (`for_credential`); only that host verifies the credential again.
+    pub(super) credential: bool,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -479,6 +482,7 @@ impl Vault {
             owner_authorship: None,
             invocation: None,
             task_host: None,
+            credential: false,
         }
     }
 
@@ -513,6 +517,7 @@ impl Vault {
             owner_authorship: None,
             invocation: None,
             task_host: None,
+            credential: false,
         }
     }
 }
@@ -556,6 +561,7 @@ impl<'v> Memory<'v> {
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
                 task_host: self.task_host.clone(),
+                credential: self.credential,
             },
         })
     }
@@ -613,6 +619,16 @@ impl Memory<'_> {
     #[must_use]
     pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {
         self.invocation
+    }
+
+    /// Marks this surface as a caller's whose credential this host admitted.
+    /// It grants and narrows nothing: a verb hook's ask on its call saves no
+    /// way to run the call without the caller, so only the caller's retry,
+    /// which the host verifies again, resumes it (ARCH-0080 §3 Ask).
+    #[must_use]
+    pub fn for_credential(mut self) -> Self {
+        self.credential = true;
+        self
     }
 
     /// Binds the running agent attempt whose TASK creates this surface makes
@@ -733,6 +749,40 @@ impl Memory<'_> {
     /// The room turn this handle is bound to, if any.
     pub(crate) fn room_turn(&self) -> Option<&crate::claim::RoomTurnCeiling> {
         self.room_turn.as_ref()
+    }
+
+    /// The sitting and the room turn's room a host bound, when nothing else
+    /// on this surface is something a resumed call could not rebuild: no
+    /// credential or read proof, on this device, a room's own turn rather
+    /// than a thread's, and no owner authorship, host origin, machine signer,
+    /// producer list, birth position or TASK host. A verb hook's ask saves
+    /// them, so settlement runs the call again as this caller (ARCH-0080 §3
+    /// Ask); `None` resumes only on the caller's retry.
+    pub(crate) fn resume_bounds(
+        &self,
+    ) -> Option<(
+        Option<crate::session_lifecycle::SessionKey>,
+        Option<EntityId>,
+    )> {
+        let plain = !self.credential
+            && self.read_proof.is_none()
+            && self.locality == crate::claim::CallerLocality::OnDevice
+            && self
+                .room_turn
+                .as_ref()
+                .is_none_or(|turn| turn.branch.is_none())
+            && self.owner_authorship.is_none()
+            && self.host_origin.is_none()
+            && self.machine_signer.is_none()
+            && self.producers.is_none()
+            && self.birth_position == crate::federation::record_scope::BirthPosition::default()
+            && self.task_host.is_none();
+        plain.then(|| {
+            (
+                self.session_key,
+                self.room_turn.as_ref().map(|turn| turn.room),
+            )
+        })
     }
 
     /// The bound actor entity id.

@@ -1,11 +1,13 @@
 //! A pre-hook's Ask (ARCH-0080 §3 Ask). Before the caller gets Pending, the
 //! engine opens the ask through the tasks.ask door, as the hook's author, and
 //! saves the stopped call in the same write: its args, the hook's place in the
-//! chain and the ask handle. A retry with the same invocation reads the ask:
-//! still open, the same Pending; answered proceed, the saved call resumes once
-//! after the asking hook; declined or expired, Skipped. The answer is evidence,
-//! never effect authority (`NotEvaluatedByAsk`): the verb's own gate runs on
-//! the resumed call.
+//! chain, the ask handle and, for a call settlement can run again without its
+//! caller, how to. A retry with the same invocation reads the ask: still open,
+//! the same Pending; answered proceed, the saved call resumes once after the
+//! asking hook, and the chain's own write uses the answer up; declined or
+//! expired, Skipped. Once settlement's drain ran the call, a retry gets what it
+//! returned. The answer is evidence, never effect authority
+//! (`NotEvaluatedByAsk`): the verb's own gate runs on the resumed call.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,14 +20,15 @@ use crate::task_verb::{
 };
 use crate::{EdgeActorClass, EntityId, Error, MemoryError, Result, Vault};
 
-use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop};
+use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume};
 
 /// Calls stopped on a hook's ask, by invocation.
 const ASKS: SideTable<[u8; 16], VerbAsk, Named> = SideTable::new(&side_table::HOOKS_VERB_ASK);
 /// The answer that lets the verb run.
 const PROCEED: &str = "proceed";
 const HOLD: &str = "hold";
-const USED: &str = "this invocation's ask was already used; call again with a new invocation";
+pub(super) const USED: &str =
+    "this invocation's ask was already used; call again with a new invocation";
 
 /// One stopped call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +56,29 @@ struct VerbAsk {
     state: VerbAskState,
     created_at: u64,
     consumed_at: Option<u64>,
+    /// How settlement runs the call again without its caller; `None` for a
+    /// call only its caller's retry resumes.
+    resume: Option<VerbResume>,
+    /// When the ask settled.
+    settled_at: Option<u64>,
+    /// Settled proceed with a resume target: the drain runs the call.
+    ready: bool,
+    /// What the drained call returned, for the caller's retry.
+    outcome: Option<SavedOutcome>,
+}
+
+/// What a call the drain ran returned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SavedOutcome {
+    /// The caller's view of the result, as JSON.
+    Ok {
+        result: String,
+    },
+    Err {
+        code: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,17 +95,30 @@ pub(super) enum Retry {
     /// No saved ask: the chain runs from its start.
     Fresh,
     Stop(VerbHookStop),
-    /// Answered proceed and consumed: the chain resumes after `binding`
-    /// with the saved args.
+    /// Answered proceed: the chain resumes after `binding` with the saved
+    /// args, and its commit uses up the answer `token` names.
     Resume {
         binding: EntityId,
         position: usize,
         args: Value,
+        token: AskToken,
     },
 }
 
-/// Reads the ask a previous try of this invocation saved, if any.
-pub(super) fn retry(vault: &Vault, call: &VerbCall) -> Result<Retry> {
+/// The proceed answer a resumed chain uses up in its own commit: the
+/// invocation's key and the ask it answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AskToken {
+    key: [u8; 16],
+    ask: EntityId,
+    /// `<pack>/<hook>`: the asking hook.
+    pub(super) hook: String,
+}
+
+/// Reads the ask a previous try of this invocation saved, if any. `resume`
+/// is how the caller could be resumed without it: only a caller whose call
+/// the drain would run the same way reads the drained outcome.
+pub(super) fn retry(vault: &Vault, call: &VerbCall, resume: Option<&VerbResume>) -> Result<Retry> {
     let key = call.invocation.0;
     let row = {
         let rtxn = vault.store.env.read_txn()?;
@@ -98,7 +137,12 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall) -> Result<Retry> {
         return skipped("this invocation belongs to another call");
     }
     if row.state == VerbAskState::Consumed {
-        return skipped(USED);
+        return match (&row.outcome, resume) {
+            (Some(outcome), Some(resume)) if row.resume.as_ref() == Some(resume) => {
+                Ok(Retry::Stop(completed(call.invocation, outcome)?))
+            }
+            _ => skipped(USED),
+        };
     }
     let status = vault
         .memory(row.author, EdgeActorClass::Human)
@@ -120,34 +164,77 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall) -> Result<Retry> {
             }
         });
     }
-    let now = vault.store.clock.now_recorded_at();
-    let consumed = vault.with_write_txn_grouped(|txn| {
-        let Some(mut current) = ASKS.get(&vault.store, txn, &key)? else {
-            return Ok(false);
-        };
-        if current.state != VerbAskState::Open {
-            return Ok(false);
-        }
-        current.state = VerbAskState::Consumed;
-        current.consumed_at = Some(now);
-        ASKS.put(&vault.store, txn, &key, &current)?;
-        Ok(true)
-    })?;
-    if !consumed {
-        return skipped(USED);
-    }
     let args =
         serde_json::from_str(&row.args).map_err(|_| Error::CorruptedIndex("verb hook ask args"))?;
     Ok(Retry::Resume {
         binding: row.binding,
         position: usize::try_from(row.position).unwrap_or(usize::MAX),
         args,
+        token: AskToken {
+            key,
+            ask: row.ask,
+            hook: row.hook,
+        },
+    })
+}
+
+/// Uses up the answer `token` names, in the resumed chain's commit: false
+/// when the row is gone, no longer Open, or names another ask (a newer ask
+/// of this invocation, which stands).
+pub(super) fn consume_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    token: &AskToken,
+) -> Result<bool> {
+    let Some(mut row) = ASKS.get(&vault.store, txn, &token.key)? else {
+        return Ok(false);
+    };
+    if row.state != VerbAskState::Open || row.ask != token.ask {
+        return Ok(false);
+    }
+    row.state = VerbAskState::Consumed;
+    row.consumed_at = Some(vault.store.clock.now_recorded_at());
+    row.ready = false;
+    ASKS.put(&vault.store, txn, &token.key, &row)?;
+    Ok(true)
+}
+
+/// The error a resumed chain's write fails with when its answer was used
+/// meanwhile, so the write does not commit.
+pub(super) fn used_error() -> Error {
+    Error::InvariantViolation("verb hook ask already used")
+}
+
+/// Whether `stop` is the Skipped a used answer ends a call with.
+pub(super) fn is_used(stop: &VerbHookStop) -> bool {
+    matches!(stop, VerbHookStop::Skipped { reason, .. } if reason == USED)
+}
+
+/// The stop a retry of a drained call gets: what the call returned.
+fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHookStop> {
+    Ok(match outcome {
+        SavedOutcome::Ok { result } => VerbHookStop::Completed {
+            invocation: invocation.to_hex(),
+            result: serde_json::from_str(result)
+                .map_err(|_| Error::CorruptedIndex("verb hook ask outcome"))?,
+        },
+        SavedOutcome::Err { code, message } => VerbHookStop::CompletedWithError {
+            invocation: invocation.to_hex(),
+            code: code.clone(),
+            message: message.clone(),
+        },
     })
 }
 
 /// Opens the hook's ask as its author and saves the stopped call, with the
-/// chain's own rows (`write`), in the ask's write. `Err(reason)` when the ask
-/// door refused: nothing was saved.
+/// chain's own rows (`write`), in the ask's write. `write` runs first, so a
+/// resumed chain uses up its old answer before the new ask's row takes the
+/// key. `resume` is saved with the call. `Err(reason)` when the ask door
+/// refused: nothing was saved.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the call, the hook, its place, the args, the label, the resume target and the chain's write"
+)]
 pub(super) fn open(
     vault: &Vault,
     call: &VerbCall,
@@ -155,6 +242,7 @@ pub(super) fn open(
     position: usize,
     args: &Value,
     label: &str,
+    resume: Option<&VerbResume>,
     write: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<std::result::Result<VerbHookStop, String>> {
     let (binding_id, binding) = hook;
@@ -191,6 +279,10 @@ pub(super) fn open(
             state: VerbAskState::Open,
             created_at: vault.store.clock.now_recorded_at(),
             consumed_at: None,
+            resume: resume.cloned(),
+            settled_at: None,
+            ready: false,
+            outcome: None,
         })
     };
     let key = call.invocation.0;
@@ -198,9 +290,9 @@ pub(super) fn open(
         .memory(binding.owner, EdgeActorClass::Human)
         .tasks_ask_with_txn_effect(&spec, |txn, ask| {
             let row = row(ask).map_err(MemoryError::from)?;
+            write(txn).map_err(MemoryError::from)?;
             ASKS.put(&vault.store, txn, &key, &row)
-                .map_err(MemoryError::from)?;
-            write(txn).map_err(MemoryError::from)
+                .map_err(MemoryError::from)
         });
     let receipt = match opened {
         Ok(receipt) => receipt,
@@ -208,14 +300,139 @@ pub(super) fn open(
     };
     if receipt.idempotent_replay {
         // The ask stood from an earlier try whose write did not land here.
+        // An Open row under the key stands.
         vault.with_write_txn_grouped(|txn| {
-            if ASKS.get(&vault.store, txn, &key)?.is_none() {
+            write(txn)?;
+            let open = ASKS
+                .get(&vault.store, txn, &key)?
+                .is_some_and(|row| row.state == VerbAskState::Open);
+            if !open {
                 ASKS.put(&vault.store, txn, &key, &row(receipt.handle.group_ref)?)?;
             }
-            write(txn)
+            Ok(())
         })?;
     }
     Ok(Ok(pending(call.invocation, receipt.handle.group_ref)))
+}
+
+/// Marks the call stopped on ask `group` settled, in the settling write:
+/// ready for the drain when the answer said proceed and the call has a
+/// resume target. `binding` is the asking hook's, from the ask's intent key.
+/// Nothing runs here, and a saved row that does not decode never fails the
+/// settlement: its retry reports it.
+pub(super) fn settled_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: [u8; 16],
+    binding: EntityId,
+    group: EntityId,
+    result: &TaskAskResult,
+    now: u64,
+) -> Result<()> {
+    let Some(mut row) = ASKS.get_lenient(&vault.store, txn, &key)? else {
+        return Ok(());
+    };
+    if row.ask != group || row.binding != binding || row.state != VerbAskState::Open {
+        return Ok(());
+    }
+    row.settled_at = Some(now);
+    row.ready = row.resume.is_some() && proceeds(result);
+    ASKS.put(&vault.store, txn, &key, &row)?;
+    if row.ready {
+        // The hook runner wakes on the commit, not only on its tick.
+        crate::batch::queue_proactivity_change(vault, txn);
+    }
+    Ok(())
+}
+
+/// One call the drain runs: what it needs to call the row again.
+pub(super) struct Ready {
+    pub(super) key: [u8; 16],
+    pub(super) verb: String,
+    pub(super) actor: EntityId,
+    pub(super) class: HookActorClass,
+    /// The saved args, as JSON.
+    pub(super) args: String,
+    pub(super) resume: VerbResume,
+    pub(super) ask: EntityId,
+}
+
+/// Every Open call a settled proceed made ready. A row that does not decode
+/// is passed over: its retry reports it.
+pub(super) fn ready(vault: &Vault) -> Result<Vec<Ready>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut ready = Vec::new();
+    for entry in ASKS.iter_raw_from(&vault.store, &rtxn, &[])? {
+        let (key, value) = entry?;
+        let (Ok(key), Ok(row)) = (
+            <[u8; 16]>::try_from(key.as_slice()),
+            ASKS.decode_value(&value),
+        ) else {
+            continue;
+        };
+        if row.state != VerbAskState::Open || !row.ready {
+            continue;
+        }
+        let Some(resume) = row.resume else {
+            continue;
+        };
+        ready.push(Ready {
+            key,
+            verb: row.verb,
+            actor: row.actor,
+            class: row.class,
+            args: row.args,
+            resume,
+            ask: row.ask,
+        });
+    }
+    Ok(ready)
+}
+
+/// Saves what the drained call of ask `group` returned and uses the answer
+/// up, unless a newer ask stands under the key or an outcome is saved.
+/// `transient` (a storage error) leaves a row the call did not use up ready
+/// for the next pass.
+pub(super) fn finish(
+    vault: &Vault,
+    key: [u8; 16],
+    group: EntityId,
+    outcome: SavedOutcome,
+    transient: bool,
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut row) = ASKS.get(&vault.store, txn, &key)? else {
+            return Ok(());
+        };
+        if row.ask != group || row.outcome.is_some() {
+            return Ok(());
+        }
+        if transient && row.state == VerbAskState::Open {
+            return Ok(());
+        }
+        row.state = VerbAskState::Consumed;
+        row.consumed_at.get_or_insert(now);
+        row.ready = false;
+        row.outcome = Some(outcome);
+        ASKS.put(&vault.store, txn, &key, &row)
+    })
+}
+
+/// Takes ask `group`'s Open call off the drain: its settlement no longer
+/// reads as a proceed, or its saved args do not decode. A retry still finds
+/// the row.
+pub(super) fn unready(vault: &Vault, key: [u8; 16], group: EntityId) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let Some(mut row) = ASKS.get(&vault.store, txn, &key)? else {
+            return Ok(());
+        };
+        if row.ask != group || row.state != VerbAskState::Open || !row.ready {
+            return Ok(());
+        }
+        row.ready = false;
+        ASKS.put(&vault.store, txn, &key, &row)
+    })
 }
 
 /// The caller's Pending: the invocation to retry and the ask handle's

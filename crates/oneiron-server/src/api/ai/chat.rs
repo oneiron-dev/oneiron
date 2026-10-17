@@ -630,6 +630,12 @@ fn hook_stopped(stop: &VerbHookStop) -> Refused {
         VerbHookStop::Skipped { .. } => (StatusCode::CONFLICT, "verb_hook_skipped"),
         VerbHookStop::Pending { .. } => (StatusCode::ACCEPTED, "verb_hook_pending"),
         VerbHookStop::Hidden { .. } => (StatusCode::FORBIDDEN, "verb_hook_hidden"),
+        // The call ran once its ask settled: the stop carries what it
+        // returned, and nothing runs it again.
+        VerbHookStop::Completed { .. } => (StatusCode::OK, "verb_hook_completed"),
+        VerbHookStop::CompletedWithError { .. } => {
+            (StatusCode::CONFLICT, "verb_hook_completed_with_error")
+        }
     };
     Box::new(
         (

@@ -11,6 +11,7 @@
 mod ask;
 mod chain;
 mod redact;
+mod resume;
 mod served;
 mod state;
 
@@ -21,6 +22,7 @@ pub use crate::error::VerbHookStop;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
+pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
 
 /// One logical verb's id, minted once where the call enters and passed
@@ -162,7 +164,26 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check)
+        chain::pre(self, call, args, check, None)
+    }
+
+    /// [`Self::pre_verb_hooks`] for a call settlement can run again without
+    /// its caller: an ask saves `resume`, and once the drain ran the call a
+    /// retry presenting the same target gets [`VerbHookStop::Completed`] or
+    /// [`VerbHookStop::CompletedWithError`]. `None` is a call only its
+    /// caller's retry resumes.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors as they occur; a hook's own failure is never one.
+    pub(crate) fn pre_verb_hooks_resumable(
+        &self,
+        call: VerbCall,
+        args: Value,
+        check: VerbArgsCheck<'_>,
+        resume: Option<VerbResume>,
+    ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
+        chain::pre(self, call, args, check, resume.as_ref())
     }
 
     /// Runs the post chain over the verb's `result`: the caller's view after
@@ -182,6 +203,7 @@ impl Vault {
 
     /// The pre chain, the verb and the post chain for one call. `run` gets
     /// the args after every Rewrite; an error from it skips the post chain.
+    /// A call its settled ask already ran answers what it returned.
     ///
     /// # Errors
     ///
@@ -195,6 +217,7 @@ impl Vault {
     ) -> std::result::Result<std::result::Result<Value, VerbHookStop>, E> {
         let pre = match self.pre_verb_hooks(call, args, check)? {
             Ok(pre) => pre,
+            Err(VerbHookStop::Completed { result, .. }) => return Ok(Ok(result)),
             Err(stop) => return Ok(Err(stop)),
         };
         let result = run(pre.args.clone())?;
