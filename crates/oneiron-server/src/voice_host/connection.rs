@@ -1,6 +1,7 @@
 //! One private, pre-admitted UDS connection on the existing Tokio runtime.
-//! No accept loop or tasks are spawned. The owner enforces listener privacy and
-//! its connection budget before calling serve. Pipecat still schedules turns.
+//! No accept loop or tasks are spawned; sentence safeguards run beside the
+//! connection and end with it. The owner enforces listener privacy and its
+//! connection budget before calling serve. Pipecat still schedules turns.
 
 use std::future::Future;
 use std::io;
@@ -194,14 +195,17 @@ impl VoiceHost {
                     match event {
                         MediaEvent::Stopped => break,
                         MediaEvent::In(input) => self.media_in(input, bridge, outputs),
+                        MediaEvent::Brain(out) => self.brain_out(out, bridge, outputs).await?,
+                        MediaEvent::Verdict(verdict) => self.verdict(verdict, bridge, outputs),
+                        MediaEvent::Tick => self.speech_tick(bridge, outputs),
+                        // Spoken audio plays only for the session's current generation.
                         MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
-                            // Spoken audio plays only for the session's current generation.
-                            if let Some(frame) = self.filter_pcm(frame) {
-                                bridge.play(frame).await?;
-                            }
+                            self.spoken(frame, bridge).await?;
                         }
+                        // A sentence that was not spoken stops its generation.
                         MediaEvent::Out(VoiceMediaOutput::SpeechFailed { generation, .. }) => {
-                            Self::speech_failed(generation, outputs);
+                            tracing::warn!("voice media: a sentence was not spoken");
+                            self.output_failed(generation, bridge, outputs);
                         }
                         MediaEvent::Out(VoiceMediaOutput::Heard { event, .. }) => {
                             // A heard final replaces any enrichment in flight, as a wire final does.
@@ -229,11 +233,19 @@ impl VoiceHost {
                             context: partial.context,
                         },
                         Ok(AsrUpdate::Final(request)) => {
-                            // Refs remain non-authoritative. The existing brain must
-                            // use ordinary disclosure/tool gates when resolving them.
-                            // Submission is synchronous, outside the session lock.
-                            outputs.brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
-                            Response::Final { handle, revision, context: request.retrieval }
+                            // With the media seats, speech opens before the brain starts.
+                            let speaking = bridge
+                                .as_deref_mut()
+                                .is_none_or(|bridge| self.start_speech(request.generation, bridge, outputs));
+                            if speaking {
+                                // Refs remain non-authoritative. The existing brain must
+                                // use ordinary disclosure/tool gates when resolving them.
+                                // Submission is synchronous, outside the session lock.
+                                outputs.brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
+                                Response::Final { handle, revision, context: request.retrieval }
+                            } else {
+                                Response::Error { code: "stopped" }
+                            }
                         }
                         Ok(_) => Response::Error { code: "stale_request" },
                         Err(error) => response_error(&error),

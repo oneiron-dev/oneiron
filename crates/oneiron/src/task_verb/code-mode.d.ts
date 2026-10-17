@@ -25,7 +25,7 @@ declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
-    batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
+    batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
     click_at(input: { image: string; x: number; y: number }): Promise<unknown>;
     crop(input: { height: number; image: string; width: number; x: number; y: number }): Promise<unknown>;
@@ -33,7 +33,7 @@ declare namespace self {
     find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
     library: {
       find(input: { site?: string | null; subgoal?: string | null }): Promise<unknown>;
-      propose(input: { args?: object; params?: string[]; postcondition: object[]; steps: (object | object | object | object | object | object | object | object)[]; subgoal: string }): Promise<unknown>;
+      propose(input: { args?: object; params?: string[]; postcondition: object[]; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal: string }): Promise<unknown>;
       run(input: { args?: object; workflow: string }): Promise<unknown>;
     };
     observe(input: { since?: number | null }): Promise<unknown>;
@@ -46,6 +46,27 @@ declare namespace self {
     zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
   };
   const compact: (input: { note?: string | null }) => Promise<unknown>;
+  const desktop: {
+    batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
+    click(input: { ref: string }): Promise<unknown>;
+    click_at(input: { image: string; x: number; y: number }): Promise<unknown>;
+    crop(input: { height: number; image: string; width: number; x: number; y: number }): Promise<unknown>;
+    expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
+    find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
+    hotkey(input: { keys: string[] }): Promise<unknown>;
+    key(input: { key: string; modifiers?: string[]; ref?: string | null }): Promise<unknown>;
+    observe(input: { since?: number | null }): Promise<unknown>;
+    open(input: { url: string }): Promise<unknown>;
+    screenshot(input: { trigger: "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt" }): Promise<unknown>;
+    scroll(input: { amount?: number | null; direction: "up" | "down" | "left" | "right"; ref?: string | null }): Promise<unknown>;
+    select(input: { option: string; ref: string }): Promise<unknown>;
+    type(input: { clear?: boolean; ref: string; text: string }): Promise<unknown>;
+    view(input: { image: string }): Promise<unknown>;
+    wait_for(input: { name?: string | null; role?: string | null; timeout_ms?: number | null }): Promise<unknown>;
+    window(input: { window: string }): Promise<unknown>;
+    windows(input: { app?: string | null }): Promise<unknown>;
+    zoom(input: { height: number; image: string; scale?: number | null; width: number; x: number; y: number }): Promise<unknown>;
+  };
   const focus: {
     refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
@@ -59,6 +80,11 @@ declare namespace self {
   const identity: {
     answer(input: { ask: string; choice: string }): Promise<unknown>;
     settle(input: { conversation?: string | null; effect: "send" | "pay" | "invite" | "share"; name: string; prompt: string; someone_new: string }): Promise<unknown>;
+  };
+  const inbox: {
+    concern: ((input: { card: string }) => Promise<unknown>) & {
+      outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
+    };
   };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
@@ -74,6 +100,7 @@ declare namespace self {
     fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
     save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
   };
+  const spawn: (input: { ask: string; intent_key: string; source: unknown }) => Promise<unknown>;
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
@@ -82,7 +109,8 @@ declare const tasks: {
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
-  update(input: { task_ref: string }): Promise<unknown>;
+  update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
+  wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
 };
 declare const vault: {
   artifacts: {
@@ -97,7 +125,7 @@ declare const vault: {
     put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
     read(input: { artifact_ref: string; version: number }): Promise<unknown>;
     release_wait(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
-    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image: string; target: unknown }[] }): Promise<unknown>;
+    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image?: string | null; review_image_ref?: string | null; target: unknown }[] }): Promise<unknown>;
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
     waits(input: { artifact_ref: string }): Promise<unknown>;
@@ -142,6 +170,9 @@ declare const vault: {
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {
     ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
+  };
+  guests: {
+    revoke(input: { grant_ref: string }): Promise<unknown>;
   };
   habits: {
     checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
@@ -267,7 +298,6 @@ declare const vault: {
   };
   shares: {
     create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; mention?: { end: number; message: string; start: number; turn: string } | null; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
-    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
     revoke(input: { share_ref: string }): Promise<unknown>;
     view(input: { narrowing?: { facet_refs?: string[]; include_unscoped?: boolean; world_refs?: string[] } | null; share_ref: string }): Promise<unknown>;
   };
