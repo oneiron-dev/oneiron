@@ -1,6 +1,5 @@
-//! Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract.
+//! Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,31 +8,26 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value as JsonValue, json};
 
+use super::ModelId;
 use super::NormalizedBurstInputs;
 use super::decision::catalogue::AUTO_CHECK;
 use super::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, HeldLadder, Reversibility,
 };
 use super::manifest::{CalibratedVerdict, ConfidenceBand, VerdictBasis};
-use super::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
-};
 use crate::claim::ClaimSource;
-use crate::entity_id::bytes_to_hex_lower;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::SourceLineage;
 use crate::{EntityId, Result};
-use oneiron_model::llm::dynamic_model_id;
 
 // ---------------------------------------------------------------------------
 // Auto-check seam (ONE-1296).
 //
-// The engine owns exactly three things here: the typed allow-or-hold decision
-// a host's ladder answers, the bounded wrapper that keeps that answer from
-// becoming an engine liveness problem, and the request contract an auto check
-// is entitled to make. It owns no model choice, no prompt tuning and no
-// verdict policy — the write gate reads only Allow / Hold / Unavailable.
+// The engine owns exactly two things here: the typed allow-or-hold decision
+// a host's ladder answers, and the bounded wrapper that keeps that answer from
+// becoming an engine liveness problem. It owns no model choice, no prompt
+// tuning and no verdict policy — the write gate reads only Allow / Hold /
+// Unavailable.
 // ---------------------------------------------------------------------------
 
 /// Wall-clock bound one auto-check consult may take before the write gate
@@ -58,16 +52,9 @@ pub(super) const AUTO_CHECK_HOLD_REASON_MAX_BYTES: usize = 256;
 
 /// The tier an auto check asks for by PURPOSE default: the cheap one. The
 /// per-call and vault-policy slots stay empty so a vault that pins its own
-/// tier still wins through [`TierPrecedence::resolved`].
+/// tier still wins through [`crate::llm::TierPrecedence::resolved`].
 #[cfg(test)]
 pub(super) const AUTO_CHECK_PURPOSE_DEFAULT_TIER: &str = "cheap";
-
-/// The floor under the purpose default, used only if a caller clears it.
-const AUTO_CHECK_GLOBAL_DEFAULT_TIER: &str = "standard";
-
-/// What a `Durable` auto check falls back to when no model answers: the same
-/// fail-closed verdict every other failure mode produces.
-const AUTO_CHECK_DETERMINISTIC_FALLBACK: &str = "fail_closed_to_proposed";
 
 /// Soft auto-verdict inputs computed from committed/same-transaction receipts.
 /// They are observations, not a durable trip or an authority ceiling.
@@ -418,130 +405,6 @@ impl BoundedAutoChecker {
             .recv_timeout(Duration::from_millis(AUTO_CHECKER_DEADLINE_MS))
             .unwrap_or(AutoCheckOutcome::Unavailable)
     }
-}
-
-/// The host request one auto-check consult is entitled to make.
-///
-/// OF-037 is the CURRENT ruling and supersedes the older BestEffort line: an
-/// auto check is a [`CallClass::Durable`] [`CallPurpose::AutoCheck`] call
-/// answering in a JSON schema on the purpose-default cheap tier. `BestEffort`
-/// is stale canon and must not come back — a check whose answer decides
-/// whether a write self-approves is memoizable, replayable work with a
-/// deterministic fallback, which is exactly what `Durable` means. Failing the
-/// call still fails closed to Proposed; the class says how the call is made,
-/// not how a failure is read.
-///
-/// `checker_ref` is the manifest's OPAQUE selector. The host resolves it and
-/// injects the matching decisions; the engine encodes it as the model identity
-/// without choosing a model. `system_prompt` is supplied by the host, including
-/// any instructions for interpreting candidate data. The engine owns the typed
-/// response schema and call contract, not natural-language prompt policy.
-#[must_use]
-pub fn auto_check_llm_request(
-    checker_ref: &str,
-    candidate: &AutoCheckCandidate<'_>,
-    system_prompt: &str,
-) -> LlmRequest {
-    LlmRequest {
-        model: auto_check_model_id(checker_ref),
-        envelope: CallEnvelope {
-            seat_effort: None,
-            scope: crate::llm::Scope::default(),
-            purpose: CallPurpose::AutoCheck,
-            class: CallClass::Durable {
-                fallback: DeterministicFallback {
-                    name: AUTO_CHECK_DETERMINISTIC_FALLBACK.to_owned(),
-                    config: None,
-                },
-            },
-            tier: TierPrecedence::for_purpose(
-                &CallPurpose::AutoCheck,
-                ModelTierRef(AUTO_CHECK_GLOBAL_DEFAULT_TIER.into()),
-            ),
-            response_format: ResponseFormat::Json {
-                schema: auto_check_verdict_schema(),
-            },
-            // This constructor has no host route yet: seed the purpose's
-            // locality, then let an actual host/manifest binding replace it.
-            locality: CallPurpose::AutoCheck
-                .default_policy()
-                .expect("built-in checker purpose has a default")
-                .locality,
-        }
-        .with_purpose_defaults(),
-        messages: vec![
-            LlmMessage {
-                role: LlmMessageRole::System,
-                content: vec![ContentPart::Text {
-                    text: system_prompt.to_owned(),
-                }],
-            },
-            LlmMessage {
-                role: LlmMessageRole::User,
-                content: vec![ContentPart::Text {
-                    text: auto_check_candidate_text(candidate),
-                }],
-            },
-        ],
-        tools: Vec::new(),
-        params: BTreeMap::new(),
-        provider_options: BTreeMap::new(),
-    }
-}
-
-fn auto_check_model_id(checker_ref: &str) -> ModelId {
-    dynamic_model_id(
-        "auto-check",
-        // Hex encodes the ORIGINAL UTF-8 bytes injectively. The fixed prefix
-        // keeps even the empty ref nonempty; no sanitization or normalization
-        // can alias distinct host selectors in pins or durable request keys.
-        format!("ref-{}", bytes_to_hex_lower(checker_ref.as_bytes())),
-        "configured",
-    )
-}
-
-pub(super) fn auto_check_verdict_schema() -> JsonValue {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "verdict": { "type": "string", "enum": ["allow", "hold"] },
-            "reasons": { "type": "array", "items": { "type": "string" } },
-        },
-        "required": ["verdict"],
-        "additionalProperties": false,
-    })
-}
-
-fn auto_check_candidate_text(candidate: &AutoCheckCandidate<'_>) -> String {
-    let lineage = match candidate.lineage {
-        Some(lineage) => lineage
-            .iter()
-            .map(ClaimSource::as_str)
-            .collect::<Vec<_>>()
-            .join(", "),
-        None => "unavailable".to_owned(),
-    };
-    let sensitivity_band = match candidate.sensitivity_band {
-        Some(band) => band.to_string(),
-        None => "unstamped".to_owned(),
-    };
-    let burst = match candidate.burst {
-        Some(burst) => format!("rate_ratio: {}\nstreak: {}", burst.rate_ratio, burst.streak),
-        None => "rate_ratio: unavailable\nstreak: unavailable".to_owned(),
-    };
-    format!(
-        "predicate: {}\nsource: {}\nlineage: {}\nactor_class: {}\nsensitivity_band: {}\nrecent_writes: {}\nwindow_secs: {}\nfailure_streak: {}\n{}\nvalue_preview: {}",
-        candidate.predicate,
-        candidate.source.as_str(),
-        lineage,
-        candidate.actor_class,
-        sensitivity_band,
-        candidate.signals.recent_writes,
-        candidate.signals.window_secs,
-        candidate.signals.failure_streak,
-        burst,
-        candidate.value_preview,
-    )
 }
 
 /// Truncates `value` to at most `max_bytes`, never splitting a character.
