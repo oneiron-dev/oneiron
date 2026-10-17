@@ -2201,9 +2201,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/guest_revoke.rs",
-     "purpose": "OF-232: the owner withdraws one ask guest's access at this host",
+     "purpose": "OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one ask guest's…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -2460,7 +2460,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 28
      }
     },
@@ -2702,6 +2702,16 @@
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/task_actor.rs",
+     "purpose": "Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -10619,13 +10629,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "HostPlannerBinding"
+     ],
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "fn": 6
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -10650,7 +10664,7 @@
      "surface": {
       "crate-vis": 14,
       "fn": 8,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1,
       "type": 1
      }
@@ -10855,6 +10869,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LeaderAdviceInput",
+      "LeaderPatternInput",
       "MemoryClaimInput",
       "MemoryEdgeInput",
       "MemorySearchInput",
@@ -10871,7 +10887,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "struct": 9
+      "struct": 11
      }
     },
     {
@@ -11039,6 +11055,7 @@
       "SelfEffect",
       "SelfFailedResult",
       "SelfFixtureEffectCall",
+      "SelfLeaderCall",
       "SelfMemoryEdgeWriteResult",
       "SelfMemoryPutClaimCall",
       "SelfMemoryPutEdgeCall",
@@ -11049,6 +11066,7 @@
       "SelfMemoryWriteResult",
       "SelfSkillCall",
       "SelfSkillCallResult",
+      "SelfSpawnAsk",
       "SelfSpeechCall",
       "SelfSpeechResult",
       "SelfTaskRefusalResult",
@@ -11059,9 +11077,9 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "enum": 6,
-      "fn": 19,
-      "struct": 28,
+      "enum": 7,
+      "fn": 20,
+      "struct": 29,
       "trait": 2
      }
     },
@@ -15061,7 +15079,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/deletion.rs",
@@ -15097,7 +15115,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
       "crate-vis": 6,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -15109,6 +15127,19 @@
      "surface": {
       "crate-vis": 10,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomPersonEraseOutcome"
+     ],
+     "path": "src/conversation/privacy_erase.rs",
+     "purpose": "A room privacy erase's request-local legal-hold split and its report",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -15268,7 +15299,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 1,
       "re-export": 3
      }
@@ -15280,7 +15311,7 @@
      "path": "src/conversation_dag/participation.rs",
      "purpose": "A live append's participation (OF-529): the thread it lands in, and the room's participation gate its writer…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -34133,15 +34164,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "RowBirth"
+      "RowBirth",
+      "WithheldKey",
+      "WithheldRef",
+      "WithheldRole"
      ],
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -38481,7 +38516,7 @@
      "path": "src/skill/exploration_trial.rs",
      "purpose": "Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -44757,7 +44792,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 215
+      "fn": 216
      }
     },
     {
@@ -44918,14 +44953,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "GuestSlipMintRequest",
+      "GuestSlipMinted",
       "SharedInvitationRequest",
       "SharedInvitationWithdrawRequest"
      ],
      "path": "src/task_verb/sdk_shared_members.rs",
      "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
      "surface": {
-      "fn": 4,
-      "struct": 2
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -47132,7 +47169,7 @@
      "path": "src/workspace_roster/join_receipt.rs",
      "purpose": "The join receipt (OF-531): one typed record per join intent",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -47816,7 +47853,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 10
      }
     },
@@ -47877,11 +47914,21 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 6,
       "re-export": 7,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/offer_liveness.rs",
+     "purpose": "When an open offer card's thread has ended (OF-530, ARCH-0006a:233): a thread is live while it has an open…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -47944,7 +47991,7 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "enum": 1
      }
     },
@@ -49278,7 +49325,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49607,9 +49654,9 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
@@ -50671,7 +50718,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50692,9 +50739,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 135,
+   "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3061,
+   "source_files": 3064,
    "test_files": 903
   },
   "oneiron-android": {
@@ -50753,7 +50800,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 78,
+      "const": 79,
       "re-export": 1,
       "type": 1
      }
@@ -58561,7 +58608,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 170
+      "fn": 171
      }
     },
     {
@@ -59575,7 +59622,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 171
+      "fn": 172
      }
     },
     {
@@ -60972,7 +61019,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -61025,7 +61072,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -62174,7 +62221,7 @@
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
