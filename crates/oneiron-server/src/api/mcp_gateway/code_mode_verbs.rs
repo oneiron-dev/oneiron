@@ -804,11 +804,11 @@ impl AgentVerbDoor for ReaderChildDoor {
         let Some(rows) = rows else {
             return Ok(true);
         };
-        crate::device_local::withholds_retained(&self.vault, self.caller, rows, &[]).map_err(
-            |_| AgentVerbRefusal {
+        crate::device_local::withholds_retained(&self.vault, self.caller, rows, &[]).map_err(|_| {
+            AgentVerbRefusal {
                 code: "engine_error".to_owned(),
-            },
-        )
+            }
+        })
     }
 }
 

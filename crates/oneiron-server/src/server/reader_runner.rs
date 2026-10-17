@@ -225,8 +225,8 @@ impl ReaderJobRunner for ReaderRunner {
     }
 }
 
-/// A store the worker drives: the canonical vault's, or one live session's
-/// as the participant its parents ran as.
+/// One live session the worker drives, and the participant its parents ran
+/// as, whom its children's rows are read as.
 type SessionSeat = (String, EntityId);
 
 /// The worker thread's state.
