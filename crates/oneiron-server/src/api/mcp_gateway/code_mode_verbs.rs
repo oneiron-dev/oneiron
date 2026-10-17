@@ -532,7 +532,11 @@ impl RunGuests {
         by: oneiron::EntityId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         // The browser runs as its connector pack: no installed pack, no browser.
-        if server.vault.require_builtin_channel_pack("browser").is_err() {
+        if server
+            .vault
+            .require_builtin_channel_pack("browser")
+            .is_err()
+        {
             return Ok(Err(AgentVerbRefusal {
                 code: "browser_pack_not_installed".to_owned(),
             }));
@@ -565,14 +569,12 @@ impl RunGuests {
             return Ok(Err(browser_refused(BrowserError::Unbound)));
         };
         let verb = call.verb.as_str();
-        let hooks = match oneiron::task_verb::verb_hook_boundary::row_pre(
-            memory,
-            verb,
-            call.input.clone(),
-        ) {
-            Ok(hooks) => hooks,
-            Err(error) => return refused(super::mcp_facade_error(error)),
-        };
+        let hooks =
+            match oneiron::task_verb::verb_hook_boundary::row_pre(memory, verb, call.input.clone())
+            {
+                Ok(hooks) => hooks,
+                Err(error) => return refused(super::mcp_facade_error(error)),
+            };
         let decider = LadderDecider {
             server: Arc::clone(server),
             asker,
