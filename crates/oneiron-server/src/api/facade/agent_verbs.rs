@@ -25,6 +25,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/steer", post(steer))
         .route("/describe", post(describe))
         .route("/tasks.create", post(tasks_create))
+        .route("/tasks.wave", post(tasks_wave))
         .route("/tasks.update", post(tasks_update))
         .route("/vault.witness", post(vault_witness))
         .route("/vault.claims.upsert", post(vault_claims_upsert))
@@ -755,6 +756,23 @@ async fn tasks_create(
         value,
         position,
     )?))
+}
+async fn tasks_wave(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(&headers, "tasks.wave")?;
+    let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("tasks.wave", &value)?;
+    let hooks = facade_hooks_pre(&server, &headers, &auth, "tasks.wave", value).await?;
+    let output = facade_output(
+        super::host_doors::tasks_wave(&server, &auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(Json(facade_hooks_post(&server, hooks, output).await?))
 }
 async fn tasks_update(
     auth: CoreAuth,

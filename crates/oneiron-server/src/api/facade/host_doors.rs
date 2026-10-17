@@ -56,6 +56,8 @@ pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The owner's root wave door (OF-427), likewise.
+pub(crate) use super::wave_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the

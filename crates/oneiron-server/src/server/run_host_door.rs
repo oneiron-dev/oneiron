@@ -11,8 +11,9 @@
 //! an agent's credential: `ai.verdict`, `vault.graph.ask` and the standing
 //! questions on the host's ladder, `vault.recall` and `report` with the
 //! host's embedder, a slide review through the host's decider, and
-//! `ai.options` from its model runtime. An `ai.*` media call and a hook
-//! replay are the owner's, and refused. A browser or desktop row drives the
+//! `ai.options` from its model runtime. Its `tasks.wave` is its own wave,
+//! queued under its lease, where a credential's is the owner's root one. An
+//! `ai.*` media call and a hook replay are the owner's, and refused. A browser or desktop row drives the
 //! run's own guest under the browser pack, its checked connection and the
 //! vault's standing grants. The board rows, `self.focus.*` and a keyed
 //! `describe`, run the engine's board dispatcher over the agent's own board
@@ -46,13 +47,13 @@ use oneiron::receipt::{
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{
     self, AgentVerb, AiOptions, AiOptionsRequest, AiVerdictRequest, BoardRefreshRequest,
-    BoardSubscriptionRequest, DescribeRequest,
+    BoardSubscriptionRequest, DescribeRequest, TaskWaveRequest,
 };
 use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{EntityId, WriteActor};
 use serde_json::Value;
 
-use super::SyncServer;
+use super::{SyncServer, wave_plan, wave_receipt};
 use crate::api::{RunGuests, VerdictAsker, drop_run_board, execute_run_board_verb};
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
@@ -306,6 +307,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsPause
             | AgentVerb::VaultQuestionsRead
             | AgentVerb::VaultQuestionsAnswers
+            | AgentVerb::TasksWave
     )
 }
 
@@ -436,6 +438,20 @@ fn host_row(
             )?)
         }
         AgentVerb::AiOptions => encode(ai_options(server, decode(input)?)?),
+        // The run's own wave: planned for its agent and queued on its own
+        // surface, whose bound lease is the wave's creator (OF-532).
+        AgentVerb::TasksWave => {
+            let request: TaskWaveRequest = decode(input)?;
+            let lane = agent_lane(server, actor)?;
+            let (epic, constraints) =
+                wave_plan(server, actor, |id| lane.is_entity_readable(id), &request)?;
+            encode(wave_receipt(memory.enqueue_wave_plan(
+                epic,
+                &request.objective,
+                constraints,
+                now,
+            )?))
+        }
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => Err(owners(verb, "ai.* media calls are the owner's")),
     }

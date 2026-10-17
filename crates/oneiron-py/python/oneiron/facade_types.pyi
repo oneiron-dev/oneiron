@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 195 facade rows, 691 declarations.
-Inputs: 170 of 195 fully typed, 24 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 161 of 195 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 40; unread shapes: 1.
+Census: 196 facade rows, 693 declarations.
+Inputs: 170 of 196 fully typed, 25 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 162 of 196 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 41; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -467,6 +467,14 @@ class TaskCreateReceipt(TypedDict):
     route: NotRequired[TaskRouteOutcome | None]
     task_record: NotRequired[RecordRef | None]
     proposal_record: NotRequired[RecordRef | None]
+class TaskWaveRequest(TypedDict):
+    epic_task_ref: str
+    planner_ref: str
+    objective: str
+    constraints: NotRequired[Any]
+class TaskWaveReceipt(TypedDict):
+    attempt_ref: str
+    state: str
 class TaskUpdateRequest(TypedDict):
     task_ref: str
     resultRef: NotRequired[str | None]

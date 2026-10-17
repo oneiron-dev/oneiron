@@ -736,6 +736,8 @@ class Oneiron:
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
+        def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
+            """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
             """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
