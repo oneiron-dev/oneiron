@@ -10653,6 +10653,8 @@ pub enum HumanAskReason {
     NeedsPerson,
     #[serde(rename = "deadline")]
     Deadline,
+    #[serde(rename = "exploration_budget")]
+    ExplorationBudget,
 }
 
 /// `oneiron::llm::decision::routine::RoutineOutcome`.

@@ -562,7 +562,13 @@ no new record is minted. The match is exact and needs at least 12 bytes. It
 reads a keyed index that holds each value's length and fingerprint, never the
 value. The index's key never leaves this machine. The owner's "not a secret"
 ruling for a record wins over the match. The step's program is stored as the
-model wrote it, so a resumed step runs the same code.
+model wrote it, so a resumed step runs the same code. A run in an off-record
+session is swept the same way.
+
+A stored file keeps its bytes. A known value in a file, or in a member of a
+container file, is marked with its existing record, as a key the scan finds
+is marked. A reader without a grant then gets the file with that value
+masked, and a granted read gets the real bytes, both through the same mark.
 
 ### Reader children, summaries and fold receipts
 
