@@ -25,12 +25,12 @@ use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT,
-    EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EffectReceipt, ExpectInput,
-    ExpectOutput, FindInput, FindOutput, ImageOutput, LibraryFindInput, LibraryFindOutput,
-    LibraryRunInput, LibraryRunOutput, NoDecider, Observation, ObserveInput, OpenInput, PointInput,
-    PressMode, ProposeInput, ProposeOutput, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput,
-    WorkflowLibrary, ZoomInput, site_of,
+    EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt,
+    ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, LibraryFindInput,
+    LibraryFindOutput, LibraryRunInput, LibraryRunOutput, NoDecider, Observation, ObserveInput,
+    OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput, RoutineDecider, Row,
+    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SelectInput, SendPolicy, TypeInput,
+    ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -299,6 +299,18 @@ pub(crate) fn effect_class(name: &str) -> Option<&'static str> {
     })
 }
 
+/// The class a click's receipt names: its target's, or [`EFFECT_UNKNOWN`]
+/// for a target with no row or no name.
+pub(crate) fn receipt_class(
+    class: Option<&'static str>,
+    row: Option<&Row>,
+) -> Option<&'static str> {
+    class.or_else(|| {
+        row.is_none_or(|row| row.name.trim().is_empty())
+            .then_some(EFFECT_UNKNOWN)
+    })
+}
+
 impl BrowserDriver for BrowserSession {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
         let scheme = input
@@ -336,6 +348,7 @@ impl BrowserDriver for BrowserSession {
             None => PressMode::None,
         };
         let mut observation = self.driver.click(input)?;
+        let class = receipt_class(class, Some(&row));
         self.receipt("click", Some(&row), class, press, &mut observation);
         Ok(observation)
     }
@@ -349,6 +362,7 @@ impl BrowserDriver for BrowserSession {
             _ => PressMode::None,
         };
         let mut observation = self.driver.click_point(x, y)?;
+        let class = receipt_class(class, row.as_ref());
         self.receipt("click_at", row.as_ref(), class, press, &mut observation);
         Ok(observation)
     }
