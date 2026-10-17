@@ -65390,9 +65390,10 @@
       "SkillsConfig"
      ],
      "path": "src/config/skills.rs",
-     "purpose": "The `[skills]` section: how the skill-edit gate's live slice is funded at this server",
+     "purpose": "The `[skills]` section: how the skill-edit gate's live slice is funded at this server, and the skills a…",
      "surface": {
       "crate-vis": 4,
+      "fn": 1,
       "struct": 1
      }
     },
