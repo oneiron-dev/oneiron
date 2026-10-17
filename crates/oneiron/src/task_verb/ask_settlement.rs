@@ -321,8 +321,9 @@ pub(super) fn question_digest(
     question: &TaskAskQuestion,
 ) -> Result<Option<[u8; 32]>> {
     let mut hash = blake3::Hasher::new();
-    for reference in
-        std::iter::once(question.reference).chain(question.context_refs.iter().copied())
+    for (index, reference) in std::iter::once(question.reference)
+        .chain(question.context_refs.iter().copied())
+        .enumerate()
     {
         let Some(raw) = vault.get_raw_in(txn, &reference.entity_ref())? else {
             return Ok(None);
@@ -330,11 +331,36 @@ pub(super) fn question_digest(
         let body = raw
             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
             .ok_or_else(ask_record::invalid)?;
+        // An engine block's question CLAIM is pinned by its id and value
+        // (FIX-LIST 1141): a review approving or rejecting it leaves the ask
+        // live, and an edited question goes stale. Every other reference
+        // binds its whole body.
+        let value = match reference {
+            super::ConsultPayloadRef::Claim(id) if index == 0 => {
+                block_question_value(vault, txn, id)?
+            }
+            _ => None,
+        };
+        let body = value.as_deref().unwrap_or(body);
         hash.update(reference.entity_ref().as_bytes());
         hash.update(&(body.len() as u64).to_be_bytes());
         hash.update(body);
     }
     Ok(Some(*hash.finalize().as_bytes()))
+}
+
+/// The canonical value of an engine block's question CLAIM, the part of it
+/// the ask's digest pins; review moves its approval and lifecycle, never the
+/// question. `None` when `id` is no `tasks.block_question` CLAIM.
+fn block_question_value(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<Vec<u8>>> {
+    Ok(vault
+        .get_claim_in_txn(txn, &id)?
+        .filter(|claim| claim.predicate == super::consts::TASK_BLOCK_QUESTION_PREDICATE)
+        .map(|claim| super::wire_encode::canonical_bytes(&claim.value)))
 }
 
 pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -> Result<bool> {

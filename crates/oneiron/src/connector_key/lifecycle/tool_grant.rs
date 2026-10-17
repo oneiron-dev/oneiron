@@ -568,6 +568,21 @@ pub(crate) fn catalog_charter_in_txn(
     Ok(derived_key_catalog_in_txn(store, txn, key)?.and_then(|(_, catalog, _)| catalog.charter))
 }
 
+/// Whether a scoped call on `server` debits the `Sends` dimension: only when
+/// the server's catalog entry is `CounterpartyComm`. ARCH-0054 gives the
+/// Send class to counterparty communication alone and leaves scoped-MCP
+/// calls unbudgeted by default, so an uncatalogued server debits no sends.
+pub(crate) fn scoped_server_debits_sends_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    server: &str,
+) -> Result<bool> {
+    Ok(catalog_key_in_txn(store, txn, server)?
+        .filter(|(_, catalog)| catalog_server(catalog).as_deref() == Some(server))
+        .and_then(|(_, catalog)| catalog.catalog)
+        .is_some_and(|entry| entry.call_class.debits_sends()))
+}
+
 /// Holds each Active per-grant key of a catalog key that is no longer
 /// Active, inside the caller's transaction. The common suspend core calls
 /// it, so a budget exhaust holds them as an owner suspend does; the
@@ -615,6 +630,10 @@ fn admitted_catalog_in_txn(
         .ok_or_else(|| invalid("no catalog connector by that name"))?;
     if record.status != ConnectorKeyStatus::Active {
         return Err(invalid("the connector is not active"));
+    }
+    // The OpenAI proxy's keys have no endpoint: no tool grant derives from one.
+    if record.connector == super::PROXY_CONNECTOR {
+        return Err(invalid("the OpenAI proxy's connector grants no tools"));
     }
     let server = catalog_server(&record)
         .ok_or_else(|| invalid("the connector name has no scoped identity"))?;
