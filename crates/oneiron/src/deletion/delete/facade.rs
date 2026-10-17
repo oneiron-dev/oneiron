@@ -371,9 +371,18 @@ impl Vault {
             )?;
             // A deleted world keeps its keys, pads and sealed copies, so it
             // restores from old bundles until they age out (DEC-0006); only
-            // an erase destroys them (the hard arm's purge).
+            // an erase destroys them (the hard arm's purge). Its delete time
+            // bounds how long a pin change still rewraps them.
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+            if existed && reason == DeleteReason::UserDelete {
+                crate::world_keys::note_world_deleted_in_txn(
+                    &self.store,
+                    &mut wtxn,
+                    *id,
+                    tombstone.deleted_at,
+                )?;
+            }
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }

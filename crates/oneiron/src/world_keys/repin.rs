@@ -24,12 +24,17 @@
 //! dropped. A key whose world's live edits outgrow one record is withheld
 //! as `FrontierWide` and the door goes on: one wide world never stops a
 //! pin move or a kit restore.
+//!
+//! A world deleted here less than 90 days ago (`DELETED_WORLD_KEEP_SECS`) is
+//! reached like a live one, so the new kit still restores it from the bundles
+//! that hold it (the Engine's call, 10-18). An erased world, or one deleted
+//! longer ago, is never opened.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::SigningKey;
 
-use super::pads::{WorldKeyPad, pad_in_txn};
+use super::pads::{WorldKeyPad, deleted_world_keys_kept_in_txn, pad_in_txn};
 use super::{
     MachineSecret, RecoveryRootSeed, SequenceCounter, WorldKey, WorldKeyBinding, WorldKeyId,
     WrapRecipient, open_counted, open_world_key, recipients,
@@ -50,7 +55,8 @@ pub enum Withheld {
     /// The local read excludes this machine: conflicted, nowhere, or one
     /// other machine.
     NotReadable,
-    /// The WORLD row is unknown, deleted or erased here: never opened.
+    /// The WORLD row is unknown or erased here, or was deleted more than 90
+    /// days ago: never opened.
     NotLive,
     /// The world now reads everywhere: no wrap counts for it, so its older
     /// keys keep only the wraps they already have.
@@ -122,7 +128,7 @@ struct Reached {
 /// What became of a reached key.
 enum Reach {
     Opened(WorldKey),
-    /// Its world is not live here: never opened.
+    /// Its world is not live here, nor deleted within 90 days: never opened.
     NotLive,
     /// Conflicted where it was reached: never opened.
     Conflicted,
@@ -171,6 +177,7 @@ impl Vault {
     ) -> Result<RepinStart> {
         let me = door.secret.machine;
         let my_key = door.signing.verifying_key().to_bytes();
+        let now = self.instant_in_txn(txn)?.secs();
         let old = self.authority_view_readonly_in_txn(txn)?;
         let (_, kept) = read_pin_and_earlier_in_txn(&self.store, txn)?;
         let old_mine = old
@@ -189,6 +196,8 @@ impl Vault {
             }
             _ => old.clone(),
         };
+        // Only a live world is listed for re-assertion: a deleted one's
+        // settings take no edit, and its keys are rewrapped below as they are.
         let mut earlier = BTreeMap::new();
         for (world, folded) in &earlier_view.worlds {
             if self.world_row_live_in_txn(txn, *world)? {
@@ -215,7 +224,7 @@ impl Vault {
             if !mine && !signed {
                 continue;
             }
-            let reach = if !self.world_row_live_in_txn(txn, key.id.world)? {
+            let reach = if !self.world_keys_reached_in_txn(txn, key.id.world, now)? {
                 Reach::NotLive
             } else if key.conflicted {
                 Reach::Conflicted
@@ -242,7 +251,7 @@ impl Vault {
             if old.world_key(&record.key).is_some() || reached.contains_key(&record.key) {
                 continue;
             }
-            let reach = if self.world_row_live_in_txn(txn, record.key.world)? {
+            let reach = if self.world_keys_reached_in_txn(txn, record.key.world, now)? {
                 pad_in_txn(&self.store, txn, &record.key)?
                     .and_then(|pad| open_own(&old, &own, record.key, None, door.secret, &pad))
                     .map_or(Reach::Unopenable, Reach::Opened)
@@ -275,6 +284,7 @@ impl Vault {
     ) -> Result<RepinFinish> {
         let me = door.secret.machine;
         let my_key = door.signing.verifying_key().to_bytes();
+        let now = self.instant_in_txn(txn)?.secs();
         let mid = self.authority_view_readonly_in_txn(txn)?;
         let root = self
             .root_recipient_in_txn(txn, &mid, door.new_root)?
@@ -305,7 +315,7 @@ impl Vault {
                 if !retry || !key.wraps.contains_key(&to_root) {
                     continue;
                 }
-                let reach = if !self.world_row_live_in_txn(txn, key.id.world)? {
+                let reach = if !self.world_keys_reached_in_txn(txn, key.id.world, now)? {
                     Reach::NotLive
                 } else if key.conflicted {
                     Reach::Conflicted
@@ -552,6 +562,19 @@ impl Vault {
             }
         }
         Ok(finish)
+    }
+
+    /// Whether a pin door reaches `world`'s keys: its WORLD row is live here,
+    /// or the world was deleted less than 90 days before `now` and not erased,
+    /// so the new kit still restores it from the bundles that hold it.
+    fn world_keys_reached_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        world: EntityId,
+        now: u64,
+    ) -> Result<bool> {
+        Ok(self.world_row_live_in_txn(txn, world)?
+            || deleted_world_keys_kept_in_txn(&self.store, txn, world, now)?)
     }
 
     /// This vault's own log folded under `admitter`'s trust, for the read
