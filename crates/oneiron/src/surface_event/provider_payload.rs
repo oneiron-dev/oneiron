@@ -80,6 +80,36 @@ impl Vault {
         self.read_blob_artifact_version(&artifact_id, version)
     }
 
+    /// The message text a provider event's archived body carries: Slack's
+    /// `event.text`, and LINE's `event.message.text` (the LINE door archives
+    /// one `{destination, event}` wrapper per event). `None` for a channel
+    /// with no extractor, a non-message event, or a body the vault no longer
+    /// holds.
+    ///
+    /// The text is what the provider's sender wrote: a caller hands it on as
+    /// foreign inbound data, never as instructions.
+    pub fn read_provider_event_text(
+        &self,
+        channel: &str,
+        payload_ref: &str,
+    ) -> Result<Option<String>> {
+        let pointer = match channel {
+            crate::channel_identity_provider::SLACK_CHANNEL => "/event/text",
+            crate::channel_identity_provider::LINE_CHANNEL => "/event/message/text",
+            _ => return Ok(None),
+        };
+        let Some(body) = self.read_provider_event(payload_ref)? else {
+            return Ok(None);
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&body) else {
+            return Ok(None);
+        };
+        Ok(value
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned))
+    }
+
     fn ensure_provider_inbound_actor(&self, now: u64) -> Result<EntityId> {
         let id = EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[])?;
         if self.get_entity_type(&id)? != Some(ENTITY_TYPE_MACHINE) {
