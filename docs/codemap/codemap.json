@@ -60024,7 +60024,7 @@
      "path": "src/embedded.rs",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -60041,6 +60041,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/invocation.rs",
+     "purpose": "Client invocation ids (ARCH-0080 §3, OF-580)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "OneironClient",
       "OpenOptions"
@@ -60050,7 +60061,7 @@
      "surface": {
       "fn": 14,
       "mod": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -60076,7 +60087,7 @@
      "path": "src/remote/mod.rs",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -60203,6 +60214,13 @@
      "layout": "file",
      "purpose": "The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7)"
     },
+    "invocation": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Client invocation ids (ARCH-0080 §3, OF-580)"
+    },
     "llm": {
      "files": 1,
      "impl_vault": false,
@@ -60220,7 +60238,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 11,
+   "source_files": 12,
    "test_files": 8
   },
   "oneiron-retrieval": {
@@ -64838,6 +64856,7 @@
      "path": "src/commands/mcp_bridge.rs",
      "purpose": "`oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's…",
      "surface": {
+      "crate-vis": 2,
       "fn": 1
      }
     },
