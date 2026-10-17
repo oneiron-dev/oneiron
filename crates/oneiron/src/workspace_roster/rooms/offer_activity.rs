@@ -430,18 +430,18 @@ impl Memory<'_> {
             if !matches!(stored.card.state, OfferState::Open { .. })
                 || !is_current_in_txn(vault, txn, &stored.card)?
             {
-                return Ok(stored.card);
+                return Ok(stored.into_card());
             }
             if room_offer_expired(&stored.card, now) {
                 stored.card.state = OfferState::AgedOut;
             } else if stored.votes.get(&caller.entity_ref()) == Some(&request.action) {
-                return Ok(stored.card);
+                return Ok(stored.into_card());
             } else {
                 stored.votes.insert(caller.entity_ref(), request.action);
                 stored.card.last_engaged_at = stored.card.last_engaged_at.max(now);
             }
             OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
-            Ok(stored.card)
+            Ok(stored.into_card())
         })
     }
 }

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 282 facade rows, 1074 declarations.
+Census: 282 facade rows, 1075 declarations.
 Inputs: 236 of 282 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 230 of 282 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
@@ -4066,6 +4066,9 @@ class OfferStateSuperseded(TypedDict):
 class OfferStateAgedOut(TypedDict):
     kind: Literal["aged_out"]
 OfferState = OfferStateOpen | OfferStateJoined | OfferStateNotNow | OfferStateSuperseded | OfferStateAgedOut
+class OfferVoteTally(TypedDict):
+    join: int
+    not_now: int
 class OfferCard(TypedDict):
     offer_id: str
     room: EntityId
@@ -4081,6 +4084,7 @@ class OfferCard(TypedDict):
     created_at: int
     until: NotRequired[int | None]
     last_engaged_at: int
+    vote_tally: OfferVoteTally
 OfferAnswer = Literal["join", "not_now"]
 class OfferAnswerRequest(TypedDict):
     offer_id: str

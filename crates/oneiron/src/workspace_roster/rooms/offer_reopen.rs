@@ -65,7 +65,7 @@ impl Memory<'_> {
                 OfferState::AgedOut => {}
                 OfferState::Open { .. } if expired => {}
                 // Still open: an earlier click already reopened it.
-                OfferState::Open { .. } => return Ok(stored.card),
+                OfferState::Open { .. } => return Ok(stored.into_card()),
                 OfferState::Joined { .. }
                 | OfferState::NotNow { .. }
                 | OfferState::Superseded { .. } => {
@@ -78,7 +78,7 @@ impl Memory<'_> {
                 if expired {
                     stored.card.state = OfferState::AgedOut;
                 }
-                return Ok(stored.card);
+                return Ok(stored.into_card());
             }
             if stored.answer.is_some() || request.until.is_some_and(|until| until <= now) {
                 return Err(MemoryError::bad_request(
@@ -100,7 +100,7 @@ impl Memory<'_> {
             stored.card.last_engaged_at = now;
             stored.votes.clear();
             OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
-            Ok(stored.card)
+            Ok(stored.into_card())
         })
     }
 }

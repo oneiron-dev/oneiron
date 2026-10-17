@@ -189,7 +189,7 @@ pub(crate) use rooms::RoomThreadTask;
 pub use rooms::{HostPin, HostPinKind, RoomHostHand, RoomHostPin};
 pub use rooms::{
     OfferAnswer, OfferAnswerRequest, OfferCard, OfferDraft, OfferReopenRequest, OfferSettlement,
-    OfferState, OfferVoteRequest, OffersPage, OffersRequest,
+    OfferState, OfferVoteRequest, OfferVoteTally, OffersPage, OffersRequest,
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 282 facade rows, 911 generated types.
+// UniFFI census: 282 facade rows, 912 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 238.
 // WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -10887,6 +10887,16 @@ pub enum OfferState {
     AgedOut,
 }
 
+/// `oneiron::workspace_roster::rooms::offers::OfferVoteTally`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferVoteTally {
+    #[serde(rename = "join")]
+    pub join: u64,
+    #[serde(rename = "not_now")]
+    pub not_now: u64,
+}
+
 /// `oneiron::workspace_roster::rooms::offers::OfferCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -10927,6 +10937,8 @@ pub struct OfferCard {
     pub until: Option<u64>,
     #[serde(rename = "last_engaged_at")]
     pub last_engaged_at: u64,
+    #[serde(rename = "vote_tally")]
+    pub vote_tally: OfferVoteTally,
 }
 
 /// `oneiron::workspace_roster::rooms::offer_settle::OfferAnswer`.

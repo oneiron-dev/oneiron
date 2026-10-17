@@ -48,7 +48,7 @@ pub use offer_activity::OfferVoteRequest;
 pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use offer_reopen::OfferReopenRequest;
 pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
-pub use offers::{OfferCard, OfferDraft, OfferState, OffersPage, OffersRequest};
+pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, OffersRequest};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
 pub(super) use participation::record_bound_task_in_txn;

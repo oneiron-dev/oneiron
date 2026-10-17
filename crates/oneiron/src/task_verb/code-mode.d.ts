@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 341 code-mode rows (322 host rows, 19 run rows), 1179 declarations.
+// Census: 341 code-mode rows (322 host rows, 19 run rows), 1180 declarations.
 // Replies: 279 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -803,7 +803,8 @@ declare namespace Sdk {
   type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string };
   type DeclaredMaximum = { units: number; unit: LeaseUnit };
   type OfferState = { kind: "open"; needs: ConsentNeed[] } | { kind: "joined"; turn: EntityId; receipt_ref: string } | { kind: "not_now"; diary_ref?: EntityId | null } | { kind: "superseded"; by: string } | { kind: "aged_out" };
-  type OfferCard = { offer_id: string; room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; lease_cap?: DeclaredMaximum | null; payer?: EntityId | null; spend_scope?: SpendScopeId | null; join_ref: string; state: OfferState; created_at: number; until?: number | null; last_engaged_at: number };
+  type OfferVoteTally = { join: number; not_now: number };
+  type OfferCard = { offer_id: string; room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; lease_cap?: DeclaredMaximum | null; payer?: EntityId | null; spend_scope?: SpendScopeId | null; join_ref: string; state: OfferState; created_at: number; until?: number | null; last_engaged_at: number; vote_tally: OfferVoteTally };
   type OfferAnswer = "join" | "not_now";
   type OfferAnswerRequest = { offer_id: string; action: OfferAnswer; intent_key: string };
   type OfferSettlement = { offer_id: string; state: OfferState; join?: JoinOutcome | null; turn_ref?: string | null; diary_ref?: string | null };
