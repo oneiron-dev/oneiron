@@ -83,6 +83,9 @@ pub struct DiaryReadRecord {
     pub grants: Vec<String>,
     /// The review request whose yes admitted the read, when the agent reviews.
     pub request: Option<EntityId>,
+    /// What the read opened: `diary` for diary entries, `pad` for sealed
+    /// scratchpads.
+    pub source: String,
 }
 
 /// Where one reader's stated reason stands in the agent's review.
@@ -373,6 +376,7 @@ impl DiaryReadGate {
                         entries: state.read.clone(),
                         grants: state.grants.iter().cloned().collect(),
                         request: spent,
+                        source: "diary".to_owned(),
                     },
                 )?;
                 read_ref = Some(read);
@@ -921,6 +925,7 @@ impl Memory<'_> {
                     entries: entries.iter().map(|entry| entry.id).collect(),
                     grants: Vec::new(),
                     request: spent,
+                    source: "pad".to_owned(),
                 },
             )?;
             Ok(DiaryReadOutcome::Granted {

@@ -191,6 +191,8 @@ pub(super) struct McpBoardState {
     /// False when the producer's own TASK scan stopped at its cap, so the
     /// truncation count above is a lower bound rather than a census.
     source_exhausted: bool,
+    /// The hook blocks this board carries, spent only when it goes out.
+    hooks: McpBoardHooks,
 }
 
 impl McpBoardState {
@@ -221,13 +223,20 @@ pub(super) async fn mcp_current_board(
 ) -> Result<McpBoardState, McpGatewayError> {
     let (observations, changes, board) = super::board_observations::state(server, actor).await?;
     let mut rows = Vec::new();
-    let (mut sections, omissions) = mcp_board_sections(server, actor, &mut rows)?;
+    let pins = mcp_hook_pins(server, actor)?;
+    let (mut sections, omissions, hooks) = mcp_board_sections(server, actor, &pins, &mut rows)?;
     rows.extend(crate::device_local::changed_line_rows(&changes));
     rows.extend(crate::device_local::changed_line_rows(&board));
     sections.push(
-        oneiron::context_board::SkillsSection::project(&[], &observations)
-            .board_section()
-            .map_err(mcp_board_frame_error)?,
+        oneiron::context_board::SkillsSection::project_with_learning(
+            &[],
+            &observations,
+            &server.vault,
+            Some(actor.actor_ref),
+        )
+        .map_err(|error| mcp_engine_error("board skills failed", error))?
+        .board_section()
+        .map_err(mcp_board_frame_error)?,
     );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
     let mut state_rows = mcp_board_state_rows(&sections);
@@ -253,6 +262,7 @@ pub(super) async fn mcp_current_board(
         scope_omitted: omissions.scope_omitted,
         window_truncated: omissions.window_truncated,
         source_exhausted: omissions.source_exhausted,
+        hooks,
     })
 }
 
@@ -291,6 +301,100 @@ impl McpBoardOmissions {
     }
 }
 
+/// The hook blocks one rendered board carries (ARCH-0080 §11, OF-579): the
+/// blocks whose rows it shows, and the receipt its pinned MEMORIES rows owe.
+/// A board rendered for its epoch alone spends neither; setup's page one
+/// records the receipt before it goes out and spends the blocks once it has.
+#[derive(Default)]
+struct McpBoardHooks {
+    blocks: std::collections::BTreeSet<oneiron::EntityId>,
+    receipt: Option<crate::api::context_board::PinsReceipt>,
+}
+
+impl McpBoardHooks {
+    /// The owner's receipt for what the hook rows disclose under a contact's
+    /// standing clearance, recorded before the board goes out, as the HTTP
+    /// board records it. A receipt that fails refuses the result.
+    async fn record_receipt(&mut self, server: &SyncServer) -> Result<(), McpGatewayError> {
+        match self.receipt.take() {
+            Some(receipt) => receipt
+                .record(&server.vault)
+                .await
+                .map_err(super::mcp_api_error),
+            None => Ok(()),
+        }
+    }
+
+    /// Spends one delivery of each block a board that went out carried. A
+    /// failed record leaves the block to show again, never to vanish unseen.
+    fn spend(&self, server: &SyncServer) {
+        if let Err(error) = server.vault.record_board_hook_deliveries(&self.blocks) {
+            tracing::warn!(kind = ?error.kind(), "mcp board hook delivery record failed");
+        }
+    }
+}
+
+/// The session a connector's board names to its hook blocks: the one its
+/// request names (`x-oneiron-session`), or none, which reaches only blocks
+/// addressed to no session. A connection names no branch.
+fn mcp_hook_recipient(actor: &McpCallContext) -> &str {
+    actor.off_record_session.as_deref().unwrap_or_default()
+}
+
+/// The hook blocks that reach this connector's board, each kept to the refs
+/// its registered scope admits, so a narrowed connector's board pins nothing
+/// outside its world and facet.
+fn mcp_hook_pins(
+    server: &SyncServer,
+    actor: &McpCallContext,
+) -> Result<Vec<oneiron::context_board::HookPin>, McpGatewayError> {
+    let mut pins = server
+        .vault
+        .board_hook_pins(mcp_hook_recipient(actor), None)
+        .map_err(|error| mcp_engine_error("board hook blocks failed", error))?;
+    if pins.is_empty() {
+        return Ok(pins);
+    }
+    let read = mcp_scoped_read(&server.vault, actor)?;
+    for pin in &mut pins {
+        let mut refs = Vec::with_capacity(pin.refs.len());
+        for id in std::mem::take(&mut pin.refs) {
+            if mcp_scope_admits_row(&server.vault, actor, &read, &id.to_hex())? {
+                refs.push(id);
+            }
+        }
+        pin.refs = refs;
+    }
+    pins.retain(|pin| !pin.refs.is_empty());
+    Ok(pins)
+}
+
+/// A keyframe's MEMORIES, which runs no retrieval: the policy manifest's pins
+/// and the rows its hook blocks pin, read as the HTTP board reads them
+/// ([`crate::api::context_board::board_pins_projection`]) under this
+/// credential, with no room. The credential's read is not narrowed to its
+/// world or facet, so a narrowed or record-restricted connector reads no
+/// manifest pin, and only the hook rows [`mcp_hook_pins`] kept. `None` when no
+/// pin reaches a row.
+fn mcp_pinned_memories(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    hook_pins: &[oneiron::context_board::HookPin],
+) -> Result<Option<crate::api::context_board::BoardPins>, McpGatewayError> {
+    let pins = crate::api::context_board::BoardPinSources {
+        refs: &[],
+        manifest: !actor.scope.is_narrow() && actor.has_unrestricted_record_scope(),
+        hooks: hook_pins,
+    };
+    let read = mcp_scoped_read(&server.vault, actor)?;
+    let auth = actor
+        .auth
+        .as_ref()
+        .expect("a scoped read holds the connector's proof");
+    crate::api::context_board::board_pins_projection(&server.vault, auth, read, None, &pins)
+        .map_err(super::mcp_api_error)
+}
+
 /// Every board row, in section order: the exact material the snapshot epoch is
 /// the epoch OF.
 fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Vec<String> {
@@ -309,12 +413,21 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 /// NARROWED to this credential's world/facet ceiling before they ever reach
 /// the renderer, so a board a narrow connector reads is never the actor-wide
 /// board. The pinned VERBS section restates the generated grammar
-/// as board state.
+/// as board state. `pins` tag the TASKS rows they name and pin their other
+/// rows into MEMORIES, beside the policy manifest's pins.
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
+    pins: &[oneiron::context_board::HookPin],
     served: &mut Vec<oneiron::EntityId>,
-) -> Result<(Vec<oneiron::context_board::BoardSection>, McpBoardOmissions), McpGatewayError> {
+) -> Result<
+    (
+        Vec<oneiron::context_board::BoardSection>,
+        McpBoardOmissions,
+        McpBoardHooks,
+    ),
+    McpGatewayError,
+> {
     let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
     let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
     let rows = crate::api::credential_memory(
@@ -354,7 +467,11 @@ fn mcp_board_sections(
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &children,
     );
-    let (tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
+    let (mut tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, served)?;
+    let mut hooks = McpBoardHooks {
+        blocks: tasks.tag_hook_pins(pins),
+        receipt: None,
+    };
     // The engine's own footer states the render WINDOW's truncation and
     // whether its scan was exhausted. That is a different fact from the scope
     // filtering above, and the two are carried separately from here on.
@@ -370,7 +487,19 @@ fn mcp_board_sections(
     let worlds_section = mcp_worlds_section(server, actor, served)?;
     let tasks_section = oneiron::context_board::assemble_tasks_section(&tasks, Vec::new())
         .map_err(mcp_board_frame_error)?;
-    let mut sections = vec![verb_section, worlds_section, tasks_section];
+    let mut sections = vec![verb_section, worlds_section];
+    if let Some(memories) = mcp_pinned_memories(server, actor, pins)? {
+        hooks
+            .blocks
+            .extend(memories.section.hook_blocks_delivered(pins));
+        served.extend_from_slice(memories.receipt.delivered());
+        sections.extend(
+            oneiron::context_board::assemble_memories_sections(&memories.section)
+                .map_err(mcp_board_frame_error)?,
+        );
+        hooks.receipt = Some(memories.receipt);
+    }
+    sections.push(tasks_section);
     let packs = mcp_visible_pack_inventory(server, actor)?;
     let rows: Vec<String> = packs
         .iter()
@@ -396,8 +525,12 @@ fn mcp_board_sections(
         .map_err(mcp_board_frame_error)?,
     );
     sections.extend(mcp_pack_sections(server, actor, served)?);
-    sections.extend(mcp_readers_section(server, actor));
-    Ok((sections, omissions))
+    sections.extend(mcp_readers_section(
+        server,
+        actor,
+        &oneiron::context_board::PeopleView::new(&people, &resident),
+    ));
+    Ok((sections, omissions, hooks))
 }
 
 /// A connector's READERS: its agent's own reader list, which is actor-wide
@@ -406,6 +539,7 @@ fn mcp_board_sections(
 fn mcp_readers_section(
     server: &SyncServer,
     actor: &McpResolvedActor,
+    people: &oneiron::context_board::PeopleView<'_>,
 ) -> Option<oneiron::context_board::BoardSection> {
     if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
         return None;
@@ -417,7 +551,7 @@ fn mcp_readers_section(
         actor.actor_class,
     )
     .at(actor.locality());
-    agent_readers_section(&memory, actor.actor_class)
+    agent_readers_section(&memory, actor.actor_class, people)
 }
 
 /// The READERS section of an agent's board (ARCH-0067; ARCH-0032
@@ -429,11 +563,12 @@ fn mcp_readers_section(
 fn agent_readers_section(
     memory: &oneiron::memory::Memory<'_>,
     class: oneiron::EdgeActorClass,
+    people: &oneiron::context_board::PeopleView<'_>,
 ) -> Option<oneiron::context_board::BoardSection> {
     if class != oneiron::EdgeActorClass::Agent {
         return None;
     }
-    match memory.board_readers_section() {
+    match memory.board_readers_section(people) {
         Ok(section) => Some(section),
         Err(error) => {
             tracing::warn!(code = %error.code, "board readers section left off");
@@ -785,6 +920,7 @@ pub(crate) async fn execute_mcp_setup(
     )
     .await?;
     let mut rider = None;
+    let mut hooks = None;
     let (mut structured, keyframe, health, snapshot, producer_epoch) = if let Some(continuation) =
         dispatch.continuation.as_ref()
     {
@@ -842,6 +978,7 @@ pub(crate) async fn execute_mcp_setup(
             keyframe: Some(keyframe.clone()),
             rows: board.rows.clone(),
         };
+        hooks = Some(board.hooks);
         rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };
@@ -884,6 +1021,9 @@ pub(crate) async fn execute_mcp_setup(
     };
     // Page one returns the keyframe it rendered, rider and connector state
     // included; a continuation restates it and moves nothing.
+    if let Some(hooks) = &mut hooks {
+        hooks.record_receipt(server).await?;
+    }
     if let Some((rider, epoch)) = &rider {
         super::board_observations::delivered(server, actor, rider, true, *epoch).await;
     }
@@ -898,7 +1038,15 @@ pub(crate) async fn execute_mcp_setup(
         carrier_policy,
     )
     .await;
-    mcp_release_result(server, actor, &snapshot.rows, continued, result)
+    let result = mcp_release_result(server, actor, &snapshot.rows, continued, result);
+    // Page one went out: each hook block it carried spends a delivery. A
+    // continuation restates that keyframe and spends nothing again.
+    if result.is_ok()
+        && let Some(hooks) = &hooks
+    {
+        hooks.spend(server);
+    }
+    result
 }
 
 /// A pumped run's CURRENT board (OF-533): [`mcp_current_board`] for the run's
@@ -920,9 +1068,15 @@ pub(crate) async fn run_current_board(
     rows.extend(crate::device_local::changed_line_rows(&changes));
     rows.extend(crate::device_local::changed_line_rows(&board));
     sections.push(
-        oneiron::context_board::SkillsSection::project(&[], &observations)
-            .board_section()
-            .map_err(mcp_board_frame_error)?,
+        oneiron::context_board::SkillsSection::project_with_learning(
+            &[],
+            &observations,
+            &server.vault,
+            Some(actor.entity_ref()),
+        )
+        .map_err(|error| mcp_engine_error("board skills failed", error))?
+        .board_section()
+        .map_err(mcp_board_frame_error)?,
     );
     let scope_label =
         crate::mcp::mcp_effective_scope_label(&crate::mcp::McpConnectorScope::vault_wide());
@@ -946,6 +1100,7 @@ pub(crate) async fn run_current_board(
         scope_omitted: omissions.scope_omitted,
         window_truncated: omissions.window_truncated,
         source_exhausted: omissions.source_exhausted,
+        hooks: McpBoardHooks::default(),
     })
 }
 
@@ -1094,6 +1249,7 @@ fn run_board_sections(
             .memory(actor.entity_ref(), actor.actor_class())
             .at(oneiron::claim::CallerLocality::OnDevice),
         actor.actor_class(),
+        &oneiron::context_board::PeopleView::new(&people, &resident),
     ));
     Ok((sections, omissions))
 }

@@ -297,11 +297,13 @@ pub(super) fn served_scratchpad(
 pub(super) fn served_readers(
     server: &SyncServer,
     auth: &CoreAuth,
+    people: &oneiron::context_board::PeopleView<'_>,
 ) -> Option<(oneiron::context_board::BoardSection, Vec<String>)> {
     if auth.actor_class() != Some("agent") || auth.principal_ref().is_none() {
         return None;
     }
-    let section = match scratchpad_memory(server, auth).map(|memory| memory.board_readers_section())
+    let section = match scratchpad_memory(server, auth)
+        .map(|memory| memory.board_readers_section(people))
     {
         Ok(Ok(section)) => section,
         Ok(Err(error)) => {

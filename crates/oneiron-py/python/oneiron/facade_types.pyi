@@ -82,6 +82,7 @@ class DiaryReadRecord(TypedDict):
     entries: list[EntityId]
     grants: list[str]
     request: NotRequired[EntityId | None]
+    source: str
 DiaryReviewState = Literal["pending", "approved", "declined", "used"]
 class DiaryReadRequest(TypedDict):
     request: EntityId

@@ -7,14 +7,14 @@ pub mod state_inputs;
 mod trigger;
 
 pub(crate) use self::annotation::VadAnnotationCleanup;
-use self::annotation::{
-    VAD_ANNOTATION_CLAIM_PREDICATE, decode_vad_annotation_claim_body_if_present,
-    vad_annotation_claim_body, vad_annotation_from_value,
-};
 pub(crate) use self::annotation::{
-    VAD_ANNOTATION_META, delete_vad_annotation_metadata_for_type_in_txn,
-    delete_vad_annotation_metadata_in_txn, vad_annotation_claim_id,
-    vad_annotation_delete_scope_exists_in_txn, vad_annotation_meta_key,
+    VAD_ANNOTATION_CLAIM_PREDICATE, VAD_ANNOTATION_META,
+    delete_vad_annotation_metadata_for_type_in_txn, delete_vad_annotation_metadata_in_txn,
+    vad_annotation_claim_id, vad_annotation_delete_scope_exists_in_txn, vad_annotation_meta_key,
+};
+use self::annotation::{
+    decode_vad_annotation_claim_body_if_present, vad_annotation_claim_body,
+    vad_annotation_from_value,
 };
 pub use self::claim_vad::{
     CLAIM_VAD_REAPPRAISAL_PREDICATE, ClaimVadConsolidation, ClaimVadReappraisal,

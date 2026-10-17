@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
-pub(super) const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
+pub(crate) const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
 const VAD_ANNOTATION_CLAIM_ID_DOMAIN: &[u8] = b"oneiron:vad-annotation-claim:v1";
 const VAD_KEY_VALENCE: &str = "valence";
 const VAD_KEY_AROUSAL: &str = "arousal";

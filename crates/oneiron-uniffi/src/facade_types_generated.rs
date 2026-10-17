@@ -254,6 +254,8 @@ pub struct DiaryReadRecord {
     pub grants: Vec<String>,
     #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
     pub request: Option<String>,
+    #[serde(rename = "source")]
+    pub source: String,
 }
 
 /// `oneiron::memory::diary_read::DiaryReviewState`.
