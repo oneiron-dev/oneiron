@@ -457,7 +457,8 @@
           "scope": "Option<RecallScope>",
           "limit": "u32",
           "format": "Option<String>",
-          "as_of": "Option<u64>"
+          "as_of": "Option<u64>",
+          "deadline_ms": "Option<u64>"
         },
         "output": "MemoryPack"
       }

@@ -94,7 +94,8 @@ pub const HEALTH_SILENT_MINUTES: SettingSpec = SettingSpec {
     seed: 30.0,
 };
 
-/// `misalignment`: widen denials in one attempt. No capture reads it yet.
+/// `misalignment`: widen proposals one attempt raised that the board has not
+/// approved.
 pub const HEALTH_WIDEN_DENIALS: SettingSpec = SettingSpec {
     key: "health.widen.denials",
     min: 1.0,
@@ -348,6 +349,7 @@ struct Dials {
     wait_share: f64,
     wait_secs: u64,
     silent_secs: u64,
+    widen_denials: u64,
     cost_spike: f64,
     ttl_secs: u64,
 }
@@ -365,6 +367,7 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             wait_share: value(&HEALTH_WAIT_SHARE)?,
             wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
             silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
+            widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
             cost_spike: value(&HEALTH_COST_SPIKE)?,
             ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
         }
@@ -391,6 +394,8 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     findings.extend(long_wait_findings(&dispatched, &attempts, &traps, &dials, since, now));
     findings.extend(duplicate_findings(vault, &dispatched, &attempts, since, now)?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
+    findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &dials, since)?);
+    findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
     findings.extend(cost_spike_findings(vault, &dispatched, &attempts, &dials, since, now)?);
     // What each agent said itself, for its card.
     for finding in &mut findings {
@@ -1062,6 +1067,100 @@ fn misalignment_findings(
             measured: count,
             counter: Vec::new(),
             confession: Some(attempt),
+            blocked: false,
+        });
+    }
+    Ok(out)
+}
+
+/// `misalignment`: one attempt raised at least the dial's widen proposals
+/// that the board has not approved, pending or refused alike.
+fn widen_denial_findings(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    dials: &Dials,
+    since: u64,
+) -> Result<Vec<Finding>> {
+    let mut out = Vec::new();
+    for (id, denials) in crate::agent_dispatch::unlanded_widens_by_parent(vault)? {
+        if denials < dials.widen_denials {
+            continue;
+        }
+        let (Some(dispatch), Some(record)) = (dispatched.get(&id), attempts.get(&id)) else {
+            continue;
+        };
+        if settled(record.state) && record.updated_at < since {
+            continue;
+        }
+        let Some(attempt) = entity(record.id) else {
+            continue;
+        };
+        let count = denials as i64;
+        out.push(Finding {
+            subject: dispatch.actor,
+            signal: AgentHealthSignal::Misalignment,
+            task: task_of(record),
+            attempt: Some(record.id),
+            evidence: vec![attempt],
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            actual: count,
+            dial: dials.widen_denials as i64,
+            measured: count,
+            counter: Vec::new(),
+            confession: None,
+            blocked: false,
+        });
+    }
+    Ok(out)
+}
+
+/// `unsupported_done`: a Completed attempt whose TASK settled Done while an
+/// evidence ref its done-means names does not resolve to a live entity.
+/// Missing evidence, not deception: any one flags.
+fn unsupported_done_findings(
+    vault: &Vault,
+    dispatched: &Dispatches,
+    attempts: &Attempts,
+    since: u64,
+) -> Result<Vec<Finding>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut out = Vec::new();
+    for (id, dispatch) in dispatched {
+        let Some(record) = attempts.get(id) else {
+            continue;
+        };
+        if record.state != AttemptState::Completed || record.updated_at < since {
+            continue;
+        }
+        let (Some(task), Some(attempt)) = (task_of(record), entity(record.id)) else {
+            continue;
+        };
+        let Some(needed) = crate::task_verb::done_task_evidence_in(vault, &rtxn, task)? else {
+            continue;
+        };
+        let mut missing = BTreeSet::new();
+        for evidence in needed {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &evidence)?.is_live() {
+                missing.insert(evidence);
+            }
+        }
+        if missing.is_empty() {
+            continue;
+        }
+        let count = missing.len() as i64;
+        out.push(Finding {
+            subject: dispatch.actor,
+            signal: AgentHealthSignal::UnsupportedDone,
+            task: Some(task),
+            attempt: Some(record.id),
+            evidence: vec![attempt, task],
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
+            actual: count,
+            dial: 0,
+            measured: count,
+            counter: Vec::new(),
+            confession: None,
             blocked: false,
         });
     }

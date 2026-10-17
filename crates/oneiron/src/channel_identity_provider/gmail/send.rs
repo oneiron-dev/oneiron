@@ -855,9 +855,19 @@ impl GmailDelegatedAdapter {
         self.require_send_grant()?;
         let identity_ref = request.channel_identity_ref.ok_or_else(invalid)?;
         self.require_active_row_matches_adapter(vault, &identity_ref)?;
+        // Whose mailbox it is comes from the binding head (OF-272); whether
+        // it may send is custody, on the local row.
+        let txn = vault.store.env.read_txn()?;
         let identity = vault
-            .get_channel_identity(&identity_ref)?
+            .get_channel_identity_in_txn(&txn, &identity_ref)?
             .ok_or_else(invalid)?;
+        let facts = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            &txn,
+            &identity_ref,
+        )?
+        .ok_or_else(invalid)?;
+        drop(txn);
         let actor = request.actor.actor_entity_ref.ok_or_else(invalid)?;
         if !request
             .intent
@@ -872,7 +882,7 @@ impl GmailDelegatedAdapter {
                 .as_deref()
                 .is_some_and(|content_ref| content_ref.starts_with(GMAIL_SEND_PLAN_REF_PREFIX))
             || !identity.may_send()
-            || identity.binding().actor_ref() != Some(actor)
+            || facts.binding.actor_ref() != Some(actor)
             || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
         {
             return Err(invalid());
@@ -901,8 +911,8 @@ fn record_sent_thread(
         canonical_message_id(message_id)?,
         result.receipt.occurred_at,
     );
-    if let Some(identity) = vault.get_channel_identity(&identity_ref)?
-        && let Some(facet) = identity.binding().facet_ref()
+    if let Some(facts) = vault.channel_identity_facts(&identity_ref)?
+        && let Some(facet) = facts.binding.facet_ref()
     {
         input = input.with_facet(facet);
     }

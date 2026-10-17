@@ -2,7 +2,10 @@
 
 use super::super::held::{cut_text, fit_state};
 use super::super::types::{invalid, paired_valid};
-use super::{records::AnswerRecord, store::encode};
+use super::{
+    records::{AnswerRecord, QuestionCriteria},
+    store::encode,
+};
 use crate::claim::{
     ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
 };
@@ -111,10 +114,22 @@ impl GraphUnitContext {
     /// source an image or a clip was read from names it.
     #[must_use]
     pub fn state(&self, images: &[DecisionImage], audio: &[DecisionAudio]) -> Value {
+        self.state_under(images, audio, &QuestionCriteria::default())
+    }
+
+    /// [`Self::state`] with the question's criteria beside the sources, as
+    /// `criteria`. The lines are never cut; an empty triple adds nothing.
+    #[must_use]
+    pub fn state_under(
+        &self,
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+        criteria: &QuestionCriteria,
+    ) -> Value {
         let texts: Vec<String> = self.sources.iter().map(|s| body_text(&s.body)).collect();
         let longest = texts.iter().map(String::len).max().unwrap_or(0);
         fit_state(longest, |cut| {
-            json!({
+            let mut state = json!({
                 "unit": self.unit.to_hex(),
                 "sources": self
                     .sources
@@ -138,7 +153,11 @@ impl GraphUnitContext {
                         view
                     })
                     .collect::<Vec<_>>(),
-            })
+            });
+            if !criteria.is_empty() {
+                state["criteria"] = json!(criteria);
+            }
+            state
         })
     }
 }
@@ -437,20 +456,9 @@ fn answer_unit(
     if !source_eligible(vault, &vault.store.env.read_txn()?, &unit, kind)? {
         return Ok(UnitOutcome::Abstain);
     }
-    let mut sources = vec![source(unit, kind, body)];
-    if let Some(neighbors) =
-        scoped.graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?
-    {
-        let txn = vault.store.env.read_txn()?;
-        for (id, kind, body) in neighbors {
-            if source_eligible(vault, &txn, &id, kind)? {
-                sources.push(source(id, kind, body));
-            }
-        }
-    } else {
+    let Some(context) = unit_context(scoped, unit, kind, body)? else {
         return Ok(UnitOutcome::Abstain);
-    }
-    let context = GraphUnitContext { unit, sources };
+    };
     let images = if answerer.reads_images() {
         unit_images(scoped, &context)?
     } else {
@@ -506,41 +514,12 @@ fn answer_unit(
     // again in this snapshot. A missing/changed source is an abstention,
     // but provider and write-gate failures remain typed failures.
     let record = vault.with_write_txn_grouped(|txn| {
-        let neighbors = scoped.graph_ask_neighbors_in_txn(
-            txn,
-            &unit,
-            MAX_NEIGHBORS,
-            MAX_NEIGHBOR_SCAN,
-            MAX_SOURCE_BYTES,
-        )?;
-        if !same_eligible_neighbors(vault, txn, neighbors, &context)? {
+        if !neighbors_unchanged_in_txn(scoped, txn, &context)? {
             return Ok(None);
         }
-        let mut rows = Vec::with_capacity(context.sources.len());
-        for source in &context.sources {
-            let Some(raw) = scoped.graph_ask_raw_in_txn(txn, &source.id)? else {
-                return Ok(None);
-            };
-            let kind = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("graph ask source header"))?
-                .entity_type;
-            if kind != source.entity_type
-                || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != source.hash
-                || !source_eligible(vault, txn, &source.id, kind)?
-            {
-                return Ok(None);
-            }
-            let Some(scope) = crate::federation::record_scope::scope_for_blob(
-                &scoped.store_read(),
-                txn,
-                source.id,
-                &raw,
-            )?
-            else {
-                return Ok(None);
-            };
-            rows.push(super::standing::Source::of_row(kind, &raw, &scope)?);
-        }
+        let Some(rows) = sources_unchanged_in_txn(scoped, txn, &context)? else {
+            return Ok(None);
+        };
         let answer = AnswerRecord {
             claim: EntityId::now(),
             unit,
@@ -595,6 +574,85 @@ fn answer_unit(
     Ok(record.map_or(UnitOutcome::Abstain, |answer| {
         UnitOutcome::Answered(Box::new(answer))
     }))
+}
+
+/// A unit's default context: the unit, then each eligible neighbour `lane`
+/// reads one admitted edge out, inside a graph ask's bounds. `None` when the
+/// neighbourhood is past a bound: the unit abstains.
+pub(super) fn unit_context(
+    lane: &ScopedRead<'_>,
+    unit: EntityId,
+    kind: u8,
+    body: Vec<u8>,
+) -> Result<Option<GraphUnitContext>> {
+    let vault = lane.vault();
+    let Some(neighbors) =
+        lane.graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?
+    else {
+        return Ok(None);
+    };
+    let txn = vault.store.env.read_txn()?;
+    let mut sources = vec![source(unit, kind, body)];
+    for (id, kind, body) in neighbors {
+        if source_eligible(vault, &txn, &id, kind)? {
+            sources.push(source(id, kind, body));
+        }
+    }
+    Ok(Some(GraphUnitContext { unit, sources }))
+}
+
+/// Whether `lane` still reads, in `txn`, exactly the eligible neighbours
+/// `context` was built from.
+pub(super) fn neighbors_unchanged_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    context: &GraphUnitContext,
+) -> Result<bool> {
+    let neighbors = lane.graph_ask_neighbors_in_txn(
+        txn,
+        &context.unit,
+        MAX_NEIGHBORS,
+        MAX_NEIGHBOR_SCAN,
+        MAX_SOURCE_BYTES,
+    )?;
+    same_eligible_neighbors(lane.vault(), txn, neighbors, context)
+}
+
+/// Every source of `context` as `lane` reads it in `txn`, at the kind and
+/// bytes it was shown and still eligible, with the scope each puts on an
+/// answer resting on it. `None` when any one changed or went out of reach.
+pub(super) fn sources_unchanged_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    context: &GraphUnitContext,
+) -> Result<Option<Vec<super::standing::Source>>> {
+    let vault = lane.vault();
+    let mut rows = Vec::with_capacity(context.sources.len());
+    for source in &context.sources {
+        let Some(raw) = lane.graph_ask_raw_in_txn(txn, &source.id)? else {
+            return Ok(None);
+        };
+        let kind = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("graph ask source header"))?
+            .entity_type;
+        if kind != source.entity_type
+            || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != source.hash
+            || !source_eligible(vault, txn, &source.id, kind)?
+        {
+            return Ok(None);
+        }
+        let Some(scope) = crate::federation::record_scope::scope_for_blob(
+            &lane.store_read(),
+            txn,
+            source.id,
+            &raw,
+        )?
+        else {
+            return Ok(None);
+        };
+        rows.push(super::standing::Source::of_row(kind, &raw, &scope)?);
+    }
+    Ok(Some(rows))
 }
 
 fn source(id: EntityId, entity_type: u8, body: Vec<u8>) -> GraphContextSource {
@@ -660,7 +718,7 @@ pub(super) fn decided(
     decision
 }
 
-fn source_versions(context: &GraphUnitContext) -> Vec<EvidenceVersion> {
+pub(super) fn source_versions(context: &GraphUnitContext) -> Vec<EvidenceVersion> {
     context
         .sources
         .iter()
