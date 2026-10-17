@@ -509,6 +509,16 @@ export class Oneiron {
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
+    residence: {
+      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
+      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeChanged => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeChanged),
+      /** Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home. */
+      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpened => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpened),
+      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
+      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
+      /** Drops the opened-item caches one of the owner's machines last touched before a time. */
+      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
+    },
     records: {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
       erase_preview: (input: Facade.RecordEraseRequest): Facade.RecordErasePreview => this.#call(() => this.#client.vaultRecordsErasePreview(input) as Facade.RecordErasePreview),
@@ -1005,6 +1015,8 @@ export class Oneiron {
     call: (input: Facade.ConnectorCallRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorCall(input) as Facade.ConnectorCallReply),
     /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
     schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
+    /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
+    call_status: (input: Facade.ConnectorCallStatusRequest): Facade.ConnectorCallStatus => this.#call(() => this.#client.connectorCallStatus(input) as Facade.ConnectorCallStatus),
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),

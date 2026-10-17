@@ -89,6 +89,17 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         &actor.scope.facets,
         actor.scope.facet_ref,
     );
+    let room_turn = headers
+        .get(crate::api::facade::ROOM_TURN_HEADER)
+        .map(|room| {
+            room.to_str()
+                .ok()
+                .and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
+                .ok_or_else(|| {
+                    McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header")
+                })
+        })
+        .transpose()?;
     Ok(McpCallContext {
         actor,
         mode,
@@ -97,6 +108,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         invocation: None,
         off_record_session: crate::api::call_receipt::request_session_ref(headers)
             .map(str::to_owned),
+        room_turn,
         drain: None,
     })
 }

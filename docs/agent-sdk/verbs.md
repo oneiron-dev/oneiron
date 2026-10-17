@@ -101,6 +101,10 @@ both bindings and their export-census tests in one change.
 - `vault.shared.close_erase_ask`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
+- `vault.residence.mode`
+- `vault.residence.open`
+- `vault.residence.index`
+- `vault.residence.prune`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
 - `vault.research.bind`
@@ -255,6 +259,7 @@ both bindings and their export-census tests in one change.
 - `connector.status`
 - `connector.call`
 - `connector.schema`
+- `connector.call_status`
 - `vault.commit`
 - `vault.remember`
 - `vault.claims.retract`

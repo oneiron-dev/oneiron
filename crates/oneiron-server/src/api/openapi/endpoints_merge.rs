@@ -103,6 +103,8 @@ pub(crate) fn openapi_document() -> Value {
     merge_error_components(&mut spec);
     merge_booking_components(&mut spec);
     merge_retrieval_depth_components(&mut spec);
+    super::owner_paths::merge_owner_paths(&mut spec);
+    super::owner_paths::merge_left_slip_paths(&mut spec);
     add_security_scheme(&mut spec);
     mark_entity_response_as_binary(&mut spec);
     fill_schema_description_gaps(&mut spec);

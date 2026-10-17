@@ -124,6 +124,10 @@ vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultResidenceMode(input: unknown): unknown
+vaultResidenceOpen(input: unknown): unknown
+vaultResidenceIndex(input: unknown): unknown
+vaultResidencePrune(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
@@ -278,6 +282,7 @@ connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
 connectorCall(input: unknown): unknown
 connectorSchema(input: unknown): unknown
+connectorCallStatus(input: unknown): unknown
 vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown

@@ -2,7 +2,9 @@
 //! person left or was removed from this shared vault learns it, though leave
 //! revoked its slips. `POST /v1/shared/removal-export` (OF-150) answers that
 //! person, under the same proof, the archive an export-first removal kept
-//! for them. The request carries that slip in `x-oneiron-left-slip`
+//! for them, and `POST /v1/shared/removal-export/{receipt_id}` the one archive
+//! one removal receipt delivered (FIX 1300). Delivery is pull-only: a removed
+//! device holds no live slip, so no host push reaches it. The request carries that slip in `x-oneiron-left-slip`
 //! (never as a bearer token, which the network door would refuse) and the
 //! usual holder proof in `x-oneiron-binding`; the engine checks the slip is
 //! one this vault minted and the device holds its key, spends the nonce, and
@@ -12,7 +14,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
@@ -30,6 +32,10 @@ pub(crate) fn left_notice_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/v1/shared/left-notices", post(left_notices))
         .route("/v1/shared/removal-export", post(removal_exports))
+        .route(
+            "/v1/shared/removal-export/{receipt_id}",
+            post(removal_export),
+        )
 }
 
 /// The person's MemberLeft, MemberRemoved and role-losing Owner notices,
@@ -75,6 +81,43 @@ async fn removal_exports(
     .map_err(|_| ApiError::unauthorized())?
     .map_err(|_| ApiError::unauthorized())?;
     Ok(Json(RemovalExports { exports }))
+}
+
+/// The archive one removal receipt delivered to the person, while it is
+/// within its term.
+#[derive(Debug, Serialize)]
+struct RemovalExport {
+    export: RemovalExportCopy,
+}
+
+/// `POST /v1/shared/removal-export/{receipt_id}` (FIX 1300): the archive the
+/// removal receipt `receipt_id` delivered to the holder of the left slip,
+/// under the same proof as the list. After its term, or for a removal that
+/// delivered this person none, it is not found; a malformed id is a bad
+/// request, refused before the nonce is spent.
+async fn removal_export(
+    headers: HeaderMap,
+    Path(receipt_id): Path<String>,
+    State(server): State<Arc<SyncServer>>,
+) -> Result<Json<RemovalExport>, EnvelopedApiError> {
+    if oneiron::EntityId::from_hex(&receipt_id).is_err() {
+        return Err(ApiError::bad_request("receipt_id must be 32 hex", Some("receipt_id")).into());
+    }
+    let (slip, proof, signature) = left_proof(&headers)?;
+    let export = tokio::task::spawn_blocking(move || {
+        server.vault().removed_owner_archive(
+            &slip,
+            proof.timestamp,
+            &signature,
+            proof.nonce.as_bytes(),
+            &receipt_id,
+        )
+    })
+    .await
+    .map_err(|_| ApiError::unauthorized())?
+    .map_err(|_| ApiError::unauthorized())?
+    .ok_or_else(|| ApiError::not_found("removal_export", None))?;
+    Ok(Json(RemovalExport { export }))
 }
 
 /// A host with no root key to sign with: it answers no notice, never an

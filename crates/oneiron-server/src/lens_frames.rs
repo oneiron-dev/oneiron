@@ -16,6 +16,17 @@
 //! bounds it. Only the retained line's memory floor evicts, oldest first, and
 //! an evicted or unknown card answers a refusal that says to re-render.
 //!
+//! Supersession (CALLS "2612 live lens card supersession", OF-181): a card a
+//! run renders for a live subscription is held with its [`CardOwner`], the
+//! creating run and the subscription key, both host-only. A successful
+//! re-render replaces that run's previous card for the same subscription
+//! ([`LensFrameStore::replace_for_subscription`]); a failed one never calls
+//! it, so the last good card stays. When the run ends, its retirement hook
+//! (L09: settle, prune, cancel) closes every card it created
+//! ([`LensFrameStore::close_run`]); a durably parked run is not ended, so it
+//! keeps its cards. Concurrent renders of other runs or subscriptions are
+//! never touched.
+//!
 //! Locking: the map's lock is held only to find, add, re-charge or drop an
 //! entry, never across a registry dispatch. Each card serializes its own
 //! events on its own lock, which an event holds from its validation to its
@@ -50,6 +61,22 @@ pub(crate) struct HeldCard {
     pub(crate) state: tokio::sync::Mutex<GeneratedUiStateSnapshot>,
 }
 
+/// Who owns a held card's supersession: the run that created it and the
+/// live subscription it renders for. Host-only: it is never part of a
+/// render or an answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "L07-A's live lens renderer builds it with its run (FIX 2612)"
+)]
+pub(crate) struct CardOwner {
+    /// The creating run's id, as its host names it.
+    pub(crate) creator_run: String,
+    /// The live subscription the card renders for; `None` for a one-off
+    /// render, which no re-render replaces.
+    pub(crate) subscription: Option<String>,
+}
+
 /// Whose card a frame is: the credential's idempotency principal, where it
 /// called from, and the card.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -77,6 +104,9 @@ struct Entry {
     /// `base` and its current `$state`.
     bytes: usize,
     card: Arc<HeldCard>,
+    /// The run and subscription that own its supersession, when a run
+    /// rendered it.
+    owner: Option<CardOwner>,
 }
 
 impl LensFrameStore {
@@ -110,6 +140,86 @@ impl LensFrameStore {
         frame: LensRenderFrame,
         render: GeneratedUiRender,
     ) -> MemoryResult<()> {
+        self.hold(auth, frame, render, None).map(drop)
+    }
+
+    /// [`Self::record`] for a run's successful render of a live
+    /// subscription: holds the new card with its `owner`, then closes every
+    /// other card the same caller holds from the same run for the same
+    /// subscription. A card the retained line cannot hold replaces nothing,
+    /// so the last good card stays. Answers how many cards it replaced.
+    #[allow(
+        dead_code,
+        reason = "L07-A's live lens renderer calls it with its run (FIX 2612)"
+    )]
+    pub(crate) fn replace_for_subscription(
+        &self,
+        auth: &CoreAuth,
+        frame: LensRenderFrame,
+        render: GeneratedUiRender,
+        owner: CardOwner,
+    ) -> MemoryResult<usize> {
+        let key = FrameKey::new(auth, render.card_id.clone());
+        if !self.hold(auth, frame, render, Some(owner.clone()))? {
+            return Ok(0);
+        }
+        let mut frames = self.lock();
+        let superseded: Vec<u64> = frames
+            .cards
+            .iter()
+            .filter(|(held, entry)| {
+                held.principal == key.principal
+                    && held.on_device == key.on_device
+                    && held.card != key.card
+                    && owner.subscription.is_some()
+                    && entry.owner.as_ref() == Some(&owner)
+            })
+            .map(|(_, entry)| entry.arrival)
+            .collect();
+        for arrival in &superseded {
+            frames.evict(*arrival);
+        }
+        frames.settle(&self.line, &self.questions);
+        Ok(superseded.len())
+    }
+
+    /// Closes every card the run `creator_run` created, whoever's caller it
+    /// was rendered for, giving their bytes back: the run's retirement hook
+    /// calls it once the run ends (settled, pruned or cancelled), never when
+    /// it parks. Answers how many it closed.
+    #[allow(
+        dead_code,
+        reason = "L09's run-retirement hook calls it (FIX 2612)"
+    )]
+    pub(crate) fn close_run(&self, creator_run: &str) -> usize {
+        let mut frames = self.lock();
+        let owned: Vec<u64> = frames
+            .cards
+            .values()
+            .filter(|entry| {
+                entry
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.creator_run == creator_run)
+            })
+            .map(|entry| entry.arrival)
+            .collect();
+        for arrival in &owned {
+            frames.evict(*arrival);
+        }
+        frames.settle(&self.line, &self.questions);
+        owned.len()
+    }
+
+    /// Holds one card with its `owner`; `false` when the retained line could
+    /// not hold it.
+    fn hold(
+        &self,
+        auth: &CoreAuth,
+        frame: LensRenderFrame,
+        render: GeneratedUiRender,
+        owner: Option<CardOwner>,
+    ) -> MemoryResult<bool> {
         if &render.card_id != frame.render_id() {
             return Err(MemoryError::new(
                 MEMORY_CODE_INTERNAL,
@@ -133,7 +243,7 @@ impl LensFrameStore {
         }
         if !frames.fit(&self.line, &self.questions, bytes, None) {
             frames.settle(&self.line, &self.questions);
-            return Ok(());
+            return Ok(false);
         }
         let arrival = frames.next;
         frames.next += 1;
@@ -146,9 +256,10 @@ impl LensFrameStore {
                 base,
                 bytes,
                 card,
+                owner,
             },
         );
-        Ok(())
+        Ok(true)
     }
 
     /// The card `card` that `auth`'s caller rendered here, if this store

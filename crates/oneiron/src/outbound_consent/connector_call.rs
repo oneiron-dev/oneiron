@@ -1101,3 +1101,106 @@ pub(crate) fn held_connector_call_in_txn(
         .filter(|row| row.settled.is_none())
         .map(|row| (row.principal_ref, row.name, row.tool)))
 }
+
+/// Who called one connector call a settler answered and acknowledged, and
+/// what it calls (FIX 2279): the status read's binding once the held row is
+/// gone. The reply itself is the settled wait's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AcknowledgedConnectorCall {
+    pub(super) principal_ref: String,
+    pub(super) name: String,
+    pub(super) tool: String,
+}
+
+/// The acknowledged calls' callers, by call ref.
+pub(super) const ACKNOWLEDGED_CALLS: SideTable<EntityId, AcknowledgedConnectorCall, Named> =
+    SideTable::new(&side_table::OUTBOUND_CONNECTOR_CALL_CALLER);
+
+/// Where one connector call stands, for its caller-bound status read (FIX
+/// 2279): who called it, what it calls, and how far it got. Secret-free and
+/// reply-free: a settled reply is its wait's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConnectorCallState {
+    /// The calling actor, hex.
+    pub principal_ref: String,
+    pub name: String,
+    pub tool: String,
+    /// When it was first held; `None` once a settler acknowledged it.
+    pub held_at_ms: Option<u64>,
+    /// The hold reasons the owner's ask carried, once an ask was tried.
+    pub reasons: Vec<String>,
+    /// What a resume settled it to, receipt-only, while its wait reply is
+    /// not yet acknowledged.
+    pub settled: Option<ConnectorCallOutcome>,
+    /// A settler answered its wait and acknowledged it: the reply is the
+    /// wait's.
+    pub acknowledged: bool,
+}
+
+impl Vault {
+    /// One connector call's state by its ref, for the caller-bound status
+    /// read (FIX 2279): the held row while one stands, else the caller an
+    /// acknowledgement kept. `None` for a ref this vault never held, or one
+    /// held before acknowledgements kept their caller.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn connector_call_state(
+        &self,
+        call_ref: &EntityId,
+    ) -> Result<Option<ConnectorCallState>, IntentLedgerError> {
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        if let Some(pending) = PENDING_CALLS.get(&self.store, &txn, call_ref)? {
+            return Ok(Some(ConnectorCallState {
+                settled: pending.settled.as_ref().map(SettledConnectorCall::outcome),
+                principal_ref: pending.principal_ref,
+                name: pending.name,
+                tool: pending.tool,
+                held_at_ms: Some(pending.held_at_ms),
+                reasons: pending.held_reasons,
+                acknowledged: false,
+            }));
+        }
+        Ok(ACKNOWLEDGED_CALLS
+            .get(&self.store, &txn, call_ref)?
+            .map(|row| ConnectorCallState {
+                principal_ref: row.principal_ref,
+                name: row.name,
+                tool: row.tool,
+                held_at_ms: None,
+                reasons: Vec::new(),
+                settled: None,
+                acknowledged: true,
+            }))
+    }
+
+    /// [`Self::ack_connector_call_delivery`], keeping who called the call
+    /// and what it calls in the same commit, so its caller, or the owner,
+    /// can still read its status by ref (FIX 2279). `true` when it dropped
+    /// the held row.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn ack_connector_call_delivery_keeping_caller(
+        &self,
+        call_ref: &EntityId,
+    ) -> Result<bool, IntentLedgerError> {
+        Ok(
+            self.with_write_txn(|txn| match PENDING_CALLS.get(&self.store, txn, call_ref)? {
+                Some(pending) if pending.settled.is_some() => {
+                    let caller = AcknowledgedConnectorCall {
+                        principal_ref: pending.principal_ref,
+                        name: pending.name,
+                        tool: pending.tool,
+                    };
+                    ACKNOWLEDGED_CALLS.put(&self.store, txn, call_ref, &caller)?;
+                    PENDING_CALLS.delete(&self.store, txn, call_ref)
+                }
+                _ => Ok(false),
+            })?,
+        )
+    }
+}

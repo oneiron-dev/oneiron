@@ -1487,6 +1487,50 @@
       "section": false
     },
     {
+      "name": "vault.residence.mode",
+      "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it.",
+      "input": "crate::task_verb::sdk::ResidenceModeRequest",
+      "output": "crate::task_verb::sdk::ResidenceModeChanged",
+      "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.mode\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.residence.open",
+      "description": "Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home.",
+      "input": "crate::task_verb::sdk::ResidenceOpenRequest",
+      "output": "crate::task_verb::sdk::ResidenceOpened",
+      "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.open\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.residence.index",
+      "description": "The thin index one of the owner's machines holds, window by window: what exists, never a body.",
+      "input": "crate::task_verb::sdk::ResidenceMachineRequest",
+      "output": "crate::task_verb::sdk::ResidenceIndex",
+      "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.index\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.residence.prune",
+      "description": "Drops the opened-item caches one of the owner's machines last touched before a time.",
+      "input": "crate::task_verb::sdk::ResidencePruneRequest",
+      "output": "crate::task_verb::sdk::ResidencePruned",
+      "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.prune\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.records.erase_preview",
       "description": "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.",
       "input": "crate::task_verb::sdk::RecordEraseRequest",
@@ -3700,6 +3744,15 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false
+    },
+    {
+      "name": "connector.call_status",
+      "description": "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it.",
+      "input": "crate::task_verb::sdk::ConnectorCallStatusRequest",
+      "output": "crate::task_verb::sdk::ConnectorCallStatus",
+      "call": "crate::task_verb::sdk::connector_call_status_read(memory, input)?",
+      "scope": "Read",
       "section": false
     },
     {

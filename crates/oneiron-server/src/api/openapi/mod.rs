@@ -3,6 +3,7 @@
 mod booking_schemas;
 mod descriptions;
 mod endpoints_merge;
+mod owner_paths;
 mod security;
 
 // The children keep the `super::...` paths they carried in the flat module;

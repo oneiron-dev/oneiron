@@ -197,6 +197,7 @@ impl McpCallContext {
             landing,
             invocation: Some(call.invocation),
             off_record_session: None,
+            room_turn: None,
             drain: Some(drain),
         };
         mcp_rewrite_admit(server, &call.verb, &context)(&call.verb, &call.args)

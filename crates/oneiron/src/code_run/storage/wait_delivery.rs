@@ -415,6 +415,22 @@ impl<'a> WaitDeliveries<'a> {
     }
 }
 
+impl WaitDeliveries<'_> {
+    /// The reply `wait_id` settled with, whether or not a run was ever
+    /// parked on it: what a caller with no parked run reads of a wait a
+    /// settler answered (FIX 2279). A room's settled rows ride its route; the
+    /// connector settler answers canonical waits only, so a room reads none.
+    pub fn settled(&self, wait_id: EntityId) -> Result<Option<WaitDelivery>> {
+        match &self.storage {
+            ExecutorStorage::Canonical(vault) => {
+                let txn = vault.store.env.read_txn()?;
+                SETTLED.get(&vault.store, &txn, &(SETTLED_TAG, wait_id))
+            }
+            ExecutorStorage::Session(_) => Ok(None),
+        }
+    }
+}
+
 /// Leads a run's seen-change row: `c` + wait + run → the highest option-void
 /// generation of the ask the run has seen while it waits on it (OF-533). It
 /// is one run's cursor: never a reply, and never the group's acknowledgement.
