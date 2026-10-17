@@ -79,6 +79,8 @@ pub(crate) use super::secret_use_doors::*;
 pub(crate) use super::reaction_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
+// The critic review door (OF-352), likewise.
+pub(crate) use super::critic_review_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 

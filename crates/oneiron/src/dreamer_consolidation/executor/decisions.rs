@@ -24,8 +24,15 @@ const IDS_PER_QUESTION: usize = 63;
 /// How long work waiting on a role's answer sits before the attempt reads
 /// the ask again (CALLS: Dreamer ask recheck).
 pub(super) const ASK_RECHECK_MS: u64 = 15 * 60 * 1_000;
+/// The highest rung a Dreamer verdict reads at. The Dreamer applies its own
+/// verdict and the owner reverts it (owner ruling 10-18, "autoapply + revert
+/// rather than holdout"), so no verdict goes up to a role and holds its
+/// work: one still in band at this rung escalates, and its pair parks as an
+/// open conflict the Dreamer's own review settles.
+const VERDICT_CEILING: DecisionRung = DecisionRung::Big;
 /// The highest role a Dreamer verdict's ask climbs to, and what its answer
-/// authorises (CALLS: Dreamer ask route).
+/// authorises (CALLS: Dreamer ask route), were [`VERDICT_CEILING`] the person
+/// rung.
 const ASK_CEILING: RoleRank = RoleRank::Owner;
 const ASK_ACT: AskAct = AskAct::Judgment;
 
@@ -200,6 +207,8 @@ impl ConsolidationExecutor<'_> {
         {
             dial.ceiling = DecisionRung::Big;
         }
+        dial.ceiling = dial.ceiling.min(VERDICT_CEILING);
+        dial.first = dial.first.min(dial.ceiling);
         let call = self.role(DREAMER_VERDICT_ROLE);
         let seal = |request: LlmRequest| -> Result<LlmRequest> {
             let mut request = vault

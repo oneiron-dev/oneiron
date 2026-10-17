@@ -37,6 +37,8 @@ pub const RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS: u64 = 32_000;
 const INPUT_SHARE_DIVISOR: u64 = 2;
 /// The longest fork chain a resident's dreaming follows back to it.
 const MAX_FORK_DEPTH: usize = 16;
+/// The most of a diary-read reason the Inbox cut prints, as the board does.
+const REVIEW_REASON_BYTES: usize = 160;
 
 /// Each resident's committed progress: what its dreaming already read.
 const PROGRESS: SideTable<EntityId, ResidentDreamProgress, Named> =
@@ -394,7 +396,7 @@ fn cut_for(
     };
     let mut inbox_lines = Vec::new();
     for item in inbox {
-        let index = format!(
+        let mut index = format!(
             "- {} {:?} thread {} with {} identities{}",
             item.occurred_at,
             item.kind,
@@ -405,6 +407,17 @@ fn cut_for(
                 .map(|payload| format!(" payload {payload}"))
                 .unwrap_or_default()
         );
+        // A pending diary read names its reader and the reason it stated,
+        // quoted as the reader's words (OF-490).
+        if let Some(review) = &item.diary_review {
+            index.push_str(&format!(
+                " diary read {} by {} ({}), reason {:?}",
+                review.request.to_hex(),
+                review.reader.to_hex(),
+                review.reader_class,
+                crate::llm::decision::cut_text(&review.reason, Some(REVIEW_REASON_BYTES))
+            ));
+        }
         // The words are quoted as data someone outside the vault wrote. A
         // row whose words overflow the room still goes in as its index line.
         let quoted = texts.get(&item.item_id).map(|words| {

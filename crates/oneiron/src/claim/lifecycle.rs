@@ -791,3 +791,81 @@ impl Vault {
             .or(write_receipt.map(crate::gate::RecordedClaimGateDecision::into_record)))
     }
 }
+
+impl Vault {
+    /// Stands `old_id` again after `new_id` superseded it, for a typed revert
+    /// door (OF-023: a reverted conflict settlement): the `new_id` →
+    /// `old_id` `supersedes` edge goes and the old head is Active with an
+    /// open window again; its supersession revisions stay as history.
+    /// `Ok(false)`, writing nothing, when `new_id` did not close `old_id` or
+    /// `old_id` is a MACHINE claim, whose signed history never reopens.
+    pub(crate) fn restore_superseded_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+    ) -> Result<bool> {
+        let (mut body, header) = self.claim_for_lifecycle_in(&*wtxn, old_id)?;
+        if body.lifecycle != ClaimLifecycleStatus::Superseded
+            || crate::authority::machine_claim_needs_history(&self.store, &*wtxn, &body)?
+        {
+            return Ok(false);
+        }
+        let mut linked = false;
+        let mut seen = 0usize;
+        for entry in self.port_edges(
+            &*wtxn,
+            new_id,
+            EdgeDirection::Out,
+            Some(EdgeKind::Supersedes),
+            None,
+        )? {
+            if seen >= MAX_EDGE_QUERY_RESULTS {
+                return Err(Error::IndexOverflow("superseded claims"));
+            }
+            seen += 1;
+            if entry?.target == *old_id {
+                linked = true;
+                break;
+            }
+        }
+        if !linked {
+            return Ok(false);
+        }
+        crate::batch::queue_proactivity_change(self, wtxn);
+        body.lifecycle = ClaimLifecycleStatus::Active;
+        body.valid_to = None;
+        let ops = vec![
+            BatchOp::DeleteEdge {
+                src: *new_id,
+                kind: EdgeKind::Supersedes,
+                tgt: *old_id,
+            },
+            BatchOp::Put {
+                id: *old_id,
+                entity_type: ENTITY_TYPE_CLAIM,
+                occurred: TimeRange {
+                    start: header.occurred_start,
+                    end: now,
+                },
+                learned_at: header.learned_at,
+                data: encode_claim_body(&body)?,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+        ];
+        crate::batch::apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            crate::batch::ApplyOpsGateMode::new(false, false),
+        )?;
+        Ok(true)
+    }
+}

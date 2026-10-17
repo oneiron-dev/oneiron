@@ -82,6 +82,9 @@ impl Vault {
     ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
         let decoded = decode_tombstone_value(raw_value);
         self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
+        // A held world keeps its pads on either reason, before any work here
+        // (OF-470).
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         // A peer deleted a world: its keys go here too, whether or not this
         // replica holds the WORLD row (fix 7). An archive is never a delete.
         if decoded.reason != Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
