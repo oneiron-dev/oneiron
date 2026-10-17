@@ -26605,7 +26605,7 @@
      "path": "src/learning/prior.rs",
      "purpose": "Priors: everything that is not a cell's own evidence enters with an origin and a weight in runs (ARCH-0003…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
