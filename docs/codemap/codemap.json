@@ -36773,6 +36773,7 @@
       "CanonicalEntityDocument",
       "CanonicalEntityDocumentHistory",
       "CanonicalForkStatus",
+      "CanonicalRoomFact",
       "CanonicalRoomTurn",
       "CanonicalSchemaManifest",
       "CanonicalSettleVerb",
@@ -36787,7 +36788,7 @@
       "crate-vis": 18,
       "enum": 2,
       "fn": 8,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -43875,7 +43876,7 @@
      "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 13,
       "struct": 5,
       "trait": 1
@@ -44681,7 +44682,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 24,
       "re-export": 16
      }
@@ -45061,6 +45062,16 @@
       "const": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/room_facts.rs",
+     "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -50511,7 +50522,7 @@
      "path": "src/workspace_roster/rooms/hosting.rs",
      "purpose": "Room hosting: the speaking duty, kept apart from the engine's upkeep",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 3,
       "struct": 5
@@ -50662,13 +50673,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 13
      }
     },
     {
@@ -53293,7 +53304,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53484,7 +53495,7 @@
    },
    "over_bar": 173,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3247,
+   "source_files": 3248,
    "test_files": 902
   },
   "oneiron-android": {
