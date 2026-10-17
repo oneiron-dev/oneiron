@@ -164,6 +164,7 @@ pub fn run_deck_transaction(
             pptx_holder_limits: None,
             slide_judgments: Vec::new(),
             paragraph_judgments: Vec::new(),
+            paragraph_question: None,
         },
         inspection,
         validation: ValidationReport {
