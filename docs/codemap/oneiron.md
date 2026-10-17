@@ -3834,12 +3834,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_cleanup/tripwire.rs` | src | m | 6 fn · 1 const · 7 crate-vis | — | Closed-form cleanup checks, the posture door, and the job body |
 | `src/vault_cleanup/visibility.rs` | src | s | 1 crate-vis | — | Local archive visibility |
 | `src/vault_shape/apply.rs` | src | m | 3 struct · 2 enum · 4 fn | ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState | Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has |
+| `src/vault_shape/channel.rs` | src | s | 1 struct · 5 enum · 3 crate-vis | ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision, ShapeMailScope, ShapeSelfHeld | How a declared channel identity is held, bound and fulfilled, as a seed writes it (ARCH-0063) |
 | `src/vault_shape/grant.rs` | src | s | 1 enum · 3 fn | ShapeGrantBound | A standing grant's bound as a seed writes it (DEC-0006): who, which class, which envelope |
 | `src/vault_shape/live.rs` | src | s | 4 crate-vis | — | The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed… |
 | `src/vault_shape/member.rs` | src | s | 2 struct · 2 enum · 2 fn · 1 crate-vis | ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick | Shared-vault membership as shape rows (ARCH-0043 presets as seeds) |
-| `src/vault_shape/mod.rs` | src | m | 3 struct · 3 enum · 3 fn · 2 const · 5 re-export | ShapeCeiling, ShapePlanRequest, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget | Vault shape as code (ARCH-0070): the setup plane held in one hand |
+| `src/vault_shape/mod.rs` | src | m | 3 struct · 3 enum · 3 fn · 2 const · 7 re-export | ShapeCeiling, ShapePlanRequest, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget | Vault shape as code (ARCH-0070): the setup plane held in one hand |
 | `src/vault_shape/plan.rs` | src | m | 3 struct · 2 enum · 4 fn | ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary | Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item… |
 | `src/vault_shape/seed.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | StoredShapeSeed | The seed's store: each revision is one immutable ASSET row in the replicated ledger, the same carrier a… |
+| `src/vault_shape/skill.rs` | src | s | 1 enum · 2 crate-vis | ShapeSkillSource | Where a declared skill comes from, as a seed writes it (ARCH-0053) |
 | `src/voice_cascade.rs` | src | s | 6 mod · 6 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `src/voice_cascade/budget.rs` | src | s | 1 crate-vis | — | Generation-owned budget reservation |
 | `src/voice_cascade/cancellation.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | OutputStop, StopReason | One stop fan-out for interruption, policy enforcement and explicit teardown |
