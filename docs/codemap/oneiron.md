@@ -2187,7 +2187,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/store.rs` | src | m | 4 fn · 13 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one… |
 | `src/llm/decision/questions/task_ask.rs` | src | s | 3 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
 | `src/llm/decision/questions/windows.rs` | src | s | 3 fn · 1 const · 5 crate-vis | — | Outcome windows the question pump closes (OF-516) |
-| `src/llm/decision/read.rs` | src | s | 1 struct · 1 fn | DecisionReadProvider | The escalation rung's decision read: the house model reads the pack's questions over the same state in one… |
+| `src/llm/decision/read.rs` | src | s | 1 struct · 1 enum · 1 trait · 1 fn | DecisionReadGate, DecisionReadProvider, GatedRead | The escalation rung's decision read: the house model reads the pack's questions over the same state in one… |
 | `src/llm/decision/routine.rs` | src | s | 2 struct · 1 enum · 6 fn · 6 const | RoutineDecision, RoutineOutcome, RoutineTrail | Routine driver steps (the CUA-S1 pattern, OF-523): a small decider takes a driver's routine choice behind… |
 | `src/llm/decision/seat.rs` | src | m | 2 struct · 1 enum · 1 trait · 2 fn · 1 type | DecisionSeat, SeatAnswer, SeatPhase, SeatRequest | Opt-in, non-light typed-decision seat and its receipt boundary |
 | `src/llm/decision/seat/tests.rs` | test | s | — | — | — |
