@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 302 facade rows, 1081 generated types.
+// UniFFI census: 302 facade rows, 1082 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 270.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -13562,6 +13562,16 @@ pub enum OfferState {
     AgedOut,
 }
 
+/// `oneiron::workspace_roster::rooms::offers::OfferVoteTally`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferVoteTally {
+    #[serde(rename = "join")]
+    pub join: u64,
+    #[serde(rename = "not_now")]
+    pub not_now: u64,
+}
+
 /// `oneiron::workspace_roster::rooms::offers::OfferCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -13602,6 +13612,8 @@ pub struct OfferCard {
     pub until: Option<u64>,
     #[serde(rename = "last_engaged_at")]
     pub last_engaged_at: u64,
+    #[serde(rename = "vote_tally")]
+    pub vote_tally: OfferVoteTally,
 }
 
 /// `oneiron::workspace_roster::rooms::offer_settle::OfferAnswer`.
