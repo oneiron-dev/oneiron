@@ -80,7 +80,8 @@ pub(super) async fn serve_with_config(
     if vault_config.page_seal.is_some() {
         tracing::warn!("{}", oneiron::PAGE_SEAL_WARNING);
     }
-    // A rehearsal restores into a plain scratch vault, as a restore does.
+    // The live seal opens the live vault and creates none: a rehearsal's
+    // scratch takes a fresh incarnation of it (`owner::backup`).
     let mut rehearsal_config = vault_config.clone();
     rehearsal_config.page_seal = None;
     let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, rehearsal_config);
@@ -390,9 +391,19 @@ pub(crate) async fn start_desktop_workers(
             &sync_server,
             crate::server::admit_every_pass(),
         ));
+        // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
+        workers.push(crate::ai_host::home_digests::spawn(
+            &sync_server,
+            crate::server::admit_every_pass(),
+        ));
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     workers.push(crate::saved_query_sweep::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
+    // Queued campaign enrollments land on the campaign's home node (ARCH-0059).
+    workers.push(crate::campaign_enrollment::spawn(
         &sync_server,
         crate::server::admit_every_pass(),
     ));
