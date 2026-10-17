@@ -13044,7 +13044,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -13115,6 +13115,16 @@
       "crate-vis": 20,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/epoch_floor.rs",
+     "purpose": "Where a removed epoch summary leaves the count (OF-013)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -13266,7 +13276,7 @@
      "path": "src/compaction/withdrawn.rs",
      "purpose": "What a withdrawn epoch summary keeps: its keyframe, without its words",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -51851,7 +51861,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -53043,7 +53053,7 @@
    },
    "over_bar": 164,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3212,
+   "source_files": 3213,
    "test_files": 902
   },
   "oneiron-android": {
