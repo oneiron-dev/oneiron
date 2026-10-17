@@ -111,9 +111,10 @@ too_many_lines = "deny"
 # upstream 0.20.5 byte-for-byte apart from ONE added open seam that keeps the
 # exact open path and the environment-cache identity separate.
 #
-# Same package, same version (0.20.5), same dependency requirements: no version
-# moves, `lmdb-master-sys` stays at the already-locked 0.2.6, and no dependency
-# is added. Provenance, seam, SAFETY contract, and the LMDB audit are in
+# Same package and version (0.20.5). OF-570 (page AEAD) moved its C library to
+# mdb.master3 (`lmdb-master3-sys` 0.2.6, LMDB data format 3) for the opt-in
+# sealed-page tier, and its page cipher adds three crates already in the lock.
+# Provenance, seam, SAFETY contract, and the LMDB audit are in
 # `crates/heed/PROVENANCE.md`.
 [patch.crates-io]
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
