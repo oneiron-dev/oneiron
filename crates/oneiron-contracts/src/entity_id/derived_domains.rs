@@ -125,6 +125,10 @@ pub const OUTBOUND_RECEIPT_RECORD: &[u8] = b"oneiron.outbound.receipt_record.v1\
 /// parts.
 pub const FIRST_PARTY_SKILL_HUB: &[u8] = b"oneiron/first-party-skill-hub/v1";
 
+/// A claim-class descriptor (`comm::descriptor`, ARCH-0057). Parts: the
+/// predicate the class describes.
+pub const CLAIM_CLASS_DESCRIPTOR: &[u8] = b"oneiron.comm.claim_class_descriptor.v1";
+
 /// The engine hub of the built-in connector packs
 /// (`skill_hub::pack_catalog::builtin`). No parts.
 pub const BUILTIN_CONNECTOR_PACK_HUB: &[u8] = b"oneiron/built-in-connector-packs/v1";
@@ -160,7 +164,7 @@ pub const COORDINATION_PATTERN: &[u8] = b"oneiron/coordination-pattern/v1/";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 38] = [
+pub(crate) const ALL: [&[u8]; 41] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -193,6 +197,7 @@ pub(crate) const ALL: [&[u8]; 38] = [
     COMM_CONNECTOR_SEND_EVENT,
     OUTBOUND_RECEIPT_RECORD,
     FIRST_PARTY_SKILL_HUB,
+    CLAIM_CLASS_DESCRIPTOR,
     BUILTIN_CONNECTOR_PACK_HUB,
     HISTORY_CONVERSATION,
     HISTORY_TURN,
