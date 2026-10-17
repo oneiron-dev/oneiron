@@ -724,7 +724,11 @@ impl TaskLend<'_> {
 }
 
 /// A resident's own dreaming model as this server serves it.
-type OwnModel = (ModelId, oneiron::ModelLocality, Arc<crate::models::OfferLadder>);
+type OwnModel = (
+    ModelId,
+    oneiron::ModelLocality,
+    Arc<crate::models::OfferLadder>,
+);
 
 /// The host's loan to one resident's dreaming (OF-490): its own model when
 /// it dreams on its own and this server serves that model, on a line of its

@@ -67,7 +67,9 @@ pub enum BodyBlockKind {
 
 /// One typed operation on a DOCX body. Offsets and lengths count Unicode
 /// scalar values.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum DocxBodyOp {
     /// Replace a paragraph's text by its shortest edit.
