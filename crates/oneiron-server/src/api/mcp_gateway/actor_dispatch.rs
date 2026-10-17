@@ -11,8 +11,8 @@ use crate::mcp::McpSurfaceMode;
 use crate::mcp::McpToolValidationError;
 use crate::mcp::McpValidatedToolArgs;
 use crate::server::SyncServer;
-use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
+use axum::http::{Extensions, HeaderMap};
 use oneiron::federation::{ScopeAxis, ScopeId};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -62,16 +62,9 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     }
     .map_err(mcp_actor_resolution_error)?;
     drop(registry);
-    // The connector header selects a registered instrument, not another
-    // principal. Verify that exact instrument with its holder proof; never
-    // borrow an unrelated Authorization header's owner privileges.
-    let mut proof_headers = headers.clone();
-    proof_headers.insert(
-        AUTHORIZATION,
-        format!("Bearer {credential}")
-            .parse()
-            .map_err(|_| mcp_proof_error())?,
-    );
+    // Verify the exact instrument the connector header selected, with its
+    // holder proof.
+    let proof_headers = mcp_proof_headers(headers)?;
     let auth = crate::auth::CoreAuth::from_headers(
         &proof_headers,
         &server.config,
@@ -101,6 +94,23 @@ pub(crate) async fn resolve_mcp_gateway_actor(
             .map(str::to_owned),
         drain: None,
     })
+}
+
+/// `headers` with the credential the connector header selected as their
+/// bearer. The header selects a registered instrument, not another
+/// principal: an unrelated Authorization header is replaced, so its owner
+/// privileges are never borrowed. A call's proof is verified on these, and
+/// an action's rows run on them.
+pub(super) fn mcp_proof_headers(headers: &HeaderMap) -> Result<HeaderMap, McpGatewayError> {
+    let credential = mcp_connector_credential(headers)?;
+    let mut proof_headers = headers.clone();
+    proof_headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {credential}")
+            .parse()
+            .map_err(|_| mcp_proof_error())?,
+    );
+    Ok(proof_headers)
 }
 
 /// Whether `auth`, the exact instrument a connector call verified, may act
@@ -170,7 +180,7 @@ fn mcp_landing_refusal(_: crate::api::write_facet::LandingRefused) -> McpGateway
     )
 }
 
-fn mcp_proof_error() -> McpGatewayError {
+pub(super) fn mcp_proof_error() -> McpGatewayError {
     McpGatewayError::new(
         -32001,
         "mcp_auth_required",
@@ -418,16 +428,21 @@ pub(crate) fn mcp_validated_actor(args: &McpValidatedToolArgs) -> &McpActorMetad
         McpValidatedToolArgs::Setup(args) => &args.actor,
         McpValidatedToolArgs::ExecuteCode(args) => &args.actor,
         McpValidatedToolArgs::ReadResult(args) => &args.actor,
+        McpValidatedToolArgs::InvokeAction(args) => &args.actor,
         McpValidatedToolArgs::Verb(args) => &args.payload.actor,
     }
 }
 
-/// Dispatches one VALIDATED endpoint tool call: setup, execute_code, or one
-/// generated verb (ONE-1704). Nothing resolves a retired `oneiron.*` name.
+/// Dispatches one VALIDATED endpoint tool call: setup, execute_code, an
+/// action, or one generated verb (ONE-1704). Nothing resolves a retired
+/// `oneiron.*` name. `headers` and `connection` are the request's own: an
+/// action's rows run under them.
 pub(crate) async fn execute_mcp_tool(
     server: &Arc<SyncServer>,
     args: McpValidatedToolArgs,
     actor: &McpCallContext,
+    headers: &HeaderMap,
+    connection: &Extensions,
 ) -> Result<Value, McpGatewayError> {
     match &args {
         McpValidatedToolArgs::Verb(verb) => {
@@ -447,6 +462,17 @@ pub(crate) async fn execute_mcp_tool(
         McpValidatedToolArgs::ExecuteCode(_) | McpValidatedToolArgs::ReadResult(_) => {
             mcp_execute_code_gate(server, actor)?;
         }
+        // A live credential: the action door itself requires its verb's
+        // scope and record bounds, as for an HTTP action, and each
+        // verb-table row meets its own route's under the same credential.
+        McpValidatedToolArgs::InvokeAction(_) => {
+            mcp_credential_gate(
+                server,
+                actor,
+                McpRecordBounds::Filtered,
+                McpCallEffect::Reads,
+            )?;
+        }
     }
     match args {
         McpValidatedToolArgs::Setup(args) => execute_mcp_setup(server, *args, actor).await,
@@ -455,6 +481,10 @@ pub(crate) async fn execute_mcp_tool(
         }
         McpValidatedToolArgs::ReadResult(args) => {
             execute_mcp_read_result(server, *args, actor).await
+        }
+        McpValidatedToolArgs::InvokeAction(args) => {
+            super::actions::execute_mcp_invoke_action(server, *args, actor, headers, connection)
+                .await
         }
         McpValidatedToolArgs::Verb(args) => execute_mcp_generated_verb(server, *args, actor).await,
     }
