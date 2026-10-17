@@ -14,6 +14,8 @@ use serde::Deserialize;
 
 /// A seat pick's anytime budget when the file names none.
 const DEFAULT_SEAT_BUDGET_MS: u64 = 2_000;
+/// One image pick's anytime budget when the file names none.
+const DEFAULT_IMAGE_PICK_BUDGET_MS: u64 = 1_000;
 
 /// `[models.decisions]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -24,6 +26,7 @@ pub(super) struct DecisionsFile {
     seat: Option<SeatPickFile>,
     system_one: Option<SystemOneFile>,
     big: Option<BigFile>,
+    image_pick: Option<ImagePickFile>,
 }
 
 /// `[models.decisions.seat]`: the code-mode seat pick.
@@ -36,6 +39,16 @@ struct SeatPickFile {
     model: String,
     /// Which of the chosen model's efforts it runs at.
     effort: String,
+    budget_ms: Option<u64>,
+}
+
+/// `[models.decisions.image_pick]`: the fast per-image pick (OF-329), asked
+/// for each image a hydrate would serve in full to a model that reads images.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImagePickFile {
+    /// "Does this task need this image in full?"
+    wording: String,
     budget_ms: Option<u64>,
 }
 
@@ -88,6 +101,14 @@ pub struct DecisionsSettings {
     pub seat: Option<SeatPickSettings>,
     pub system_one: Option<SystemOneSettings>,
     pub big: Option<BigSettings>,
+    pub image_pick: Option<ImagePickSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImagePickSettings {
+    pub wording: String,
+    /// Each image's anytime budget.
+    pub budget: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,11 +199,28 @@ impl DecisionsFile {
                 })
             })
             .transpose()?;
+        let image_pick = self
+            .image_pick
+            .map(|pick| -> anyhow::Result<_> {
+                Ok(ImagePickSettings {
+                    wording: filled("image_pick.wording", pick.wording)?,
+                    budget: Duration::from_millis(
+                        match pick.budget_ms.unwrap_or(DEFAULT_IMAGE_PICK_BUDGET_MS) {
+                            0 => anyhow::bail!(
+                                "models.decisions.image_pick.budget_ms must be above 0"
+                            ),
+                            ms => ms,
+                        },
+                    ),
+                })
+            })
+            .transpose()?;
         Ok(DecisionsSettings {
             auto_check,
             seat,
             system_one,
             big,
+            image_pick,
         })
     }
 }

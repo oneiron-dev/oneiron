@@ -19,7 +19,7 @@ pub struct SkillsConfig {
     /// slice, and the owner's measure must name its own budget.
     pub live_pulls_per_axis: Option<u32>,
     /// The skill the house mind drafts a project card with, by its 32-hex
-    /// id. Unset: none ships, so a drafting run is refused.
+    /// id. Unset: the shipped project-proposal skill.
     pub project_proposal_draft_skill: Option<String>,
     /// The goal-intake skill a minted project's leader interviews with, by
     /// its 32-hex id. Unset: the shipped goal-intake skill.
@@ -55,10 +55,10 @@ impl SkillsConfig {
     }
 
     /// The skills a project conversation runs (OF-501): this server's
-    /// drafting skill, if it names one, and its goal-intake skill, or the
-    /// shipped one.
+    /// drafting and goal-intake skills, each the shipped one when it names
+    /// none.
     pub fn project_conversation(&self) -> anyhow::Result<ProjectConversationSkills> {
-        let mut skills = ProjectConversationSkills::seeded(skill_id(
+        let mut skills = ProjectConversationSkills::shipped(skill_id(
             "project_proposal_draft_skill",
             &self.project_proposal_draft_skill,
         )?)?;
