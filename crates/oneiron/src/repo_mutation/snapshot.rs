@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
+use crate::secret_snapshot::{SnapshotExclusionSet, SnapshotWithhold};
 
 use super::git::{git_output_optional, run_git, validate_relative_repo_path};
 use super::oplog::{REPO_MUTATION_OPLOG_SCHEMA_VERSION, SNAPSHOT, repo_mutation_snapshot_key};
@@ -41,6 +42,58 @@ pub(super) struct StoredRepoSnapshotEntry {
 pub(super) enum StoredRepoSnapshotEntryKind {
     File,
     Symlink,
+    /// A file snapshot custody keeps out ([`SnapshotCustody`]): its path and
+    /// mode, none of its bytes. A restore leaves the file the checkout holds
+    /// there as it is.
+    Withheld,
+}
+
+/// Snapshot custody (ARCH-0069 S4/S5) over the checkout a mutation snapshots
+/// (OF-067): the declared-path exclusion and undeclared-secret quarantine a
+/// codebase snapshot keeps, read once per capture. A file it withholds is
+/// stored [`StoredRepoSnapshotEntryKind::Withheld`], so its bytes never reach
+/// a snapshot row and a restore never deletes it.
+pub(super) struct SnapshotCustody {
+    exclusions: SnapshotExclusionSet,
+    root: Option<String>,
+}
+
+impl SnapshotCustody {
+    pub(super) fn of(vault: &Vault, repo_root: &Path) -> Result<Self> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(Self {
+            exclusions: SnapshotExclusionSet::for_every_project(vault, &txn)?,
+            root: repo_root
+                .to_str()
+                .map(|root| root.trim_end_matches('/').to_owned()),
+        })
+    }
+
+    /// Why the policy keeps `content` at `path` out of a snapshot, if it does.
+    pub(super) fn withholds(&self, path: &str, content: &[u8]) -> Option<SnapshotWithhold> {
+        self.exclusions
+            .withholds(path, content, self.root.as_deref())
+    }
+
+    /// A file's entry as the policy keeps it.
+    pub(super) fn file(
+        &self,
+        path: String,
+        executable: bool,
+        content: Vec<u8>,
+    ) -> StoredRepoSnapshotEntry {
+        let (kind, content) = match self.withholds(&path, &content) {
+            None => (StoredRepoSnapshotEntryKind::File, content),
+            Some(_) => (StoredRepoSnapshotEntryKind::Withheld, Vec::new()),
+        };
+        StoredRepoSnapshotEntry {
+            path,
+            kind,
+            executable,
+            content,
+            symlink_target: None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -49,7 +102,10 @@ struct SnapshotStats {
     total_bytes: u64,
 }
 
-pub(super) fn capture_repo_snapshot(repo_root: &Path) -> Result<(RepoForkHash, Vec<u8>)> {
+pub(super) fn capture_repo_snapshot(
+    vault: &Vault,
+    repo_root: &Path,
+) -> Result<(RepoForkHash, Vec<u8>)> {
     let head = git_output_optional(
         repo_root,
         &[
@@ -60,9 +116,10 @@ pub(super) fn capture_repo_snapshot(repo_root: &Path) -> Result<(RepoForkHash, V
     )?
     .map(|bytes| utf8_trimmed(bytes, "git HEAD must be UTF-8"))
     .transpose()?;
+    let custody = SnapshotCustody::of(vault, repo_root)?;
     let mut entries = Vec::new();
     let mut stats = SnapshotStats::default();
-    collect_snapshot_entries(repo_root, repo_root, &mut entries, &mut stats)?;
+    collect_snapshot_entries(repo_root, repo_root, &custody, &mut entries, &mut stats)?;
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     let snapshot = StoredRepoSnapshot {
         schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
@@ -77,6 +134,7 @@ pub(super) fn capture_repo_snapshot(repo_root: &Path) -> Result<(RepoForkHash, V
 fn collect_snapshot_entries(
     repo_root: &Path,
     dir: &Path,
+    custody: &SnapshotCustody,
     entries: &mut Vec<StoredRepoSnapshotEntry>,
     stats: &mut SnapshotStats,
 ) -> Result<()> {
@@ -89,7 +147,7 @@ fn collect_snapshot_entries(
         let path = child.path();
         let metadata = fs::symlink_metadata(&path)?;
         if metadata.file_type().is_dir() {
-            collect_snapshot_entries(repo_root, &path, entries, stats)?;
+            collect_snapshot_entries(repo_root, &path, custody, entries, stats)?;
             continue;
         }
         let relative = repo_relative_path(repo_root, &path)?;
@@ -111,13 +169,7 @@ fn collect_snapshot_entries(
                 )));
             }
             record_snapshot_entry_size(stats, metadata.len())?;
-            entries.push(StoredRepoSnapshotEntry {
-                path: relative,
-                kind: StoredRepoSnapshotEntryKind::File,
-                executable: is_executable(&metadata),
-                content: fs::read(&path)?,
-                symlink_target: None,
-            });
+            entries.push(custody.file(relative, is_executable(&metadata), fs::read(&path)?));
         } else {
             return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
                 "repo snapshot supports only files, directories, and symlinks",
@@ -168,6 +220,9 @@ pub(super) fn restore_repo_snapshot(
 
     for entry in snapshot.entries {
         validate_relative_repo_path(&entry.path)?;
+        if entry.kind == StoredRepoSnapshotEntryKind::Withheld {
+            continue;
+        }
         let target = repo_root.join(&entry.path);
         if fs::symlink_metadata(&target).is_ok() {
             remove_existing_path(&target)?;
@@ -184,6 +239,7 @@ pub(super) fn restore_repo_snapshot(
                 let target = ensure_repo_parent_dirs_no_symlink(repo_root, &entry.path)?;
                 create_symlink(Path::new(&target_path), &target)?;
             }
+            StoredRepoSnapshotEntryKind::Withheld => {}
         }
     }
     if let Some(head) = snapshot_head {

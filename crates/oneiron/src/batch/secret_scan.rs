@@ -387,6 +387,18 @@ pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// [`scan_write_payload`] for a reader that marks a hit rather than refusing a
+/// write: the reason it would refuse with, the rule's own code.
+pub(crate) fn write_payload_hit(data: &[u8]) -> Option<&'static str> {
+    match scan_payload(data) {
+        Ok(_) => None,
+        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+            Some(reason_codes.last().copied().unwrap_or(REASON_DETECTED))
+        }
+        Err(_) => Some(REASON_DETECTED),
+    }
+}
+
 /// Apply the same raw/structured scan as ordinary non-custody batch puts to
 /// source bytes staged outside the entity tables, before their first write.
 /// It follows the batch door, so the owner's switch turns it off too.
