@@ -34,6 +34,7 @@ use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::page_seal::WrapTransition;
 use super::{os_fill, refused};
 use crate::Vault;
 use crate::error::Result;
@@ -158,6 +159,25 @@ struct StoredWrap {
     envelope: Vec<u8>,
 }
 
+impl StoredWrap {
+    fn digest(&self) -> WrapDigest {
+        WrapDigest {
+            id: self.info.id.clone(),
+            envelope: *blake3::hash(&self.envelope).as_bytes(),
+        }
+    }
+}
+
+/// One wrap as a page-seal mirror carries it (OF-570): its id, which names
+/// its kind and label, and the BLAKE3 digest of its sealed envelope. A
+/// sealed vault admits an unlock from its mirror only while it holds the
+/// wrap that opened, envelope for envelope.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct WrapDigest {
+    id: String,
+    envelope: [u8; 32],
+}
+
 /// A host-chosen name inside a wrap id: 1 to 64 of `A-Z a-z 0-9 . _ -`.
 fn check_name(name: &str) -> Result<()> {
     let ok = !name.is_empty()
@@ -269,20 +289,43 @@ impl CarriedVaultKey {
     }
 
     /// The vault key a carried wrap opens to under `unlock`.
-    pub(super) fn open(
+    fn open(&self, vault_id: &[u8; 32], unlock: &VaultKeyUnlock<'_>) -> Result<VaultDataKey> {
+        self.open_recording(vault_id, unlock).map(|(key, _)| key)
+    }
+
+    /// The vault key a carried wrap opens to under `unlock`, and the digest
+    /// of every carried wrap that opens. Each wrap `unlock` may open is
+    /// tried: while a wrap change commits, a page-seal mirror carries a wrap
+    /// and its replacement under one id (OF-570).
+    pub(super) fn open_recording(
         &self,
         vault_id: &[u8; 32],
         unlock: &VaultKeyUnlock<'_>,
-    ) -> Result<VaultDataKey> {
-        let wrap = |kind: VaultKeyWrapKind| {
+    ) -> Result<(VaultDataKey, Vec<WrapDigest>)> {
+        let mut key = None;
+        let mut opened = Vec::new();
+        let mut refusal = None;
+        let mut attempt = |stored: &StoredWrap, secret: &UnlockSecret<'_>| match open_wrap(
+            vault_id,
+            &self.commitment,
+            stored,
+            secret,
+        ) {
+            Ok(unwrapped) => {
+                opened.push(stored.digest());
+                if key.is_none() {
+                    key = Some(unwrapped);
+                }
+            }
+            Err(error) => refusal = Some(error),
+        };
+        let named = |kind: VaultKeyWrapKind| {
             let id = kind.id();
-            self.wraps
-                .iter()
-                .find(|stored| stored.info.id == id)
-                .ok_or_else(|| refused("the vault key has no such wrap"))
+            self.wraps.iter().filter(move |stored| stored.info.id == id)
         };
         match unlock {
             VaultKeyUnlock::Device(keystore) => {
+                let mut held = false;
                 for stored in &self.wraps {
                     let VaultKeyWrapKind::Device { install } = &stored.info.kind else {
                         continue;
@@ -301,50 +344,51 @@ impl CarriedVaultKey {
                     else {
                         continue;
                     };
-                    return open_wrap(
-                        vault_id,
-                        &self.commitment,
-                        stored,
-                        &UnlockSecret::Kek(Kek::from_bytes(*seed)),
-                    );
+                    held = true;
+                    attempt(stored, &UnlockSecret::Kek(Kek::from_bytes(*seed)));
                 }
-                Err(refused(
-                    "this keystore holds no device wrap of the vault key",
-                ))
+                if !held {
+                    return Err(refused(
+                        "this keystore holds no device wrap of the vault key",
+                    ));
+                }
             }
             VaultKeyUnlock::Password(password) => {
                 let passphrase = Passphrase::new(password)
                     .map_err(|_| refused("the password is not accepted"))?;
-                open_wrap(
-                    vault_id,
-                    &self.commitment,
-                    wrap(VaultKeyWrapKind::Password)?,
-                    &UnlockSecret::Passphrase(&passphrase),
-                )
+                let secret = UnlockSecret::Passphrase(&passphrase);
+                for stored in named(VaultKeyWrapKind::Password) {
+                    attempt(stored, &secret);
+                }
             }
             VaultKeyUnlock::Passkey { credential, prf } => {
                 check_name(credential)?;
-                open_wrap(
-                    vault_id,
-                    &self.commitment,
-                    wrap(VaultKeyWrapKind::Passkey {
-                        credential: (*credential).to_owned(),
-                    })?,
-                    &UnlockSecret::Kek(Kek::from_bytes(*prf)),
-                )
+                let secret = UnlockSecret::Kek(Kek::from_bytes(*prf));
+                for stored in named(VaultKeyWrapKind::Passkey {
+                    credential: (*credential).to_owned(),
+                }) {
+                    attempt(stored, &secret);
+                }
             }
             VaultKeyUnlock::Escrow { label, secret } => {
                 check_name(label)?;
-                open_wrap(
-                    vault_id,
-                    &self.commitment,
-                    wrap(VaultKeyWrapKind::Escrow {
-                        label: (*label).to_owned(),
-                    })?,
-                    &UnlockSecret::Hybrid(secret),
-                )
+                let secret = UnlockSecret::Hybrid(secret);
+                for stored in named(VaultKeyWrapKind::Escrow {
+                    label: (*label).to_owned(),
+                }) {
+                    attempt(stored, &secret);
+                }
             }
         }
+        match key {
+            Some(key) => Ok((key, opened)),
+            None => Err(refusal.unwrap_or_else(|| refused("the vault key has no such wrap"))),
+        }
+    }
+
+    /// Each carried wrap's digest.
+    pub(super) fn digests(&self) -> Vec<WrapDigest> {
+        self.wraps.iter().map(StoredWrap::digest).collect()
     }
 }
 
@@ -513,6 +557,7 @@ impl Vault {
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let envelope = seal_wrap(&vault_id, &commitment, &kind, &WrapSecret::Kek(kek), &key)?;
+        let transition = self.begin_wrap_transition()?;
         let info = self.with_write_txn(|txn| {
             if STATE.get(&self.store, txn, &())?.is_some() {
                 return Err(refused("the vault already has a data key"));
@@ -532,19 +577,16 @@ impl Vault {
                 kind,
                 created_at,
             };
-            WRAPS.put(
-                &self.store,
-                txn,
-                &info.id,
-                &StoredWrap {
-                    info: info.clone(),
-                    envelope,
-                },
-            )?;
+            let stored = StoredWrap {
+                info: info.clone(),
+                envelope,
+            };
+            transition.stage(|| self.staged_wraps_in_txn(txn, Some(&stored)))?;
+            WRAPS.put(&self.store, txn, &info.id, &stored)?;
             Ok(info)
         })?;
         self.hold_vault_key(key);
-        self.sync_page_custody()?;
+        transition.finish()?;
         Ok(info)
     }
 
@@ -661,6 +703,44 @@ impl Vault {
         }))
     }
 
+    /// What a sealed vault's page-seal mirror holds while a wrap change
+    /// commits ([`WrapTransition::stage`]): every wrap `txn` reads before the
+    /// change touches one, and the wrap it adds.
+    fn staged_wraps_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        adding: Option<&StoredWrap>,
+    ) -> Result<CarriedVaultKey> {
+        let state = STATE
+            .get(&self.store, txn, &())?
+            .ok_or_else(|| refused("the vault has no data key"))?;
+        let mut wraps: Vec<StoredWrap> = WRAPS
+            .scan(&self.store, txn)?
+            .into_iter()
+            .map(|(_, stored)| stored)
+            .collect();
+        wraps.extend(adding.cloned());
+        Ok(CarriedVaultKey {
+            commitment: state.commitment,
+            wraps,
+        })
+    }
+
+    /// Whether this vault holds one of `wraps` as it is, envelope for
+    /// envelope: what admits a page seal unlocked from the mirror (OF-570).
+    pub(super) fn holds_any_wrap(&self, wraps: &[WrapDigest]) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        for wrap in wraps {
+            let held = WRAPS
+                .get(&self.store, &txn, &wrap.id)?
+                .is_some_and(|stored| stored.digest() == *wrap);
+            if held {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// The vault key as it rests, read in `txn` for a sealed artifact to carry,
     /// and the key for `context` of the one this handle holds. Refused while the
     /// key is locked, and when the held key is not the one `txn` reads.
@@ -732,9 +812,11 @@ impl Vault {
         )?;
         self.hold_vault_key(key);
         // Held either way; a vault that takes no write (archived) wraps it
-        // to itself on a later unlock.
-        if let Err(error) = self.add_vault_key_wrap(kind, &WrapSecret::Kek(kek)) {
-            tracing::warn!(%error, "the vault key was not wrapped to this install");
+        // to itself on a later unlock. A wrap that committed on a sealed
+        // vault rewrites its mirror, or says it did not.
+        match self.commit_vault_key_wrap(kind, &WrapSecret::Kek(kek), None) {
+            Ok((_, transition)) => transition.finish()?,
+            Err(error) => tracing::warn!(%error, "the vault key was not wrapped to this install"),
         }
         Ok(())
     }
@@ -917,12 +999,27 @@ impl Vault {
         secret: &WrapSecret<'_>,
         owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<VaultKeyWrapInfo> {
+        let (info, transition) = self.commit_vault_key_wrap(kind, secret, owner)?;
+        transition.finish()?;
+        Ok(info)
+    }
+
+    /// Seals one wrap of the held key and commits it, staged first in a
+    /// sealed vault's page-seal mirror. The change's last step, the mirror
+    /// rewritten from the committed wraps, is the caller's ([`WrapTransition`]).
+    fn commit_vault_key_wrap(
+        &self,
+        kind: VaultKeyWrapKind,
+        secret: &WrapSecret<'_>,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> Result<(VaultKeyWrapInfo, WrapTransition<'_>)> {
         let key = self
             .held_vault_key()
             .ok_or_else(|| refused("unlock the vault key first"))?;
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let envelope = seal_wrap(&vault_id, &commitment, &kind, secret, &key)?;
+        let transition = self.begin_wrap_transition()?;
         let info = self.with_write_txn(|txn| {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self, txn)?;
@@ -938,19 +1035,15 @@ impl Vault {
                 kind,
                 created_at: self.instant_in_txn(txn)?.secs(),
             };
-            WRAPS.put(
-                &self.store,
-                txn,
-                &info.id,
-                &StoredWrap {
-                    info: info.clone(),
-                    envelope,
-                },
-            )?;
+            let stored = StoredWrap {
+                info: info.clone(),
+                envelope,
+            };
+            transition.stage(|| self.staged_wraps_in_txn(txn, Some(&stored)))?;
+            WRAPS.put(&self.store, txn, &info.id, &stored)?;
             Ok(info)
         })?;
-        self.sync_page_custody()?;
-        Ok(info)
+        Ok((info, transition))
     }
 
     /// Removes one wrap. The last wrap stays: without it the key is lost.
@@ -973,6 +1066,7 @@ impl Vault {
         id: &str,
         owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<()> {
+        let transition = self.begin_wrap_transition()?;
         self.with_write_txn(|txn| {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self, txn)?;
@@ -984,10 +1078,11 @@ impl Vault {
             if WRAPS.scan(&self.store, txn)?.len() <= 1 {
                 return Err(refused("the last vault key wrap stays"));
             }
+            transition.stage(|| self.staged_wraps_in_txn(txn, None))?;
             WRAPS.delete(&self.store, txn, &id)?;
             Ok(())
         })?;
-        self.sync_page_custody()
+        transition.finish()
     }
 
     /// The vault key's wraps, public facts only.

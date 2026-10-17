@@ -65,10 +65,7 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
             let vault = open(&args.serve)?;
             emit(&SignerPin::from(vault.checkpoint_signer()?))
         }
-        VaultKeyCommand::PrfInput(args) => {
-            let vault = open(&args.serve)?;
-            emit(&view::prf_input(&vault, &args.name)?)
-        }
+        VaultKeyCommand::PrfInput(args) => prf_input(&args),
         VaultKeyCommand::SetPassword(args) => set_password(*args),
         VaultKeyCommand::AddPasskey(args) => add_passkey(*args),
         VaultKeyCommand::AddEscrow(args) => add_escrow(*args),
@@ -97,34 +94,48 @@ fn open_held(serve: &crate::config::ServeArgs) -> anyhow::Result<oneiron::Vault>
     Ok(vault)
 }
 
+/// A passkey's PRF input. A sealed vault's comes from the public vault id
+/// its mirror names, with no page opened: a new device asks its passkey for
+/// the output before the vault opens.
+fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    if world_keys::vault_is_sealed(&config.vault_path)? {
+        let vault_id = world_keys::page_seal_vault_id(&config.vault_path)
+            .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))?;
+        return emit(&view::prf_input_for(&vault_id, &args.name)?);
+    }
+    let vault = open_stopped_vault(&config, INSTEAD)?;
+    emit(&view::prf_input(&vault, &args.name)?)
+}
+
 /// Wraps the key to this install. A vault this install holds no wrap of
 /// opens with the unlock the flags name: a sealed vault's pages unlock with
-/// it before the open, a plain vault's key after it.
+/// it before the open, a plain vault's key after it. A recovery box files an
+/// escrow seed under the vault's id: a sealed vault's mirror names it, and a
+/// plain vault opens first to read its own.
 fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    let unlock = HostUnlock::read_with(
-        args.unlock,
-        args.credential.as_deref(),
-        args.label.as_deref(),
-        &args.secret,
-        || {
+    let vault = if args.unlock == UnlockMethod::Device {
+        open_held(&args.serve)?
+    } else if world_keys::vault_is_sealed(&config.vault_path)? {
+        refuse_orphaned_page_seal(&config.vault_path)?;
+        let unlock = HostUnlock::read_for_device(&args, || {
             world_keys::page_seal_vault_id(&config.vault_path)
                 .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
-        },
-    )?;
-    let vault = match unlock {
-        HostUnlock::Device => open_held(&args.serve)?,
-        _ => {
-            let mut vault_config = vault_config(&config);
-            vault_config.page_seal = prepare_page_seal(&config, Some(&unlock))?;
-            let vault = open_stopped_vault_with(&config, vault_config, INSTEAD)?;
-            if !vault.vault_pages_sealed() {
-                unlock.unlock_live(&vault).map_err(|error| {
-                    anyhow::anyhow!("the vault key did not unlock with {}: {error}", unlock.name())
-                })?;
-            }
-            vault
-        }
+        })?;
+        let mut vault_config = vault_config(&config);
+        vault_config.page_seal = prepare_page_seal(&config, Some(&unlock))?;
+        open_stopped_vault_with(&config, vault_config, INSTEAD)?
+    } else {
+        let vault = open_stopped_vault(&config, INSTEAD)?;
+        let unlock = HostUnlock::read_for_device(&args, || Ok(vault.vault_key_vault_id()))?;
+        unlock.unlock_live(&vault).map_err(|error| {
+            anyhow::anyhow!(
+                "the vault key did not unlock with {}: {error}",
+                unlock.name()
+            )
+        })?;
+        vault
     };
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(&owner, NewVaultKeyWrap::Device)?)
@@ -137,11 +148,15 @@ fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
 ///   key needs a keystore to wrap to, or the password `unlock` names, which
 ///   the caller sets right after the open;
 /// - none for a plain vault, refused when the config asks for the tier.
+///
+/// A mirror whose vault's data is missing is refused
+/// ([`refuse_orphaned_page_seal`]).
 pub(crate) fn prepare_page_seal(
     config: &ServeConfig,
     unlock: Option<&HostUnlock>,
 ) -> anyhow::Result<Option<VaultPageSeal>> {
     let path = &config.vault_path;
+    refuse_orphaned_page_seal(path)?;
     if world_keys::vault_is_sealed(path)? {
         let unlocked = match unlock.and_then(|unlock| unlock.engine()) {
             Some(engine) => world_keys::unlock_page_seal(path, &engine),
@@ -181,16 +196,32 @@ pub(crate) fn prepare_page_seal(
     Ok(Some(world_keys::new_page_seal(path)?))
 }
 
-/// Refuses a sealed vault left with no wrap of its key: it would not open
-/// again.
+/// Refuses a page-seal mirror with no vault beside it, before anything can
+/// create a vault there: the new vault would take that vault's identity and
+/// custody. The mirror stays as it is.
+pub(crate) fn refuse_orphaned_page_seal(path: &Path) -> anyhow::Result<()> {
+    if path.join("data.mdb").exists() || !world_keys::vault_is_sealed(path)? {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "the data of vault {} is missing, but its page-seal mirror {} is still there: move the \
+         mirror away to create a new vault (it may be the only copy of that vault's key wraps)",
+        path.display(),
+        world_keys::page_seal_custody_path(path)?.display()
+    )
+}
+
+/// Refuses a sealed vault that would not open again: it needs a wrap of its
+/// key, and a mirror that reads back and carries one of the wraps the vault
+/// holds. A plain vault passes.
 pub(crate) fn ensure_page_seal_wrapped(vault: &oneiron::Vault, path: &Path) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !vault.vault_pages_sealed() || !vault.vault_key_wraps()?.is_empty(),
-        "the sealed vault at {} has no wrap of its key and will not open again: delete it and \
-         run `oneiron init --maximum-tier` with a keystore or --secret-file",
-        path.display()
-    );
-    Ok(())
+    vault.check_page_custody().map_err(|error| {
+        anyhow::anyhow!(
+            "the sealed vault at {} would not open again ({error}): if it was just created, \
+             delete it and run `oneiron init --maximum-tier` with a keystore or --secret-file",
+            path.display()
+        )
+    })
 }
 
 fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
@@ -465,6 +496,21 @@ impl HostUnlock {
                     .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?
                     .vault_id)
             },
+        )
+    }
+
+    /// The unlock `args` name for `vault-key add-device`, its secret read now.
+    /// A recovery box files an escrow seed under the vault `vault_id` reads.
+    fn read_for_device(
+        args: &VaultKeyAddDeviceArgs,
+        vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
+    ) -> anyhow::Result<Self> {
+        Self::read_with(
+            args.unlock,
+            args.credential.as_deref(),
+            args.label.as_deref(),
+            &args.secret,
+            vault_id,
         )
     }
 

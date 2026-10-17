@@ -10,8 +10,16 @@
 //!   `.<vault dir name>.page-seal`, owner-only. Like the gate decision keys it
 //!   is never inside the vault and never in a checkpoint image. It holds only
 //!   sealed envelopes and public facts, as a sealed artifact does.
-//! - The mirror is rewritten from the vault after each wrap change and on each
-//!   sealed open, once the vault has a wrap.
+//! - The mirror is rewritten from the vault on each sealed open, once the
+//!   vault has a wrap, and around each wrap change ([`WrapTransition`]):
+//!   before it commits, the mirror holds the committed wraps and the ones it
+//!   adds; after, the committed wraps. An unlock from the mirror is admitted
+//!   at open only while the vault holds the very wrap that opened, so a crash
+//!   between the two leaves a mirror whose stale wrap opens nothing, and the
+//!   next open with a current one repairs it.
+//! - A mirror with no vault beside it is another vault's custody, kept as it
+//!   is: no vault is created there, and only [`new_page_seal`] makes a seal
+//!   that creates one.
 //!
 //! Body files, `.lines`, LFS staging and lock files stay outside the tier.
 
@@ -19,12 +27,12 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::vault_key::{CarriedVaultKey, VaultDataKey, VaultKeyUnlock};
+use super::vault_key::{CarriedVaultKey, VaultDataKey, VaultKeyUnlock, WrapDigest};
 use super::{os_fill, refused};
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -35,8 +43,13 @@ pub const PAGE_SEAL_WARNING: &str =
 
 const PAGE_KEY_CONTEXT: &str = "oneiron/vault-page-key/v1";
 const MIRROR_VERSION: u32 = 1;
-/// The most of a mirror file that is read.
+/// The most a mirror file is, for its reader and its writer alike: a wrap
+/// change whose mirror would be larger is refused before it commits.
 const MIRROR_LIMIT: u64 = 1 << 20;
+/// Why a mirror with no vault beside it unlocks nothing and makes no vault.
+const ORPHANED: &str = "this vault's data is missing but its page-seal mirror is still beside it: \
+     move the mirror away to create a new vault here (it may be the only copy of that vault's \
+     key wraps)";
 /// LMDB refuses a sealed file opened without a key, or a plain one with one.
 const MDB_ENV_ENCRYPTION: i32 = -30776;
 /// LMDB refuses a page that does not open under the key.
@@ -46,8 +59,8 @@ const MDB_CRYPTO_FAIL: i32 = -30777;
 /// what a read-only door opens one with.
 static OPENED: LazyLock<Mutex<HashMap<PathBuf, Arc<Zeroizing<[u8; 32]>>>>> =
     LazyLock::new(Default::default);
-/// Held while a mirror is read from a vault and written, so the last writer
-/// writes the latest wraps.
+/// Held while a mirror is read from a vault and written, and through each
+/// wrap change on a sealed vault, so the last writer writes the latest wraps.
 static MIRRORING: Mutex<()> = Mutex::new(());
 
 /// What opens a sealed vault's pages: the page key, the vault it belongs to,
@@ -59,6 +72,15 @@ pub struct VaultPageSeal {
     incarnation: [u8; 32],
     page_key: Arc<Zeroizing<[u8; 32]>>,
     data_key: Arc<VaultDataKey>,
+    origin: SealOrigin,
+}
+
+/// Where a seal came from: minted for a new vault, the one seal that creates
+/// a vault, or unlocked from a mirror by the carried wraps it opened.
+#[derive(Clone)]
+enum SealOrigin {
+    New,
+    Unlocked(Vec<WrapDigest>),
 }
 
 impl std::fmt::Debug for VaultPageSeal {
@@ -79,13 +101,21 @@ impl PartialEq for VaultPageSeal {
 }
 
 impl VaultPageSeal {
-    fn derive(vault_id: [u8; 32], incarnation: [u8; 32], data_key: VaultDataKey) -> Self {
-        let page_key = Arc::new(Zeroizing::new(data_key.derive(PAGE_KEY_CONTEXT, &incarnation)));
+    fn derive(
+        vault_id: [u8; 32],
+        incarnation: [u8; 32],
+        data_key: VaultDataKey,
+        origin: SealOrigin,
+    ) -> Self {
+        let page_key = Arc::new(Zeroizing::new(
+            data_key.derive(PAGE_KEY_CONTEXT, &incarnation),
+        ));
         Self {
             vault_id,
             incarnation,
             page_key,
             data_key: Arc::new(data_key),
+            origin,
         }
     }
 
@@ -109,6 +139,17 @@ struct Mirror {
     vault_id: [u8; 32],
     incarnation: [u8; 32],
     carried: CarriedVaultKey,
+}
+
+impl Mirror {
+    fn of(seal: &VaultPageSeal, carried: CarriedVaultKey) -> Self {
+        Self {
+            version: MIRROR_VERSION,
+            vault_id: seal.vault_id,
+            incarnation: seal.incarnation,
+            carried,
+        }
+    }
 }
 
 /// Where the vault at `vault_path` keeps its page-seal mirror:
@@ -150,22 +191,60 @@ pub fn new_page_seal(vault_path: &Path) -> Result<VaultPageSeal> {
     if vault_is_sealed(vault_path)? {
         return Err(refused("a page-seal mirror is already beside this vault"));
     }
-    if fs::symlink_metadata(vault_path.join("data.mdb")).is_ok() {
-        return Err(refused("the maximum tier is chosen when the vault is created"));
+    if has_data(vault_path) {
+        return Err(refused(
+            "the maximum tier is chosen when the vault is created",
+        ));
     }
     let mut vault_id = [0u8; 32];
     let mut incarnation = [0u8; 32];
     os_fill(&mut vault_id)?;
     os_fill(&mut incarnation)?;
-    Ok(VaultPageSeal::derive(vault_id, incarnation, VaultDataKey::generate()?))
+    Ok(VaultPageSeal::derive(
+        vault_id,
+        incarnation,
+        VaultDataKey::generate()?,
+        SealOrigin::New,
+    ))
 }
 
 /// Unlocks the pages of the sealed vault at `vault_path` from its mirror,
-/// with any of its vault key's wraps.
+/// with any of its vault key's wraps. The seal opens that vault, and only
+/// while it holds the wrap that opened ([`Vault::settle_page_seal`]); it
+/// never creates one, and a mirror whose vault's data is missing refuses.
 pub fn unlock_page_seal(vault_path: &Path, unlock: &VaultKeyUnlock<'_>) -> Result<VaultPageSeal> {
     let mirror = read_mirror(vault_path)?;
-    let key = mirror.carried.open(&mirror.vault_id, unlock)?;
-    Ok(VaultPageSeal::derive(mirror.vault_id, mirror.incarnation, key))
+    if !has_data(vault_path) {
+        return Err(refused(ORPHANED));
+    }
+    let (key, opened) = mirror.carried.open_recording(&mirror.vault_id, unlock)?;
+    Ok(VaultPageSeal::derive(
+        mirror.vault_id,
+        mirror.incarnation,
+        key,
+        SealOrigin::Unlocked(opened),
+    ))
+}
+
+/// Refuses to create a vault at `root` where a page-seal mirror is beside
+/// it, or under a seal unlocked from one: a mirror with no vault is another
+/// vault's custody, kept as it is, and only [`new_page_seal`] makes a seal
+/// that creates a vault. The create door asks before it makes any file.
+pub(crate) fn admit_new_vault(root: &Path, seal: Option<&VaultPageSeal>) -> Result<()> {
+    if vault_is_sealed(root)? {
+        return Err(refused(ORPHANED));
+    }
+    match seal.map(|seal| &seal.origin) {
+        Some(SealOrigin::Unlocked(_)) => Err(refused(
+            "a page seal unlocked from a mirror opens its vault and creates none",
+        )),
+        Some(SealOrigin::New) | None => Ok(()),
+    }
+}
+
+/// Whether the vault at `vault_path` has its LMDB data file.
+fn has_data(vault_path: &Path) -> bool {
+    fs::symlink_metadata(vault_path.join("data.mdb")).is_ok()
 }
 
 /// The vault id the mirror of the sealed vault at `vault_path` names: a
@@ -204,6 +283,11 @@ fn write_mirror(root: &Path, mirror: &Mirror) -> Result<()> {
     let _ = dir;
     let raw =
         serde_json::to_vec(mirror).map_err(|_| refused("the page-seal mirror did not encode"))?;
+    if raw.len() as u64 > MIRROR_LIMIT {
+        return Err(refused(
+            "the page-seal mirror would pass its 1 MiB limit: remove a wrap first",
+        ));
+    }
     let mut suffix = [0u8; 8];
     os_fill(&mut suffix)?;
     let mut temp = path.as_os_str().to_owned();
@@ -274,9 +358,9 @@ pub(crate) fn page_seal_open_error(error: heed::Error, keyed: bool) -> Error {
         _ => None,
     };
     match code {
-        Some(MDB_ENV_ENCRYPTION) if keyed => refused(
-            "this vault is plain: the maximum tier is chosen when the vault is created",
-        ),
+        Some(MDB_ENV_ENCRYPTION) if keyed => {
+            refused("this vault is plain: the maximum tier is chosen when the vault is created")
+        }
         Some(MDB_ENV_ENCRYPTION) => {
             refused("this vault is sealed (maximum tier): unlock it with its vault key")
         }
@@ -292,16 +376,40 @@ impl Vault {
         heed::Env::is_sealed(&self.store.env)
     }
 
+    /// This vault's page seal while its pages are sealed; `None` while they
+    /// are plain.
+    fn sealed_page_seal(&self) -> Result<Option<&VaultPageSeal>> {
+        if !self.vault_pages_sealed() {
+            return Ok(None);
+        }
+        self.config
+            .page_seal
+            .as_ref()
+            .map(Some)
+            .ok_or_else(|| refused("a sealed vault is open without its page seal"))
+    }
+
     /// Settles the seal this vault opened with, before any caller holds it:
-    /// the seal must be this vault's, a new vault takes its data key, the key
-    /// is held, read-only doors in this process may open the vault, and the
-    /// mirror is rewritten once the vault has a wrap.
+    /// the seal must be this vault's, one unlocked from the mirror must have
+    /// opened a wrap the vault still holds, a new vault takes its data key,
+    /// the key is held, read-only doors in this process may open the vault,
+    /// and the mirror is rewritten once the vault has a wrap.
     pub(crate) fn settle_page_seal(&self) -> Result<()> {
         let Some(seal) = self.config.page_seal.as_ref() else {
             return Ok(());
         };
         if *self.vault_id().as_bytes() != seal.vault_id {
             return Err(refused("the page seal belongs to another vault"));
+        }
+        // A wrap a change removed or replaced, or one whose change never
+        // committed, opens nothing here; the mirror stays as it is, so a
+        // current wrap still opens and repairs it.
+        if let SealOrigin::Unlocked(opened) = &seal.origin
+            && !self.holds_any_wrap(opened)?
+        {
+            return Err(refused(
+                "this credential is no longer a wrap of this vault; unlock with a current one",
+            ));
         }
         self.admit_page_seal_key(&seal.data_key)?;
         OPENED
@@ -316,27 +424,111 @@ impl Vault {
 
     /// Rewrites the page-seal mirror from the vault's key state, when its
     /// pages are sealed and it has a wrap.
-    pub(crate) fn sync_page_custody(&self) -> Result<()> {
-        if !self.vault_pages_sealed() {
+    fn sync_page_custody(&self) -> Result<()> {
+        let Some(seal) = self.sealed_page_seal()? else {
             return Ok(());
-        }
-        let seal = self
-            .config
-            .page_seal
-            .as_ref()
-            .ok_or_else(|| refused("a sealed vault is open without its page seal"))?;
+        };
         let _mirroring = MIRRORING.lock().unwrap_or_else(PoisonError::into_inner);
+        self.write_page_custody(seal)
+    }
+
+    /// [`Self::sync_page_custody`] under the mirror lock the caller holds.
+    fn write_page_custody(&self, seal: &VaultPageSeal) -> Result<()> {
         let Some(carried) = self.resting_vault_key()? else {
             return Ok(());
         };
-        write_mirror(
-            self.store.env.path(),
-            &Mirror {
-                version: MIRROR_VERSION,
-                vault_id: seal.vault_id,
-                incarnation: seal.incarnation,
-                carried,
-            },
-        )
+        write_mirror(self.store.env.path(), &Mirror::of(seal, carried))
+    }
+
+    /// Begins one wrap change ([`WrapTransition`]): on a sealed vault it
+    /// holds the mirror lock until the change finishes.
+    pub(super) fn begin_wrap_transition(&self) -> Result<WrapTransition<'_>> {
+        let seal = self.sealed_page_seal()?;
+        let mirroring = seal.map(|_| MIRRORING.lock().unwrap_or_else(PoisonError::into_inner));
+        Ok(WrapTransition {
+            vault: self,
+            seal,
+            _mirroring: mirroring,
+        })
+    }
+
+    /// Checks that this vault opens again, as a host asks before it calls a
+    /// new sealed vault ready. A plain vault does. A sealed one needs a wrap,
+    /// and a mirror that reads back as this vault's and carries one of the
+    /// wraps the vault holds, envelope for envelope.
+    pub fn check_page_custody(&self) -> Result<()> {
+        let Some(seal) = self.sealed_page_seal()? else {
+            return Ok(());
+        };
+        if self.resting_vault_key()?.is_none() {
+            return Err(refused("the vault key has no wrap yet"));
+        }
+        let mirror = match read_mirror(self.store.env.path()) {
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(refused("the page-seal mirror is missing"));
+            }
+            read => read?,
+        };
+        if mirror.vault_id != seal.vault_id || mirror.incarnation != seal.incarnation {
+            return Err(refused("the page-seal mirror is another vault's"));
+        }
+        let carries_held = *mirror.carried.commitment() == seal.data_key.commitment(&seal.vault_id)
+            && self.holds_any_wrap(&mirror.carried.digests())?;
+        if !carries_held {
+            return Err(refused(
+                "the page-seal mirror carries none of this vault's wraps",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// One wrap change on a sealed vault, kept recoverable across the vault and
+/// its mirror. The mirror lock is held throughout:
+/// 1. [`Self::stage`], in the transaction that makes the change: the mirror
+///    holds the committed wraps and the ones the change adds, its removals
+///    not yet applied. A failure refuses the change before it commits.
+/// 2. The transaction commits.
+/// 3. [`Self::finish`]: the mirror is rewritten from the committed wraps.
+///
+/// A crash between any two steps leaves a mirror that holds every committed
+/// wrap. A wrap it holds beyond them opens nothing at open
+/// ([`Vault::settle_page_seal`]), and the next open with a current one
+/// rewrites it. On a plain vault both steps do nothing.
+pub(super) struct WrapTransition<'a> {
+    vault: &'a Vault,
+    seal: Option<&'a VaultPageSeal>,
+    _mirroring: Option<MutexGuard<'static, ()>>,
+}
+
+impl WrapTransition<'_> {
+    /// Step 1: writes `staged` (the committed wraps and the change's own) as
+    /// the mirror. Refused, so the change does not commit, when the write
+    /// fails, when the mirror would pass what its reader takes, and when the
+    /// wraps are of another key than the seal's.
+    pub(super) fn stage(&self, staged: impl FnOnce() -> Result<CarriedVaultKey>) -> Result<()> {
+        let Some(seal) = self.seal else {
+            return Ok(());
+        };
+        let carried = staged()?;
+        if *carried.commitment() != seal.data_key.commitment(&seal.vault_id) {
+            return Err(refused("a sealed vault's wraps are of its page seal's key"));
+        }
+        write_mirror(self.vault.store.env.path(), &Mirror::of(seal, carried))
+    }
+
+    /// Step 3, once the change committed: the mirror rewritten from the
+    /// committed wraps. A failure says the change stands and the next sealed
+    /// open repairs the mirror.
+    pub(super) fn finish(self) -> Result<()> {
+        let Some(seal) = self.seal else {
+            return Ok(());
+        };
+        self.vault.write_page_custody(seal).map_err(|error| {
+            Error::Io(std::io::Error::other(format!(
+                "the vault key's wrap change committed, but its page-seal mirror was not \
+                 rewritten ({error}); the next sealed open repairs it"
+            )))
+        })
     }
 }

@@ -12,7 +12,7 @@ use crate::overlay_db::OverlayDb;
 #[cfg(test)]
 use crate::store::test_hooks;
 use crate::store::{RawDatabases, Store, VaultWriterLease, seed_default_policy_manifest_in_txn};
-use crate::world_keys::page_seal_open_error;
+use crate::world_keys::{admit_new_vault, page_seal_open_error};
 
 use super::embedding_transform_gates::{
     persist_embedding_transform_if_missing, preflight_embedding_transform,
@@ -128,6 +128,10 @@ impl Store {
             let bound_root_identity = file_identity(&bound_root_dir.metadata()?);
             let is_new_vault = root_preflight.is_new_vault;
             if is_new_vault {
+                // A page-seal mirror with no vault is another vault's
+                // custody, and only a seal minted for a new vault creates
+                // one (OF-570).
+                admit_new_vault(&canonical_path, config.page_seal.as_ref())?;
                 #[cfg(target_os = "linux")]
                 torn_creation_cleanup.arm_bound(&bound_root_dir)?;
                 #[cfg(not(target_os = "linux"))]

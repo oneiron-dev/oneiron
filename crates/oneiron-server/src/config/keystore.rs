@@ -91,8 +91,7 @@ impl KeystoreConfig {
     /// loads this install's signing keys from it before any signing work is
     /// admitted. A platform with none does not stop serve: the signing and
     /// world-key doors answer `KeystoreUnavailable` without it, and reads and sync
-    /// go on. A sealed vault (maximum tier) with no wrap yet is wrapped to this
-    /// device here. True when one was installed.
+    /// go on. True when one was installed.
     pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
         match self.open(vault_path) {
             Ok(Some(keystore)) => {
@@ -102,7 +101,6 @@ impl KeystoreConfig {
                 );
                 vault.install_device_keystore(keystore);
                 vault.prepare_install_signing_logged();
-                wrap_sealed_to_device(vault);
                 true
             }
             Ok(None) => {
@@ -122,22 +120,26 @@ impl KeystoreConfig {
             }
         }
     }
-}
 
-/// A sealed vault (maximum tier) with no wrap yet takes this device's: its
-/// pages open from the mirror beside it only through a wrap.
-fn wrap_sealed_to_device(vault: &oneiron::Vault) {
-    let unwrapped = vault
-        .vault_key_wraps()
-        .is_ok_and(|wraps| wraps.is_empty());
-    if !vault.vault_pages_sealed() || !unwrapped {
-        return;
-    }
-    if let Err(error) = vault.add_vault_key_device() {
-        tracing::error!(
-            %error,
-            "the sealed vault's key was not wrapped to this device; it opens again only with a wrap"
-        );
+    /// [`Self::install_on`] where init or serve may just have created the
+    /// vault sealed (maximum tier, OF-570): one with no wrap yet takes this
+    /// device's, and a failure fails the boot, since its pages open from the
+    /// mirror beside it only through a wrap. True when a keystore was
+    /// installed.
+    pub fn install_on_boot(
+        &self,
+        vault: &oneiron::Vault,
+        vault_path: &Path,
+    ) -> anyhow::Result<bool> {
+        let installed = self.install_on(vault, vault_path);
+        if installed && vault.vault_pages_sealed() && vault.vault_key_wraps()?.is_empty() {
+            vault.add_vault_key_device().map_err(|error| {
+                anyhow::anyhow!(
+                    "the new sealed vault's key was not wrapped to this device: {error}"
+                )
+            })?;
+        }
+        Ok(installed)
     }
 }
 

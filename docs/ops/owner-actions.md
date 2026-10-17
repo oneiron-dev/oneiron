@@ -779,8 +779,13 @@ in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlo
 opens. With no keystore, serve unlocks them with the password the service manager's credential store
 holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
 another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
---unlock password`. A restore makes a plain vault, so it is refused over a sealed one; restore to
-another `--vault-path`. Body files, `.lines`, LFS staging and lock files stay outside the tier.
+--unlock password`; `oneiron vault-key prf-input NAME` gives a passkey's input before the vault
+opens. A credential whose wrap was removed or replaced opens nothing, even if an interrupted change
+left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
+the vault's data is not, init, serve and restore refuse: move the mirror away to create a new vault,
+since it may be the only copy of that vault's wraps. A restore makes a plain vault, so it is refused
+over a sealed one; restore to another `--vault-path`. Body files, `.lines`, LFS staging and lock
+files stay outside the tier.
 
 ## Contact disclosure
 

@@ -591,8 +591,9 @@ impl Vault {
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
-        // A sealed vault (maximum tier) holds its data key and mirrors its
-        // wraps before any caller holds it.
+        // A sealed vault (maximum tier) admits the wrap its seal was
+        // unlocked with, holds its data key and mirrors its wraps before any
+        // caller holds it.
         vault.settle_page_seal()?;
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.

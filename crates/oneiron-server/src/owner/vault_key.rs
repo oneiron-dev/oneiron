@@ -120,7 +120,13 @@ pub(crate) struct PrfInput {
 }
 
 pub(crate) fn prf_input(vault: &oneiron::Vault, credential: &str) -> oneiron::Result<PrfInput> {
-    let input = vault.vault_key_passkey_prf_input(credential)?;
+    prf_input_for(&vault.vault_key_vault_id(), credential)
+}
+
+/// [`prf_input`] for the vault `vault_id` names, with no vault open: a sealed
+/// vault's, from the public id its page-seal mirror names (OF-570).
+pub(crate) fn prf_input_for(vault_id: &[u8; 32], credential: &str) -> oneiron::Result<PrfInput> {
+    let input = oneiron::world_keys::passkey_prf_input(vault_id, credential)?;
     Ok(PrfInput {
         credential: credential.to_owned(),
         prf_input: b64(&input),

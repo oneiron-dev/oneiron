@@ -56,7 +56,7 @@ pub use self::page_seal::{
     PAGE_SEAL_WARNING, VaultPageSeal, new_page_seal, page_seal_custody_path, page_seal_vault_id,
     unlock_page_seal, vault_is_sealed,
 };
-pub(crate) use self::page_seal::{page_seal_open_error, seal_read_only};
+pub(crate) use self::page_seal::{admit_new_vault, page_seal_open_error, seal_read_only};
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
 pub use self::root::{RecoveryRoot, RecoveryRootId, RecoveryRootSeed, SeedOrigin};
 pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore};

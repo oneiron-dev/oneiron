@@ -206,8 +206,10 @@ pub(crate) fn setup_models(
 /// Opens the configured vault, creating it on a first run: sealed when the
 /// config asks for the maximum tier (OF-570). A new sealed vault's key is
 /// wrapped to this device's keystore and to the password `--secret-file`
-/// names.
+/// names, and init fails unless its mirror then opens it. A page-seal mirror
+/// whose vault's data is missing is refused, never adopted.
 fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiron::Vault> {
+    super::owner::refuse_orphaned_page_seal(&config.vault_path)?;
     let fresh = !config.vault_path.join("data.mdb").exists();
     anyhow::ensure!(
         fresh || answers.secret_file.is_none(),
@@ -226,7 +228,9 @@ fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiro
     }
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)?;
     if vault.vault_pages_sealed() {
-        config.keystore.install_on(&vault, &config.vault_path);
+        config
+            .keystore
+            .install_on_boot(&vault, &config.vault_path)?;
         if let Some(super::owner::HostUnlock::Password(password)) = &password {
             vault.set_vault_key_password(password, None)?;
         }

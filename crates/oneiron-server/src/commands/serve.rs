@@ -61,6 +61,9 @@ pub(super) async fn serve_with_config(
         tracing::info!(dict_paths = ?dicts.paths, "using CJK dictionary search paths");
     }
 
+    // A page-seal mirror whose vault's data is missing is refused, never
+    // adopted for a new vault (OF-570).
+    super::owner::refuse_orphaned_page_seal(&config.vault_path)?;
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     // A sealed vault (maximum tier) opens with its page seal, and one the
@@ -88,7 +91,11 @@ pub(super) async fn serve_with_config(
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
-    config.keystore.install_on(&vault, &config.vault_path);
+    // A new sealed vault is wrapped to this device, and serve starts only
+    // once its mirror opens it.
+    config
+        .keystore
+        .install_on_boot(&vault, &config.vault_path)?;
     super::owner::ensure_page_seal_wrapped(&vault, &config.vault_path)?;
     #[cfg(unix)]
     if let Err(error) = vault.collect_result_bodies(4096) {

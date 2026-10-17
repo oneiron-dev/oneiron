@@ -31,6 +31,7 @@ mod vault_key;
 pub use self::vault_key::vault_key;
 pub(super) use self::vault_key::{
     HostUnlock, ensure_page_seal_wrapped, prepare_page_seal, read_secret_file,
+    refuse_orphaned_page_seal,
 };
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
@@ -234,9 +235,11 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
     // A restore makes a plain vault, and a sealed vault's page-seal mirror
-    // would stay beside it (OF-570).
+    // would stay beside it (OF-570); a mirror whose vault's data is missing
+    // is refused first, by name.
     let sealed = oneiron::world_keys::vault_is_sealed(&config.vault_path)?;
     let refuse_sealed = || -> anyhow::Result<()> {
+        vault_key::refuse_orphaned_page_seal(&config.vault_path)?;
         anyhow::ensure!(
             !sealed,
             "vault {} is sealed (maximum tier), and a restore makes a plain vault: restore to \
