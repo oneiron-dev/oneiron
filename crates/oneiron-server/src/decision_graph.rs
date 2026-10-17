@@ -28,8 +28,7 @@ use oneiron::llm::decision::{
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{
-    DreamerRunnerStore, EdgeActorClass, EntityId, Error, HostingPrivacyPosture, Result, Vault,
-    WriteActor,
+    DreamerRunnerStore, EdgeActorClass, EntityId, Error, HostingPrivacyPosture, Result, WriteActor,
 };
 
 use crate::ai_host::LocalVisionModel;
@@ -486,7 +485,7 @@ pub(crate) fn spawn(
 /// does nothing. The engine holds a failed question before it is due again;
 /// its error logs by kind, as its text can quote the vault.
 pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
-    if !at_home(server.vault(), now)? {
+    if !at_home(server, now)? {
         return Ok(());
     }
     let batch = refresh_due_questions_by_role(server.vault(), now, |record, runner, to| {
@@ -545,12 +544,15 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
 /// Whether this server is the vault's home: the elected home names this
 /// server's stable client identity, the gate the shared timer puts on macro
 /// work and digests. A vault no node has claimed is claimed here, as serve's
-/// Dreamer claims it, so standing questions run with the Dreamer off.
-pub(crate) fn at_home(vault: &Vault, now: u64) -> Result<bool> {
-    let store = DreamerRunnerStore::new(vault);
+/// Dreamer claims it, so standing questions run with the Dreamer off. A
+/// device of another home (`[device_sync]`) claims nothing, as its Dreamer
+/// claims nothing: it defers to the home its sync section names.
+pub(crate) fn at_home(server: &SyncServer, now: u64) -> Result<bool> {
+    let store = DreamerRunnerStore::new(server.vault());
     let local = store.local_home_node_candidate(true, true, false)?;
     let home = match store.home_node_designation()? {
         Some(home) => Some(home),
+        None if server.ai.device() => None,
         None => store.elect_home_node(&[local], now)?,
     };
     Ok(home.is_some_and(|home| home.node_id == local.node_id))

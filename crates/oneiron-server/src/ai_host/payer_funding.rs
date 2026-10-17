@@ -4,7 +4,8 @@
 //! A call spending under a scope whose root carries a payer's consent bills
 //! that PERSON's own billing account. The host binds it before the run starts,
 //! so every permit and usage row the run makes carries it. One hook,
-//! `billing_account`, maps a PERSON to an account. When it maps none, the
+//! `billing_account`, maps a PERSON to an account: a live Owner of the vault
+//! bills the vault's own account, with no ask. When it maps none, the
 //! call holds on a typed payer-needed ask to the vault's owners, who may
 //! approve billing the vault for that launch. Nothing here falls back to the
 //! vault owner silently: a scope that cannot be read, or a room-bound call
@@ -75,11 +76,21 @@ impl fmt::Display for PayerFault {
 }
 
 /// The host's PERSON-to-billing-account map, the one hook (CALLS, FIX 805
-/// resolver). Neither canon nor a root's payer consent maps a PERSON to an
-/// account, so it maps none yet: every room-paid call holds on a payer-needed
-/// ask until a host maps its payers here.
-fn billing_account(_vault: &Vault, _person: EntityId) -> Option<String> {
-    None
+/// resolver). A live Owner of the vault bills the vault's own account, the
+/// one owner spend bills: that is the Owner's own account, not a fallback.
+/// Neither canon nor a root's payer consent maps any other PERSON to an
+/// account, so their room-paid calls hold on a payer-needed ask until a host
+/// maps them here. An owner check that fails to read maps none, so the call
+/// holds rather than bills the vault unasked.
+fn billing_account(vault: &Vault, person: EntityId) -> Option<PayerAccount> {
+    match vault.is_live_owner_person(&person) {
+        Ok(true) => Some(PayerAccount::VaultOwner),
+        Ok(false) => None,
+        Err(error) => {
+            tracing::warn!(%error, "a payer's owner standing could not be read");
+            None
+        }
+    }
 }
 
 /// How a call that spends under `scope` is funded: `None` for a call no room
@@ -108,7 +119,7 @@ pub(crate) fn scope_funding(
         }
     };
     let account = match billing_account(vault, payer.party) {
-        Some(account) => PayerAccount::Person { account },
+        Some(account) => account,
         None => PayerAccount::VaultApproved {
             ask: approved_ask(vault, &root, payer.party)?,
         },
