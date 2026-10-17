@@ -24,6 +24,7 @@ pub enum AgentVerb {
     Steer,
     Describe,
     TasksCreate,
+    TasksWave,
     TasksUpdate,
     VaultWitness,
     VaultClaimsUpsert,
@@ -278,6 +279,7 @@ impl AgentVerb {
         Self::Steer,
         Self::Describe,
         Self::TasksCreate,
+        Self::TasksWave,
         Self::TasksUpdate,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
@@ -535,6 +537,7 @@ impl AgentVerb {
             Self::Steer => "steer",
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
+            Self::TasksWave => "tasks.wave",
             Self::TasksUpdate => "tasks.update",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
@@ -792,6 +795,7 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::Describe
                 | Self::TasksCreate
+                | Self::TasksWave
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1053,6 +1057,7 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::Describe
                 | Self::TasksCreate
+                | Self::TasksWave
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1340,6 +1345,7 @@ impl AgentVerb {
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
+                | Self::TasksWave
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -1579,6 +1585,7 @@ impl AgentVerb {
                 | Self::Cancel
                 | Self::Steer
                 | Self::TasksCreate
+                | Self::TasksWave
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1725,6 +1732,9 @@ impl AgentVerb {
                 | Self::VaultClaimsSeed
         )
     }
+    pub const fn is_task_work(self) -> bool {
+        matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
+    }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
@@ -1750,6 +1760,7 @@ impl AgentVerb {
             Self::Steer => &["spec"],
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
             Self::TasksCreate => &["spec", "label", "assignee"],
+            Self::TasksWave => &["spec"],
             Self::TasksUpdate => &["task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -2005,6 +2016,7 @@ impl AgentVerb {
             Self::Steer => &["spec"],
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
+            Self::TasksWave => &["spec"],
             Self::TasksUpdate => &["task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -2295,6 +2307,9 @@ impl AgentVerb {
             Self::TasksCreate => {
                 "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."
             }
+            Self::TasksWave => {
+                "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
+            }
             Self::TasksUpdate => {
                 "Records the owner's acknowledgement of a failed TASK; any other task stays as it was."
             }
@@ -2381,7 +2396,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => "The reader's own outcome notices for a shared vault.",
             Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
             Self::VaultMembersAdd => {
-                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept."
+                "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
             }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."

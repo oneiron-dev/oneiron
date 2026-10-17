@@ -166,12 +166,6 @@ fn admit_word_with_source(
     {
         return Err(invalid()); // A changed commitment needs a new ask revision.
     }
-    let answer = TaskAskAnswer {
-        task_ref: task,
-        actor_ref: actor,
-        result_ref: word.result_ref,
-        word_ref,
-    };
     if let Some(existing) = read_answer(vault, txn, word_ref)? {
         if existing.group == id
             && existing.task == task
@@ -179,7 +173,16 @@ fn admit_word_with_source(
             && existing.source == source
             && existing.word == *word
         {
-            return Ok(answer);
+            // The kinds the fact stored, not a re-read of a result that may
+            // since be erased.
+            return Ok(TaskAskAnswer::new(
+                task,
+                actor,
+                word.result_ref,
+                word_ref,
+                existing.actor_kind,
+                existing.result_kind,
+            ));
         }
         return Err(invalid());
     }
@@ -194,6 +197,12 @@ fn admit_word_with_source(
             reference,
         )?;
     }
+    let actor_kind = vault
+        .get_entity_type_in_txn(txn, &actor)?
+        .ok_or(Error::EntityNotFound)?;
+    let result_kind = vault
+        .get_entity_type_in_txn(txn, &word.result_ref)?
+        .ok_or(Error::EntityNotFound)?;
     let evidence = evidence_in(vault, txn, id, group)?;
     // A bearer of one recipient link is a stranger to this vault: its words
     // stay bounded. An authenticated actor's never are (rule 5).
@@ -211,8 +220,10 @@ fn admit_word_with_source(
         group: id,
         task,
         actor,
+        actor_kind,
         source,
         word: word.clone(),
+        result_kind,
         link_proof: None,
         order,
         delegation_grant_ref,
@@ -228,6 +239,14 @@ fn admit_word_with_source(
         .batch_in()
         .edge(&word_ref, crate::EdgeKind::About, &id, 1.0)
         .apply(txn)?;
+    let answer = TaskAskAnswer::new(
+        task,
+        actor,
+        word.result_ref,
+        word_ref,
+        actor_kind,
+        result_kind,
+    );
     if source == TaskAskSource::Companion && group.effective.what.commitment {
         super::super::ask_soft_confirm::put_notice(
             vault,
