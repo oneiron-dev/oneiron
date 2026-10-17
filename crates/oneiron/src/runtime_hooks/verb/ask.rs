@@ -90,9 +90,7 @@ struct VerbAsk {
 #[serde(rename_all = "snake_case")]
 pub(super) enum SavedOutcome {
     /// The caller's view of the result, as JSON.
-    Ok {
-        result: String,
-    },
+    Ok { result: String },
     Err {
         code: String,
         message: String,

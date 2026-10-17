@@ -270,9 +270,11 @@ impl Vault {
         credential: Option<VerbAskCredential>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
         let credential = credential.filter(|_| self.verb_hook_state.credential_check().is_some());
-        let resume = credential.as_ref().map(|credential| VerbResume::Credential {
-            reference: credential.reference().clone(),
-        });
+        let resume = credential
+            .as_ref()
+            .map(|credential| VerbResume::Credential {
+                reference: credential.reference().clone(),
+            });
         let _witness =
             credential::WitnessScope::enter(credential.map(VerbAskCredential::into_witness));
         self.pre_verb_hooks_resumable(call, args, check, resume)
