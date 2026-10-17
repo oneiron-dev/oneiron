@@ -345,13 +345,20 @@ declare const vault: {
     };
   };
   shared: {
+    close_erase_ask(input: { act_id?: string | null; ask_id: string; erased: boolean }): Promise<unknown>;
     deletion(input: object): Promise<unknown>;
+    erase_ask(input: { record: string; vault_id: number }): Promise<unknown>;
+    erase_asks(input: { vault_id: number }): Promise<unknown>;
     execute(input: { act_id: string }): Promise<unknown>;
+    matured(input: { vault_id: number }): Promise<unknown>;
+    object(input: { act_id: string }): Promise<unknown>;
     outcomes(input: { vault_id: number }): Promise<unknown>;
     propose_delete(input: { vault_id: number }): Promise<unknown>;
     propose_remove_owner(input: { export_first: boolean; successor?: string | null; target: string; target_keeps?: string | null; vault_id: number }): Promise<unknown>;
     propose_transfer(input: { from_keeps?: string | null; to: string; vault_id: number }): Promise<unknown>;
     receipt(input: { receipt_id: string }): Promise<unknown>;
+    started(input: { vault_id: number }): Promise<unknown>;
+    withdraw_objection(input: { act_id: string }): Promise<unknown>;
   };
   shares: {
     create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; mention?: { end: number; message: string; start: number; turn: string } | null; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;

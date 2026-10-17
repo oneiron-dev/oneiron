@@ -578,6 +578,66 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shared_object(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.object", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_withdraw_objection(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.withdraw_objection", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_started(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.started", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_matured(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.matured", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_erase_ask(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.erase_ask", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_erase_asks(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.erase_asks", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_close_erase_ask(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.close_erase_ask", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_guests_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.guests.revoke", input)

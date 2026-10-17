@@ -480,7 +480,14 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.members.invitations"
         | "vault.members.accept"
         | "vault.members.decline"
-        | "vault.members.withdraw_invitation" => {
+        | "vault.members.withdraw_invitation"
+        | "vault.shared.object"
+        | "vault.shared.withdraw_objection"
+        | "vault.shared.started"
+        | "vault.shared.matured"
+        | "vault.shared.erase_ask"
+        | "vault.shared.erase_asks"
+        | "vault.shared.close_erase_ask" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),

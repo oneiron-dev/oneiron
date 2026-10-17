@@ -691,6 +691,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_object(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.object")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.object", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_withdraw_objection(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.withdraw_objection")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.shared.withdraw_objection", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_started(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.started")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.started", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_matured(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.matured")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.matured", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_erase_ask(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.erase_ask")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.erase_ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_erase_asks(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.erase_asks")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.erase_asks", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_close_erase_ask(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.close_erase_ask")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.close_erase_ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py
