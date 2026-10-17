@@ -18,6 +18,10 @@ use serde::Deserialize;
 
 use crate::http_listener::ConnectionLimits;
 
+/// `limits.task_work`'s default: past ten times the fleet's 200 agents, as
+/// its sibling queues (`decision_reads`, `lfs_transfers`) sit.
+const TASK_WORK: usize = 2_048;
+
 /// Resolved limits.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LimitsConfig {
@@ -67,6 +71,10 @@ pub struct LimitsConfig {
     /// is one pack of prompts, however many the model server's slots take at
     /// once; the rest wait their turn there.
     pub decision_reads: usize,
+    /// Task work (`can`, `ask`, `wait`, `tasks.answer`) the vault runs at
+    /// once. Past it, each caller's work waits its fair turn, up to
+    /// `queue_wait_timeout_ms`, then runs anyway: it is never refused.
+    pub task_work: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
     /// when it declares none. Past it, an upload still lands and the row asks.
@@ -145,6 +153,7 @@ impl Default for LimitsConfig {
             embedder_requests: 2_048,
             embedder_answer_bytes: 256 * 1024 * 1024,
             decision_reads: 2_048,
+            task_work: TASK_WORK,
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
@@ -214,6 +223,7 @@ impl LimitsConfig {
             embedder_requests,
             embedder_answer_bytes,
             decision_reads,
+            task_work,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             retrieval_query_bytes,
@@ -258,6 +268,7 @@ impl LimitsConfig {
         set(&mut self.embedder_requests, embedder_requests);
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
         set(&mut self.decision_reads, decision_reads);
+        set(&mut self.task_work, task_work);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
@@ -323,6 +334,7 @@ impl LimitsConfig {
             ("embedder_requests", self.embedder_requests as u64),
             ("embedder_answer_bytes", self.embedder_answer_bytes),
             ("decision_reads", self.decision_reads as u64),
+            ("task_work", self.task_work as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
@@ -391,6 +403,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) embedder_requests: Option<usize>,
     pub(super) embedder_answer_bytes: Option<u64>,
     pub(super) decision_reads: Option<usize>,
+    pub(super) task_work: Option<usize>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
     pub(super) retrieval_query_bytes: Option<usize>,

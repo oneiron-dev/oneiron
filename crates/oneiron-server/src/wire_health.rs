@@ -617,9 +617,13 @@ pub fn record_outcome(vault: &Vault, unit: EntityId, outcome: &str) -> Result<En
     vault.record_health_outcome(owner, unit, outcome, oneiron_vault_contract::now_ts())
 }
 
-/// Starts the worker. Each pass runs on a blocking thread: the ladder's
-/// model rungs block on the server's runtime.
-pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+/// Starts the worker. Each pass runs on a blocking thread, held by `admit`
+/// (a managed vault frozen for reap skips the tick): the ladder's model
+/// rungs block on the server's runtime.
+pub(crate) fn spawn(
+    server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(SWEEP_EVERY);
@@ -629,7 +633,15 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            match tokio::task::spawn_blocking(move || sweep(&server)).await {
+            let Some(pass) = admit() else {
+                continue;
+            };
+            match tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                sweep(&server)
+            })
+            .await
+            {
                 Ok(Err(error)) => {
                     tracing::warn!(%error, "wire health sweep failed; it runs again next tick");
                 }

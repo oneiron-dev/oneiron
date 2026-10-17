@@ -222,10 +222,16 @@ pub(super) async fn serve_with_config(
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
-    workers.push(crate::wire_health::spawn(&sync_server));
+    workers.push(crate::wire_health::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
-        workers.push(crate::decision_graph::spawn(&sync_server));
+        workers.push(crate::decision_graph::spawn(
+            &sync_server,
+            crate::server::admit_every_pass(),
+        ));
     }
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));

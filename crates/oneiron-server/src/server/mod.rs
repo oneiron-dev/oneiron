@@ -23,7 +23,7 @@ mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
-pub use self::core::SyncServer;
+pub use self::core::{SyncServer, TaskWorkTurn};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
 pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
