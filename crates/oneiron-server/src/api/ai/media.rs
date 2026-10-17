@@ -34,7 +34,7 @@ use serde_json::Value as JsonValue;
 
 use super::refusal;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::server::SyncServer;
+use crate::server::{MediaRefusal, SyncServer, admit_media};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -361,8 +361,8 @@ fn admit(
     let purpose = CallPurpose::Other {
         name: format!("ai.{}", operation.as_str()),
     };
-    let mut request = MediaRequest {
-        model: model.clone(),
+    let request = MediaRequest {
+        model,
         envelope: CallEnvelope {
             scope: Default::default(),
             tier: TierPrecedence::for_purpose(
@@ -381,31 +381,30 @@ fn admit(
         params: body.params,
         voice,
     };
-    if let Some(key) = request.admission_request().route_selector_override() {
-        return Err((
+    // The same admission as engine code's media door.
+    let request = admit_media(
+        &server.vault,
+        media,
+        server.extraction_egress.as_deref(),
+        request,
+    )
+    .map_err(|refused| match refused {
+        MediaRefusal::UnknownModel => refusal(
+            StatusCode::BAD_REQUEST,
+            "unknown_model",
+            format!("the model serves no {} call here", operation.as_str()),
+        ),
+        MediaRefusal::SelectorOverride(key) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": {"code": "route_selector_forbidden", "key": key}})),
         )
-            .into_response());
-    }
-    let context = oneiron::llm::HostInferenceContext {
-        binding: oneiron::llm::HostInferenceBinding::Advertised { model, locality },
-        extraction_egress: server.extraction_egress.as_deref(),
-    };
-    let authorized = server
-        .vault
-        .authorize_raw_inference(request.admission_request(), &context)
-        .map_err(|_| {
-            refusal(
-                StatusCode::FORBIDDEN,
-                "inference_denied",
-                "the vault's inference policy refuses this call",
-            )
-        })?;
-    request.envelope = authorized.into_request().envelope;
-    // The world a caller names does not vouch for what it sends: a
-    // fallback judges the call as naming none, as a raw text call is.
-    request.envelope.scope.world = None;
+            .into_response(),
+        MediaRefusal::Denied(_) => refusal(
+            StatusCode::FORBIDDEN,
+            "inference_denied",
+            "the vault's inference policy refuses this call",
+        ),
+    })?;
     Ok((request, binding))
 }
 

@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 
 use super::media_bridge::{MediaBridge, MediaTts, MediaWorker};
 use super::{VoiceBrainOut, VoiceMediaBindings, VoicePlayout};
-use crate::models::ModelRuntime;
+use crate::server::MediaDoor;
 
 /// Spoken audio and ends the host holds for the wire. The serve loop
 /// drains it before it reads again, so a few suffice.
@@ -39,8 +39,8 @@ fn invalid(message: &str) -> oneiron::Error {
 /// [`VoiceMediaBindings`] for a connection whose own stream carries the
 /// audio side: no separate microphone, playout or control channels.
 pub struct VoiceWireBindings {
-    /// The media door: `Arc::clone(server.ai.models())`.
-    pub door: Arc<ModelRuntime>,
+    /// The vault-bound media door: `server.media_door()`.
+    pub door: Arc<MediaDoor>,
     /// The vault the host serves; its live voice rows pick both routes.
     pub vault: Arc<Vault>,
     /// The voice the assistant speaks in.

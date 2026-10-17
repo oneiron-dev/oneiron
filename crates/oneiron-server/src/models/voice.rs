@@ -1,11 +1,12 @@
 //! The voice cascade's routes on the media seats (OF-410). A voice lane
 //! speaks or hears on the one `[models.media]` rung its vault row's tier is
 //! bound to (`tiers` on the speech and transcribe seats), and each call it
-//! makes goes through [`ModelRuntime`] as a media door, admitted on its own
-//! permit and settled on the media meter.
+//! makes goes through the server's vault-bound media door
+//! (`crate::server::MediaDoor`), admitted again by the vault's inference
+//! policy and on its own permit, and settled on the media meter.
 use std::collections::BTreeMap;
 
-use oneiron::llm::media::{AiMediaDoor, AiOperation, MediaFuture, MediaRequest, MediaResponse};
+use oneiron::llm::media::{AiOperation, MediaRequest};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext, PurposeDefault, VoiceLane};
 use oneiron::voice_cascade::media::MediaVoiceRoute;
 use oneiron::{CallClass, CallEnvelope, CallPurpose, ResponseFormat, TierPrecedence, Vault};
@@ -18,7 +19,7 @@ impl ModelRuntime {
     /// names a tier and a locality, and exactly one bound rung must serve
     /// both: none, or two, refuses rather than relabel another rung. The
     /// vault's inference policy then admits the route, and its envelope
-    /// rides every call the lane makes.
+    /// rides every call the lane makes, each admitted again at its door.
     pub fn voice_route(
         &self,
         vault: &Vault,
@@ -77,27 +78,5 @@ impl ModelRuntime {
             target,
             envelope,
         })
-    }
-}
-
-/// The door engine code holds when it keeps the runtime itself (the voice
-/// cascade's media worker): each call is a run of its own on the media
-/// meter, rung by rung through the media gate.
-impl AiMediaDoor for ModelRuntime {
-    fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
-        Box::pin(self.media.run(request))
-    }
-}
-
-/// The door the voice cascade opens a live stream through
-/// ([`oneiron::voice_cascade::media::LeasedAsrStream`]): each stream is a
-/// run of its own on the media meter, on one permit.
-impl oneiron::voice_cascade::media::VoiceStreamDoor for ModelRuntime {
-    fn open_stream<'a>(
-        &'a self,
-        request: MediaRequest,
-        bound_ms: u64,
-    ) -> MediaFuture<'a, oneiron::llm::run_admission::MediaStreamLease> {
-        Box::pin(async move { self.media.open_stream(request, bound_ms) })
     }
 }

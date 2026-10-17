@@ -46,32 +46,27 @@ impl JobStore {
         Self { vault }
     }
 
-    /// Keeps `row` as job `ticket`, its end's clip bytes beside it. A row
-    /// the vault refuses is logged: the job still runs, held, until a
-    /// restart.
-    pub(super) fn put(&self, ticket: &str, mut row: JobRow) {
+    /// Keeps `row` as job `ticket`, its end's clip bytes beside it: the row
+    /// and its clips in one write, so a refused write keeps none of them.
+    pub(super) fn put(&self, ticket: &str, mut row: JobRow) -> Result<(), String> {
+        let mut parts = Vec::new();
         if let Some(MediaJobState::Done { response }) = &mut row.ended {
             for (index, part) in response.parts.iter_mut().enumerate() {
-                let Some(bytes) = part_bytes(part).filter(|bytes| !bytes.is_empty()) else {
-                    continue;
-                };
-                let bytes = std::mem::take(bytes);
-                if let Err(error) = self.vault.sync_state_put(&part_key(ticket, index), &bytes) {
-                    tracing::error!(%error, ticket, "a media job's clip was not kept");
-                    return;
+                if let Some(bytes) = part_bytes(part).filter(|bytes| !bytes.is_empty()) {
+                    parts.push((part_key(ticket, index), std::mem::take(bytes)));
                 }
             }
         }
-        let kept = rmp_serde::to_vec_named(&row)
-            .map_err(|error| error.to_string())
-            .and_then(|bytes| {
+        let kept = rmp_serde::to_vec_named(&row).map_err(|error| error.to_string())?;
+        self.vault
+            .with_write_txn_grouped(|wtxn| {
+                for (key, bytes) in &parts {
+                    self.vault.sync_state_put_in_write_txn(wtxn, key, bytes)?;
+                }
                 self.vault
-                    .sync_state_put(&row_key(ticket), &bytes)
-                    .map_err(|error| error.to_string())
-            });
-        if let Err(error) = kept {
-            tracing::error!(%error, ticket, "a media job was not kept");
-        }
+                    .sync_state_put_in_write_txn(wtxn, &row_key(ticket), &kept)
+            })
+            .map_err(|error| error.to_string())
     }
 
     /// Job `ticket`'s row, its clips' bytes back in place.
