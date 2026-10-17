@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 9 | 1 | 0 |
 | [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 4 | 2 | 0 |
 | [oneiron-llm-systemone](codemap/oneiron-llm-systemone.md) | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` | 1 | 1 | 0 |
-| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 4 | 2 | 0 |
+| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 4 | 2 | 1 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 35 | 6 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | — | 19 | 1 | 2 |
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 25 | 4 | 1 |
@@ -541,7 +541,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `iroh_transport` | file | 1 | m | Private iroh data plane |
+| `iroh_transport` | file | 1 | L | Private iroh data plane |
 | `sync_dialer` | file | 1 | s | The sync client's carrier to its home machine over the mesh (OF-535) |
 | `transport_key` | file | 1 | s | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
 
