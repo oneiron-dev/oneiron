@@ -110,6 +110,8 @@ pub struct DreamerWakeDriver<'a> {
     pub(super) steering: Vec<BudgetSteeringSignal>,
     consolidation_only: bool,
     skill_optimizer: Option<crate::dreamer_runner::maintenance::CoachSkillOptimizer<'a>>,
+    contribution_host:
+        Option<&'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync)>,
     tournament_candidate: Option<(
         crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
         DreamerClaimAuthoringAdmission,
@@ -134,6 +136,7 @@ impl<'a> DreamerWakeDriver<'a> {
             steering: Vec::new(),
             consolidation_only: false,
             skill_optimizer: None,
+            contribution_host: None,
             tournament_candidate: None,
             #[cfg(feature = "sync")]
             progress: None,
@@ -146,6 +149,15 @@ impl<'a> DreamerWakeDriver<'a> {
         optimizer: crate::dreamer_runner::maintenance::CoachSkillOptimizer<'a>,
     ) -> Self {
         self.skill_optimizer = Some(optimizer);
+        self
+    }
+
+    /// Attach the host's replay capsule for the Coach's contribution checks.
+    pub fn with_contribution_host(
+        mut self,
+        host: &'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync),
+    ) -> Self {
+        self.contribution_host = Some(host);
         self
     }
 
@@ -386,15 +398,23 @@ impl<'a> DreamerWakeDriver<'a> {
                         && input.trigger == WakeTrigger::Timer
                         && input.scope == DreamerConsolidationScope::Macro =>
                 {
-                    self.store.admit_next_resident_dream(AdmitDreamerAttempt {
-                        lease_owner: input.lease_owner.clone(),
-                        now: input.now,
-                        budget_id: self.budget_id.clone(),
-                        budget_total_units: input.budget_total_units,
-                        reserve_units: input.reserve_units,
-                        started_milestone: self
-                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
-                    })?
+                    // The host may route a resident's dreaming to its own
+                    // line (FIX 1152); every settlement below follows the
+                    // line its admission reserved on.
+                    self.store.admit_next_resident_dream(
+                        AdmitDreamerAttempt {
+                            lease_owner: input.lease_owner.clone(),
+                            now: input.now,
+                            budget_id: self.budget_id.clone(),
+                            budget_total_units: input.budget_total_units,
+                            reserve_units: input.reserve_units,
+                            started_milestone: self
+                                .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                        },
+                        &mut |candidate: &crate::attempt_queue::AttemptRecord| {
+                            exec.runner_budget_id(candidate)
+                        },
+                    )?
                 }
                 outcome => outcome,
             };
@@ -558,6 +578,9 @@ impl<'a> DreamerWakeDriver<'a> {
 
             report.admitted += 1;
             let attempt_id = admitted.status.attempt.id;
+            // The runner line this attempt reserved on: the pass's, or the
+            // line the host routed it to.
+            let line = admitted.reservation.budget_id.clone();
 
             // ONE-1896 §3, quota/budget rung, at the ONE boundary where this
             // pass both holds a leased attempt and can still act: the wake
@@ -632,7 +655,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,
                     deadline: &self.deadline,
-                    budget_id: &self.budget_id,
+                    budget_id: &line,
                     now_ms: input.now.saturating_mul(1_000),
                     prepared_wake: Some(prepared_wake),
                     prepared_attempt: match prepared_wake.preparation(attempt_id) {
@@ -672,7 +695,11 @@ impl<'a> DreamerWakeDriver<'a> {
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
                     {
-                        crate::dreamer_runner::maintenance::execute(&admitted, &ctx)
+                        crate::dreamer_runner::maintenance::execute(
+                            &admitted,
+                            &ctx,
+                            self.contribution_host,
+                        )
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
                     {
@@ -726,7 +753,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         // admitted attempt (stuck leased) AND its reservation.
                         self.store
                             .abort_budget_reservation(AbortDreamerBudgetReservation {
-                                budget_id: self.budget_id.clone(),
+                                budget_id: line.clone(),
                                 child_attempt: attempt_id,
                                 now: input.now,
                             })?;
@@ -776,7 +803,7 @@ impl<'a> DreamerWakeDriver<'a> {
             match execution {
                 DreamerAttemptExecution::Completed { completed_units } => {
                     self.store.settle_budget(SettleDreamerBudget {
-                        budget_id: self.budget_id.clone(),
+                        budget_id: line.clone(),
                         child_attempt: attempt_id,
                         actual_units: completed_units,
                         now: input.now,
@@ -792,7 +819,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     self.store.defer_selection(
                         &admitted,
                         SettleDreamerBudget {
-                            budget_id: self.budget_id.clone(),
+                            budget_id: line.clone(),
                             child_attempt: attempt_id,
                             actual_units: completed_units,
                             now: input.now,
@@ -828,7 +855,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     // consumed, so the wake ledger settles the sum rather than
                     // refunding work that happened.
                     self.store.settle_budget(SettleDreamerBudget {
-                        budget_id: self.budget_id.clone(),
+                        budget_id: line.clone(),
                         child_attempt: attempt_id,
                         actual_units: completed_units.saturating_add(spent_reserve_units),
                         now: input.now,
@@ -855,7 +882,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     let reason = clamp_park_reason(reason);
                     self.store.settle_checkpoint_budget(
                         SettleDreamerBudget {
-                            budget_id: self.budget_id.clone(),
+                            budget_id: line.clone(),
                             child_attempt: attempt_id,
                             actual_units: completed_units,
                             now: input.now,
@@ -887,7 +914,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     // reservation.
                     self.store
                         .abort_budget_reservation(AbortDreamerBudgetReservation {
-                            budget_id: self.budget_id.clone(),
+                            budget_id: line.clone(),
                             child_attempt: attempt_id,
                             now: input.now,
                         })?;

@@ -407,14 +407,16 @@ fn mcp_hook_pins(
 /// A keyframe's MEMORIES, which runs no retrieval: the policy manifest's pins
 /// and the rows its hook blocks pin, read as the HTTP board reads them
 /// ([`crate::api::context_board::board_pins_projection`]) under this
-/// credential, with no room. The credential's read is not narrowed to its
-/// world or facet, so a narrowed or record-restricted connector reads no
-/// manifest pin, and only the hook rows [`mcp_hook_pins`] kept. `None` when no
-/// pin reaches a row.
+/// credential, in the bound `room` its own read admitted, else with no room
+/// (FIX 1051). The credential's read is not narrowed to its world or facet,
+/// so a narrowed or record-restricted connector reads no manifest pin, and
+/// only the hook rows [`mcp_hook_pins`] kept. `None` when no pin reaches a
+/// row.
 fn mcp_pinned_memories(
     server: &SyncServer,
     actor: &McpResolvedActor,
     hook_pins: &[oneiron::context_board::HookPin],
+    room: Option<oneiron::EntityId>,
 ) -> Result<Option<crate::api::context_board::BoardPins>, McpGatewayError> {
     let pins = crate::api::context_board::BoardPinSources {
         refs: &[],
@@ -426,8 +428,66 @@ fn mcp_pinned_memories(
         .auth
         .as_ref()
         .expect("a scoped read holds the connector's proof");
-    crate::api::context_board::board_pins_projection(&server.vault, auth, read, None, &pins)
+    crate::api::context_board::board_pins_projection(&server.vault, auth, read, room, &pins)
         .map_err(super::mcp_api_error)
+}
+
+/// ROOM (FIX 1051): the room the caller's authenticated request binds, its
+/// room turn, read fresh through the caller's own facade handle as the HTTP
+/// board reads one. No room turn, or a room the caller cannot read, renders
+/// no ROOM: omitted silently, never an ambient room guessed in its place.
+fn mcp_bound_room(
+    server: &SyncServer,
+    actor: &McpCallContext,
+) -> Option<oneiron::context_board::RoomSection> {
+    let room = actor.room_turn?;
+    let memory = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality());
+    match memory.rooms_render_hosted(room, None) {
+        Ok(section) => Some(section),
+        Err(error) => {
+            tracing::debug!(code = %error.code, "mcp board room omitted");
+            None
+        }
+    }
+}
+
+/// SCRATCHPAD (FIX 2340): the live pad of the session the caller's
+/// authenticated request binds (`x-oneiron-session`), read as the agent
+/// itself, as the HTTP board serves an agent's. An unbound request, a caller
+/// that is not an agent, or a session with no live pad renders none.
+fn mcp_scratchpad_section(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Option<oneiron::context_board::BoardSection> {
+    let session = actor.off_record_session.as_deref()?;
+    if actor.actor_class != oneiron::EdgeActorClass::Agent {
+        return None;
+    }
+    let memory = crate::api::credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality());
+    match memory.scratchpad_board_section(session) {
+        Ok(Some(board)) => {
+            served.push(board.pad);
+            Some(board.section)
+        }
+        Ok(None) => None,
+        Err(error) => {
+            tracing::debug!(code = %error.code, "mcp board scratchpad omitted");
+            None
+        }
+    }
 }
 
 /// Every board row, in section order: the exact material the snapshot epoch is
@@ -452,7 +512,7 @@ fn mcp_board_state_rows(sections: &[oneiron::context_board::BoardSection]) -> Ve
 /// rows into MEMORIES, beside the policy manifest's pins.
 fn mcp_board_sections(
     server: &Arc<SyncServer>,
-    actor: &McpResolvedActor,
+    actor: &McpCallContext,
     pins: &[oneiron::context_board::HookPin],
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
@@ -525,7 +585,10 @@ fn mcp_board_sections(
         oneiron::context_board::assemble_tasks_section(&tasks, mcp_fanout_rows(server, actor)?)
             .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];
-    if let Some(memories) = mcp_pinned_memories(server, actor, pins)? {
+    let room = mcp_bound_room(server, actor);
+    if let Some(memories) =
+        mcp_pinned_memories(server, actor, pins, room.as_ref().map(|room| room.room))?
+    {
         hooks.memories = memories.section.hook_shares(pins);
         served.extend_from_slice(memories.receipt.delivered());
         sections.extend(
@@ -535,6 +598,19 @@ fn mcp_board_sections(
         hooks.receipt = Some(memories.receipt);
     }
     sections.push(tasks_section);
+    if let Some(room) = &room {
+        served.push(room.room);
+        served.extend(
+            room.claims
+                .iter()
+                .filter_map(|claim| oneiron::EntityId::from_hex(&claim.claim_ref).ok()),
+        );
+        sections.push(
+            room.board_section(&oneiron::context_board::PeopleView::new(&people, &resident))
+                .map_err(mcp_board_frame_error)?,
+        );
+    }
+    sections.extend(mcp_scratchpad_section(server, actor, served));
     let packs = mcp_visible_pack_inventory(server, actor)?;
     let rows: Vec<String> = packs
         .iter()
@@ -568,10 +644,11 @@ fn mcp_board_sections(
     Ok((sections, omissions, hooks))
 }
 
-/// The fan-out launches that wait on the owner, as TASKS lead rows (OF-393):
-/// the agent's own, or every one for an owner's connector. They are
-/// actor-wide, as its children are, so a world/facet-narrowed or
-/// record-restricted connector reads none.
+/// The fan-out launches that wait on an approver, as TASKS lead rows
+/// (OF-393): the agent's own and those whose bound project lead or board role
+/// it holds live, or every one for an owner's connector. They are actor-wide,
+/// as its children are, so a world/facet-narrowed or record-restricted
+/// connector reads none.
 fn mcp_fanout_rows(
     server: &SyncServer,
     actor: &McpResolvedActor,
@@ -1108,7 +1185,8 @@ pub(crate) async fn execute_mcp_setup(
 }
 
 /// A pumped run's CURRENT board (OF-533): [`mcp_current_board`] for the run's
-/// agent, which holds no MCP credential. Its rows are read under the agent's
+/// agent, which holds no MCP credential. Its host door binds no session or
+/// room turn, so it renders no SCRATCHPAD and no ROOM (FIX 2340, 1051). Its rows are read under the agent's
 /// own lane on this device, its epoch and STREAM state are keyed on the
 /// run's own connection, and nothing is narrowed: the agent reads its board
 /// as a vault-wide connector of its own would. Its hook rows are those of
@@ -1321,7 +1399,8 @@ fn run_board_sections(
             .board_section()
             .map_err(mcp_board_frame_error)?
     };
-    // The agent's own fan-out launches that wait on the owner (OF-393).
+    // The fan-out launches that wait on an approver (OF-393): the agent's own
+    // and those whose bound project lead or board role it holds live.
     let launches = server
         .vault
         .memory(actor.entity_ref(), actor.actor_class())

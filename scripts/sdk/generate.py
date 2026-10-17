@@ -76,9 +76,16 @@ for row in ROWS:
     # invocation the call resolved: the one its verb hooks fired for.
     if row.get('host_door_caller') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes its caller')
+    # `host_door_session` hands the door the sitting the call names (the
+    # facade's session header, or the MCP connector's off-record session),
+    # `None` when it names none; a session that is no id refuses.
+    if row.get('host_door_session') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes its session')
     # `host_door_lists` marks a host door that lists the rows its reads
     # picked, as a plain row's answer does: the door returns them beside its
     # result, and every served door releases the answer by them (DEC-0005).
+    # A door one of whose paths lists none returns `None` for that call, never
+    # an empty list standing in for it, and the call's answer goes unlisted.
     if row.get('host_door_lists') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door lists its rows')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
@@ -636,12 +643,13 @@ def mcp_input_dispatch(row):
     elif row.get('host_door'):
         # A host door answers from the server's own state, under the same
         # credential the REST facade passes it.
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await'
+        session_arg = 'actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, ' if row.get('host_door_session') else ''
+        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await'
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  (f'let (output, listed) = {door};\n'
-                  '// Derived from the rows its reads listed.\n'
-                  'served.extend(listed);\n'
+                  '// Derived from the rows its reads listed, when its path lists them.\n'
+                  'served.extend(crate::api::facade::host_doors::ListedRows::rows(listed).into_iter().flatten());\n'
                   'let output = output.map_err(mcp_facade_error)?;\n' if row.get('host_door_lists') else
                   f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
@@ -1118,10 +1126,11 @@ def facade_dispatch(facade_rows):
             # the turn producer after it, as its MCP arm does.
             lands = r.get('lands_turn')
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
-            door = f'super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
+            session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
             answer = (f'''let (output, listed) = {door};
                 let output = facade_output(output?)?;{landed}
-                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(listed) }})''' if r.get('host_door_lists') else
+                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
                       f'''let output = facade_output({door}?)?;{landed}
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;

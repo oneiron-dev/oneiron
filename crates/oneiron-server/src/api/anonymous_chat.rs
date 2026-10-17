@@ -209,7 +209,15 @@ async fn chat(
     };
     // Names are host-generated, request-local and never returned or logged.
     let session_ref = format!("anonymous:{:016x}", rand_core::OsRng.next_u64());
-    let session = match server.vault.open_anonymous_chat(&session_ref, backend) {
+    // OF-063 (FIX 2137): the stretch maps to the principal the credential
+    // names; a credential naming none opens it bound to nobody.
+    let opened = match crate::api::call_receipt::request_principal(&auth) {
+        Some(principal) => server
+            .vault
+            .open_anonymous_chat_for(&session_ref, backend, principal),
+        None => server.vault.open_anonymous_chat(&session_ref, backend),
+    };
+    let session = match opened {
         Ok(session) => session,
         Err(_) => return refusal(StatusCode::CONFLICT, "anonymous_session_unavailable"),
     };
