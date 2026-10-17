@@ -158,26 +158,6 @@ pub(crate) fn mirror_custody_transitions(
     Ok(wrote)
 }
 
-/// Copies `source`'s custody map into `target`, as an own machine's
-/// promotion covers it. Copies nothing when `source` holds none.
-pub(crate) fn copy_custody_map(source: &LoroDoc, target: &LoroDoc) -> Result<()> {
-    if !holds_custody_map(source) {
-        return Ok(());
-    }
-    let mut rows = Vec::new();
-    source.get_map(CUSTODY_MAP).for_each(|map_key, value| {
-        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
-            rows.push((map_key.to_owned(), bytes.to_vec()));
-        }
-    });
-    let map = target.get_map(CUSTODY_MAP);
-    for (map_key, bytes) in rows {
-        map_insert_bytes(&map, &map_key, &bytes)?;
-    }
-    target.commit();
-    Ok(())
-}
-
 /// Whether `doc` holds a custody map. Looking a root up by name creates it:
 /// look first.
 fn holds_custody_map(doc: &LoroDoc) -> bool {

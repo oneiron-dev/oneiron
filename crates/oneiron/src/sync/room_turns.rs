@@ -20,7 +20,7 @@
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use super::loro_support::{map_get_bytes, map_insert_bytes};
+use super::loro_support::{map_contains_binary, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -210,5 +210,33 @@ fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
         Ok(merged) if merged > 0 => tracing::debug!(window, merged, "room turn rows merged"),
         Ok(_) => {}
         Err(error) => tracing::warn!(window, error = %error, "room turn rows not merged"),
+    }
+}
+
+impl Vault {
+    /// Mirrors TURN `turn`'s room row into the live window that carries the
+    /// TURN, after a door changed the row: a thread-task binding or a
+    /// conversion (OF-522). Best effort: a window opened later mirrors it as
+    /// it opens.
+    pub(crate) fn refresh_room_turn_in_live_window(&self, turn: &EntityId) {
+        let hex = turn.to_hex();
+        for window in self.live_windows() {
+            if window.key.world().is_some()
+                || !map_contains_binary(&window.doc.get_map("entities"), &hex)
+            {
+                continue;
+            }
+            match mirror_room_turn(self, &window.doc, turn) {
+                Ok(true) => {
+                    window.doc.commit_with(
+                        loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN),
+                    );
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(window = %window.key, error = %error, "room turn row not mirrored");
+                }
+            }
+        }
     }
 }
