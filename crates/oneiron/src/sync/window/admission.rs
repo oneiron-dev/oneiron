@@ -197,6 +197,11 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::custody::CUSTODY_MAP),
         )?;
+        // OF-522: every room turn row the snapshot holds is whole.
+        crate::sync::room_turns::admit_room_turn_map(
+            key,
+            &candidate.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
+        )?;
         // A snapshot can also carry the state at a root, where a carrier
         // deleted after the root survives outside the retained ops, and
         // later exports reuse that root as encoded. Two Loro readers decode
@@ -236,6 +241,10 @@ fn validate_window_update(
                 vault,
                 key,
                 &root.get_map(crate::sync::custody::CUSTODY_MAP),
+            )?;
+            crate::sync::room_turns::admit_room_turn_map(
+                key,
+                &root.get_map(crate::sync::room_turns::ROOM_TURNS_MAP),
             )?;
         }
         if misplaced {
@@ -312,6 +321,8 @@ fn validate_window_update(
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
     let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
     let custody = ContainerID::new_root(crate::sync::custody::CUSTODY_MAP, ContainerType::Map);
+    let room_turns =
+        ContainerID::new_root(crate::sync::room_turns::ROOM_TURNS_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -325,6 +336,8 @@ fn validate_window_update(
         } else if op.container == custody {
             // OF-422: put-then-delete still carries the bytes on the wire.
             crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;
+        } else if op.container == room_turns {
+            crate::sync::room_turns::admit_room_turn_carrier(key, &map_key, &value)?;
         } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)
