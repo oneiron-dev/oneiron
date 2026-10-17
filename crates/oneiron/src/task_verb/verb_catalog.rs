@@ -10,6 +10,8 @@ pub enum AgentVerb {
     SelfMemoryDiaryReview,
     SelfIdentityAnswer,
     SelfIdentitySettle,
+    SelfInboxConcern,
+    SelfInboxConcernOutcome,
     VaultPeopleList,
     VaultPeopleGet,
     SelfMessage,
@@ -54,6 +56,7 @@ pub enum AgentVerb {
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
+    VaultGuestsRevoke,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -195,6 +198,8 @@ impl AgentVerb {
         Self::SelfMemoryDiaryReview,
         Self::SelfIdentityAnswer,
         Self::SelfIdentitySettle,
+        Self::SelfInboxConcern,
+        Self::SelfInboxConcernOutcome,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
         Self::SelfMessage,
@@ -239,6 +244,7 @@ impl AgentVerb {
         Self::VaultMembersChange,
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
+        Self::VaultGuestsRevoke,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -383,6 +389,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
             Self::SelfIdentityAnswer => "self.identity.answer",
             Self::SelfIdentitySettle => "self.identity.settle",
+            Self::SelfInboxConcern => "self.inbox.concern",
+            Self::SelfInboxConcernOutcome => "self.inbox.concern.outcome",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
             Self::SelfMessage => "self.message",
@@ -427,6 +435,7 @@ impl AgentVerb {
             Self::VaultMembersChange => "vault.members.change",
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
+            Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -569,6 +578,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcern
+                | Self::SelfInboxConcernOutcome
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -613,6 +624,7 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -761,6 +773,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcern
+                | Self::SelfInboxConcernOutcome
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -805,6 +819,7 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -994,6 +1009,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcern
+                | Self::SelfInboxConcernOutcome
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -1034,6 +1051,7 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1167,6 +1185,7 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryReview
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
+                | Self::SelfInboxConcernOutcome
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1190,6 +1209,7 @@ impl AgentVerb {
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
+                | Self::VaultGuestsRevoke
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -1288,6 +1308,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
+            Self::SelfInboxConcern => &["spec"],
+            Self::SelfInboxConcernOutcome => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1296,7 +1318,7 @@ impl AgentVerb {
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
-            Self::TasksCreate => &["spec", "label"],
+            Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksUpdate => &["task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -1332,6 +1354,7 @@ impl AgentVerb {
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
+            Self::VaultGuestsRevoke => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1474,6 +1497,8 @@ impl AgentVerb {
             Self::SelfMemoryDiaryReview => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
+            Self::SelfInboxConcern => &["spec"],
+            Self::SelfInboxConcernOutcome => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1518,6 +1543,7 @@ impl AgentVerb {
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
+            Self::VaultGuestsRevoke => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1677,6 +1703,8 @@ impl AgentVerb {
             Self::SelfIdentitySettle => {
                 "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."
             }
+            Self::SelfInboxConcern => "",
+            Self::SelfInboxConcernOutcome => "",
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
             Self::SelfMessage => {
@@ -1795,6 +1823,7 @@ impl AgentVerb {
             Self::VaultMembersLeave => {
                 "A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead."
             }
+            Self::VaultGuestsRevoke => "",
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
             }

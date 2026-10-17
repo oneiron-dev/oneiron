@@ -33,6 +33,8 @@ selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
 selfIdentityAnswer(input: unknown): unknown
 selfIdentitySettle(input: unknown): unknown
+selfInboxConcern(input: unknown): unknown
+selfInboxConcernOutcome(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
 selfMessage(input: unknown): unknown
@@ -77,6 +79,7 @@ vaultMembersAdd(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
+vaultGuestsRevoke(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown

@@ -122,6 +122,24 @@
       "section": false
     },
     {
+      "name": "self.inbox.concern",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
+      "call": "memory.concern_card(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "self.inbox.concern.outcome",
+      "input": "crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest",
+      "output": "crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary",
+      "call": "memory.concern_outcome(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.people.list",
       "description": "One page of the people the caller reads, in handle order.",
       "input": "crate::memory::PeopleListRequest",
@@ -278,7 +296,8 @@
       "proposes": true,
       "mcp_fields": {
         "spec": "spec",
-        "label": "label"
+        "label": "label",
+        "assignee": "assignee"
       },
       "mcp_required_fields": [
         "spec"
@@ -292,10 +311,10 @@
     {
       "name": "tasks.update",
       "description": "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.",
-      "input": "TaskRequest",
+      "input": "TaskUpdateRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
-      "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
+      "call": "memory.tasks_update_request(&input)?",
       "scope": "Write",
       "mcp_scope": "addressed",
       "mcp_fields": {
@@ -934,6 +953,16 @@
       "input": "crate::task_verb::sdk::SharedVaultRequest",
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::leave_shared_vault_as(memory.vault(), &memory.embedded_owner(\"vault.members.leave\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.guests.revoke",
+      "input": "crate::task_verb::sdk::GuestRevokeRequest",
+      "output": "crate::receipt::GuestRevokeResponse",
+      "call": "crate::task_verb::sdk::revoke_guest_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -3087,6 +3116,20 @@
       "scope": "Write",
       "context": "run",
       "effect": "SkillsCall"
+    },
+    {
+      "name": "self.spawn",
+      "input": "crate::code_run::ReaderSpawnInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ReaderSpawn"
+    },
+    {
+      "name": "tasks.wait",
+      "input": "crate::code_run::TaskWaitSetRequest",
+      "scope": "Read",
+      "context": "run",
+      "effect": "TasksWaitSet"
     }
   ]
 }
