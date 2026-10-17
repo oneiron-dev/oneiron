@@ -282,17 +282,13 @@ fn refuse_stranded_children(
     next: &ProjectEffective,
 ) -> Result<()> {
     let parent = id.to_hex();
-    for row in reader
-        .store()
-        .type_index
-        .prefix_iter(reader.txn(), &[kind])?
-    {
-        let (key, _) = row?;
-        let child = EntityId::from_bytes(
-            key[1..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("project type index"))?,
-        )?;
+    for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        reader.store(),
+        reader.txn(),
+        kind,
+        None,
+    )? {
+        let child = row?;
         if child == id {
             continue;
         }
