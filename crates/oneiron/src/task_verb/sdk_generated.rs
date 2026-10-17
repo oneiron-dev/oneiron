@@ -547,6 +547,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.secrets.lift_history",
+                crate::code_run::vault_read::request_schema::<crate::policy_model::SecretLiftRequest>(
+                ),
+            ),
+            (
                 "vault.widen_proposals",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -2281,6 +2286,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.secrets.lift_history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.widen_proposals" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3751,6 +3763,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::learning_setting_doors::LearningSettingClear =
                 decode(value.clone())?;
         }
+        "vault.secrets.lift_history" => {
+            let _input: crate::policy_model::SecretLiftRequest = decode(value.clone())?;
+        }
         "vault.widen_proposals" => {
             let _input: crate::agent_dispatch::widen_doors::WidenProposalsRequest =
                 decode(value.clone())?;
@@ -4540,6 +4555,7 @@ pub fn invoke(
         "vault.settings.learning.clear" => {
             encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
+        "vault.secrets.lift_history" => encode(vault_secrets_lift_history(memory, decode(value)?)?),
         "vault.widen_proposals" => encode(vault_widen_proposals(memory, decode(value)?)?),
         "vault.widen_proposals.approve" => {
             encode(vault_widen_proposals_approve(memory, decode(value)?)?)
@@ -5838,6 +5854,17 @@ pub fn vault_settings_learning_clear(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_secrets_lift_history(
+    memory: &Memory<'_>,
+    input: crate::policy_model::SecretLiftRequest,
+) -> MemoryResult<crate::policy_model::SecretLiftStatus> {
+    crate::policy_model::secret_lift_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.lift_history")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_widen_proposals(
     memory: &Memory<'_>,
     input: crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -5916,7 +5943,7 @@ pub fn vault_lenses_list(
 pub fn vault_lenses_default(
     memory: &Memory<'_>,
     input: crate::lens::LensDefaultRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::LensFrameCard>> {
     memory.lenses_default(input)
 }
 pub fn vault_disclosure_offer(

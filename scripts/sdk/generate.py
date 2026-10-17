@@ -75,6 +75,11 @@ for row in ROWS:
     # invocation the call resolved: the one its verb hooks fired for.
     if row.get('host_door_caller') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes its caller')
+    # `host_door_lists` marks a host door that lists the rows its reads
+    # picked, as a plain row's answer does: the door returns them beside its
+    # result, and every served door releases the answer by them (DEC-0005).
+    if row.get('host_door_lists') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door lists its rows')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
     # server's dispatch and its MCP dispatch take one turn for it
     # (`SyncServer::admit_task_work`, never refused) before the engine call and
@@ -157,6 +162,10 @@ ARGUMENTS = {
     # (napi object, UniFFI record, Python JSON) onto the engine's wire type.
     'media': {'rust': 'Option<oneiron::code_run::vault_read::ContextPackMediaQuery>', 'napi': 'Option<NapiRecallMedia>', 'native_ts': 'RecallMedia | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallMedia | None', 'native_py': 'Option<&str>', 'json': True,
         'napi_convert': 'let {name} = {name}.map(recall_media_to_engine).transpose().map_err(facade_error)?;', 'py_convert': 'let {name}: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = {name}.map(|value| decode(value, "recall media")).transpose()?;', 'field': '{name}'},
+    # OF-423: a recall's query affect, lowered the same way onto the engine's
+    # `QueryAffect`; the engine's recall door refuses it out of range.
+    'query_affect': {'rust': 'Option<oneiron::task_verb::sdk::QueryAffect>', 'napi': 'Option<NapiQueryAffect>', 'native_ts': 'QueryAffect | undefined', 'py': 'dict[str, Any] | None', 'stub': 'QueryAffect | None', 'native_py': 'Option<&str>', 'json': True,
+        'napi_convert': 'let {name} = {name}.map(query_affect_to_engine);', 'py_convert': 'let {name}: Option<oneiron::task_verb::sdk::QueryAffect> = {name}.map(|value| decode(value, "recall query affect")).transpose()?;', 'field': '{name}'},
     'ref': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'str | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
@@ -584,9 +593,14 @@ def mcp_input_dispatch(row):
     elif row.get('host_door'):
         # A host door answers from the server's own state, under the same
         # credential the REST facade passes it.
+        door = f'crate::api::facade::host_doors::{method}(server, auth, {"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await'
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
-                 f'let output = crate::api::facade::host_doors::{method}(server, auth, {"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}input).await.map_err(mcp_facade_error)?;\n')
+                 (f'let (output, listed) = {door};\n'
+                  '// Derived from the rows its reads listed.\n'
+                  'served.extend(listed);\n'
+                  'let output = output.map_err(mcp_facade_error)?;\n' if row.get('host_door_lists') else
+                  f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
@@ -1040,15 +1054,21 @@ def facade_dispatch(facade_rows):
         if r.get('host_door'):
             # A host door answers from the server's own state, outside any
             # room turn, under the credential the call presented. It opens its
-            # own handles, so no list here names the rows it read.
+            # own handles, so no list here names the rows it read, unless the
+            # door lists them itself (`host_door_lists`).
+            door = f'super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await'
+            answer = (f'''let (output, listed) = {door};
+                let output = facade_output(output?)?;
+                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(listed) }})''' if r.get('host_door_lists') else
+                      f'''let output = facade_output({door}?)?;
+                Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
                 {record_scope_guard(r)}
                 facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
-                let output = facade_output(super::host_doors::{method}(server, auth, {"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}facade_input(hooks.args.clone())?).await?)?;
-                Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))
+                {answer}
             }}\n'''
             continue
         # `readable` names the credential read checks: each caller-named ref is

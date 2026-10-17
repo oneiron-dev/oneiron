@@ -423,6 +423,7 @@
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?",
+      "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -433,6 +434,7 @@
       "input": "crate::task_verb::sdk::FanoutAckRequest",
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?",
+      "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -543,7 +545,6 @@
       "section": false,
       "binding": {
         "assemble": true,
-        "defaults": true,
         "options": "RecallOptions",
         "args": [
           {
@@ -579,12 +580,16 @@
           {
             "name": "media",
             "kind": "media"
+          },
+          {
+            "name": "query_affect",
+            "kind": "query_affect"
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        "
         }
       },
       "uniffi": {
@@ -596,7 +601,8 @@
           "format": "Option<String>",
           "as_of": "Option<u64>",
           "deadline_ms": "Option<u64>",
-          "media": "Option<RecallMedia>"
+          "media": "Option<RecallMedia>",
+          "query_affect": "Option<QueryAffect>"
         },
         "output": "MemoryPack"
       }
@@ -1533,6 +1539,17 @@
       "section": false
     },
     {
+      "name": "vault.secrets.lift_history",
+      "description": "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start.",
+      "input": "crate::policy_model::SecretLiftRequest",
+      "output": "crate::policy_model::SecretLiftStatus",
+      "call": "crate::policy_model::secret_lift_as_owner(memory.vault(), &memory.embedded_owner(\"vault.secrets.lift_history\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.widen_proposals",
       "description": "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined.",
       "input": "crate::agent_dispatch::widen_doors::WidenProposalsRequest",
@@ -1652,10 +1669,12 @@
     },
     {
       "name": "vault.lenses.default",
-      "description": "Composes the default vault lens from the named sources, read under the caller's own scope.",
+      "description": "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server.",
       "input": "crate::lens::LensDefaultRequest",
-      "output": "crate::claim::ScopedReadResult<crate::lens::GeneratedLens>",
+      "output": "crate::claim::ScopedReadResult<crate::lens::LensFrameCard>",
       "call": "memory.lenses_default(input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "projection_record_scope": true
@@ -4471,7 +4490,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.export",
-      "description": "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands.",
+      "description": "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep.",
       "refs": [
         "/artifact_ref"
       ],
