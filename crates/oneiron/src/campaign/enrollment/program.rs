@@ -737,10 +737,10 @@ fn write_program_in_txn(
 }
 
 /// The binding rule the checked doors apply inside their write: the rule
-/// [`put_campaign_program`] holds a query to
-/// ([`MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY`]), counting only programs that
-/// still enroll ([`program_enrolls_in_txn`]), so an archived program, or one of
-/// an archived campaign, releases its query.
+/// [`put_campaign_program`] holds a query to (`audience_taken_by`: no second
+/// program of one campaign on one query), counting only programs that still
+/// enroll ([`program_enrolls_in_txn`]), so an archived program releases its
+/// query.
 fn require_audience_query_free_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -748,18 +748,14 @@ fn require_audience_query_free_in_txn(
     program: &CampaignProgram,
     query_ref: EntityId,
 ) -> Result<()> {
-    let mut bound: usize = 0;
     for other in programs_for_query_in_txn(vault, txn, query_ref)? {
-        if other.program_ref != program.program_ref
+        if audience_taken_by(&other, program)
             && program_enrolls_in_txn(vault, txn, campaign_kind, &other)?
         {
-            bound = bound.saturating_add(1);
+            return Err(invalid(
+                "another program of this campaign already enrolls from this saved query",
+            ));
         }
-    }
-    if bound >= MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY {
-        return Err(invalid(
-            "another campaign program already enrolls from this saved query",
-        ));
     }
     Ok(())
 }

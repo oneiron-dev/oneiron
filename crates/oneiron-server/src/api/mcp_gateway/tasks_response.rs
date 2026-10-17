@@ -705,6 +705,10 @@ fn mcp_agent_verb_input(
         "vault.kv.delete" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.search" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.program.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.program.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.program.update" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.program.archive" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.report" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.digest" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.lens" => a.spec.clone().ok_or_else(invalid),
@@ -1209,6 +1213,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.kv.namespaces" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.program.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.program.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.program.update" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.program.archive" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.report" => {
@@ -2567,6 +2583,38 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_kv_namespaces(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.program.create" => {
+            let input: oneiron::campaign::surface::CreateCampaignProgramRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_program_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.program.read" => {
+            let input: oneiron::campaign::surface::CampaignProgramReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_program_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.program.update" => {
+            let input: oneiron::campaign::surface::UpdateCampaignProgramRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_program_update(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.program.archive" => {
+            let input: oneiron::campaign::surface::ArchiveCampaignProgramRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_program_archive(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.weave.report" => {

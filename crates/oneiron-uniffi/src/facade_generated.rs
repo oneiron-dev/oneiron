@@ -206,6 +206,26 @@ export_facade! {
     let output = client.vault_kv_namespaces(&input)?;
     crate::codec::lift_record("vault.kv.namespaces", &output)
 };
+"vault.campaign.program.create" => fn vault_campaign_program_create(&self, input: CreateCampaignProgramRequest) -> CampaignProgramRecord = |client| {
+    let input: oneiron::campaign::surface::CreateCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.create", input)?;
+    let output = client.vault_campaign_program_create(&input)?;
+    crate::codec::lift_record("vault.campaign.program.create", &output)
+};
+"vault.campaign.program.read" => fn vault_campaign_program_read(&self, input: CampaignProgramReadRequest) -> CampaignProgramReadResult = |client| {
+    let input: oneiron::campaign::surface::CampaignProgramReadRequest = crate::codec::lower_record("vault.campaign.program.read", input)?;
+    let output = client.vault_campaign_program_read(&input)?;
+    crate::codec::lift_record("vault.campaign.program.read", &output)
+};
+"vault.campaign.program.update" => fn vault_campaign_program_update(&self, input: UpdateCampaignProgramRequest) -> CampaignProgramRecord = |client| {
+    let input: oneiron::campaign::surface::UpdateCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.update", input)?;
+    let output = client.vault_campaign_program_update(&input)?;
+    crate::codec::lift_record("vault.campaign.program.update", &output)
+};
+"vault.campaign.program.archive" => fn vault_campaign_program_archive(&self, input: ArchiveCampaignProgramRequest) -> CampaignProgramRecord = |client| {
+    let input: oneiron::campaign::surface::ArchiveCampaignProgramRequest = crate::codec::lower_record("vault.campaign.program.archive", input)?;
+    let output = client.vault_campaign_program_archive(&input)?;
+    crate::codec::lift_record("vault.campaign.program.archive", &output)
+};
 "vault.weave.report" => fn vault_weave_report(&self, input: WeaveReportRequest) -> WeaveReportView = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.report", input)?;
     let output = client.vault_weave_report(&input)?;

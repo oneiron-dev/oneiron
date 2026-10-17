@@ -45,6 +45,10 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultCampaignProgramCreate,
+    VaultCampaignProgramRead,
+    VaultCampaignProgramUpdate,
+    VaultCampaignProgramArchive,
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultWeaveLens,
@@ -350,6 +354,10 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultCampaignProgramCreate,
+        Self::VaultCampaignProgramRead,
+        Self::VaultCampaignProgramUpdate,
+        Self::VaultCampaignProgramArchive,
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultWeaveLens,
@@ -658,6 +666,10 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultCampaignProgramCreate => "vault.campaign.program.create",
+            Self::VaultCampaignProgramRead => "vault.campaign.program.read",
+            Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
+            Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultWeaveLens => "vault.weave.lens",
@@ -966,6 +978,10 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignProgramCreate
+                | Self::VaultCampaignProgramRead
+                | Self::VaultCampaignProgramUpdate
+                | Self::VaultCampaignProgramArchive
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -1278,6 +1294,10 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignProgramCreate
+                | Self::VaultCampaignProgramRead
+                | Self::VaultCampaignProgramUpdate
+                | Self::VaultCampaignProgramArchive
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -1615,6 +1635,10 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignProgramCreate
+                | Self::VaultCampaignProgramRead
+                | Self::VaultCampaignProgramUpdate
+                | Self::VaultCampaignProgramArchive
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -1894,6 +1918,9 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultCampaignProgramCreate
+                | Self::VaultCampaignProgramUpdate
+                | Self::VaultCampaignProgramArchive
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
@@ -2113,6 +2140,10 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignProgramCreate => &["spec"],
+            Self::VaultCampaignProgramRead => &["spec"],
+            Self::VaultCampaignProgramUpdate => &["spec"],
+            Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -2419,6 +2450,10 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignProgramCreate => &["spec"],
+            Self::VaultCampaignProgramRead => &["spec"],
+            Self::VaultCampaignProgramUpdate => &["spec"],
+            Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -2801,6 +2836,18 @@ impl AgentVerb {
             }
             Self::VaultKvNamespaces => {
                 "The caller's distinct live namespaces, with exact segment prefix and suffix matching."
+            }
+            Self::VaultCampaignProgramCreate => {
+                "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."
+            }
+            Self::VaultCampaignProgramRead => {
+                "One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now."
+            }
+            Self::VaultCampaignProgramUpdate => {
+                "Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops."
+            }
+            Self::VaultCampaignProgramArchive => {
+                "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."
             }
             Self::VaultWeaveReport => {
                 "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."

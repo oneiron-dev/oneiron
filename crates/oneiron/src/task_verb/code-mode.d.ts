@@ -196,6 +196,14 @@ declare const vault: {
     };
   };
   batch(input: { entities: { entity_type: number; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }[] }): Promise<unknown>;
+  campaign: {
+    program: {
+      archive(input: { campaign_ref: string; expected_definition_version: number; program_ref: string }): Promise<unknown>;
+      create(input: { audience?: object | null; campaign_ref: string; name: string; schema_version?: number; steps?: object[] }): Promise<unknown>;
+      read(input: { campaign_ref: string; program_ref: string }): Promise<unknown>;
+      update(input: { audience?: object | null; campaign_ref: string; expected_definition_version: number; name: string; program_ref: string; steps: object[] }): Promise<unknown>;
+    };
+  };
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
     history(input: { claim_ref: string }): Promise<unknown>;

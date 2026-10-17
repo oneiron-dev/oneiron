@@ -70,6 +70,10 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultCampaignProgramCreate(input: unknown): unknown
+vaultCampaignProgramRead(input: unknown): unknown
+vaultCampaignProgramUpdate(input: unknown): unknown
+vaultCampaignProgramArchive(input: unknown): unknown
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultWeaveLens(input: unknown): unknown
