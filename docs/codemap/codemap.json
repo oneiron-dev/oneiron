@@ -24699,7 +24699,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)",
      "surface": {
       "enum": 3,
-      "fn": 26,
+      "fn": 27,
       "struct": 4
      }
     },
@@ -45584,6 +45584,7 @@
      "kind": "src",
      "notable": [
       "AsrUpdate",
+      "AudienceRefresh",
       "SafeguardUpdate",
       "VoiceCascadeSession",
       "VoiceSessionConfig"
@@ -45592,9 +45593,9 @@
      "purpose": "Session transitions only",
      "surface": {
       "enum": 1,
-      "fn": 19,
+      "fn": 20,
       "re-export": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -45864,7 +45865,7 @@
      "path": "src/voice_identity/math_keys.rs",
      "purpose": "Vector-math door (normalize/cosine/same-space check) and the digest helper the typed side tables' keys are…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -45969,7 +45970,7 @@
       "const": 3,
       "crate-vis": 3,
       "enum": 7,
-      "fn": 17,
+      "fn": 18,
       "struct": 12
      }
     },
