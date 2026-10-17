@@ -48,7 +48,8 @@ pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u6
 
 /// The prior in force for a registered cell.
 ///
-/// A `learning.setting` cell starts from the owner's seed when one is set,
+/// A `learning.setting` cell starts from the owner's seed for its scope when
+/// one is set (its project's, its type's, else the vault's),
 /// then from a stored prior, then from the catalog seed at the shipped
 /// weight. Every other cell starts from its stored prior, else the shipped
 /// default of its form.
@@ -64,8 +65,13 @@ pub(crate) fn cell_prior_in_txn(
             .setting_key
             .as_deref()
             .and_then(learning_setting::setting_spec)
-        && let Some((value, weight_runs)) =
-            learning_setting::owner_seed_in_txn(&vault.store, txn, spec)?
+        && let Some((value, weight_runs)) = learning_setting::owner_seed_in_txn(
+            &vault.store,
+            txn,
+            spec,
+            row.cell.subject,
+            row.cell.type_ref.as_ref(),
+        )?
     {
         return Ok(Prior {
             origin: PriorOrigin::Seed,
