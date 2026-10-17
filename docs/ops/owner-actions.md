@@ -547,9 +547,19 @@ the observed one never outranks what you said. The marker stays open until you a
 
 Each answer writes a `conflict.resolved` claim naming the marker, plus one receipt. The marker
 itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
-may settle that subject's conflicts too, but an agent never closes a claim you stated. The
-Dreamer asks its decision ladder only about conflicts its own delegation covers. Anything it
-can't settle stays here for you.
+may settle that subject's conflicts too, but an agent never closes a claim you stated.
+
+The Dreamer settles nothing until you let it:
+
+- `POST /v1/owner/conflicts/review` with `{"scope": "subject", "subject": "<32 hex>"}` lets it
+  settle that subject's conflicts; `{"scope": "vault"}` lets it settle every subject's. The
+  reply names the standing grant.
+- `POST /v1/owner/conflicts/review/revoke` with the same body ends that grant. Ending the whole
+  vault's leaves a subject's own grant standing.
+
+Once it holds a grant, the home node's Dreamer asks its decision ladder about up to eight of the
+covered conflicts after each scheduled pass. Its answer is signed by the Dreamer and receipted
+under the grant. Anything its ladder can't settle stays here for you.
 
 ## Review cleanup
 
@@ -824,6 +834,23 @@ When a shipped closed-form T1 detector reproduces every label (today `retrieval.
 `retrieval_miss`: a confirmed window holds a miss, a rejected one holds none), the revision is
 graduated and its T2 stops running; the T1 already runs in the Coach's nightly tier-1 sweep.
 `GET /v1/owner/self-heal/minted` lists each family's registration and what graduated it.
+
+## Calibrate the judge
+
+When the Coach shadows a new judge model against the current one, the cases the two answer
+differently stay open until a settled outcome or a third judge decides them. You can decide
+them too. Each night the Coach turns open cases into A/B asks, one per case, for each owner who
+funded judge-ask minutes; an owner who funded none is never asked. It keeps only as many waiting
+as your minutes buy.
+
+`GET /v1/owner/coach/judge-asks/minutes` reads your balance, and `POST` with `{"minutes"}` sets
+it. Each delivered ask spends the calibration policy's minutes (one by default), and nothing
+refills the balance. The asks reach only your own digest: `POST
+/v1/owner/proactivity/digest/assemble` assembles it for you, carrying the asks once a cadence
+period, by id in `judge_ask_ids`. `POST /v1/owner/coach/judge-asks/pick` with `{"ask", "choice":
+"a" | "b"}` picks one option. The pick is a final label in the judged skill's anchor: the next
+shadow pass sides with it, and a pick against a judge that already took over re-pins the old
+one, with a notice.
 
 ## Answer the decision ladder's asks
 
@@ -1150,7 +1177,7 @@ system job's. The whole body rides as one structured argument, so every size the
 runs as an action. It runs the verb's own door instead when the request names a room turn, or
 comes from a credential that binds no principal or read key. The route picks the path before it
 writes. A refusal answers with the code, words and suggestions the verb's own route refused
-with (a replay of a refused key keeps the code). A TURN write wakes the Dreamer once on either
+with, and a retry under a refused key answers with the same words. A TURN write wakes the Dreamer once on either
 path.
 
 ## Live agent runs
