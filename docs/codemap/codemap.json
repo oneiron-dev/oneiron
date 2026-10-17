@@ -18169,7 +18169,7 @@
      "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 7,
       "trait": 1
@@ -21525,6 +21525,7 @@
       "CandidateFixResult",
       "CodeFixExport",
       "CodeFixReplay",
+      "CodeFixSource",
       "CodeFixVerdict",
       "CodeFixWithheld",
       "ExportScrubber",
@@ -21542,8 +21543,8 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
-      "crate-vis": 2,
-      "enum": 8,
+      "crate-vis": 3,
+      "enum": 9,
       "fn": 5,
       "struct": 6,
       "trait": 2
@@ -38042,7 +38043,7 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
