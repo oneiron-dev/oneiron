@@ -10,6 +10,7 @@ pub mod coach_heal;
 mod coach_repair;
 pub mod code_fix;
 mod curator;
+pub mod detectors;
 mod evaluation;
 pub mod honesty;
 pub mod identity;

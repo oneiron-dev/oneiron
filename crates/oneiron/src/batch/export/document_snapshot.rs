@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryHold, ExportDiaryLedger,
-    ExportDiaryRead, ExportEdge, ExportManifest, ExportSecretsNulledManifest, WholeVaultExport,
+    ExportDiaryRead, ExportEdge, ExportEmbeddingSetup, ExportManifest, ExportScope,
+    ExportSecretsNulledManifest, WholeVaultExport, carries_embedding_setup,
     whole_vault_export_excludes_entity,
 };
 use crate::Vault;
@@ -34,6 +35,8 @@ pub(crate) struct ExportSnapshot {
     pub(crate) diary_holds: Vec<ExportDiaryHold>,
     pub(crate) secrets: Vec<ArchiveSecretCustody>,
     pub(crate) secrets_included: bool,
+    /// OF-370: the vault's embedding setup, when this export carries it.
+    pub(crate) embedding_setup: Option<ExportEmbeddingSetup>,
 }
 
 /// One run's result manifests, as its replay record names them, each with
@@ -374,6 +377,18 @@ impl Vault {
             .into_iter()
             .filter(|(id, _)| included.contains(id))
             .collect();
+        // OF-370: a whole-vault archive carries the embedding setup, read in
+        // this snapshot; a records archive and OKF carry none.
+        let scope = match (only, cut) {
+            (Some(_), _) => ExportScope::Records,
+            (None, ExportCut::Archive) => ExportScope::WholeVault,
+            (None, ExportCut::Okf) => ExportScope::Okf,
+        };
+        let embedding_setup = if carries_embedding_setup(scope) {
+            Some(super::embedding_setup_in_txn(&self.store, &rtxn)?)
+        } else {
+            None
+        };
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.
@@ -401,6 +416,7 @@ impl Vault {
                 diary_holds,
                 secrets,
                 secrets_included: include_secrets && only.is_none() && cut == ExportCut::Archive,
+                embedding_setup,
             },
             cut,
         )
