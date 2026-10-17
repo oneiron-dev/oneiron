@@ -18,10 +18,12 @@ mod extraction;
 mod media_bridge;
 mod serve_bindings;
 mod speech;
+mod wire;
 
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, VoiceBrainOut, VoicePlayout};
+pub use wire::VoiceWireBindings;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
