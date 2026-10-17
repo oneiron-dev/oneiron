@@ -32,6 +32,7 @@ mod byte_line;
 pub mod cli;
 pub mod commands;
 pub mod config;
+mod connector_admission_host;
 pub mod connector_call_host;
 mod connector_call_settle;
 pub mod control_keys;
