@@ -33,6 +33,10 @@ const fn retry(reason: &'static str) -> Error {
 #[serde(deny_unknown_fields)]
 struct LiveAxesRow {
     plan_digest: String,
+    /// The effective goal revision measured: a revised goal (a new project
+    /// goal claim, a rebind, an override) is measured again even when its
+    /// axes keep their names and kinds.
+    goal_revision: String,
     proposal_digest: String,
     target_digest: String,
     evidence_digest: String,
@@ -122,7 +126,14 @@ pub fn measure_skill_edit_goal_axes(
     let current = vault
         .get_skill_record(&target)?
         .ok_or(Error::EntityNotFound)?;
-    let plan = skill_goal_axis_plan(vault, &target, pulls_per_axis)?;
+    let (plan, goal_revision) = {
+        let txn = vault.store.env.read_txn()?;
+        let definition = goal_definition_in_txn(vault, &txn, &target)?;
+        (
+            goal_axis_plan(&definition, pulls_per_axis),
+            definition.revision,
+        )
+    };
     let report = measure_goal_axes(vault, target, &current, &staged, &plan, scorer, bandit)?;
     vault.with_write_txn_grouped(|txn| {
         let staged_now = vault.read_skill_record_in_txn(&*txn, proposal)?;
@@ -142,15 +153,15 @@ pub fn measure_skill_edit_goal_axes(
                 "the reserved evidence moved while the goal axes were measured",
             ));
         }
-        if goal_axis_plan(
-            &goal_definition_in_txn(vault, txn, &target)?,
-            pulls_per_axis,
-        ) != plan
+        let definition = goal_definition_in_txn(vault, txn, &target)?;
+        if goal_axis_plan(&definition, pulls_per_axis) != plan
+            || definition.revision != goal_revision
         {
             return Err(retry("the goal moved while its axes were measured"));
         }
         let row = LiveAxesRow {
             plan_digest: plan_digest(&plan),
+            goal_revision,
             proposal_digest,
             target_digest,
             evidence_digest: evidence_identity(&held_out).1,
@@ -172,7 +183,8 @@ pub fn measure_skill_edit_goal_axes(
 
 /// Whether the gate waits on a live measurement of `proposal`: its goal is
 /// joined to a project's goal record with primary axes, and no kept report
-/// binds both current bodies, the reserved evidence and the goal's plan.
+/// binds both current bodies, the reserved evidence and the goal's plan and
+/// revision.
 /// # Errors
 /// A proposal that is not an open optimizer proposal, an unreadable target or
 /// goal, or storage errors.
@@ -194,6 +206,7 @@ pub fn skill_edit_needs_goal_axis_report(vault: &Vault, proposal: &EntityId) -> 
         binds(
             &row,
             &plan,
+            &definition.revision,
             &proposal_digest,
             &target_digest,
             &evidence_digest,
@@ -201,15 +214,18 @@ pub fn skill_edit_needs_goal_axis_report(vault: &Vault, proposal: &EntityId) -> 
     }))
 }
 
-/// Whether `row` measured this exact basis on `plan`.
+/// Whether `row` measured this exact basis on `plan`, under goal revision
+/// `goal_revision`.
 fn binds(
     row: &LiveAxesRow,
     plan: &GoalAxisPlan,
+    goal_revision: &str,
     proposal: &str,
     target: &str,
     evidence: &str,
 ) -> bool {
     row.plan_digest == plan_digest(plan)
+        && row.goal_revision == goal_revision
         && row.proposal_digest == proposal
         && row.target_digest == target
         && row.evidence_digest == evidence
@@ -288,6 +304,7 @@ pub(super) fn live_axes(
         binds(
             row,
             &plan,
+            &basis.goal_revision,
             &basis.proposal_digest,
             &basis.target_digest,
             &basis.evidence_digest,

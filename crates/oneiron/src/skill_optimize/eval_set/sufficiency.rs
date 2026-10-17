@@ -12,7 +12,8 @@
 //! The owner is asked for a label "only when a real decision waits on a set
 //! that is too small". There is no standing labelling session: an ask names
 //! the decision that waits, and the minutes it is shown to cost come from the
-//! judge-calibration policy row.
+//! judge-calibration policy row. A digest carries it once, paid from the same
+//! funded minutes as the judge asks.
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -195,6 +196,8 @@ pub struct EvalLabelAsk {
     /// The minutes the ask is shown to cost.
     pub minutes: u32,
     pub asked_at: u64,
+    /// When a digest carried it: only a delivery marker, never an answer.
+    pub delivered_at: Option<u64>,
     pub chosen: Option<String>,
     pub answered_at: Option<u64>,
 }
@@ -265,6 +268,7 @@ impl Vault {
                 option_b: option_b.to_owned(),
                 minutes: super::super::policy::resolved_in_txn(self, txn)?.ask_minutes,
                 asked_at: at,
+                delivered_at: None,
                 chosen: None,
                 answered_at: None,
             };
@@ -282,6 +286,38 @@ impl Vault {
             .into_iter()
             .filter(|ask| &ask.responsible == person && ask.answered_at.is_none())
             .collect())
+    }
+
+    /// A digest's draw on the eval label asks `owner` is responsible for: the
+    /// unanswered ones no digest carried yet, in key order, while their
+    /// minutes fit `budget`. Each one taken is marked delivered at `at` in the
+    /// caller's transaction; they return with the minutes they cost.
+    /// # Errors
+    /// Unreadable rows, or storage errors.
+    pub(in crate::skill_optimize) fn take_eval_label_asks_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        at: u64,
+        budget: u32,
+    ) -> Result<(Vec<EvalLabelAsk>, u32)> {
+        let mut taken = Vec::new();
+        let mut spent = 0_u32;
+        for mut ask in rows_in_txn::<EvalLabelAsk>(self, txn, LABEL_ASK_PREFIX)? {
+            let pending = ask.answered_at.is_none() && ask.delivered_at.is_none();
+            if ask.responsible != owner || !pending {
+                continue;
+            }
+            match spent.checked_add(ask.minutes) {
+                Some(total) if total <= budget => spent = total,
+                _ => break,
+            }
+            ask.delivered_at = Some(at);
+            let key = ask_key(&ask.decision, &ask.case);
+            self.store.vault_meta.put(txn, &key, &encode(&ask)?)?;
+            taken.push(ask);
+        }
+        Ok((taken, spent))
     }
 
     /// The responsible person's pick: an owner-pick label on the case, the

@@ -233,8 +233,8 @@ use basis::{
     held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
 use decision::{
-    accepted_in_cycle_in_txn, close_answered_proposal_in_txn, readable_target,
-    standing_verdict_in_txn,
+    accepted_in_cycle_in_txn, approval_deferral_in_txn, close_answered_proposal_in_txn,
+    judge_cadence_allows_in_txn, readable_target, standing_verdict_in_txn,
 };
 use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,

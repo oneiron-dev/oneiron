@@ -713,25 +713,26 @@ pub(super) fn apply_in_txn(
         } => {
             verdict.tradeoff_jev.clone_from(jev);
             clear_ask_in_txn(vault, txn, &verdict.proposal)?;
+            let resolution = TradeoffResolution {
+                pending: verdict.id,
+                owner: question
+                    .accountable()
+                    .ok_or(Error::CorruptedIndex("tradeoff question without a role"))?,
+                authentication: authentication.clone(),
+                evidence: question.digest()?,
+                rung: *rung,
+            };
             if *choice == TradeoffChoice::Approve
-                && accepted_in_cycle_in_txn(vault, txn, cycle, &verdict.proposal)?
-                    >= cycle_cap_in_txn(vault, txn)?
+                && let Some(deferred) =
+                    approval_deferral_in_txn(vault, txn, cycle, &verdict.proposal, &verdict.skill)?
             {
-                verdict.disposition = SkillEditDisposition::DeferredCycleCap;
+                // The deferred row keeps the approval, so the answer it gave
+                // to this exact question stays known.
+                verdict.disposition = deferred;
+                verdict.tradeoff_resolution = Some(resolution);
                 return Ok(None);
             }
-            Ok(Some((
-                *choice,
-                TradeoffResolution {
-                    pending: verdict.id,
-                    owner: question
-                        .accountable()
-                        .ok_or(Error::CorruptedIndex("tradeoff question without a role"))?,
-                    authentication: authentication.clone(),
-                    evidence: question.digest()?,
-                    rung: *rung,
-                },
-            )))
+            Ok(Some((*choice, resolution)))
         }
         TradeoffPlan::Ask { question, jev } => {
             let preferences = preferences_in_txn(vault, txn, &question.goal_id)?;
@@ -989,14 +990,24 @@ fn settle_ask_in_txn(
             &preferences,
         )?;
         let cycle = SkillEditCycle::new(pending.cycle.clone())?;
+        let resolution = TradeoffResolution {
+            pending: pending.id,
+            owner: actor,
+            authentication,
+            evidence: expected_question_digest.to_owned(),
+            rung,
+        };
         if choice == TradeoffChoice::Approve
-            && accepted_in_cycle_in_txn(vault, txn, &cycle, proposal)?
-                >= cycle_cap_in_txn(vault, txn)?
+            && let Some(disposition) =
+                approval_deferral_in_txn(vault, txn, &cycle, proposal, &pending.skill)?
         {
+            // The deferred row keeps the person's approval, so the outcome of
+            // the question they answered stays known.
             let deferred = HeldOutVerdict {
                 id: vault.store.clock.entity_id()?,
-                disposition: SkillEditDisposition::DeferredCycleCap,
+                disposition,
                 accepted: false,
+                tradeoff_resolution: Some(resolution),
                 goal_revision: goal_definition_in_txn(vault, txn, &pending.skill)?.revision,
                 at,
                 ..pending
@@ -1005,13 +1016,6 @@ fn settle_ask_in_txn(
             clear_ask_in_txn(vault, txn, proposal)?;
             return Ok(deferred);
         }
-        let resolution = TradeoffResolution {
-            pending: pending.id,
-            owner: actor,
-            authentication,
-            evidence: expected_question_digest.to_owned(),
-            rung,
-        };
         record_tradeoff_resolution_in_txn(vault, txn, pending, resolution, choice, &cycle, at)
     }
 }

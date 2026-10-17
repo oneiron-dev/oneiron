@@ -2,7 +2,8 @@
 //!
 //! The engine proposes questions, not answers. Only an authenticated human
 //! pick over a delivered ask writes a label. A digest delivers each ask once;
-//! the owner's funded minutes balance defaults to zero (fail closed).
+//! the owner's funded minutes balance defaults to zero (fail closed). Eval
+//! label asks draw on the same balance, after the judge asks.
 
 use serde::{Deserialize, Serialize};
 
@@ -239,8 +240,9 @@ fn propose_in_txn(
 }
 
 /// Set the remaining minutes of new judge questions for this human. Each ask
-/// costs the resolved manifest's `ask_minutes` at delivery. The balance is not reset on
-/// cadence; zero disables delivery until an authenticated owner replenishes it.
+/// costs the resolved manifest's `ask_minutes` at delivery, and each eval label
+/// ask the minutes it was asked at. The balance is not reset on cadence; zero
+/// disables delivery until an authenticated owner replenishes it.
 pub fn set_judge_digest_minutes(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -493,6 +495,32 @@ pub(crate) fn take_digest_asks_in_txn(
         for ask in &selected {
             ASKS.put(&vault.store, txn, &ask.id, ask)?;
         }
+    }
+    Ok(selected)
+}
+
+/// The digest's second draw on the same balance, after
+/// [`take_digest_asks_in_txn`]: the owner's pending eval label asks, each
+/// debited the minutes it was asked at, while what remains covers them. A zero
+/// balance carries none; marks and debit share the digest's transaction.
+pub(crate) fn take_digest_eval_asks_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+    at: u64,
+) -> Result<Vec<super::EvalLabelAsk>> {
+    let minutes = MINUTES
+        .get(&vault.store, &*txn, &owner)?
+        .map_or(0, |balance| balance.0);
+    if minutes == 0 {
+        return Ok(Vec::new());
+    }
+    let (selected, spent) = vault.take_eval_label_asks_in_txn(txn, owner, at, minutes)?;
+    if !selected.is_empty() {
+        let remaining = minutes
+            .checked_sub(spent)
+            .ok_or(Error::ArithmeticOverflow("judge ask minutes"))?;
+        MINUTES.put(&vault.store, txn, &owner, &JudgeMinutes(remaining))?;
     }
     Ok(selected)
 }

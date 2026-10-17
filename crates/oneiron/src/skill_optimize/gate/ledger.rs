@@ -31,6 +31,9 @@ fn validate_tradeoff_verdict(
             disposition,
             SkillEditDisposition::AcceptedTradeoff
                 | SkillEditDisposition::RejectedTradeoff
+                // An approval the cycle cap or the judge's cadence deferred.
+                | SkillEditDisposition::DeferredCycleCap
+                | SkillEditDisposition::DeferredJudgeCadence
                 | SkillEditDisposition::RefusedStaleTarget
                 | SkillEditDisposition::RefusedProtectedTier
                 | SkillEditDisposition::RefusedBindingMismatch

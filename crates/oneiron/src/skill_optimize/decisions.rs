@@ -316,10 +316,18 @@ impl dyn HeldOutReplayNotes + '_ {
             instructions: &arm.desc,
             held_out_receipts: &receipts,
         };
+        // The criterion's own kind when the host sent one, else the kind the
+        // goal declares now: either way it is frozen with the question, so a
+        // later floor test never reads it from a goal revised since.
         let kind = criterion
-            .get("name")
-            .and_then(Value::as_str)
-            .and_then(|name| self.axis_kind(&case, name));
+            .get("kind")
+            .and_then(|kind| serde_json::from_value::<super::GoalAxisKind>(kind.clone()).ok())
+            .or_else(|| {
+                criterion
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .and_then(|name| self.axis_kind(&case, name))
+            });
         let decision = ask(
             self,
             "live_axis",
