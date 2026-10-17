@@ -61498,7 +61498,7 @@
      "path": "src/pin.rs",
      "purpose": "Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -70805,8 +70805,18 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/organs.rs",
+     "purpose": "The organs on the server's one host ([`SyncServer::organs`]): at boot it takes every organ an Active pack…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -71991,7 +72001,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72063,7 +72073,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 586,
+   "source_files": 587,
    "test_files": 182
   },
   "oneiron-spawn": {
