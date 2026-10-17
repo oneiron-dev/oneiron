@@ -200,13 +200,13 @@ pub(crate) async fn no_record_reply(mut response: Response) -> Response {
 /// `OffRecordMode::Anonymous`, and the principal the request's credential
 /// names (its holder, whichever class acts under it) is on its room's
 /// roster or is the actor who entered it alone
-/// (`Vault::off_record_session_is_anonymous_for`, OF-063). Only a request
-/// whose principal provably differs records as anywhere else: one with no
-/// principal (the host root, an OAuth relay, the legacy shared secret)
-/// keeps the unchecked rule, as a session the registry cannot be asked
-/// about does. Each transport asks when the call arrives and again when its
-/// receipt would be written: a caller verified at either time writes none,
-/// so a session closed mid-call keeps its call's exception.
+/// (`Vault::off_record_session_is_anonymous_for`, OF-063). Every other
+/// request records as anywhere else, and so does one with no principal
+/// (the host root, an OAuth relay, the legacy shared secret): it binds no
+/// session (Engine ruling 2137/2271). Each transport asks when the call
+/// arrives and again when its receipt would be written: a caller verified
+/// at either time writes none, so a session closed mid-call keeps its
+/// call's exception.
 pub(crate) fn in_anonymous_session(
     server: &SyncServer,
     headers: &HeaderMap,
@@ -224,6 +224,24 @@ pub(crate) fn in_anonymous_session(
 pub(crate) fn request_principal(auth: &CoreAuth) -> Option<oneiron::EntityId> {
     auth.principal_ref()
         .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+}
+
+/// The principal an MCP call binds its session for (OF-063, FIX 2271): the
+/// one its credential names, or, for the configured root, whose credential
+/// verifies no slip and names no principal, the host-registered actor it
+/// acts through, the actor its rows' surfaces bind
+/// (`Memory::keeps_no_record` reads the same). A slip that names no
+/// principal maps to none, so it binds no session.
+pub(crate) fn mcp_session_principal(
+    auth: Option<&CoreAuth>,
+    actor: oneiron::EntityId,
+) -> Option<oneiron::EntityId> {
+    match auth {
+        Some(auth) if auth.principal_ref().is_some() || auth.verified_slip().is_some() => {
+            request_principal(auth)
+        }
+        _ => Some(actor),
+    }
 }
 
 /// The session ref a request's `x-oneiron-session` header names, as text;
