@@ -44,6 +44,7 @@ mod shared_member_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod weave_doors;
+mod widen_proposal_doors;
 
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
