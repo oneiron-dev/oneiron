@@ -12,10 +12,17 @@
 //! A handle is valid while its runner holds the same lease: no wall-clock
 //! TTL. One credential attaches per lease generation and none rebinds it. A
 //! run leaves at settlement, unless it parks on a durable wait, which keeps
-//! its lease. An unattached run has no handle, and a handle never falls back
-//! to an actor's latest run or to plain dispatch.
+//! its lease; a parked run whose lease then goes (a cancel) leaves at the
+//! next registration or housekeeping pass. An unattached run has no handle,
+//! and a handle never falls back to an actor's latest run or to plain
+//! dispatch.
+//!
+//! An attach or action waits up to [`LIVE_RUN_GUARD_WAIT`] for the guard
+//! while an entry or another action holds it. Tokio's mutex queues in order,
+//! so a waiting call gets the guard before the runner's next entry.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use axum::http::StatusCode;
 use oneiron::attempt_queue::AttemptRecord;
@@ -44,6 +51,10 @@ pub(crate) const LIVE_RUN_ATTACHED: &str = "live_run_attached";
 
 /// The version tag every handle opens with.
 const HANDLE_TAG: &str = "lr1";
+
+/// How long an attach or action waits for the run's guard while an entry or
+/// another action holds it, before it answers [`CODE_RUN_BUSY`].
+const LIVE_RUN_GUARD_WAIT: Duration = Duration::from_secs(5);
 
 /// Why a live-run attach or action was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,10 +154,11 @@ impl LiveRunEntry {
             && self.leased.attempt_count == leased.attempt_count
     }
 
-    /// The run's guard if no entry or action holds it.
-    fn try_serial(&self) -> Result<OwnedMutexGuard<()>, LiveRunRefusal> {
-        Arc::clone(&self.serial)
-            .try_lock_owned()
+    /// The run's guard, waiting up to [`LIVE_RUN_GUARD_WAIT`] while an entry
+    /// or another action holds it.
+    async fn wait_serial(&self) -> Result<OwnedMutexGuard<()>, LiveRunRefusal> {
+        tokio::time::timeout(LIVE_RUN_GUARD_WAIT, Arc::clone(&self.serial).lock_owned())
+            .await
             .map_err(|_| LiveRunRefusal::Busy)
     }
 }
@@ -171,6 +183,7 @@ impl LiveRuns {
         planner: Option<PlannerSettings>,
         executor: String,
     ) -> oneiron::Result<Arc<LiveRunEntry>> {
+        self.prune(vault);
         if let Some(entry) = self.get(run)
             && entry.is_lease(actor, leased)
         {
@@ -214,26 +227,68 @@ impl LiveRuns {
         settled
     }
 
-    /// Attaches `caller` to run `run` and answers its handle. The caller
-    /// must be the run's own agent; under the run's guard its lease must
-    /// still hold. The credential attached already gets the same handle
-    /// again; another is refused. Blocking.
+    /// Drops every run whose lease no longer holds, read live: a parked run
+    /// cancelled, which no entry or call touches again, leaves here. The map
+    /// is locked only to list the runs and to drop them; the lease reads run
+    /// between. A run whose lease cannot be read stays. Blocking.
+    pub(crate) fn prune(&self, vault: &Vault) {
+        let mut gone: Vec<_> = self.map().values().cloned().collect();
+        gone.retain(
+            |entry| match live_run::live_run_lease_holds(vault, &entry.proof) {
+                Ok(holds) => !holds,
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        run = ?entry.run,
+                        "a live run's lease cannot be read; it stays registered"
+                    );
+                    false
+                }
+            },
+        );
+        let mut runs = self.map();
+        for entry in &gone {
+            if is_current(&runs, entry) {
+                runs.remove(&entry.run);
+            }
+        }
+    }
+
+    /// Run `run` held for `caller` to attach to: the caller must be the
+    /// run's own agent. Waits up to [`LIVE_RUN_GUARD_WAIT`] for the run's
+    /// guard.
+    pub(crate) async fn attaching(
+        &self,
+        run: EntityId,
+        caller: LiveRunCaller,
+    ) -> Result<AttachingLiveRun, LiveRunRefusal> {
+        let entry = self
+            .get(run)
+            .filter(|entry| is_agent(entry.actor, caller.actor))
+            .ok_or(LiveRunRefusal::Unavailable)?;
+        let serial = entry.wait_serial().await?;
+        Ok(AttachingLiveRun {
+            entry,
+            caller,
+            _serial: serial,
+        })
+    }
+
+    /// Attaches the caller of `held` to its run and answers its handle.
+    /// Under the run's guard its lease must still hold. The credential
+    /// attached already gets the same handle again; another is refused.
+    /// Blocking.
     pub(crate) fn attach(
         &self,
         vault: &Vault,
-        run: EntityId,
-        caller: LiveRunCaller,
+        held: AttachingLiveRun,
     ) -> oneiron::Result<Result<String, LiveRunRefusal>> {
-        let Some(entry) = self
-            .get(run)
-            .filter(|entry| is_agent(entry.actor, caller.actor))
-        else {
-            return Ok(Err(LiveRunRefusal::Unavailable));
-        };
-        let _serial = match entry.try_serial() {
-            Ok(serial) => serial,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
+        let AttachingLiveRun {
+            entry,
+            caller,
+            _serial,
+        } = held;
+        let run = entry.run;
         if !self.holds(vault, &entry)? {
             return Ok(Err(LiveRunRefusal::Stale));
         }
@@ -302,6 +357,13 @@ impl LiveRuns {
     }
 }
 
+/// A run held to attach a caller: its entry and the caller, under its guard.
+pub(crate) struct AttachingLiveRun {
+    entry: Arc<LiveRunEntry>,
+    caller: LiveRunCaller,
+    _serial: OwnedMutexGuard<()>,
+}
+
 /// A handle resolved to its registered run, not yet held.
 pub(crate) struct ResolvedLiveRun {
     entry: Arc<LiveRunEntry>,
@@ -320,15 +382,16 @@ impl ResolvedLiveRun {
         self.binding.action_key(key)
     }
 
-    /// Takes the run's guard for one whole action, then rechecks that the
-    /// run is still registered under its lease, which still holds, with
-    /// this attachment. A held guard answers busy at once, never waits.
-    pub(crate) fn hold(
+    /// Takes the run's guard for one whole action, waiting up to
+    /// [`LIVE_RUN_GUARD_WAIT`] while an entry or another action holds it,
+    /// then rechecks that the run is still registered under its lease, which
+    /// still holds, with this attachment.
+    pub(crate) async fn hold(
         &self,
         runs: &LiveRuns,
         vault: &Vault,
     ) -> oneiron::Result<Result<HeldLiveRun, LiveRunRefusal>> {
-        let serial = match self.entry.try_serial() {
+        let serial = match self.entry.wait_serial().await {
             Ok(serial) => serial,
             Err(refusal) => return Ok(Err(refusal)),
         };
