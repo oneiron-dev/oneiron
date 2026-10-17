@@ -2108,18 +2108,49 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/checkpoint.rs",
+     "purpose": "The checkpoint v2 images this vault built and keeps (OF-469): each image's canonical bytes keyed by its id…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "AuthorityCheckpoint"
+      "AuthorityArchiveManifest",
+      "AuthorityCheckpointRow",
+      "AuthorityCheckpointUnresolved",
+      "AuthorityCheckpointV2"
      ],
-     "path": "src/authority/checkpoint.rs",
-     "purpose": "Quorum-signed authority roster checkpoints, linked to exact signed history",
+     "path": "src/authority/checkpoint_image.rs",
+     "purpose": "The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
-      "fn": 7,
-      "struct": 1
+      "const": 4,
+      "crate-vis": 7,
+      "fn": 5,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointPosture",
+      "CheckpointRoot",
+      "CheckpointRootPolicy"
+     ],
+     "path": "src/authority/checkpoint_policy.rs",
+     "purpose": "Who may attest a portable authority checkpoint (OF-469, checkpoint v2): the eligible roots and the quorum…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
      }
     },
     {
@@ -2213,7 +2244,7 @@
      "path": "src/authority/fold_resume.rs",
      "purpose": "A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -2566,7 +2597,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 32
+      "re-export": 33
      }
     },
     {
@@ -2806,7 +2837,7 @@
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -2853,14 +2884,6 @@
      "notable": [],
      "path": "src/authority/tests/causal_claim.rs",
      "purpose": "Admission and later reads both honor revoke/regrant causality, not backdated time",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/checkpoint.rs",
-     "purpose": "Checkpoint signatures, replay equivalence and chain linkage",
      "surface": {}
     },
     {
@@ -5158,6 +5181,7 @@
      "path": "src/blob_artifact/esign/ledger.rs",
      "purpose": "Claims are the document state machine",
      "surface": {
+      "const": 1,
       "crate-vis": 12,
       "fn": 3
      }
@@ -5186,7 +5210,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -14601,7 +14625,7 @@
      "purpose": "Explicit memory pins bypass query relevance and render shedding, never read authority",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -51541,7 +51565,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 132,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52985,8 +53009,8 @@
    },
    "over_bar": 164,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3207,
-   "test_files": 903
+   "source_files": 3209,
+   "test_files": 902
   },
   "oneiron-android": {
    "files": [
@@ -53117,7 +53141,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MachineEncryptionKey",
@@ -53129,7 +53153,7 @@
      "purpose": "The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec",
      "surface": {
       "const": 4,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 5,
       "struct": 2
@@ -70983,7 +71007,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChatBrain",

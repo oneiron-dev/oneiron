@@ -9,7 +9,7 @@ use super::*;
 
 /// One fully verified restrictive fact. Scratch ancestry is proof only; it
 /// never enters `valid_entries`, the roster, or the permissive merged state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct VerifiedRestriction {
     vault_id: AuthorityVaultId,
     entry_hash: AuthorityEntryHash,
@@ -18,7 +18,7 @@ struct VerifiedRestriction {
     routed: BTreeSet<AuthorityEntryHash>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 enum Restriction {
     Actor {
         authority_key: AuthorityKey,
@@ -39,7 +39,7 @@ enum Restriction {
     },
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct RevokeFacts {
     by_hash: BTreeMap<AuthorityEntryHash, VerifiedRestriction>,
 }
