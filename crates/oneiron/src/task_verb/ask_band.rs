@@ -136,9 +136,6 @@ impl Memory<'_> {
         handles: &[TaskAskHandle],
         policy: &impl AskBandPolicy,
     ) -> MemoryResult<DecisionBand> {
-        if handles.len() > 4096 {
-            return Err(MemoryError::bad_request("too many ask receipts"));
-        }
         let key = key(self.vault(), self.actor(), class)?;
         self.with_verified_actor_write_txn(|txn| {
             let mut state = read(self.vault(), txn, &key)?;

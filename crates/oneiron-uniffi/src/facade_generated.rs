@@ -995,6 +995,16 @@ export_facade! {
     let output = client.connector_status(&input)?;
     crate::codec::lift_record("connector.status", &output)
 };
+"connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ConnectorCallReply = |client| {
+    let input: oneiron::outbound_consent::ConnectorCallRequest = crate::codec::lower_record("connector.call", input)?;
+    let output = client.connector_call(&input)?;
+    crate::codec::lift_record("connector.call", &output)
+};
+"connector.schema" => fn connector_schema(&self, input: ConnectorSchemaRequest) -> ConnectorSchemaReply = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorSchemaRequest = crate::codec::lower_record("connector.schema", input)?;
+    let output = client.connector_schema(&input)?;
+    crate::codec::lift_record("connector.schema", &output)
+};
 "vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
     let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
     let output = client.vault_commit(&input)?;
@@ -1214,5 +1224,15 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EditNoteRequest = crate::codec::lower_record("vault.notes.edit", input)?;
     let output = client.vault_notes_edit(&input)?;
     crate::codec::lift_record("vault.notes.edit", &output)
+};
+"vault.notes.seal" => fn vault_notes_seal(&self, input: NoteRefRequest) -> NoteSeal = |client| {
+    let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.seal", input)?;
+    let output = client.vault_notes_seal(&input)?;
+    crate::codec::lift_record("vault.notes.seal", &output)
+};
+"vault.notes.lifecycle" => fn vault_notes_lifecycle(&self, input: NoteRefRequest) -> NoteLifecycleView = |client| {
+    let input: oneiron::note::NoteRefRequest = crate::codec::lower_record("vault.notes.lifecycle", input)?;
+    let output = client.vault_notes_lifecycle(&input)?;
+    crate::codec::lift_record("vault.notes.lifecycle", &output)
 };
 }

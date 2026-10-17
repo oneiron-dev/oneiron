@@ -860,6 +860,8 @@ class Oneiron:
             """Creates a NOTE of a registered kind from an existing entity."""
         def edit(self, input: Facade.EditNoteRequest) -> Facade.NoteEditOutcome:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
+        def seal(self, request: Facade.NoteRefRequest) -> Facade.NoteSeal: ...
+        def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
@@ -905,6 +907,10 @@ class Oneiron:
             """Every live catalogued connector whose name or summary matches the query."""
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
+        def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ConnectorCallReply:
+            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+        def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
+            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
     class _ConnectorOutboundVerbs:

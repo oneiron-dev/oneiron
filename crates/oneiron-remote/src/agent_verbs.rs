@@ -656,6 +656,12 @@ impl OneironClient {
                 "connector.status" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::ConnectorView>,
                 >(client, verb, &input),
+                "connector.call" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorCallReply,
+                >(client, verb, &input),
+                "connector.schema" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorSchemaReply,
+                >(client, verb, &input),
                 "vault.commit" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
                     client, verb, &input,
                 ),
@@ -789,6 +795,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.notes.edit" => remote_agent_verb_output::<
                     oneiron::note::NoteProgramEditOutcome,
+                >(client, verb, &input),
+                "vault.notes.seal" => {
+                    remote_agent_verb_output::<oneiron::note::NoteSeal>(client, verb, &input)
+                }
+                "vault.notes.lifecycle" => remote_agent_verb_output::<
+                    oneiron::note::NoteLifecycleView,
                 >(client, verb, &input),
                 _ => Err(crate::error::bad_request(
                     "unknown SDK agent verb",
@@ -3313,6 +3325,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("connector.status", value)
     }
+    pub fn connector_call(
+        &self,
+        input: &oneiron::outbound_consent::ConnectorCallRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorCallReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("connector.call", value)
+    }
+    pub fn connector_schema(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSchemaRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorSchemaReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("connector.schema", value)
+    }
     pub fn vault_commit(
         &self,
         input: &oneiron::task_verb::sdk::CommitRequest,
@@ -3883,5 +3919,31 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.edit", value)
+    }
+    /// Seals one NOTE: its document freezes, and a later edit opens a fork.
+    pub fn vault_notes_seal(
+        &self,
+        input: &oneiron::note::NoteRefRequest,
+    ) -> Result<oneiron::note::NoteSeal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.seal", value)
+    }
+    /// Where one NOTE stands (active, sealed, archived or tombstoned) and its seal.
+    pub fn vault_notes_lifecycle(
+        &self,
+        input: &oneiron::note::NoteRefRequest,
+    ) -> Result<oneiron::note::NoteLifecycleView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.lifecycle", value)
     }
 }

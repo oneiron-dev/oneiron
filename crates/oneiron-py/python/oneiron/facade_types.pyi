@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 243 facade rows, 840 declarations.
-Inputs: 204 of 243 fully typed, 38 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 198 of 243 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 58; unread shapes: 1.
+Census: 247 facade rows, 851 declarations.
+Inputs: 207 of 247 fully typed, 39 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 200 of 247 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 63; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -82,6 +82,7 @@ class DiaryReadRecord(TypedDict):
     entries: list[EntityId]
     grants: list[str]
     request: NotRequired[EntityId | None]
+    source: str
 DiaryReviewState = Literal["pending", "approved", "declined", "used"]
 class DiaryReadRequest(TypedDict):
     request: EntityId
@@ -305,6 +306,9 @@ class PersonRequest(TypedDict):
 class EmptyRequest(TypedDict):
     ...
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
+ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
+ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -350,7 +354,8 @@ class ShapeRowChannel(TypedDict):
     address: str
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
-    grant_ref: str
+    grant_ref: NotRequired[str]
+    bound: NotRequired[ShapeGrantBound | None]
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -379,6 +384,10 @@ class ShapeItemStateLanded(TypedDict):
     receipt: str
 class ShapeItemStateProposed(TypedDict):
     state: Literal["proposed"]
+class ShapeItemStateFiled(TypedDict):
+    state: Literal["filed"]
+    proposal_ref: str
+    expires_at: int
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -386,7 +395,7 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
@@ -3522,6 +3531,10 @@ class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
 HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
+class QuestionCriteria(TypedDict):
+    yes_if_all: list[str]
+    no_if_any: list[str]
+    not_a_reason_to_say_no: list[str]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
@@ -3529,6 +3542,7 @@ class GraphAskRequest(TypedDict):
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
     posture: NotRequired[HostingPrivacyPosture | None]
+    criteria: NotRequired[QuestionCriteria | None]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
     probability: NotRequired[float | None]
@@ -3567,10 +3581,6 @@ QuestionActivation = Literal["one_off", "standing"]
 class RefreshPolicy(TypedDict):
     on_arrival: bool
     every_seconds: NotRequired[int | None]
-class QuestionCriteria(TypedDict):
-    yes_if_all: list[str]
-    no_if_any: list[str]
-    not_a_reason_to_say_no: list[str]
 QuestionAudience = Literal["asker"]
 class QuestionMedia(TypedDict):
     images: NotRequired[bool]
@@ -3712,6 +3722,7 @@ class DecisionAsk(TypedDict):
     prior: NotRequired[AskPrior | None]
     queue_pin: ProviderPin
     to: AskTo
+    correlation: NotRequired[str | None]
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
 class DecisionAskClimbRequest(TypedDict):
@@ -3736,6 +3747,46 @@ class ConnectorView(TypedDict):
     registered_at: int
     status_changed_at: NotRequired[int | None]
     budgeted_as_sends: bool
+MutationIntent = Literal["preview", "explicit_mutation"]
+class ConnectorCallRequest(TypedDict):
+    name: str
+    tool: str
+    arguments: NotRequired[Any]
+    mutation: NotRequired[MutationIntent]
+class ConnectorToolResult(TypedDict):
+    source: str
+    foreign: bool
+    content: Any
+    structured_content: NotRequired[Any | None]
+    is_error: bool
+    rpc_error: NotRequired[Any | None]
+class ConnectorCallReplyDelivered(TypedDict):
+    outcome: Literal["delivered"]
+    result: NotRequired[ConnectorToolResult | None]
+    reasons: NotRequired[list[str]]
+class ConnectorCallReplyHeld(TypedDict):
+    outcome: Literal["held"]
+    call_ref: str
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyRefused(TypedDict):
+    outcome: Literal["refused"]
+    decision_ref: NotRequired[str | None]
+    reasons: list[str]
+class ConnectorCallReplyPendingDelivery(TypedDict):
+    outcome: Literal["pending_delivery"]
+    call_ref: NotRequired[str | None]
+    reasons: list[str]
+ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery
+class ConnectorSchemaRequest(TypedDict):
+    name: str
+    tool: str
+class ConnectorSchemaReply(TypedDict):
+    source: str
+    foreign: bool
+    input_schema: NotRequired[Any | None]
+    destructive: NotRequired[bool | None]
+    reasons: NotRequired[list[str]]
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
 class ClaimRefRequest(TypedDict):
@@ -4116,6 +4167,7 @@ class OfficeBodyFork(TypedDict):
     commits: int
     opened_at: int
     state: ForkState
+    run_root: NotRequired[EntityId | None]
 class OfficeBodyForkEditRequest(TypedDict):
     artifact_ref: str
     fork_ref: str
@@ -4299,3 +4351,15 @@ class NoteEditOutcomeReviewRequired(TypedDict):
     outcome: Literal["review_required"]
     receipt: CommitReceipt
 NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
+class NoteRefRequest(TypedDict):
+    note_ref: str
+class NoteSeal(TypedDict):
+    note: str
+    document: str
+    frontier: list[int]
+    sealed_by: str
+    sealed_at: int
+NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
+class NoteLifecycleView(TypedDict):
+    status: NoteLifecycleStatus
+    seal: NotRequired[NoteSeal | None]

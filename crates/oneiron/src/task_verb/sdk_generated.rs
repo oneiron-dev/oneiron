@@ -1026,6 +1026,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConnectorNameRequest>(),
             ),
             (
+                "connector.call",
+                crate::code_run::vault_read::request_schema::<
+                    crate::outbound_consent::ConnectorCallRequest,
+                >(),
+            ),
+            (
+                "connector.schema",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorSchemaRequest,
+                >(),
+            ),
+            (
                 "self.browser.open",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
             ),
@@ -1379,6 +1391,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.notes.edit",
                 crate::code_run::vault_read::request_schema::<EditNoteRequest>(),
+            ),
+            (
+                "vault.notes.seal",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
+            ),
+            (
+                "vault.notes.lifecycle",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
                 "vault.search",
@@ -2890,6 +2910,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "connector.call" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "connector.schema" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.commit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3192,6 +3226,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.notes.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.seal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.lifecycle" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3853,6 +3901,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "connector.status" => {
             let _input: ConnectorNameRequest = decode(value.clone())?;
         }
+        "connector.call" => {
+            let _input: crate::outbound_consent::ConnectorCallRequest = decode(value.clone())?;
+        }
+        "connector.schema" => {
+            let _input: crate::task_verb::sdk::ConnectorSchemaRequest = decode(value.clone())?;
+        }
         "self.browser.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
         }
@@ -4116,6 +4170,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.notes.edit" => {
             let _input: EditNoteRequest = decode(value.clone())?;
+        }
+        "vault.notes.seal" => {
+            let _input: crate::note::NoteRefRequest = decode(value.clone())?;
+        }
+        "vault.notes.lifecycle" => {
+            let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
         _ => {
             return Err(wrong_root(verb)
@@ -4432,6 +4492,8 @@ pub fn invoke(
         "self.decisions.asks" => encode(self_decisions_asks(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
+        "connector.call" => encode(connector_call(memory, decode(value)?)?),
+        "connector.schema" => encode(connector_schema(memory, decode(value)?)?),
         "vault.commit" => encode(vault_commit(memory, decode(value)?)?),
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
@@ -4502,6 +4564,8 @@ pub fn invoke(
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
+        "vault.notes.seal" => encode(vault_notes_seal(memory, decode(value)?)?),
+        "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     })
 }
@@ -6291,6 +6355,18 @@ pub fn connector_status(
 ) -> MemoryResult<Option<crate::task_verb::sdk::ConnectorView>> {
     crate::task_verb::sdk::connector_description(memory, input)
 }
+pub fn connector_call(
+    memory: &Memory<'_>,
+    input: crate::outbound_consent::ConnectorCallRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorCallReply> {
+    crate::task_verb::sdk::connector_call_host_only(memory, &input)
+}
+pub fn connector_schema(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectorSchemaRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorSchemaReply> {
+    crate::task_verb::sdk::connector_schema_read(memory, input)
+}
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
@@ -6981,4 +7057,28 @@ pub fn vault_notes_edit(
         &["/note_ref"],
     )?;
     memory.edit_note(&input.note_ref, &input.edit)
+}
+pub fn vault_notes_seal(
+    memory: &Memory<'_>,
+    input: crate::note::NoteRefRequest,
+) -> MemoryResult<crate::note::NoteSeal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.seal",
+        &input,
+        &["/note_ref"],
+    )?;
+    memory.seal_note(&input)
+}
+pub fn vault_notes_lifecycle(
+    memory: &Memory<'_>,
+    input: crate::note::NoteRefRequest,
+) -> MemoryResult<crate::note::NoteLifecycleView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.lifecycle",
+        &input,
+        &["/note_ref"],
+    )?;
+    memory.note_lifecycle(&input)
 }

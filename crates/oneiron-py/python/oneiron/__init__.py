@@ -1309,6 +1309,12 @@ class Oneiron:
         def edit(self, input: dict[str, Any]) -> Any:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
             return json.loads(_translate(lambda: self._client.vault_notes_edit(json.dumps(input, allow_nan=False))))
+        def seal(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Seals one NOTE: its document freezes, and a later edit opens a fork."""
+            return json.loads(_translate(lambda: self._client.vault_notes_seal(json.dumps(request, allow_nan=False))))
+        def lifecycle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."""
+            return json.loads(_translate(lambda: self._client.vault_notes_lifecycle(json.dumps(request, allow_nan=False))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1384,6 +1390,12 @@ class Oneiron:
         def status(self, spec):
             """One catalogued connector by name, removed ones included."""
             return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
+        def call(self, spec):
+            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            return json.loads(_translate(lambda: self._client.connector_call(json.dumps(spec))))
+        def schema(self, spec):
+            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)

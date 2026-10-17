@@ -207,6 +207,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.decisions.asks", post(facade_route))
         .route("/connector.list", post(facade_route))
         .route("/connector.status", post(facade_route))
+        .route("/connector.call", post(facade_route))
+        .route("/connector.schema", post(facade_route))
         .route("/vault.commit", post(facade_route))
         .route("/vault.remember", post(facade_route))
         .route("/vault.claims.retract", post(facade_route))
@@ -251,4 +253,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.create", post(facade_route))
         .route("/vault.notes.from_entity", post(facade_route))
         .route("/vault.notes.edit", post(facade_route))
+        .route("/vault.notes.seal", post(facade_route))
+        .route("/vault.notes.lifecycle", post(facade_route))
 }

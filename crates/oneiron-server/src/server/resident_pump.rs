@@ -185,6 +185,12 @@ impl SyncServer {
     fn resident_pass(&self, now: u64) -> Pass {
         let mut pass = Pass::default();
         let vault = self.vault();
+        // OF-533: the waits a pumped run parks on are swept on this recheck,
+        // so a parked ask's deadline lands with no Dreamer enabled.
+        if let Err(error) = vault.settle_code_run_waits() {
+            pass.faults
+                .insert("task waits".to_owned(), error.to_string());
+        }
         let agents = match vault.entities_by_type(ENTITY_TYPE_AGENT_DEF) {
             Ok(agents) => agents,
             Err(error) => {

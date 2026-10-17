@@ -1830,6 +1830,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn connector_call(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "connector.call")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("connector.call", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn connector_schema(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "connector.schema")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("connector.schema", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_commit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.commit")?;
         let output = py
@@ -2184,6 +2198,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.notes.edit")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.notes.edit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_seal(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.notes.seal")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.seal", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_lifecycle(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.notes.lifecycle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.lifecycle", input))
             .map_err(raise)?;
         encode(&output)
     }
