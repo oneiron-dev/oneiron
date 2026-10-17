@@ -849,7 +849,7 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
             return json.loads(_translate(lambda: self._client.vault_lenses_deactivate(json.dumps(spec))))
         def list(self, spec):
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection."""
+            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
             """Composes the default vault lens from the named sources, read under the caller's own scope."""
@@ -936,6 +936,12 @@ class Oneiron:
         def blame(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every unit of one tested code file state, blamed by the operations that wrote it."""
             return json.loads(_translate(lambda: self._client.vault_code_blame(json.dumps(request, allow_nan=False))))
+        def proposal_view(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """One repo proposal's semantic change from its base, under the provenance it was proposed with."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_view(json.dumps(request, allow_nan=False))))
+        def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
+            return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
     class _VaultRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
