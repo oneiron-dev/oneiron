@@ -220,6 +220,11 @@ impl Vault {
                     if !grant_allows(self, txn, fork.note, actor)? {
                         return Err(invalid("no grant to accept this fork").into());
                     }
+                    // A merge or switch moves a sealed pad's text; a reject
+                    // only decides the fork.
+                    if verdict != NoteVerdict::Reject {
+                        self.refuse_sealed_pad_in_txn(txn, fork.note)?;
+                    }
                     if let Some(receipt) = land(self, txn, fork, verdict, actor)? {
                         bundle.landed.push(receipt);
                     }
@@ -249,6 +254,7 @@ impl Vault {
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
                     super::verbs::note_core(self, txn, note)?;
+                    self.refuse_sealed_pad_in_txn(txn, note)?;
                     let parent =
                         load_doc(self, txn, note)?.ok_or(invalid("note has no document"))?;
                     let fork_doc = parent

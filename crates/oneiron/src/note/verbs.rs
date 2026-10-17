@@ -308,6 +308,8 @@ impl Vault {
             .memory(actor.entity_ref(), actor.actor_class())
             .with_actor_content_write_txn_as(actor, |content| {
                 content.update_note(note, |txn| {
+                    // A fork of a sealed pad is a write to it too.
+                    self.refuse_sealed_pad_in_txn(txn, note)?;
                     let existed = load_doc(self, txn, note)?.is_some();
                     if existed && matches!(edit, NoteEdit::WholeText { base: None, .. }) {
                         return Err(invalid("whole-text edit requires its read version").into());
