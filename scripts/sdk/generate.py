@@ -662,7 +662,7 @@ def mcp_input_dispatch(row):
                      '    return execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
                      '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
-            body += ('if input.task_ref.is_none() && !input.self_target && !input.vault {\n'
+            body += ('if input.task_ref.is_none() && input.handle.is_none() && input.after.is_none() && !input.self_target && !input.vault {\n'
                      '    // The section is narrowed to this credential before its\n'
                      "    // render cap, so its counts are the credential's rows alone.\n"
                      '    let rows = memory.describe_rows().map_err(mcp_facade_error)?;\n'
@@ -781,7 +781,9 @@ async fn execute_agent_verb_listing(
     }
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
     let surface = McpRowSurface { position, invocation, origin };
-    let memory = surface.memory(server, actor, producers);
+    // The direct caller's own proof, on the rows whose HTTP door binds it
+    // outside a room turn (OF-417, OF-365).
+    let memory = mcp_direct_authorship(server, tool, actor, surface.memory(server, actor, producers))?;
     // Rule 5: a task-work row takes its one turn here, for MCP and code mode
     // alike, and holds it through its hooks and its row.
     let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work) {

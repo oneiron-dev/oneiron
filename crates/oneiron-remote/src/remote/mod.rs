@@ -321,9 +321,28 @@ impl RemoteClient {
             .send()
             .map_err(|error| transport_error(describe_send_failure(&error)))?;
         let status = response.status();
-        // A 202 is a refusal here as on a verb: a verb hook the dispatched
-        // tool met asked first, and the body names the ask.
-        if !status.is_success() || status == reqwest::StatusCode::ACCEPTED {
+        // A model round trip answers 202 with its queued callback. Any other
+        // 202 is a refusal as on a verb: a verb hook the dispatched tool met
+        // asked first, and the body names the ask.
+        if status == reqwest::StatusCode::ACCEPTED {
+            let body: serde_json::Value = read_json(response, status, "a lens frame event")?;
+            if body.get("callbackId").is_some() {
+                return serde_json::from_value(body).map_err(|error| {
+                    transport_error(format!(
+                        "the server queued a lens callback this call could not decode: {error}"
+                    ))
+                });
+            }
+            let bytes = serde_json::to_vec(&body).unwrap_or_default();
+            return Err(
+                self::response::parse_error_envelope(&bytes).unwrap_or_else(|| {
+                    transport_error(format!(
+                        "the server answered {status} with a body that is not an Oneiron error envelope"
+                    ))
+                }),
+            );
+        }
+        if !status.is_success() {
             return Err(read_error_envelope(response, status));
         }
         read_json(response, status, "a lens frame event")
