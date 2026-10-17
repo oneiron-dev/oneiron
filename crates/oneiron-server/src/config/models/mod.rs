@@ -24,6 +24,7 @@ mod decision_read;
 mod decisions;
 mod levels;
 mod media;
+mod planner;
 mod provider;
 #[cfg(test)]
 mod tests;
@@ -39,6 +40,7 @@ pub use decisions::{
 };
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
+pub use planner::{PlannerSeatSetting, PlannerSettings};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
 pub use voice::VoiceSettings;
 
@@ -78,6 +80,8 @@ pub(crate) struct ModelsFile {
     media: Option<media::MediaFile>,
     #[serde(default)]
     voice: voice::VoiceFile,
+    #[serde(default)]
+    planner: planner::PlannerFile,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -179,6 +183,9 @@ pub struct ModelsConfig {
     pub media: MediaSettings,
     /// The server's own voice loop (`[models.voice]`).
     pub voice: VoiceSettings,
+    /// The seats a leased agent's planned spawns choose among
+    /// (`[models.planner]`); none lends no planner.
+    pub planner: PlannerSettings,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -433,6 +440,7 @@ impl ModelsFile {
         let media = self.media.unwrap_or_default().resolve(&providers)?;
         let decisions = self.decisions.resolve()?;
         let voice = self.voice.resolve(base)?;
+        let planner = self.planner.resolve()?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -449,6 +457,7 @@ impl ModelsFile {
             decisions,
             media,
             voice,
+            planner,
         };
         if let Some(file) = self.decision_read {
             models.decision_read = Some(file.resolve(base, &models)?);

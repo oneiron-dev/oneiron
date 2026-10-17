@@ -6,6 +6,7 @@
 //! host-owned: the host's transport sends one request per call, so a run's
 //! media gate may wrap this backend.
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use oneiron::llm::BrokerIsolation;
 use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
     MediaUsage,
@@ -88,6 +89,19 @@ pub trait GeminiMediaTransport: Send + Sync {
         request: GeminiMediaHttpRequest,
         lease: &'a BudgetLease,
     ) -> GeminiMediaFuture<'a>;
+
+    /// Every check the transport makes before it sends, with no I/O (a
+    /// broker it cannot reach, a key its custody door would refuse); `Ok`,
+    /// the default, for a transport that checks nothing first.
+    fn preflight(&self) -> LlmResult<()> {
+        Ok(())
+    }
+
+    /// How the credential broker that sends for this transport is kept apart
+    /// from the daemon; `None`, the default, when no broker does.
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        None
+    }
 }
 
 /// One Gemini API media client. It serves each engine model it was built
@@ -304,6 +318,16 @@ impl<T: GeminiMediaTransport> GeminiMediaBackend<T> {
 }
 
 impl<T: GeminiMediaTransport> MediaBackend for GeminiMediaBackend<T> {
+    /// A model this client was not built for, or its transport's refusal.
+    fn preflight(&self, request: &MediaRequest) -> LlmResult<()> {
+        self.wire_model(&request.model)?;
+        self.transport.preflight()
+    }
+
+    fn broker_isolation(&self) -> Option<BrokerIsolation> {
+        self.transport.broker_isolation()
+    }
+
     fn run<'a>(
         &'a self,
         request: MediaRequest,

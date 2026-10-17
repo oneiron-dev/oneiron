@@ -236,14 +236,21 @@ pub(super) async fn serve_with_config(
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     workers.push(crate::saved_query_sweep::spawn(&sync_server));
     // Uncertain identities are decided, or asked of the person (OF-123).
-    workers.push(crate::ai_host::identity::spawn(&sync_server));
+    workers.push(crate::ai_host::identity::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(
         &sync_server,
         config.failure_signals.publisher_candidates()?,
+        crate::server::admit_every_pass(),
     ));
     // The nightly Coach jobs that need the host's model or rules (OF-420).
-    workers.push(crate::ai_host::coach_host::spawn(&sync_server));
+    workers.push(crate::ai_host::coach_host::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
     workers.extend(crate::decision_host::spawn_person_threshold(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).
@@ -263,6 +270,7 @@ pub(super) async fn serve_with_config(
     workers.extend(crate::ai_host::self_heal_detectors::spawn(
         &sync_server,
         &config.self_heal,
+        crate::server::admit_every_pass(),
     ));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
