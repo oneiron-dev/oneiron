@@ -5,7 +5,10 @@
 //! subprotocol, then every message rides it as one app RPC, the wake poll's
 //! included. A server that does not select that subprotocol, or refuses the
 //! upgrade, has no MCP carrier, and the bridge holds one pooled HTTP client
-//! instead for the rest of its life; so does `--transport http`.
+//! instead for the rest of its life; so does `--transport http`. A socket that
+//! drops fails the requests in flight on it with a typed error, and a later
+//! request opens a fresh one, after a backoff while opens keep failing; a
+//! request that never reached the socket goes over HTTP meanwhile.
 //!
 //! Neither changes what a request is. Each still carries the slip and a holder
 //! proof signed for it alone, which the server's binding door verifies and
@@ -35,6 +38,11 @@ use crate::cli::{McpSurface, McpTransport};
 /// A server that cannot be reached in this time gets this request over HTTP,
 /// and the next request tries the socket again.
 const SOCKET_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// After an open fails, requests go over HTTP for this long before the next
+/// try, doubling per failure up to the cap; an open that succeeds resets it.
+const SOCKET_REOPEN_BACKOFF: Duration = Duration::from_secs(1);
+const SOCKET_REOPEN_BACKOFF_CAP: Duration = Duration::from_secs(30);
 
 /// How often an otherwise quiet socket is pinged, and how long it may stay
 /// silent with nothing in flight before the bridge drops it and opens a fresh
@@ -238,6 +246,9 @@ struct SocketState {
     opening: bool,
     /// The server has no MCP carrier: every request goes over HTTP.
     declined: bool,
+    /// How many opens have failed in a row, and when the next may start.
+    failures: u32,
+    retry_at: Option<Instant>,
 }
 
 /// One open socket: requests reach its driver through here.
@@ -363,11 +374,13 @@ impl SocketLink {
     }
 
     /// The open socket, opening one when there is none. `None` sends this
-    /// request over HTTP: the server has no MCP carrier, or the socket could
-    /// not be opened by `until`. Requests that arrive during an open wait for
-    /// it, each no longer than its own deadline.
+    /// request over HTTP: the server has no MCP carrier, the socket could not
+    /// be opened by `until`, or a failed open's backoff is still running.
+    /// Requests that arrive during an open wait for it, each no longer than
+    /// its own deadline, and share its outcome.
     fn session(&self, credential: &Credential<'_>, until: Instant) -> Option<Arc<Session>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let joined = state.failures;
         loop {
             if state.declined {
                 return None;
@@ -377,7 +390,17 @@ impl SocketLink {
             {
                 return Some(Arc::clone(session));
             }
+            // An open this request waited on failed: it goes over HTTP.
+            if state.failures != joined {
+                return None;
+            }
             if !state.opening {
+                if state
+                    .retry_at
+                    .is_some_and(|retry_at| Instant::now() < retry_at)
+                {
+                    return None;
+                }
                 break;
             }
             let left = until.saturating_duration_since(Instant::now());
@@ -400,6 +423,8 @@ impl SocketLink {
         let session = match opened {
             Opened::Session(session) => {
                 state.session = Some(Arc::clone(&session));
+                state.failures = 0;
+                state.retry_at = None;
                 Some(session)
             }
             Opened::Declined(why) => {
@@ -407,7 +432,14 @@ impl SocketLink {
                 eprintln!("oneiron mcp: {why}; holding one pooled HTTP connection instead");
                 None
             }
-            Opened::Failed => None,
+            Opened::Failed => {
+                let backoff = SOCKET_REOPEN_BACKOFF
+                    .saturating_mul(2_u32.saturating_pow(state.failures.min(16)))
+                    .min(SOCKET_REOPEN_BACKOFF_CAP);
+                state.failures = state.failures.saturating_add(1);
+                state.retry_at = Some(Instant::now() + backoff);
+                None
+            }
         };
         self.opened.notify_all();
         session
