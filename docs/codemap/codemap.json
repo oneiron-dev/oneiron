@@ -12113,7 +12113,7 @@
      "path": "src/code_sandbox/egress/receipt.rs",
      "purpose": "Proxy receipts use the existing owner-local gate ledger",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -16188,7 +16188,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "enum": 1,
       "struct": 1
      }
@@ -47324,7 +47324,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 332
+      "fn": 333
      }
     },
     {
@@ -51219,7 +51219,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world delete that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -55943,13 +55943,17 @@
      "kind": "src",
      "notable": [
       "DesktopGuest",
-      "DesktopSession"
+      "DesktopSession",
+      "PersonInput",
+      "Takeover",
+      "TakeoverRecord"
      ],
      "path": "src/desktop.rs",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…",
      "surface": {
-      "fn": 7,
-      "struct": 2
+      "enum": 2,
+      "fn": 13,
+      "struct": 3
      }
     },
     {
@@ -55980,6 +55984,8 @@
       "ExpectOutput",
       "FindInput",
       "FindOutput",
+      "HandoverInput",
+      "HandoverOutput",
       "HotkeyInput",
       "ImageOutput",
       "KeyInput",
@@ -56018,7 +56024,7 @@
       "enum": 7,
       "fn": 10,
       "re-export": 5,
-      "struct": 35,
+      "struct": 37,
       "trait": 2
      }
     },
@@ -66602,6 +66608,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/desktop_takeover_routes.rs",
+     "purpose": "`/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/diary_routes.rs",
      "purpose": "`/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8)",
      "surface": {
@@ -71723,6 +71739,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/desktop_seats.rs",
+     "purpose": "The run desktops live on this host (CUA-001), so the owner's door can reach the same guest a run's door drives",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71830,7 +71856,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 4
      }
     },
@@ -72711,7 +72737,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 305,
+     "files": 306,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73033,7 +73059,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73105,7 +73131,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 605,
+   "source_files": 607,
    "test_files": 182
   },
   "oneiron-spawn": {
