@@ -19,11 +19,13 @@ mod apply;
 mod card;
 mod channel;
 mod grant;
+mod group;
 mod live;
 mod manifest;
 mod member;
 mod plan;
 mod reach;
+mod run;
 mod seed;
 mod skill;
 
@@ -36,12 +38,14 @@ pub use channel::{
     ShapeMailScope, ShapeSelfHeld,
 };
 pub use grant::ShapeGrantBound;
+pub use group::{ShapeInboxGroup, ShapeInboxMember};
 pub use member::{ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick};
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
 pub use reach::{
     REACH_LINE_MAX_CHANGES, REACH_LINE_NO_CHANGE, REACH_LINE_NONE, ShapePlanReach, ShapeReach,
     ShapeReachFact, ShapeReachVerdict,
 };
+pub use run::{SHAPE_APPLY_ATTEMPT_KIND, SHAPE_ITEM_ATTEMPT_KIND, ShapeApplyRun, shape_item_ref};
 pub use seed::StoredShapeSeed;
 pub use skill::ShapeSkillSource;
 
@@ -218,6 +222,15 @@ impl ShapeTarget {
             Self::Grant { .. } => "grant",
             Self::Manifest { .. } => "manifest",
             Self::Sync { .. } => "sync",
+        }
+    }
+
+    /// The declared name, as a person reads it beside the kind.
+    #[must_use]
+    pub fn name(&self) -> String {
+        match self {
+            Self::Shared => "the vault".to_owned(),
+            other => other.keys().join(" / "),
         }
     }
 
