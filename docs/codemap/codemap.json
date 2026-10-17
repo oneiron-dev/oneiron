@@ -1790,7 +1790,7 @@
      "purpose": "Write-once executor identity for a skill-bearing attempt's terminal receipt",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -36051,7 +36051,7 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 1,
       "fn": 19,
       "struct": 1
@@ -69203,7 +69203,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7,
       "struct": 3,
