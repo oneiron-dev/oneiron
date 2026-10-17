@@ -236,7 +236,7 @@ fn canonical_replay_request_envelope() -> Result<WriteEnvelope> {
 
 pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
-        SelfDispatchOutcome::AgentSpawn(result) => super::coordination_codec::spawn_value(result),
+        SelfDispatchOutcome::AgentSpawn(result) => super::coordination_codec::spawn_value(result)?,
         SelfDispatchOutcome::AgentDefinitionPut(result) => request_map(vec![
             ("kind", Value::from("agent_definition_put")),
             ("id", entity_id_value(result.id)),
