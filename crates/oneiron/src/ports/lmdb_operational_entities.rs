@@ -93,41 +93,6 @@ impl EntityStoreMaintenance for Store {
         payload.extend_from_slice(body);
         self.entities.put(txn, id.as_bytes(), &payload)
     }
-    fn port_redaction_receipt_sweep_complete(
-        &self,
-        txn: &mut RwTxn<'_>,
-        id: &EntityId,
-        completed_at: u64,
-    ) -> Result<()> {
-        let (stored, entity_type) = stored_record(self, txn, id)?;
-        if entity_type != ENTITY_TYPE_REDACTION_AUDIT {
-            return Err(Error::CorruptedIndex("redaction audit entity type"));
-        }
-        let mut receipt =
-            crate::deletion::decode_redaction_audit_receipt(&stored[ENTITY_METADATA_HEADER_LEN..])?;
-        if receipt.sweep_complete_at.is_some() {
-            return Err(Error::InvariantViolation(
-                "a redaction audit receipt completes its sweep once",
-            ));
-        }
-        receipt.sweep_complete_at = Some(completed_at);
-        let body = rmp_serde::to_vec_named(&receipt)
-            .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))?;
-        crate::deletion::validate_redaction_receipt_body(&body)?;
-        let mut payload = stored[..ENTITY_METADATA_HEADER_LEN].to_vec();
-        payload.extend_from_slice(&body);
-        crate::vault::entity_revision::capture_entity_revision(self, txn, id, &payload)?;
-        // Both completion times are now written: a legal hold's "erase
-        // completed" names this receipt's request (OF-470 C4).
-        crate::store::legal_hold::note_erase_completed_in_txn(
-            self,
-            txn,
-            &receipt.scope.entity_ids,
-            &receipt.request_id,
-            completed_at,
-        )?;
-        self.entities.put(txn, id.as_bytes(), &payload)
-    }
     #[cfg(feature = "sync")]
     fn port_retained_shell_restore(
         &self,

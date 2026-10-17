@@ -93,9 +93,12 @@ impl ConsolidationExecutor<'_> {
         evidence.extend(turns);
         let state = conflict_state(&conflict.identity, members, prior_heads)?;
         let to = self.ask_route(step_ctx.vault, Some(conflict.identity.project))?;
+        // The ask is this conflict's in this attempt: its open-marker id.
+        let key =
+            crate::dreamer_consolidation::conflict_open_marker_id(conflict, step_ctx.attempt_id)?;
         let Some(decided) = self
             .decide(
-                step_ctx, pass, resources, &to, &questions, &evidence, &state, charges,
+                step_ctx, pass, resources, &to, key, &questions, &evidence, &state, charges,
             )
             .await?
         else {

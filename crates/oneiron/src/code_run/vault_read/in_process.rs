@@ -202,7 +202,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 })
                 .collect();
             self.scoped_read
-                .search_seeded(query, vector, &media, limit, None)
+                .search_seeded(query, vector, &media, limit, None, None)
         };
         results.map_err(|error| engine_failure(VaultReadMethod::Query, &error))
     }
