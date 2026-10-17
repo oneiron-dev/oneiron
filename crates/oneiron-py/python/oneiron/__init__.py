@@ -494,6 +494,9 @@ class Oneiron:
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
         @property
+        def connectors(self) -> "Oneiron._VaultConnectorsVerbs":
+            return Oneiron._VaultConnectorsVerbs(self._client)
+        @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
@@ -805,6 +808,9 @@ class Oneiron:
         def put(self, spec):
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+        def remove(self, spec):
+            """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
+            return json.loads(_translate(lambda: self._client.vault_packs_remove(json.dumps(spec))))
         @property
         def setup(self) -> "Oneiron._VaultPacksSetupVerbs":
             return Oneiron._VaultPacksSetupVerbs(self._client)
@@ -823,6 +829,24 @@ class Oneiron:
         def verify(self, spec):
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_verify(json.dumps(spec))))
+    class _VaultConnectorsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs":
+            return Oneiron._VaultConnectorsSubscriptionsVerbs(self._client)
+    class _VaultConnectorsSubscriptionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_subscriptions_put(json.dumps(spec))))
+        def list(self, spec):
+            """An agent's connector event subscriptions, standing and revoked, for the owner."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_subscriptions_list(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner stops one connector event subscription; the agent's key for the channel stays."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_subscriptions_revoke(json.dumps(spec))))
     class _VaultAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1313,7 +1337,7 @@ class Oneiron:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
-            """Speaks one turn into the current room turn's room, through the normal witness gate."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
         def join(self, spec):
             """Files and decides a request to take part in a room or one of its threads."""

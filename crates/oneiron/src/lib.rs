@@ -178,6 +178,7 @@ pub mod fanout_auto;
 pub mod inbox;
 pub mod learning;
 pub mod learning_setting;
+pub mod learning_setting_choice;
 pub mod learning_setting_doors;
 pub mod own_rate;
 pub mod policy_setting_doors;
