@@ -18858,7 +18858,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/duplicate.rs",
      "purpose": "`duplicate_work` on action digests (agent-mind §3.4, OF-568): two attempts ran the same action on the same…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
