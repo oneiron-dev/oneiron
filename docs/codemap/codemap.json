@@ -24568,18 +24568,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferAnswerIntent",
-      "OfferCardPayload"
+      "OfferCardIntent",
+      "OfferCardOutcome",
+      "OfferCardPayload",
+      "OfferCardPhase",
+      "OfferReopenIntent",
+      "OfferVoteIntent"
      ],
      "path": "src/genui/offer_card.rs",
-     "purpose": "The offer card's render-neutral payload and its write-free answer intent (OF-530)",
+     "purpose": "The offer card's render-neutral payload and its write-free intents (OF-530): the host's answer, a room…",
      "surface": {
-      "const": 2,
-      "fn": 7,
-      "struct": 2
+      "const": 5,
+      "enum": 3,
+      "fn": 15,
+      "struct": 4
      }
     },
     {
@@ -46772,7 +46778,7 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -46847,6 +46853,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/lifecycle_receipt.rs",
+     "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -46867,7 +46883,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 2,
       "re-export": 24
      }
@@ -46970,7 +46986,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -53665,7 +53681,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53828,7 +53844,7 @@
    },
    "over_bar": 177,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3266,
+   "source_files": 3267,
    "test_files": 902
   },
   "oneiron-android": {

@@ -1943,7 +1943,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/failure_card.rs` | src | s | 4 struct · 1 enum · 1 fn · 1 const · 1 crate-vis | FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SurfacedFailureCard, SurfacedFailureCardInput | ONE-1887 surfaced-failure card composer and QA validators |
 | `src/genui/failure_card_validation.rs` | src | s | 2 crate-vis | — | Read-only integrity checks for surfaced failure cards |
 | `src/genui/mod.rs` | src | s | 8 re-export · 1 crate-vis | — | OF-336 generated-UI component contract |
-| `src/genui/offer_card.rs` | src | s | 2 struct · 7 fn · 2 const | OfferAnswerIntent, OfferCardPayload | The offer card's render-neutral payload and its write-free answer intent (OF-530) |
+| `src/genui/offer_card.rs` | src | m | 4 struct · 3 enum · 15 fn · 5 const | OfferAnswerIntent, OfferCardIntent, OfferCardOutcome, OfferCardPayload, OfferCardPhase, OfferReopenIntent, OfferVoteIntent | The offer card's render-neutral payload and its write-free intents (OF-530): the host's answer, a room… |
 | `src/genui/project_proposal.rs` | src | m | 4 struct · 7 fn · 1 const | ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard, ProjectProposalPicks | Typed project proposal and owner-confirmed, write-free mint intent (OF-501) |
 | `src/genui/protocol.rs` | src | s | 1 struct · 1 enum · 1 fn | Of336ActionDescriptor, Of336ComponentKind | OF-336 component discriminators and the action descriptor every card advertises |
 | `src/genui/receipt_view.rs` | src | s | 2 struct · 2 enum · 8 fn | ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution | Receipt view component, deep-link kinds and commitment link resolver |
@@ -3719,14 +3719,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/highway.rs` | src | m | 6 fn · 16 crate-vis | — | The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and… |
 | `src/task_verb/highway_accept.rs` | src | m | 8 crate-vis | — | The highway's Accept arm (OF-220): take a TASK addressed to you |
 | `src/task_verb/highway_block.rs` | src | m | 7 crate-vis | — | Exits from Blocked an owner can drive (OF-220) |
-| `src/task_verb/highway_post.rs` | src | L | 8 crate-vis | — | The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved… |
+| `src/task_verb/highway_post.rs` | src | L | 9 crate-vis | — | The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved… |
 | `src/task_verb/highway_report.rs` | src | XL | 13 crate-vis | — | The highway's Report arm (OF-220): progress, blocked, done, failed and release against a fenced handle, the… |
 | `src/task_verb/highway_runner.rs` | src | m | 14 crate-vis | — | Engine runners on the task highway (OF-220) |
 | `src/task_verb/highway_status.rs` | src | s | 1 crate-vis | — | The highway's Status arm (OF-220): any handle's status, and a poll |
 | `src/task_verb/highway_types.rs` | src | m | 10 struct · 6 enum · 1 fn · 9 crate-vis | AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle, TaskLifecycleRecord +8 | The task highway's typed calls, durable handles, outcomes and status view (OF-220) |
 | `src/task_verb/lifecycle_facade.rs` | src | m | 7 fn · 5 crate-vis | — | — |
+| `src/task_verb/lifecycle_receipt.rs` | src | s | 8 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
 | `src/task_verb/linear_store.rs` | src | m | 1 struct · 5 fn · 6 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
-| `src/task_verb/mod.rs` | src | s | 2 mod · 24 re-export · 30 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | s | 2 mod · 24 re-export · 31 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
@@ -3736,7 +3737,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/project_ask.rs` | src | s | 2 fn · 2 crate-vis | — | Asks addressed to a project, over the ordinary TASK ask (ARCH-0067: a proposal on a project's task goes to… |
 | `src/task_verb/project_tradeoff.rs` | src | m | 5 fn · 5 crate-vis | — | A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks) |
 | `src/task_verb/proposal_create.rs` | src | s | 2 crate-vis | — | Brief-less `tasks.create` proposals land on approval (OF-220) |
-| `src/task_verb/query_facade.rs` | src | L | 7 fn · 5 crate-vis | — | — |
+| `src/task_verb/query_facade.rs` | src | L | 7 fn · 6 crate-vis | — | — |
 | `src/task_verb/rate_limit.rs` | src | s | 1 fn · 9 crate-vis | — | — |
 | `src/task_verb/recall_door.rs` | src | s | 1 struct · 5 fn · 1 const | RecallDoor | The recall door: when a recall's clock starts, what it answers when its door stops waiting, and how it… |
 | `src/task_verb/reconciliation.rs` | src | s | 1 fn · 1 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
