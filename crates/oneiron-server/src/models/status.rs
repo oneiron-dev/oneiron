@@ -50,6 +50,7 @@ fn kind_name(kind: ProviderKind) -> &'static str {
         ProviderKind::Cartesia => "cartesia",
         ProviderKind::Elevenlabs => "elevenlabs",
         ProviderKind::Voxcpm2 => "voxcpm2",
+        ProviderKind::Gemini => "gemini",
     }
 }
 
@@ -86,18 +87,22 @@ impl ProviderStatus {
         }
     }
 
-    /// A tagger entry: accepted config whose consumer is the tagger slot's
-    /// worker, not the LLM slot.
+    /// Accepted config the LLM slot builds no client for: a tagger entry,
+    /// whose consumer is the tagger slot, or a media-only provider, whose
+    /// clients are its media rungs'.
     pub(super) fn without_consumer(name: &str, provider: &ProviderConfig) -> Self {
-        Self::with(
-            name,
-            provider,
-            "no_consumer",
-            Some(
-                "tagger providers are served by the tagger slot worker, not this server build"
-                    .into(),
-            ),
-        )
+        let (state, reason) = if provider.kind == ProviderKind::Oneironer {
+            (
+                "tagger_slot",
+                "served by the tagger slot; the vault manifest's extraction_encoder binding selects it",
+            )
+        } else {
+            (
+                "media_only",
+                "serves [models.media] rungs only; it answers no chat call",
+            )
+        };
+        Self::with(name, provider, state, Some(reason.into()))
     }
 
     pub(super) fn unavailable(

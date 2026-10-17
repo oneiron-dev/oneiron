@@ -88,5 +88,6 @@ fn adapter(kind: ProviderKind) -> &'static str {
         ProviderKind::Cartesia => "cartesia",
         ProviderKind::Elevenlabs => "elevenlabs",
         ProviderKind::Voxcpm2 => "voxcpm2",
+        ProviderKind::Gemini => "gemini",
     }
 }

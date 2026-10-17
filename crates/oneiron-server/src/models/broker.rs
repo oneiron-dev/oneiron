@@ -229,6 +229,7 @@ pub(super) fn broker_backend(
         ProviderKind::Cartesia | ProviderKind::Elevenlabs | ProviderKind::Voxcpm2 => {
             anyhow::bail!("a speech provider sends no model call")
         }
+        ProviderKind::Gemini => anyhow::bail!("a gemini provider sends media calls only"),
     };
     Ok(BrokerBackend {
         wire,

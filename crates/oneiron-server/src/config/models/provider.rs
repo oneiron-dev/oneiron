@@ -32,13 +32,24 @@ pub enum ProviderKind {
     /// carries, so it is reached over loopback HTTP only. A
     /// `[models.media.speech]` rung only.
     Voxcpm2,
+    /// Google's Gemini API (`x-goog-api-key`), its origin as `base_url`: a
+    /// `[models.media.image]` rung (`models/{model}:generateContent`, asked
+    /// for image output) or a `[models.media.video]` rung (a Veo
+    /// `predictLongRunning` job) only.
+    Gemini,
 }
 
 impl ProviderKind {
     /// Whether this kind answers `generate` calls on the LLM slot.
     #[must_use]
     pub fn generates(self) -> bool {
-        !matches!(self, Self::Oneironer) && !self.speech_only()
+        !matches!(self, Self::Oneironer) && !self.media_only()
+    }
+
+    /// Whether this kind serves media seats and nothing else.
+    #[must_use]
+    pub fn media_only(self) -> bool {
+        self.speech_only() || matches!(self, Self::Gemini)
     }
 
     /// Whether this kind is a hosted speech wire, which serves the speech
@@ -63,9 +74,11 @@ impl ProviderKind {
 
     fn default_locality(self) -> ModelLocality {
         match self {
-            Self::OpenaiCompat | Self::AnthropicCompat | Self::Cartesia | Self::Elevenlabs => {
-                ModelLocality::ThirdParty
-            }
+            Self::OpenaiCompat
+            | Self::AnthropicCompat
+            | Self::Cartesia
+            | Self::Elevenlabs
+            | Self::Gemini => ModelLocality::ThirdParty,
             Self::LocalOpenaiCompat | Self::Oneironer | Self::Voxcpm2 => ModelLocality::OwnServer,
         }
     }
@@ -90,7 +103,9 @@ impl ProviderKind {
                 LlmCapability::ToolCalling,
                 LlmCapability::ToolResults,
             ],
-            Self::Oneironer | Self::Cartesia | Self::Elevenlabs | Self::Voxcpm2 => Vec::new(),
+            Self::Oneironer | Self::Cartesia | Self::Elevenlabs | Self::Voxcpm2 | Self::Gemini => {
+                Vec::new()
+            }
         }
     }
 }
@@ -134,9 +149,10 @@ const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
 /// Headers that carry credentials. Keys arrive through `key_env` or
 /// `key_secret`, never as a literal in a config file.
-const CREDENTIAL_HEADERS: [&str; 4] = [
+const CREDENTIAL_HEADERS: [&str; 5] = [
     "authorization",
     "x-api-key",
+    "x-goog-api-key",
     "api-key",
     "proxy-authorization",
 ];
