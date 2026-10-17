@@ -332,7 +332,15 @@ impl<'a> HostSelfDispatcher<'a> {
                 call.task_ref = Some(task);
             }
         }
-        let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        let mut memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        // The run's leased try is the ask's fan-out caller (OF-393): the ask
+        // states the count, expected spend and cap of that agent's spend
+        // tree. A run bound by its attempt id alone states none.
+        if self.agent_lease.is_some()
+            && let Some(binding) = self.task_host_binding()?
+        {
+            memory = memory.with_task_host(binding);
+        }
         Ok(match memory.tasks_ask(&call) {
             Ok(receipt) => SelfDispatchOutcome::TaskAsk(receipt),
             Err(error) => failed(SelfEffect::TasksAsk, error),
