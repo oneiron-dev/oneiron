@@ -1,11 +1,57 @@
 //! Connects typed MEMORIES projections to the shared board frame and shed ladder.
-use super::frame::{BoardFrameError, BoardSection, SectionPolicy, ShedRank};
+use super::frame::{BoardFrameError, BoardSection, MAX_BOARD_ROW_BYTES, SectionPolicy, ShedRank};
 use super::memories::{MemoriesSection, MemoryRow, MemoryTier};
 use std::collections::BTreeMap;
 
 /// One MEMORIES row as the board renders it. A foreign row shows no snippet.
 /// A hook block's row carries its hook's tag, as a quoted leaf.
 pub(super) fn memory_row_text(row: &MemoryRow, foreign: bool) -> String {
+    let mut text = memory_row_head(row, foreign);
+    if !foreign && let Some(snippet) = &row.snippet {
+        text.push(' ');
+        text.push_str(snippet);
+    }
+    text
+}
+
+/// The bytes a split row's `(part n/m)` tag may take, with its spaces.
+const PART_TAG_BYTES: usize = " (part /) ".len() + 2 * 20;
+
+/// [`memory_row_text`] as the board rows it renders in. A row over
+/// [`MAX_BOARD_ROW_BYTES`] carries its snippet across numbered rows, the
+/// first led by the row's head and each later one by its reference, cut only
+/// at character boundaries: a pinned text is never truncated (Rule 5).
+fn memory_board_rows(row: &MemoryRow, foreign: bool) -> Vec<String> {
+    let text = memory_row_text(row, foreign);
+    let snippet = match &row.snippet {
+        Some(snippet) if !foreign && text.len() > MAX_BOARD_ROW_BYTES => snippet.as_str(),
+        _ => return vec![text],
+    };
+    let head = memory_row_head(row, foreign);
+    let reference = format!("{}:{}", row.short_id, row.content_hash);
+    let room = MAX_BOARD_ROW_BYTES
+        .saturating_sub(head.len() + PART_TAG_BYTES)
+        .max(4);
+    let mut parts = Vec::new();
+    let mut rest = snippet;
+    while !rest.is_empty() {
+        let cut = rest.floor_char_boundary(room);
+        parts.push(&rest[..cut]);
+        rest = &rest[cut..];
+    }
+    let total = parts.len();
+    parts
+        .into_iter()
+        .enumerate()
+        .map(|(index, part)| {
+            let lead = if index == 0 { &head } else { &reference };
+            format!("{lead} (part {}/{total}) {part}", index + 1)
+        })
+        .collect()
+}
+
+/// A MEMORIES row's reference, trust, tier and hook tag, before its snippet.
+fn memory_row_head(row: &MemoryRow, foreign: bool) -> String {
     let label = row
         .claim_source
         .map_or("unknown", crate::claim::ClaimSource::as_str);
@@ -21,10 +67,6 @@ pub(super) fn memory_row_text(row: &MemoryRow, foreign: bool) -> String {
     if let Some(hook) = &row.hook {
         text.push_str(" hook=");
         text.push_str(&super::quoted_leaf(hook));
-    }
-    if !foreign && let Some(snippet) = &row.snippet {
-        text.push(' ');
-        text.push_str(snippet);
     }
     text
 }
@@ -50,11 +92,11 @@ pub fn assemble_memories_sections(
         let mut pinned = Vec::new();
         let mut details = Vec::new();
         for row in &rows {
-            let text = memory_row_text(row, foreign);
+            let texts = memory_board_rows(row, foreign);
             if row.tier == MemoryTier::Pinned {
-                pinned.push(text);
+                pinned.extend(texts);
             } else {
-                details.push(text);
+                details.extend(texts);
             }
         }
         let mut board = BoardSection::new(

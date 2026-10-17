@@ -73,7 +73,8 @@ impl MemoriesSection {
     /// and a withheld row is skipped. A TASK is left to TASKS. A row already
     /// on the board renders once: a hook's pin takes its place, and a row
     /// another hook pinned keeps that hook's tag. A binding's rows stop at its
-    /// token cap. Returns each read's receipt.
+    /// token cap; a row whose words would pass it pins its reference alone.
+    /// Returns each read's receipt.
     pub fn include_hook_pins(
         &mut self,
         reader: &ScopedRead<'_>,
@@ -99,9 +100,16 @@ impl MemoriesSection {
                     continue;
                 }
                 row.hook = Some(pin.hook.clone());
-                let cost =
+                let mut cost =
                     crate::count_context_pack_tokens(&memory_row_text(&row, foreign_row(&row)));
                 let used = spent.entry(pin.binding).or_default();
+                // A row whose words overrun the cap pins its reference alone,
+                // as it did before pins carried text; nothing is cut.
+                if used.saturating_add(cost) > pin.token_cap as usize && row.snippet.is_some() {
+                    row.snippet = None;
+                    cost =
+                        crate::count_context_pack_tokens(&memory_row_text(&row, foreign_row(&row)));
+                }
                 if used.saturating_add(cost) > pin.token_cap as usize {
                     continue;
                 }
