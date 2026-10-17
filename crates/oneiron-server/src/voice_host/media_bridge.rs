@@ -7,8 +7,10 @@
 //!
 //! A heard utterance enters the session as an ASR final: it is enriched
 //! outside the session lock and applied through `handle_asr`, as a final
-//! from the wire is. Spoken audio passes the session's `filter_pcm` before
-//! it reaches the owner's playout, so a stopped or stale generation never
+//! from the wire is. The brain's reply comes back through the session's
+//! sentence safeguards before it is spoken (`speech`). Spoken audio passes
+//! the session's `filter_pcm` before it reaches the owner's playout, and
+//! again when playout dequeues it, so a stopped or stale generation never
 //! plays; a stop flushes what the owner still queues through its
 //! `CascadeControl`. A banked voice renders only under its render consent
 //! for the TTS route's target and locality: it is bound when the bindings
@@ -22,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use oneiron::Vault;
-use oneiron::llm::VoiceLane;
+use oneiron::llm::{VoiceChunkPolicy, VoiceLane};
 use oneiron::voice_cascade::media::{
     BankVoiceBinding, MediaAsrAdapter, MediaTtsAdapter, MediaVoiceRoute, VoiceMediaOutput,
     VoiceMediaQueue, VoiceMediaSender, VoiceMediaWork, VoiceMediaWorker, VoiceRender,
@@ -34,6 +36,7 @@ use oneiron::voice_cascade::{
 };
 use tokio::sync::mpsc;
 
+use super::speech::{self, CHUNK_TICK, Speech, Verdict, Verdicts, VoiceBrainOut, VoicePlayout};
 use super::{EnrichmentWork, HostError, VoiceHost, VoiceOutputs};
 use crate::models::ModelRuntime;
 
@@ -61,6 +64,10 @@ pub enum VoiceMediaIn {
     /// again, and a changed one stops the live generation before the next
     /// audio plays.
     RosterChanged,
+    /// The owner's playout played all of a generation's audio, up to its
+    /// [`VoicePlayout::End`], on the server and the client. The generation
+    /// finishes once its brain and every sentence's verdict are done too.
+    Drained(GenerationEpoch),
 }
 
 /// The media side of one served voice connection.
@@ -74,20 +81,28 @@ pub struct VoiceMediaBindings {
     /// The rate and channels of the microphone's PCM16LE.
     pub sample_rate: u32,
     pub channels: u16,
-    /// The owner's audio side: microphone audio, cuts and VAD.
+    /// The owner's audio side: microphone audio, cuts, VAD and drains.
     pub audio_in: mpsc::Receiver<VoiceMediaIn>,
-    /// Spoken audio for playout, past the session's filter.
-    pub playout: mpsc::Sender<PcmFrame>,
+    /// The brain's events, sent by the brain the connection starts.
+    pub brain_out: mpsc::Receiver<VoiceBrainOut>,
+    /// The session's cadence for cutting the brain's text into sentences.
+    pub chunking: VoiceChunkPolicy,
+    /// Spoken audio for playout, past the session's filter, and each
+    /// generation's end.
+    pub playout: mpsc::Sender<VoicePlayout>,
     /// How many calls the media queue holds.
     pub queue_capacity: usize,
 }
 
 impl VoiceMediaBindings {
     /// The vault's live ASR and TTS routes on the door, one media queue and
-    /// its worker, and the TTS seam. A lane with no live voice row, or a
-    /// banked voice whose render consent does not reach the TTS route,
-    /// refuses.
+    /// its worker, and the TTS seam. A lane with no live voice row, a
+    /// banked voice whose render consent does not reach the TTS route, or a
+    /// cadence that could never cut a sentence, refuses.
     pub(super) fn build(self) -> oneiron::Result<(MediaTts, MediaBridge, MediaWorker)> {
+        if speech::chunker(&self.chunking).is_none() {
+            return Err(invalid("voice chunk policy"));
+        }
         let asr_route = self
             .door
             .voice_route(&self.vault, VoiceLane::AsrLive, None)?;
@@ -108,8 +123,13 @@ impl VoiceMediaBindings {
             MediaBridge {
                 asr,
                 audio_in: Some(self.audio_in),
+                brain_out: Some(self.brain_out),
                 outputs,
                 playout: self.playout,
+                chunking: self.chunking,
+                speech: None,
+                verdicts: Verdicts::new(),
+                tick_at: None,
                 started: Instant::now(),
                 next_utterance: 0,
             },
@@ -124,11 +144,9 @@ impl VoiceMediaBindings {
 }
 
 /// The bridge's TTS seam: one [`MediaTtsAdapter`] per generation over the
-/// shared media queue. Clones share it: the brain's stream driver
-/// (`drive_voice_stream`) submits its sentences through one, and the served
-/// connection's stops go through another.
-#[derive(Clone)]
-pub struct MediaTts(Arc<Mutex<MediaTtsState>>);
+/// shared media queue. Only the served connection speaks through it: the
+/// brain's sentences pass the session's safeguards first.
+pub(super) struct MediaTts(Arc<Mutex<MediaTtsState>>);
 
 struct MediaTtsState {
     vault: Arc<Vault>,
@@ -226,9 +244,19 @@ pub(super) struct MediaBridge {
     asr: MediaAsrAdapter<VoiceMediaSender>,
     /// `None` once the owner's audio side closed.
     audio_in: Option<mpsc::Receiver<VoiceMediaIn>>,
+    /// `None` once the brain's side closed.
+    brain_out: Option<mpsc::Receiver<VoiceBrainOut>>,
     outputs: mpsc::UnboundedReceiver<VoiceMediaOutput>,
-    playout: mpsc::Sender<PcmFrame>,
-    /// The session's VAD clock starts here.
+    playout: mpsc::Sender<VoicePlayout>,
+    pub(super) chunking: VoiceChunkPolicy,
+    /// The generation being spoken, while its audio is open.
+    pub(super) speech: Option<Speech>,
+    pub(super) verdicts: Verdicts,
+    /// When a quiet brain's buffered words are next held against the
+    /// cadence; kept across polls, so steady microphone audio cannot
+    /// starve it.
+    tick_at: Option<tokio::time::Instant>,
+    /// The session's VAD and cadence clock starts here.
     started: Instant,
     next_utterance: u64,
 }
@@ -237,27 +265,52 @@ pub(super) struct MediaBridge {
 pub(super) enum MediaEvent {
     In(VoiceMediaIn),
     Out(VoiceMediaOutput),
+    Brain(VoiceBrainOut),
+    Verdict(Verdict),
+    /// The cadence's clock: buffered words may be due as a sentence.
+    Tick,
     /// The worker stopped: nothing more is heard or spoken.
     Stopped,
 }
 
 impl MediaBridge {
-    /// The owner's next input, or the worker's next output.
+    /// The owner's next input, the brain's next event, a verdict, the
+    /// cadence's clock, or the worker's next output.
     pub(super) async fn next(&mut self) -> MediaEvent {
         loop {
-            let Some(audio_in) = self.audio_in.as_mut() else {
-                return self
-                    .outputs
-                    .recv()
-                    .await
-                    .map_or(MediaEvent::Stopped, MediaEvent::Out);
+            let Self {
+                audio_in,
+                brain_out,
+                outputs,
+                speech,
+                verdicts,
+                tick_at,
+                ..
+            } = &mut *self;
+            let ticking = speech.as_ref().is_some_and(|speech| !speech.ended);
+            let tick = if ticking {
+                *tick_at.get_or_insert_with(|| tokio::time::Instant::now() + CHUNK_TICK)
+            } else {
+                *tick_at = None;
+                tokio::time::Instant::now()
             };
             tokio::select! {
-                input = audio_in.recv() => match input {
+                input = recv(audio_in) => match input {
                     Some(input) => return MediaEvent::In(input),
-                    None => self.audio_in = None,
+                    None => *audio_in = None,
                 },
-                output = self.outputs.recv() => {
+                out = recv(brain_out) => match out {
+                    Some(out) => return MediaEvent::Brain(out),
+                    None => *brain_out = None,
+                },
+                Some(verdict) = futures_util::StreamExt::next(verdicts), if !verdicts.is_empty() => {
+                    return MediaEvent::Verdict(verdict);
+                }
+                () = tokio::time::sleep_until(tick), if ticking => {
+                    *tick_at = None;
+                    return MediaEvent::Tick;
+                }
+                output = outputs.recv() => {
                     return output.map_or(MediaEvent::Stopped, MediaEvent::Out);
                 }
             }
@@ -274,10 +327,10 @@ impl MediaBridge {
         Ok(())
     }
 
-    /// Hands spoken audio to the owner's playout.
-    pub(super) async fn play(&self, frame: PcmFrame) -> io::Result<()> {
+    /// Hands spoken audio, or a generation's end, to the owner's playout.
+    pub(super) async fn play(&self, playout: VoicePlayout) -> io::Result<()> {
         self.playout
-            .send(frame)
+            .send(playout)
             .await
             .map_err(|_| io::Error::other("voice playout closed"))
     }
@@ -289,6 +342,18 @@ impl MediaBridge {
 
     fn now(&self) -> Duration {
         self.started.elapsed()
+    }
+
+    pub(super) fn now_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+}
+
+/// The receiver's next item; forever once it is gone.
+async fn recv<T>(receiver: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
+    match receiver {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -340,15 +405,19 @@ impl VoiceHost {
             VoiceMediaIn::Speaking(speaking) => {
                 self.observe_speech(bridge.now(), speaking).map(|stop| {
                     if let Some(stop) = stop {
-                        dispatch(&stop, outputs);
+                        speech::stopped(&stop, bridge, outputs);
                     }
                 })
             }
             VoiceMediaIn::RosterChanged => self.refresh_interlocutors().map(|stop| {
                 if let Some(stop) = stop {
-                    dispatch(&stop, outputs);
+                    speech::stopped(&stop, bridge, outputs);
                 }
             }),
+            VoiceMediaIn::Drained(generation) => {
+                self.drained(generation, bridge);
+                Ok(())
+            }
         };
         if let Err(error) = handled {
             tracing::warn!(%error, "voice media input refused");
@@ -388,20 +457,6 @@ impl VoiceHost {
         }
     }
 
-    /// A sentence that could not be spoken stops the generation's audio:
-    /// its queued speech and the PCM the owner still holds.
-    pub(super) fn speech_failed<B, T: TtsSeamClient, C: CascadeControl>(
-        generation: GenerationEpoch,
-        outputs: &mut VoiceOutputs<B, T, C>,
-    ) {
-        tracing::warn!("voice media: a sentence was not spoken");
-        let flushed = outputs.control.flush_queued_pcm(generation);
-        let cancelled = outputs.tts.submit(TtsCommand::Cancel { generation });
-        if flushed.is_err() || cancelled.is_err() {
-            tracing::warn!("voice media: a failed sentence's stop was not delivered");
-        }
-    }
-
     fn observe_speech(
         &self,
         now: Duration,
@@ -414,19 +469,5 @@ impl VoiceHost {
     /// that changed.
     fn refresh_interlocutors(&self) -> Result<Option<OutputStop>, HostError> {
         Ok(self.lock()?.core.refresh_interlocutors()?.stop)
-    }
-}
-
-/// Submits a stop to every output arm; a failed arm is logged.
-fn dispatch<B: Brain, T: TtsSeamClient, C: CascadeControl>(
-    stop: &OutputStop,
-    outputs: &mut VoiceOutputs<B, T, C>,
-) {
-    let errors = stop.dispatch(&mut outputs.brain, &mut outputs.tts, &mut outputs.control);
-    if !errors.is_empty() {
-        tracing::warn!(
-            count = errors.len(),
-            "voice media: a stop arm was not delivered"
-        );
     }
 }
