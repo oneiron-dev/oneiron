@@ -13,7 +13,6 @@ use crate::error::Error;
 use crate::memory::{Memory, MemoryResult};
 
 use super::ask_types::{TaskAskHandle, TaskAskStatus};
-use super::brief::BriefStamp;
 use super::consts::{
     TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE, TASK_EXTERNAL_ATTEMPT_KIND,
     TASK_REALIZE_ATTEMPT_KIND, TASK_SETTLE_ID_DOMAIN,
@@ -207,12 +206,12 @@ impl Memory<'_> {
             }
         };
         let mine = lease_owner_for(self.actor(), generation.as_ref());
-        let brief_running = live.as_ref().and_then(|record| {
-            (record.kind == TASK_EXTERNAL_ATTEMPT_KIND)
-                .then(|| rmp_serde::from_slice::<Option<BriefStamp>>(&record.payload).ok())
-                .flatten()
-                .flatten()
-        });
+        let brief_running = live
+            .as_ref()
+            .filter(|record| record.kind == TASK_EXTERNAL_ATTEMPT_KIND)
+            .map(|record| super::external_attempt::decode(&record.payload))
+            .transpose()?
+            .and_then(|input| input.brief);
         let attempt_view = live.as_ref().map(|record| AttemptView {
             attempt_ref: attempt_hex(record.id),
             state: record.state.as_str().to_owned(),

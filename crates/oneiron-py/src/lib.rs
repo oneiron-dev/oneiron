@@ -253,6 +253,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_inbox_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_inbox_mark(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.inbox.mark")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.inbox.mark", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_inbox_concern(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.inbox.concern")?;
         let output = py
@@ -1668,6 +1682,27 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.artifacts.read")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.artifacts.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_enqueue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.enqueue")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.enqueue", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_seed(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.seed")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.seed", input))
             .map_err(raise)?;
         encode(&output)
     }

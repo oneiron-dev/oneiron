@@ -84,7 +84,6 @@ impl HostSelfDispatcher<'_> {
         let planner = self.planner.as_ref().ok_or_else(invalid)?;
         let type_ref =
             self.place_agent_spawn_type(&ask.need, context.type_ref.as_ref(), planner.placement)?;
-        let budget = ask.budget_cap_units.as_ref().map(|cap| *cap.value());
         let receipt = self.plan_agent_spawn(
             &LivePlanRequest {
                 need: ask.into_need(type_ref),
@@ -95,9 +94,7 @@ impl HostSelfDispatcher<'_> {
             },
             at,
         )?;
-        if let Some(asked) = budget {
-            context.budget = Some(context.budget.map_or(asked, |carve| carve.min(asked)));
-        }
+        narrow_budget(&mut context, receipt.asked.budget_cap_units.as_ref());
         context.type_ref = Some(receipt.asked.type_ref.clone());
         let target = AgentDispatchTarget::Custom(receipt.plan.agent_def);
         context.plan = Some(receipt);
@@ -335,6 +332,17 @@ impl HostSelfDispatcher<'_> {
             return Err(invalid());
         }
         Ok((vault, status.attempt))
+    }
+}
+
+/// A budget the spawner set, seed or pin, narrows the child's hard carve; it
+/// never widens it.
+pub(super) fn narrow_budget(
+    context: &mut AgentSpawnContext,
+    asked: Option<&crate::agent_dispatch::SpawnOverride<u64>>,
+) {
+    if let Some(asked) = asked.map(|cap| *cap.value()) {
+        context.budget = Some(context.budget.map_or(asked, |carve| carve.min(asked)));
     }
 }
 

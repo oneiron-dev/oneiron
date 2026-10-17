@@ -122,6 +122,36 @@
       "section": false
     },
     {
+      "name": "self.inbox.list",
+      "description": "Lists one page of notifications delivered to the bound actor, without marking them.",
+      "input": "InboxListRequest",
+      "output": "crate::inbox::NotificationPage",
+      "call": "memory.inbox_list(input.after.as_deref(), input.limit.unwrap_or(crate::inbox::INBOX_PAGE_DEFAULT))?",
+      "scope": "Read",
+      "admission": {"lane_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "page": {
+        "rows": "rows",
+        "cursor": "next_after"
+      },
+      "mcp_scope": "filtered",
+      "mcp_served_output": "output.rows.iter().filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())",
+      "section": false
+    },
+    {
+      "name": "self.inbox.mark",
+      "description": "Marks one delivered notification seen or acknowledged for the bound actor.",
+      "input": "InboxMarkRequest",
+      "output": "crate::inbox::NotificationRow",
+      "call": "memory.inbox_mark(&input.notification_ref, input.mark)?",
+      "scope": "Write",
+      "admission": {"lane_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "filtered",
+      "mcp_served_output": "oneiron::EntityId::from_hex(&output.id).ok()",
+      "section": false
+    },
+    {
       "name": "self.inbox.concern",
       "input": "crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest",
       "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
@@ -3403,33 +3433,65 @@
     },
     {
       "name": "vault.consolidation.enqueue",
+      "description": "Enqueues one consolidation attempt and returns its durable job reference.",
       "uniffi": {
         "args": {
           "input": "ConsolidationJobInput"
         },
         "output": "DreamerJobRef"
       },
-      "context": "definition"
+      "input": "ConsolidationEnqueueRequest",
+      "output": "crate::memory::DreamerAttemptRef",
+      "call": "memory_requests::enqueue_consolidation(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "vault.consolidation.status",
+      "description": "Reads the status of one consolidation attempt by its durable job reference.",
       "uniffi": {
         "args": {
           "job_ref": "String"
         },
         "output": "Option<DreamerJobView>"
       },
-      "context": "definition"
+      "input": "ConsolidationStatusRequest",
+      "output": "Option<crate::memory::DreamerAttemptView>",
+      "call": "memory_requests::dreamer_attempt_status(memory, input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "vault.claims.seed",
+      "description": "Seeds claims through their individual gates, forced proposed, returning one receipt per claim.",
+      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
         },
         "output": "Vec<CommitReceipt>"
       },
-      "context": "definition"
+      "input": "CommitRequest",
+      "output": "Vec<crate::memory::CommitReceipt>",
+      "call": "memory_requests::seed_claims(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?; for claim in &input.claims { crate::memory::caps::check_claim_input(claim)?; }"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "proposes": true,
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted"
     },
     {
       "name": "connector.outbound.schedule",
@@ -3570,6 +3632,13 @@
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
+    },
+    {
+      "name": "self.agents.spawn",
+      "input": "crate::code_run::AgentSpawnInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "AgentsSpawn"
     },
     {
       "name": "self.leader.advice",

@@ -432,6 +432,9 @@ pub(crate) fn mcp_hook_stop(stop: oneiron::runtime_hooks::VerbHookStop) -> McpGa
         VerbHookStop::Skipped { .. } => "verb_hook_skipped",
         VerbHookStop::Pending { .. } => "verb_hook_pending",
         VerbHookStop::Hidden { .. } => "verb_hook_hidden",
+        // The call ran once its ask settled; the stop carries its outcome.
+        VerbHookStop::Completed { .. } => "verb_hook_completed",
+        VerbHookStop::CompletedWithError { .. } => "verb_hook_completed_with_error",
     };
     let mut error = McpGatewayError::new(-32020, kind, stop.to_string());
     error.hook = Some(Box::new(stop));
@@ -597,6 +600,8 @@ fn mcp_agent_verb_input(
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
         "self.identity.answer" => a.spec.clone().ok_or_else(invalid),
         "self.identity.settle" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.list" => a.spec.clone().ok_or_else(invalid),
+        "self.inbox.mark" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.concern" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.concern.outcome" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.concern.move" => a.spec.clone().ok_or_else(invalid),
@@ -921,6 +926,9 @@ fn mcp_agent_verb_input(
         "vault.artifacts.put" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.append" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.enqueue" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.claims.seed" => a.spec.clone().ok_or_else(invalid),
         "connector.outbound.schedule" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.create" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
@@ -974,6 +982,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.identity.settle" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.inbox.mark" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.inbox.concern" => {
@@ -1561,6 +1575,15 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.artifacts.read" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.consolidation.enqueue" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consolidation.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.claims.seed" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "connector.outbound.schedule" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -1675,16 +1698,7 @@ async fn execute_agent_verb_listing(
         Some(session) => memory.in_off_record_session(session),
         None => memory,
     };
-    let hooks = crate::api::facade::row_hooks_pre(
-        server,
-        actor.actor_ref,
-        actor.actor_class,
-        Some(invocation),
-        tool,
-        input,
-    )
-    .await
-    .map_err(mcp_facade_error)?;
+    let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) =
         execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
@@ -1804,6 +1818,35 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_identity_settle(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.list" => {
+            let input: oneiron::task_verb::sdk::InboxListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            served.extend(
+                output
+                    .rows
+                    .iter()
+                    .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok()),
+            );
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("rows");
+            mcp_agent_verb_output(output, source)
+        }
+        "self.inbox.mark" => {
+            let input: oneiron::task_verb::sdk::InboxMarkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_inbox_mark(&memory, input)
+                .map_err(mcp_facade_error)?;
+            served.extend(oneiron::EntityId::from_hex(&output.id).ok());
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -3701,6 +3744,30 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_artifacts_read(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.enqueue" => {
+            let input: oneiron::task_verb::sdk::ConsolidationEnqueueRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_consolidation_enqueue(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.status" => {
+            let input: oneiron::task_verb::sdk::ConsolidationStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_consolidation_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.claims.seed" => {
+            let input: oneiron::task_verb::sdk::CommitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_claims_seed(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "connector.outbound.schedule" => {
