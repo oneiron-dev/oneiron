@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 319 code-mode rows (301 host rows, 18 run rows), 1093 declarations.
-// Replies: 259 fully typed, 47 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 320 code-mode rows (302 host rows, 18 run rows), 1096 declarations.
+// Replies: 260 fully typed, 47 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -796,7 +796,7 @@ declare namespace Sdk {
   type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
   type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
   type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
-  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[] };
+  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null };
   type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline";
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
@@ -1036,6 +1036,9 @@ declare namespace Sdk {
   type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
   type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
   type DeckOracleRequest = { receipt: OracleReceipt };
+  type DeckPreviewRequest = { artifact_ref: string; slides: number[] };
+  type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string };
+  type DeckPreview = { frontier: number[]; profile: string; projector: string; export_key: string; renderer: string; provisional: boolean; slides: DeckPreviewSlide[] };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
   type ReadBlobVersionRequest = { artifact_ref: string; version: number };
@@ -1356,6 +1359,8 @@ declare const vault: Sdk.VaultHost & {
         merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.LandingReceipt | StoredResult>;
         /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
         oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.DeckGateView | StoredResult>;
+        /** The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed. */
+        preview(input: Sdk.DeckPreviewRequest): Promise<Sdk.DeckPreview | StoredResult>;
         /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
         review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.DeckReviewView | StoredResult>;
       };
