@@ -14,14 +14,17 @@
 //! is rebuilt: the member decoded, its keys overwritten, the container
 //! encoded around it again (`batch::secret_scan::container`). A container
 //! the write door kept no keys in is still read whole before a masked reader
-//! gets it: one that holds a key no mark places, or that cannot be read, is
-//! refused.
+//! gets it: one that holds a key no mark places is refused. A sealed one,
+//! which no reader here reads whole (encrypted, malformed, past a bound), is
+//! stored as it is (owner ruling C2): the owner and a granted agent read its
+//! bytes (`reveal::file`), and a masked reader gets
+//! [`SecretError::SealedFileWithheld`], never the raw bytes.
 
 use heed::{RoTxn, RwTxn};
 
 use crate::blob_artifact::ArtifactExport;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::federation::Sensitivity;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
@@ -191,6 +194,11 @@ pub(crate) fn sighted_bytes_in_txn(
         return Ok(bytes);
     }
     let Some(file) = masked_file_in_txn(store, txn, blake3::hash(&bytes).as_bytes())? else {
+        // A sealed file goes to the owner and a granted agent only: no mark
+        // covers what it holds.
+        if secret_scan::is_sealed(&bytes) {
+            return Err(Error::Secret(SecretError::SealedFileWithheld));
+        }
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members: it is read before it is served.
         if secret_scan::is_container(&bytes) && secret_scan::scan_container_members(&bytes).is_err()

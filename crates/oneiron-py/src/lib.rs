@@ -604,6 +604,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_weave_owner_link_wrong(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.owner.link.wrong")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.owner.link.wrong", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_packs_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.packs.put")?;
         let output = py
@@ -2312,6 +2319,20 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.artifacts.body.deck.oracle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_body_deck_preview(
+        &self,
+        py: Python<'_>,
+        request_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.artifacts.body.deck.preview")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.body.deck.preview", input)
             })
             .map_err(raise)?;
         encode(&output)
