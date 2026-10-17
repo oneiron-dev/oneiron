@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 308 facade rows, 1101 generated types.
+// UniFFI census: 308 facade rows, 1103 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 276.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -16237,12 +16237,60 @@ pub enum XlsxNumberFormat {
     },
 }
 
+/// `oneiron_docedit::xlsx_styles::XlsxAlignment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxAlignment {
+    #[serde(
+        rename = "horizontal",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub horizontal: Option<String>,
+    #[serde(rename = "vertical", default, skip_serializing_if = "Option::is_none")]
+    pub vertical: Option<String>,
+    #[serde(rename = "wrap_text", default, skip_serializing_if = "Option::is_none")]
+    pub wrap_text: Option<bool>,
+    #[serde(
+        rename = "shrink_to_fit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shrink_to_fit: Option<bool>,
+    #[serde(rename = "indent", default, skip_serializing_if = "Option::is_none")]
+    pub indent: Option<u32>,
+    #[serde(rename = "rotation", default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<u32>,
+    #[serde(
+        rename = "reading_order",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reading_order: Option<u32>,
+}
+
+/// `oneiron_docedit::xlsx_styles::XlsxProtection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxProtection {
+    #[serde(rename = "locked", default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    #[serde(rename = "hidden", default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+}
+
 /// `oneiron_docedit::xlsx_styles::XlsxFormat`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct XlsxFormat {
     #[serde(rename = "base")]
     pub base: u32,
+    #[serde(
+        rename = "cell_style",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cell_style: Option<String>,
     #[serde(rename = "font", default, skip_serializing_if = "Option::is_none")]
     pub font: Option<XlsxFont>,
     #[serde(rename = "fill", default, skip_serializing_if = "Option::is_none")]
@@ -16255,6 +16303,14 @@ pub struct XlsxFormat {
         skip_serializing_if = "Option::is_none"
     )]
     pub number_format: Option<XlsxNumberFormat>,
+    #[serde(rename = "alignment", default, skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<XlsxAlignment>,
+    #[serde(
+        rename = "protection",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub protection: Option<XlsxProtection>,
 }
 
 /// `oneiron::office_body::xlsx::BodyFormat`.

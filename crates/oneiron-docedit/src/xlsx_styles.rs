@@ -1,5 +1,6 @@
 //! Cell formats a body composes from the workbook's own: an imported cell
-//! format with its font, fill, border or number format changed. The
+//! format with its named cell style, font, fill, border, number format,
+//! alignment or protection changed. The
 //! projection writes each into the stylesheet, reusing an equal font, fill,
 //! border, number format or cell format already there, so the stylesheet
 //! grows only by what is new; imported records keep their bytes and indices.
@@ -66,6 +67,37 @@ const LINES: &[&str] = &[
     "mediumDashDotDot",
     "slantDashDot",
 ];
+/// ST_HorizontalAlignment.
+const HORIZONTAL: &[&str] = &[
+    "general",
+    "left",
+    "center",
+    "right",
+    "fill",
+    "justify",
+    "centerContinuous",
+    "distributed",
+];
+/// ST_VerticalAlignment.
+const VERTICAL: &[&str] = &["top", "center", "bottom", "justify", "distributed"];
+/// Excel's ceiling on a cell's indent, in steps.
+const MAX_INDENT: u32 = 250;
+/// The text rotation that stacks letters top to bottom.
+const STACKED: u32 = 255;
+/// Excel's ceiling on a cell style's name.
+const MAX_STYLE_NAME: usize = 255;
+/// A cell format's children in schema order.
+const XF_ORDER: &[&str] = &["alignment", "protection", "extLst"];
+/// What a named cell style may carry, each with the flag that says a style
+/// includes it: an id attribute, or the child element of that name.
+const STYLE_PARTS: &[(&str, &str)] = &[
+    ("numFmtId", "applyNumberFormat"),
+    ("fontId", "applyFont"),
+    ("fillId", "applyFill"),
+    ("borderId", "applyBorder"),
+    ("alignment", "applyAlignment"),
+    ("protection", "applyProtection"),
+];
 /// A font's children in the order Excel writes them.
 const FONT_ORDER: &[&str] = &[
     "b",
@@ -113,11 +145,17 @@ const SHEET_ORDER: &[&str] = &[
 
 /// A cell format composed from one of the workbook's: `base`, an index into
 /// [`XlsxBook::styles`](crate::xlsx_body::XlsxBook::styles), with the parts
-/// set here changed. Its alignment, protection and cell style stay the base's.
+/// set here changed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct XlsxFormat {
     pub base: u32,
+    /// A named cell style (`Normal`, `Good`, `Heading 1` or one the workbook
+    /// defines; case does not matter), applied as Excel applies one first:
+    /// each part the style includes replaces the base's, and the changes
+    /// below go on top. A name the workbook lacks is added as a style of the
+    /// base's look, where Excel would refuse it.
+    pub cell_style: Option<String>,
     /// Changes to the base's font.
     pub font: Option<XlsxFont>,
     /// Replaces the base's fill.
@@ -126,6 +164,40 @@ pub struct XlsxFormat {
     pub border: Option<XlsxBorder>,
     /// Replaces the base's number format.
     pub number_format: Option<XlsxNumberFormat>,
+    /// Changes to the base's alignment.
+    pub alignment: Option<XlsxAlignment>,
+    /// Changes to the base's protection.
+    pub protection: Option<XlsxProtection>,
+}
+
+/// A change to a cell's alignment: what is left out stays the base's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxAlignment {
+    /// `general`, `left`, `center`, `right`, `fill`, `justify`,
+    /// `centerContinuous` or `distributed`.
+    pub horizontal: Option<String>,
+    /// `top`, `center`, `bottom`, `justify` or `distributed`.
+    pub vertical: Option<String>,
+    pub wrap_text: Option<bool>,
+    pub shrink_to_fit: Option<bool>,
+    /// Indent steps, 0 to 250.
+    pub indent: Option<u32>,
+    /// The text's angle in degrees: 0 to 90 turns it up, 91 to 180 turns it
+    /// down by the amount past 90, and 255 stacks its letters.
+    pub rotation: Option<u32>,
+    /// 0 follows the text, 1 reads left to right, 2 right to left.
+    pub reading_order: Option<u32>,
+}
+
+/// A change to a cell's protection, which holds once its sheet is protected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct XlsxProtection {
+    /// The cell refuses edits.
+    pub locked: Option<bool>,
+    /// The formula bar hides the cell's formula.
+    pub hidden: Option<bool>,
 }
 
 /// A change to a font: what is left out stays the base font's.
@@ -207,11 +279,44 @@ pub enum XlsxNumberFormat {
 type Result<T> = std::result::Result<T, XlsxBodyError>;
 
 /// Refuse a format the workbook could not hold: a base past its `styles`
-/// cell formats, a font size or name, a pattern, line style, color or number
-/// format out of range.
+/// cell formats, a style name, font size or name, a pattern, line style,
+/// color, number format or alignment out of range.
 pub fn check_format(format: &XlsxFormat, styles: usize) -> Result<()> {
     if format.base as usize >= styles {
         return Err(refused("a cell format the workbook does not have"));
+    }
+    if format.cell_style.as_deref().is_some_and(|name| {
+        name.trim().is_empty() || name.chars().count() > MAX_STYLE_NAME || !writable(name)
+    }) {
+        return Err(refused("a cell style name is 1 to 255 characters"));
+    }
+    if let Some(alignment) = &format.alignment {
+        if alignment
+            .horizontal
+            .as_deref()
+            .is_some_and(|value| !HORIZONTAL.contains(&value))
+        {
+            return Err(refused("not a horizontal alignment"));
+        }
+        if alignment
+            .vertical
+            .as_deref()
+            .is_some_and(|value| !VERTICAL.contains(&value))
+        {
+            return Err(refused("not a vertical alignment"));
+        }
+        if alignment.indent.is_some_and(|indent| indent > MAX_INDENT) {
+            return Err(refused("an indent is 0 to 250 steps"));
+        }
+        if alignment
+            .rotation
+            .is_some_and(|angle| angle > 180 && angle != STACKED)
+        {
+            return Err(refused("a text rotation is 0 to 180 degrees, or 255"));
+        }
+        if alignment.reading_order.is_some_and(|order| order > 2) {
+            return Err(refused("a reading order is 0, 1 or 2"));
+        }
     }
     if let Some(font) = &format.font {
         if font.name.as_deref().is_some_and(|name| {
@@ -299,6 +404,8 @@ pub(crate) fn write_formats(
     let mut fills = List::read(&tree, "fills", "fill")?;
     let mut borders = List::read(&tree, "borders", "border")?;
     let mut xfs = List::read(&tree, "cellXfs", "xf")?;
+    let mut style_xfs = List::read(&tree, "cellStyleXfs", "xf")?;
+    let mut cell_styles = List::read(&tree, "cellStyles", "cellStyle")?;
     if xfs.imported != styles {
         return Err(refused("the stylesheet changed under the body"));
     }
@@ -306,6 +413,9 @@ pub(crate) fn write_formats(
     for format in formats {
         check_format(format, styles)?;
         let mut xf = xfs.entries[format.base as usize].clone();
+        if let Some(name) = &format.cell_style {
+            apply_cell_style(&mut xf, name, &mut style_xfs, &mut cell_styles)?;
+        }
         let part = |name: &str| {
             xf.attrs
                 .get(name)
@@ -355,6 +465,29 @@ pub(crate) fn write_formats(
             xf.set("numFmtId", id);
             xf.set("applyNumberFormat", 1);
         }
+        if let Some(patch) = &format.alignment {
+            let mut alignment = xf
+                .child("alignment")
+                .cloned()
+                .unwrap_or_else(|| Element::new("alignment"));
+            patch_alignment(&mut alignment, patch);
+            xf.put(alignment, XF_ORDER);
+            xf.set("applyAlignment", 1);
+        }
+        if let Some(patch) = &format.protection {
+            let mut protection = xf
+                .child("protection")
+                .cloned()
+                .unwrap_or_else(|| Element::new("protection"));
+            // Unwritten, a cell is locked and its formula shown.
+            for (name, on) in [("locked", patch.locked), ("hidden", patch.hidden)] {
+                if let Some(on) = on {
+                    protection.set(name, u8::from(on));
+                }
+            }
+            xf.put(protection, XF_ORDER);
+            xf.set("applyProtection", 1);
+        }
         indices.push(xfs.find_or_push(xf)?);
     }
     let prefix = tree.nodes[0]
@@ -362,7 +495,15 @@ pub(crate) fn write_formats(
         .rsplit_once(':')
         .map_or_else(String::new, |(prefix, _)| format!("{prefix}:"));
     let mut edits = Vec::new();
-    for list in [&num_fmts, &fonts, &fills, &borders, &xfs] {
+    for list in [
+        &num_fmts,
+        &fonts,
+        &fills,
+        &borders,
+        &style_xfs,
+        &xfs,
+        &cell_styles,
+    ] {
         list.write(&tree, bytes, &prefix, &mut edits);
     }
     if edits.is_empty() {
@@ -547,6 +688,13 @@ impl Element {
         self.children.insert(at, child);
     }
 
+    /// The SpreadsheetML child of this name.
+    fn child(&self, name: &str) -> Option<&Self> {
+        self.children
+            .iter()
+            .find(|held| held.sml && held.name == name)
+    }
+
     fn remove(&mut self, name: &str) {
         self.children
             .retain(|held| !(held.sml && held.name == name));
@@ -608,6 +756,91 @@ fn patch_font(font: &mut Element, patch: &XlsxFont) {
         // A named font no longer follows the theme's major or minor font.
         font.remove("scheme");
     }
+}
+
+/// Apply the named cell style `name` to the cell format `xf` as Excel
+/// does: each part the style's record includes (all but those flagged off)
+/// replaces the format's, and the format then follows the style. A name the
+/// workbook lacks is added as a style whose record is the format's own look.
+fn apply_cell_style(
+    xf: &mut Element,
+    name: &str,
+    style_xfs: &mut List,
+    cell_styles: &mut List,
+) -> Result<()> {
+    let lower = name.to_lowercase();
+    let held = cell_styles.entries.iter().find_map(|style| {
+        (style.attrs.get("name")?.to_lowercase() == lower)
+            .then(|| style.attrs.get("xfId")?.trim().parse::<usize>().ok())
+            .flatten()
+    });
+    let at = match held.filter(|at| *at < style_xfs.entries.len()) {
+        Some(at) => {
+            let style = style_xfs.entries[at].clone();
+            for (part, flag) in STYLE_PARTS {
+                if style.attrs.get(*flag).map(String::as_str) == Some("0") {
+                    continue;
+                }
+                if part.ends_with("Id") {
+                    match style.attrs.get(*part) {
+                        Some(id) => xf.set(part, id),
+                        None => {
+                            xf.attrs.remove(*part);
+                        }
+                    }
+                } else {
+                    match style.child(part) {
+                        Some(child) => xf.put(child.clone(), XF_ORDER),
+                        None => xf.remove(part),
+                    }
+                }
+                xf.attrs.remove(*flag);
+            }
+            at
+        }
+        None => {
+            let mut record = Element::new("xf");
+            for (part, _) in STYLE_PARTS {
+                if part.ends_with("Id") {
+                    if let Some(id) = xf.attrs.get(*part) {
+                        record.set(part, id);
+                    }
+                } else if let Some(child) = xf.child(part) {
+                    record.put(child.clone(), XF_ORDER);
+                }
+            }
+            let at = style_xfs.find_or_push(record)?;
+            let mut style = Element::new("cellStyle");
+            style.set("name", name);
+            style.set("xfId", at);
+            cell_styles.entries.push(style);
+            at as usize
+        }
+    };
+    xf.set("xfId", at);
+    Ok(())
+}
+
+fn patch_alignment(alignment: &mut Element, patch: &XlsxAlignment) {
+    for (name, value) in [
+        ("horizontal", &patch.horizontal),
+        ("vertical", &patch.vertical),
+    ] {
+        if let Some(value) = value {
+            alignment.set(name, value);
+        }
+    }
+    for (name, value) in [
+        ("indent", patch.indent),
+        ("textRotation", patch.rotation),
+        ("readingOrder", patch.reading_order),
+    ] {
+        if let Some(value) = value {
+            alignment.set(name, value);
+        }
+    }
+    alignment.flag("wrapText", patch.wrap_text);
+    alignment.flag("shrinkToFit", patch.shrink_to_fit);
 }
 
 fn patch_border(border: &mut Element, patch: &XlsxBorder) {
