@@ -48,6 +48,7 @@ mod cooperative_deletion_routes;
 mod decision_ask_routes;
 mod diary_routes;
 mod disclosure_routes;
+mod dreamer_maintenance_routes;
 mod embedding_space_routes;
 mod federation_connect_routes;
 mod guest_routes;
@@ -117,6 +118,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(connector_subscription_routes::routes())
         .merge(diary_routes::routes())
         .merge(disclosure_routes::routes())
+        .merge(dreamer_maintenance_routes::routes())
         .merge(embedding_space_routes::routes())
         .merge(history_routes::routes())
         .merge(house_routes::routes())

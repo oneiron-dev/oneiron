@@ -1,10 +1,13 @@
 //! Scheduled curator and harness-evaluation facets on one gated Dreamer
 //! authority, and the Coach's nightly retrieval tune on the same lane. Both
 //! Dreamer facets ride the nightly wake: the curator grades the Dreamer's own
-//! consolidations and applies what the owner approved, and the harness audit
-//! flags the Dreamer's tuning config for a retune. Neither deploys anything.
+//! consolidations and applies one rung at once, and the harness audit flags
+//! the Dreamer's tuning config for a retune. Neither deploys anything. A
+//! Dreamer finding applies with a receipt the owner reverts (OF-023); a
+//! Coach finding waits in the run tray.
 pub mod action_mode;
 pub mod agent_health;
+mod applied;
 mod calibration_asks;
 pub mod coach;
 pub mod coach_heal;
@@ -21,6 +24,9 @@ pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod person_threshold;
 mod proposals;
 mod strength;
+pub use applied::{
+    AppliedMaintenance, MAINTENANCE_APPLY_KIND, MAINTENANCE_REVERT_KIND, MaintenanceRevert,
+};
 pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;

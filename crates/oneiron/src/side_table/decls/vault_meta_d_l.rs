@@ -113,6 +113,10 @@ side_tables! {
     /// A settled identity's context hint: a name, the words around it and the entity it named.
     /// Key: u8(kind) + hash32(name) + id16(entity).
     DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
+    /// OF-023: one Dreamer maintenance write applied at once: its kind, attempt, the finding's
+    /// revision, the before-state its effect changed, its receipt and, once the owner reverts
+    /// it, the revert. Key: id16 (finding).
+    DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named;
     /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
     /// lists the same ones. Ids only, never their text. Key: id16.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
