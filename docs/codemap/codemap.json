@@ -4017,7 +4017,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_read.rs",
@@ -4130,7 +4130,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExportAdapterDescriptor",
@@ -4169,6 +4169,24 @@
      "purpose": "Import-time validation of the serializer's full document, not its claims",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddingSetupImport",
+      "EmbeddingSetupWithheld",
+      "PortableEmbeddingSpace",
+      "PortableEvidenceFloors",
+      "PortableSlotBindings"
+     ],
+     "path": "src/batch/export/embedding_setup.rs",
+     "purpose": "The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -4313,7 +4331,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 5,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -20861,7 +20879,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 27,
+      "crate-vis": 30,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -50839,7 +50857,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 112,
+     "files": 113,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52269,7 +52287,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3160,
+   "source_files": 3161,
    "test_files": 903
   },
   "oneiron-android": {
