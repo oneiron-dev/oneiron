@@ -168,13 +168,57 @@ impl Memory<'_> {
         self.admitted_turns_at(turns, None)
     }
 
+    /// [`Self::admitted_turn_group_at`] over a room's turns: each private
+    /// thread's (FIX 2951) under that thread's own gate and lane, never the
+    /// room's, so a reader in its audience reads it there and any other
+    /// reads none of it, neither its turns nor what they name. Every other
+    /// turn reads as the room's, in the order given. With `thread`, all of
+    /// them read under that thread.
+    fn admitted_turns_at(
+        &self,
+        turns: Vec<RoomTurn>,
+        thread: Option<EntityId>,
+    ) -> MemoryResult<Vec<RoomTurn>> {
+        if turns.is_empty() || thread.is_some() {
+            return self.admitted_turn_group_at(turns, thread);
+        }
+        let room = EntityId::from_hex(&turns[0].room_id)?;
+        if turns.iter().any(|turn| turn.room_id != turns[0].room_id) {
+            return Err(invalid().into());
+        }
+        let order: std::collections::BTreeMap<String, usize> = turns
+            .iter()
+            .enumerate()
+            .map(|(at, turn)| (turn.turn_id.clone(), at))
+            .collect();
+        let mut groups = std::collections::BTreeMap::<Option<EntityId>, Vec<RoomTurn>>::new();
+        {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            for turn in turns {
+                let place = self.thread_place_in(&txn, room, EntityId::from_hex(&turn.turn_id)?)?;
+                let group = match place {
+                    ThreadPlace::Room => None,
+                    ThreadPlace::Private(root) => Some(root),
+                    ThreadPlace::Withheld => continue,
+                };
+                groups.entry(group).or_default().push(turn);
+            }
+        }
+        let mut admitted = Vec::new();
+        for (root, group) in groups {
+            admitted.extend(self.admitted_turn_group_at(group, root)?);
+        }
+        admitted.sort_by_key(|turn| order.get(&turn.turn_id).copied());
+        Ok(admitted)
+    }
+
     /// [`Self::admitted_turns`] for the room's reader, or, with `thread`,
     /// for a reader of that one thread (OF-529): its own gate and a lane
     /// bound to that thread, never the room's. A trunk turn's quote (OF-460)
     /// is kept only when the lane admits its target TURN and MESSAGE, or the
     /// one it does not is no longer live: an erased target reads as redacted,
     /// never as a hidden live row.
-    fn admitted_turns_at(
+    fn admitted_turn_group_at(
         &self,
         mut turns: Vec<RoomTurn>,
         thread: Option<EntityId>,
@@ -789,7 +833,10 @@ impl Memory<'_> {
     /// Scoped get handle; reaches a thread even when every list omits it.
     /// An agent with no standing in the room itself reads the thread on that
     /// thread's own Ready receipt (OF-529), through a snapshot and a lane
-    /// bound to that thread alone; every other reader reads the room.
+    /// bound to that thread alone, and so does a reader in a private
+    /// thread's audience (FIX 2951); every other reader reads the room. The
+    /// room's snapshot withholds a private thread from anyone off its
+    /// audience, so it answers them as it answers a missing one.
     pub fn rooms_get_thread(
         &self,
         room: EntityId,
@@ -797,7 +844,13 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<super::RoomThread>> {
         let thread = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?.then_some(handle)
+            let private = matches!(
+                super::audience::thread_audience_in(self.vault(), &txn, room, handle),
+                Ok(Some(_))
+            );
+            ((private && self.reads_thread_audience_in(&txn, room, handle)?)
+                || agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?)
+            .then_some(handle)
         };
         let turns = match thread {
             None => self.room_turn_snapshot(room)?,
