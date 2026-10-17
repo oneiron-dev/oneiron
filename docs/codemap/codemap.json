@@ -27824,12 +27824,12 @@
       "BoundedAutoChecker"
      ],
      "path": "src/llm/autocheck.rs",
-     "purpose": "Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract",
+     "purpose": "Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 5,
       "trait": 1
      }
@@ -40348,7 +40348,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 7,
       "struct": 2,
