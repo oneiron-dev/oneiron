@@ -27883,7 +27883,7 @@
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
       "crate-vis": 3,
-      "fn": 24,
+      "fn": 26,
       "struct": 4
      }
     },
@@ -28057,7 +28057,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -28345,6 +28345,23 @@
       "enum": 1,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostRule",
+      "HostRuleProvider",
+      "HostRuleRef"
+     ],
+     "path": "src/llm/decision/rules.rs",
+     "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): a reason the authenticated owner types with an answer…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -52914,7 +52931,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 97,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53609,7 +53626,7 @@
    },
    "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3255,
+   "source_files": 3256,
    "test_files": 902
   },
   "oneiron-android": {
@@ -56510,7 +56527,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 45,
+      "const": 46,
       "crate-vis": 1
      }
     },
@@ -73379,6 +73396,7 @@
       "HooksReplayRequest",
       "HostPin",
       "HostPinKind",
+      "HostRuleRef",
       "HostingPrivacyPosture",
       "HumanAskReason",
       "IdentityActNow",
@@ -73977,7 +73995,7 @@
      "purpose": "—",
      "surface": {
       "enum": 257,
-      "struct": 654
+      "struct": 655
      }
     },
     {
