@@ -12,8 +12,9 @@
 //!   whose stored arousal reaches the policy's floor arousal, keeps at least
 //!   the policy's availability floor, so neither starves under aging.
 //! - **Emotion congruence.** With a query VAD (the caller's, or the bound
-//!   retrieval turn's annotation), a claim's score is tilted by how close its
-//!   stored VAD sits to the query's.
+//!   retrieval turn's annotation), a candidate's score is tilted by how close
+//!   its stored VAD sits to the query's: a claim's consolidated VAD, or a
+//!   TURN's or MESSAGE's own annotation.
 //!
 //! All three touch the surfacing multiplier only. Confidence, salience and
 //! stored bytes stay exactly as written: availability is never decayed truth.
@@ -30,7 +31,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::store::StoreRead;
 
 use super::types::{EntityMetadataCache, ScoredEntity};
@@ -169,6 +170,51 @@ pub(super) fn stored_claim_vad(
     Ok(None)
 }
 
+/// The predicate of a TURN's or MESSAGE's VAD annotation claim, as
+/// `crate::affect` writes it (`VAD_ANNOTATION_CLAIM_PREDICATE`).
+const VAD_ANNOTATION_PREDICATE: &str = "affect.vad";
+
+/// A candidate's stored VAD under the run's snapshot: a CLAIM's consolidated
+/// state ([`stored_claim_vad`]), or a TURN's or MESSAGE's active `affect.vad`
+/// annotation. `None` for any other kind, or when none is active and valid.
+pub(super) fn stored_candidate_vad(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<Option<Vad>> {
+    if entity_type == ENTITY_TYPE_CLAIM {
+        return stored_claim_vad(store, rtxn, id);
+    }
+    if entity_type != ENTITY_TYPE_TURN && entity_type != ENTITY_TYPE_MESSAGE {
+        return Ok(None);
+    }
+    let claim_id = crate::affect::vad_annotation_claim_id(entity_type, id)?;
+    let Some(raw) = store
+        .port_entity_record(rtxn, &claim_id)?
+        .map(|row| row.encode())
+    else {
+        return Ok(None);
+    };
+    if EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_CLAIM)
+    {
+        return Ok(None);
+    }
+    let Some(body) = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|bytes| crate::claim::decode_claim_body(bytes, true).ok())
+    else {
+        return Ok(None);
+    };
+    if body.predicate != VAD_ANNOTATION_PREDICATE
+        || body.subject != ClaimSubject::Entity(*id)
+        || body.lifecycle != ClaimLifecycleStatus::Active
+    {
+        return Ok(None);
+    }
+    Ok(decode_claim_vad_value(&body.value))
+}
+
 fn decode_claim_vad_value(value: &Value) -> Option<Vad> {
     let Value::Map(entries) = value else {
         return None;
@@ -239,9 +285,10 @@ fn emotion_similarity(stored: Vad, query: Vad) -> f32 {
     (1.0 - (dv * dv + da * da + dd * dd) / 3.0).clamp(0.0, 1.0)
 }
 
-/// Each scored claim's emotion-congruence multiplier
+/// Each scored candidate's emotion-congruence multiplier
 /// `1 + weight × (2 × similarity − 1)`, in `1 − weight ..= 1 + weight`.
-/// Rows without stored claim VAD are absent: they keep their score.
+/// Rows without stored VAD ([`stored_candidate_vad`]) are absent: they keep
+/// their score.
 pub(super) fn emotion_congruence_multipliers(
     scores: &[ScoredEntity],
     query: Vad,
@@ -255,10 +302,7 @@ pub(super) fn emotion_congruence_multipliers(
         let Some(meta) = metadata_cache.get(store, rtxn, &scored.id)? else {
             continue;
         };
-        if meta.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
-        }
-        if let Some(stored) = stored_claim_vad(store, rtxn, &scored.id)? {
+        if let Some(stored) = stored_candidate_vad(store, rtxn, &scored.id, meta.entity_type)? {
             let similarity = emotion_similarity(stored, query);
             multipliers.insert(scored.id, 1.0 + weight * (2.0 * similarity - 1.0));
         }
