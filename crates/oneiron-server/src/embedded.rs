@@ -17,6 +17,15 @@
 //! through [`EmbeddedHost::wake_handle`]. [`EmbeddedHost::stop_handle`] stops
 //! serving: connections drain, then every worker stops. No process signal is
 //! watched here.
+//!
+//! [`EmbeddedEngine`] is the whole of it for a binding: from a path and the
+//! app's host it opens the vault the way `oneiron serve` does
+//! ([`open_served_vault`]), serves it, answers one buffered request at a
+//! time over a fresh duplex stream, and stops and restarts serving over the
+//! same open vault. [`BlockingEngine`] runs one on a runtime of its own for
+//! a binding whose callers are app threads.
+
+mod engine;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::pin;
@@ -34,6 +43,11 @@ use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
 use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, watch};
 
+pub use self::engine::{
+    BlockingEngine, EmbeddedEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config,
+    ensure_app_thread, host_limits, unix_millis,
+};
+pub use crate::commands::{OpenedServedVault, open_served_vault};
 use crate::config::ServeConfig;
 use crate::web_client::DeploymentPosition;
 
@@ -48,6 +62,10 @@ const HOST_MEMORY_SHARE: u64 = 8;
 /// The share of it one pushed blob's scan takes: a sixty-fourth, as of the
 /// machine's.
 const HOST_SCAN_BLOB_SHARE: u64 = 64;
+
+/// Why an embedded engine never serves a relay host's config.
+const RELAY_REFUSAL: &str =
+    "a relay host never opens a vault; use `oneiron host relay --config <room.json>`";
 
 /// Serves `vault` over `host`'s channel until the app stops it.
 ///
@@ -64,15 +82,29 @@ const HOST_SCAN_BLOB_SHARE: u64 = 64;
 /// Run it on a multi-thread Tokio runtime, outside a `LocalSet`, as
 /// [`crate::build_app`] says.
 pub async fn serve_embedded<A: AppHost>(
-    mut host: EmbeddedHost<A, DuplexStream>,
+    host: EmbeddedHost<A, DuplexStream>,
     vault: Arc<oneiron::Vault>,
-    mut config: ServeConfig,
+    config: ServeConfig,
     artifacts: Option<mpsc::Receiver<DuplexStream>>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
-        "a relay host never opens a vault; use `oneiron host relay --config <room.json>`"
+        RELAY_REFUSAL
     );
+    let owner_host = owner_host(&config);
+    serve_prepared(host, vault, config, artifacts, owner_host).await
+}
+
+/// [`serve_embedded`]'s body, given the owner host the vault's opener
+/// already built, so its rehearsal config is resolved once. `config` is
+/// not a relay's: each caller refuses one first.
+async fn serve_prepared<A: AppHost>(
+    mut host: EmbeddedHost<A, DuplexStream>,
+    vault: Arc<oneiron::Vault>,
+    mut config: ServeConfig,
+    artifacts: Option<mpsc::Receiver<DuplexStream>>,
+    owner_host: crate::owner::schedule::OwnerHost,
+) -> anyhow::Result<()> {
     // The app's keychain, when config and environment name no secret.
     if config.auth_secret.is_none()
         && let Ok(secret) = host.secret("auth_secret")
@@ -95,7 +127,7 @@ pub async fn serve_embedded<A: AppHost>(
     }
     let cors_layer = crate::commands::build_cors_layer(&server_config)?;
     let (sync_server, gpu_poller) =
-        crate::commands::build_server(vault, &config, server_config, owner_host(&config)).await?;
+        crate::commands::build_server(vault, &config, server_config, owner_host).await?;
     let sync_server = if artifacts.is_some() {
         sync_server.with_artifact_socket()
     } else {

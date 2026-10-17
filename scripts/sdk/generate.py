@@ -1462,8 +1462,8 @@ def outputs():
 # shared wire shape. An input record with no fields is no argument at all. Only
 # a type the inventory could not read crosses as the crate's `WireJson` leaf,
 # parsed into the row's engine input type and written from its typed output on
-# the Rust side; there is no generic `call`. A definition row with a `uniffi` block
-# exports its signature and fails closed until the table makes it callable.
+# the Rust side; there is no generic `call`. A definition row gets no UniFFI
+# export: the generator refuses one until the table gives it a call.
 # Codecs are selected by type (`crates/oneiron-uniffi/src/codec.rs`), never by
 # verb name.
 UNIFFI_INPUTS = {

@@ -1,4 +1,6 @@
-//! Minimal JNI/Kotlin ownership adapter. The Java instance owns one engine vault.
+//! Minimal JNI/Kotlin ownership adapter. The Java instance owns one engine vault,
+//! or a share of the one its `EmbeddedEngine` serves (`engine`, behind the
+//! `engine` feature).
 //! No engine state lives in process-global native storage.
 use jni::{
     JNIEnv,
@@ -6,10 +8,14 @@ use jni::{
     sys::{jbyteArray, jint, jlong},
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use std::sync::MutexGuard;
+use std::sync::{Arc, MutexGuard};
+
+// Public so its JNI exports are reachable items, as this file's are.
+#[cfg(feature = "engine")]
+pub mod engine;
 
 struct NativeVault {
-    vault: Vault,
+    vault: Arc<Vault>,
 }
 impl NativeVault {
     fn open(path: &str) -> Result<Self, String> {
@@ -17,7 +23,9 @@ impl NativeVault {
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
         Vault::open(path, VaultConfig::device())
-            .map(|vault| Self { vault })
+            .map(|vault| Self {
+                vault: Arc::new(vault),
+            })
             .map_err(display)
     }
     fn put(&self, id: &str, kind: jint, at: jlong, body: &[u8]) -> Result<(), String> {
@@ -113,7 +121,9 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_getNative(
         }
     })
 }
-/// JNI close drops the actual Rust vault, including its LMDB environment.
+/// JNI close drops this instance's vault: the vault itself, with its LMDB
+/// environment, or its share of an engine's, which closes when the last
+/// share and the engine have gone.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_oneiron_EmbeddedVault_closeNative(
     mut env: JNIEnv<'_>,

@@ -8,6 +8,12 @@
 //! client's one dispatcher, so this crate adds no transport, no route table
 //! and no second error taxonomy.
 //!
+//! With the `engine` feature, `EmbeddedEngine` runs the full server inside
+//! the app's process instead (`oneiron_server::embedded`): it opens the vault
+//! the way `oneiron serve` does, and its `client` attaches `Oneiron` handles
+//! to that same open vault. Its `request` reaches the server's HTTP surface;
+//! the handles' verbs still answer through the client's embedded dispatcher.
+//!
 //! The verb methods are generated from `scripts/sdk/agent-verbs.json` into
 //! `facade_generated.rs`: one exported method per facade row, which calls that
 //! row's typed client method through the lift/lower codecs in `codec`. A row
@@ -22,14 +28,17 @@
 //! one name-keyed method is `retry`, which only resends a pending ask's call.
 //! Every exported row is callable: the table names no definition-only row.
 //!
-//! This surface exports no foreign callback interface and no subscription
-//! verb: streaming belongs to the transport lane, not to a second socket minted
+//! The one foreign callback interface is the embedded engine's app host,
+//! `AppHostCallbacks` (with `engine`). There is no subscription verb:
+//! streaming belongs to the transport lane, not to a second socket minted
 //! here.
 
 #[macro_use]
 mod contract;
 mod codec;
 mod dto;
+#[cfg(feature = "engine")]
+mod embedded_engine;
 mod error;
 mod facade_types_generated;
 
@@ -44,6 +53,10 @@ pub use dto::{
     RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
     StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
     WitnessMessage, WitnessReceipt, WitnessTurn,
+};
+#[cfg(feature = "engine")]
+pub use embedded_engine::{
+    AppHostCallbacks, EmbeddedEngine, EngineHeader, EngineLimits, EngineReply, EngineRequest,
 };
 pub use error::OneironError;
 pub use facade_types_generated::*;
@@ -64,10 +77,14 @@ pub const HEAD_MEMORY_PACK_SCHEMA_VERSION: u32 = oneiron::MEMORY_PACK_VERSION;
 ///
 /// Both constructors return this same type, and a narrower actor scope is
 /// still this same type. It holds the shared client and nothing else: no
-/// second storage handle, transport, budget or callback.
+/// second storage handle, transport, budget or callback. A handle from
+/// `EmbeddedEngine::client` (with `engine`) also holds that engine, so the
+/// server outlives every handle on its vault.
 #[derive(uniffi::Object)]
 pub struct Oneiron {
     inner: oneiron_remote::OneironClient,
+    #[cfg(feature = "engine")]
+    engine: Option<Arc<EmbeddedEngine>>,
 }
 
 #[uniffi::export]
@@ -92,7 +109,11 @@ impl Oneiron {
             path.as_deref(),
             &oneiron_remote::OpenOptions { dimensions },
         )?;
-        Ok(Arc::new(Self { inner }))
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: None,
+        }))
     }
 
     /// Binds a remote `oneiron-server`.
@@ -104,7 +125,11 @@ impl Oneiron {
     #[uniffi::constructor]
     pub fn connect(url: String, key: String) -> Result<Arc<Self>, OneironError> {
         let inner = oneiron_remote::OneironClient::connect(&url, &key)?;
-        Ok(Arc::new(Self { inner }))
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: None,
+        }))
     }
 
     /// Returns a NEW handle bound to another actor; this one is unchanged.
@@ -114,13 +139,21 @@ impl Oneiron {
     /// a remote principal cannot widen or replace the actor its slip bound.
     pub fn as_actor(&self, actor_key: String) -> Result<Arc<Self>, OneironError> {
         let inner = self.inner.as_actor(&actor_key)?;
-        Ok(Arc::new(Self { inner }))
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: self.engine.clone(),
+        }))
     }
 
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
     pub fn in_room_turn(&self, room_ref: String) -> Result<Arc<Self>, OneironError> {
         let inner = self.inner.in_room_turn(&room_ref)?;
-        Ok(Arc::new(Self { inner }))
+        Ok(Arc::new(Self {
+            inner,
+            #[cfg(feature = "engine")]
+            engine: self.engine.clone(),
+        }))
     }
 
     /// The lasting call receipt the last verb's reply stated, as
