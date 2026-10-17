@@ -314,9 +314,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/oneiron-broker.rs` | src | s | — | — | `oneiron-broker serve`: the credential broker, run as its own OS user |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
-| `src/builtin_host.rs` | src | s | 4 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
+| `src/builtin_host.rs` | src | s | 5 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
 | `src/builtin_host/checks.rs` | src | s | 2 crate-vis | — | The served host's connection checks: the engine's provider checks, plus `browser.session`, which is local… |
 | `src/builtin_host/handles.rs` | src | s | 8 crate-vis | — | One handle per served built-in channel: its adapter, the provider account its check bound, and the… |
+| `src/builtin_host/slack_app.rs` | src | m | 12 crate-vis | — | The served Slack app and the provider URLs of the built-in channels (OF-519): the manifest the owner creates… |
 | `src/builtin_host/webhooks.rs` | src | m | 4 crate-vis | — | The provider webhooks of the served built-in channels (OF-519) |
 | `src/byte_line.rs` | src | m | 11 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
 | `src/cli.rs` | src | L | 21 struct · 9 enum · 3 fn · 6 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +22 | — |
