@@ -354,7 +354,26 @@ impl EmbeddedClient {
         verb: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, MemoryError> {
-        let memory = self.memory();
+        self.invoke_in(self.memory(), verb, input)
+    }
+
+    /// [`Self::invoke`] under `invocation`: a retry of a call a verb hook
+    /// stopped on an ask names the id it ran under (ARCH-0080 §3).
+    pub(crate) fn invoke_as(
+        &self,
+        verb: &str,
+        input: serde_json::Value,
+        invocation: oneiron::runtime_hooks::InvocationId,
+    ) -> Result<serde_json::Value, MemoryError> {
+        self.invoke_in(self.memory().with_invocation(invocation), verb, input)
+    }
+
+    fn invoke_in(
+        &self,
+        memory: oneiron::memory::Memory<'_>,
+        verb: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, MemoryError> {
         match self.room_turn {
             Some(room) => memory.for_room_turn(room)?.invoke(verb, input),
             None => oneiron::task_verb::sdk::invoke(&memory, verb, input),

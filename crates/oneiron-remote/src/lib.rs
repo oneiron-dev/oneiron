@@ -37,6 +37,7 @@ mod agent_verbs;
 mod caps;
 mod embedded;
 mod error;
+mod invocation;
 pub mod llm;
 mod remote;
 
@@ -55,6 +56,7 @@ pub use crate::caps::{
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
+pub use crate::invocation::pending_invocation;
 use crate::remote::RemoteClient;
 
 /// Options an embedded open accepts (§HEAD-CONTRACT `OpenOptions`).
