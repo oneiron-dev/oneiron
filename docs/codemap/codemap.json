@@ -60740,7 +60740,7 @@
      "path": "src/facade/convert.rs",
      "purpose": "DTO to/from engine converters plus the forget paging helper",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -60788,6 +60788,7 @@
       "NapiOutboundDraftInput",
       "NapiOutboundIntentReceipt",
       "NapiPendingWrite",
+      "NapiQueryAffect",
       "NapiReadReceipt",
       "NapiReadScope",
       "NapiRecallMedia",
@@ -60806,7 +60807,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 55
+      "struct": 56
      }
     },
     {
@@ -71724,6 +71725,7 @@
       "OutboundIntentReceipt",
       "Paired",
       "PendingWrite",
+      "QueryAffect",
       "QuoteSpan",
       "ReadReceipt",
       "ReadScope",
@@ -71750,7 +71752,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 7,
-      "struct": 49
+      "struct": 50
      }
     },
     {
