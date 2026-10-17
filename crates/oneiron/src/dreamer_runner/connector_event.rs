@@ -1,13 +1,14 @@
 //! Connector wake delivery retains its typed event; it is not a partition job.
 use super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
-    DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    DreamerParkCause, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::connector_key::events::ConnectorEvent;
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::outbound::{
-    ConnectorReply, ConnectorReplyDispatch, OutboundDispatchError, OutboundExecutionOutcome,
-    OutboundExecutionRequest, OutboundExecutionSink, connector_reply_request,
+    ConnectorReply, ConnectorReplyDispatch, OutboundDispatchError, OutboundDispatchOutcome,
+    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
+    connector_reply_request,
 };
 use crate::{ClaimSource, EntityId, Error, Result, Vault};
 use rmpv::Value;
@@ -156,17 +157,44 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
             );
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         };
-        if let Some(reply) = responder.reply(ctx.vault, &wake)? {
-            let dispatch = connector_reply_request(&wake.event, &reply)?;
-            let sink = responder.sink(&wake, &dispatch)?;
-            ctx.vault
-                .dispatch_connector_reply(&wake.event, &reply, &mut BorrowedSink(sink))
-                .map_err(|err| match err {
-                    OutboundDispatchError::Engine(err) => err,
-                    other => Error::InvalidConfig(format!("connector reply dispatch: {other}")),
-                })?;
-        }
-        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+        let Some(reply) = responder.reply(ctx.vault, &wake)? else {
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        };
+        let dispatch = connector_reply_request(&wake.event, &reply)?;
+        let sink = responder.sink(&wake, &dispatch)?;
+        let result = ctx
+            .vault
+            .dispatch_connector_reply(&wake.event, &reply, &mut BorrowedSink(sink))
+            .map_err(|err| match err {
+                OutboundDispatchError::Engine(err) => err,
+                other => Error::InvalidConfig(format!("connector reply dispatch: {other}")),
+            })?;
+        // A reply that did not leave parks the wake; its resume re-sends the
+        // kept body, never a second model call. An ambiguous send may have
+        // landed, so it waits for a look rather than an automatic resend.
+        Ok(match result.outcome {
+            OutboundDispatchOutcome::DeliveredToChannel
+            | OutboundDispatchOutcome::Degraded
+            | OutboundDispatchOutcome::Suppressed
+            | OutboundDispatchOutcome::LetGo => {
+                DreamerAttemptExecution::Completed { completed_units: 0 }
+            }
+            OutboundDispatchOutcome::Held => DreamerAttemptExecution::Park {
+                reason: format!(
+                    "connector reply held: {}",
+                    result.gate_reason_codes.join(",")
+                ),
+                cause: DreamerParkCause::Signal,
+            },
+            OutboundDispatchOutcome::Failed => DreamerAttemptExecution::Park {
+                reason: "connector reply failed".to_owned(),
+                cause: DreamerParkCause::ProviderUnavailable,
+            },
+            OutboundDispatchOutcome::Ambiguous => DreamerAttemptExecution::Park {
+                reason: "connector reply ambiguous".to_owned(),
+                cause: DreamerParkCause::Other,
+            },
+        })
     }
 }
 
