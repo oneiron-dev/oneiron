@@ -53,6 +53,9 @@ pub struct SharedInvitation {
     pub issued_at: u64,
     pub expires_at: u64,
     pub state: SharedInvitationState,
+    /// Minted by `initialize_shared_vault` for a founding member, in the
+    /// creation writer: only such an invitation may name the Owner role.
+    pub founding: bool,
 }
 
 /// Key: hex32 (invitee) ":" hex32 (invitation id), so a person reads their
@@ -108,7 +111,8 @@ impl Vault {
     }
 
     /// The `add_member` effect: one pending invitation of `member` at `role`,
-    /// refused while another of theirs to this vault is still open.
+    /// refused while another of theirs to this vault is still open. `founding`
+    /// marks the creation writer's own invitations.
     pub(super) fn issue_invitation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -116,6 +120,7 @@ impl Vault {
         inviter: EntityId,
         member: EntityId,
         role: Role,
+        founding: bool,
         now: u64,
     ) -> Result<Effect> {
         if self
@@ -136,6 +141,7 @@ impl Vault {
                 .checked_add(SHARED_INVITATION_TTL_SECS)
                 .ok_or_else(invalid)?,
             state: SharedInvitationState::Pending,
+            founding,
         };
         self.put_invitation_in_txn(txn, &invitation)?;
         Ok(Effect {
@@ -172,7 +178,12 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            non_root(Some(invitation.role))?;
+            // Only a founding invitation may admit an Owner (OF-150's
+            // co-owned vault); until it is accepted the creator is the only
+            // one. Any other invitation admits no root role.
+            if !(invitation.founding && invitation.role == Role::Owner) {
+                non_root(Some(invitation.role))?;
+            }
             self.authorize_shared_vault_write_in_txn(
                 txn,
                 vault_id,

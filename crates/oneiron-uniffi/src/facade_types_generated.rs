@@ -3109,6 +3109,8 @@ pub struct SharedInvitation {
     pub expires_at: u64,
     #[serde(rename = "state")]
     pub state: SharedInvitationState,
+    #[serde(rename = "founding")]
+    pub founding: bool,
 }
 
 /// `oneiron::task_verb::sdk_shared_members::SharedInvitationRequest`.

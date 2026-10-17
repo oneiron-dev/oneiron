@@ -551,7 +551,7 @@ export type SharedMemberRequest = { vault_id: number; member: string }
 /** `oneiron::federation::shared_act::membership::invitation::SharedInvitationState` */
 export type SharedInvitationState = "pending" | { accepted: { at: number } } | { declined: { at: number } } | { withdrawn: { by: string; at: number } }
 /** `oneiron::federation::shared_act::membership::invitation::SharedInvitation` */
-export type SharedInvitation = { id: string; vault_id: number; inviter: string; invitee: string; role: FederationGrantRole; issued_at: number; expires_at: number; state: SharedInvitationState }
+export type SharedInvitation = { id: string; vault_id: number; inviter: string; invitee: string; role: FederationGrantRole; issued_at: number; expires_at: number; state: SharedInvitationState; founding: boolean }
 /** `oneiron::task_verb::sdk_shared_members::SharedInvitationRequest` */
 export type SharedInvitationRequest = { vault_id: number; invitation: string }
 /** `oneiron::task_verb::sdk_shared_members::SharedInvitationWithdrawRequest` */

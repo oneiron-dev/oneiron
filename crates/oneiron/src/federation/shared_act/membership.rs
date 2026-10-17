@@ -295,6 +295,43 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// One founding member's invitation (OF-531), in the initializer's
+    /// writer: the vault's creator invites `member`, a live person, at
+    /// `role`, Owner included (a co-owned vault, OF-150), and the receipt
+    /// tells them through their own outcome notice. They join only on
+    /// acceptance, as any invitee does.
+    pub(crate) fn invite_founding_member_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        creator: EntityId,
+        member: EntityId,
+        role: Role,
+        now: u64,
+    ) -> Result<SharedActExecutionReceipt> {
+        if role != Role::Owner {
+            non_root(Some(role))?;
+        }
+        if !crate::consent::person_is_live_in_txn(self, txn, &member)? {
+            return Err(invalid());
+        }
+        let effect =
+            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, now)?;
+        let id = self.store.clock.entity_id()?.to_hex();
+        self.record_shared_change_in_txn(
+            txn,
+            id,
+            vault_id,
+            None,
+            creator,
+            BTreeSet::from([creator]),
+            effect,
+            None,
+            None,
+            now,
+        )
+    }
+
     /// Invite `member`, a live person with no membership here, at a non-root
     /// role, or the creation preset's default member role when `None`. No
     /// grant is written until they accept ([`Vault::accept_shared_invitation`]);
@@ -325,7 +362,7 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, now)
+                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)
             },
         )
     }

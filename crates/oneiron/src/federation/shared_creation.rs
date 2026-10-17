@@ -90,6 +90,13 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
 impl Vault {
     /// Run once while creating shared membership. Reopening never reapplies defaults.
     /// No preset means exactly the explicitly supplied roles, without implicit grants.
+    ///
+    /// Only the creator's own row is granted at once: their Owner grant under a
+    /// preset, or the role they name for themselves. Every other founding member
+    /// is invited at their role and joins on acceptance (OF-531, Engine ruling
+    /// 2026-10-17), so the creator needs a grant of their own to invite anyone.
+    /// A founding co-Owner's invitation names the Owner role (OF-150); until
+    /// it is accepted the creator is the vault's only Owner.
     pub fn initialize_shared_vault(
         &self,
         owner: &AuthenticatedOwner,
@@ -110,6 +117,7 @@ impl Vault {
             return Err(invalid("shared membership has already been initialized"));
         }
         let mut rows = std::collections::BTreeMap::new();
+        let mut invites = std::collections::BTreeMap::new();
         if preset.is_some() {
             rows.insert(actor, Role::Owner);
         }
@@ -118,9 +126,19 @@ impl Vault {
                 .role
                 .or_else(|| preset.map(SharedVaultPreset::default_member_role))
                 .ok_or_else(|| invalid("no preset requires an explicit role"))?;
-            if rows.insert(member.member_ref, role).is_some() {
+            let fresh = if member.member_ref == actor {
+                rows.insert(actor, role).is_none()
+            } else {
+                invites.insert(member.member_ref, role).is_none()
+            };
+            if !fresh {
                 return Err(invalid("duplicate initial member"));
             }
+        }
+        if !invites.is_empty() && !rows.contains_key(&actor) {
+            return Err(invalid(
+                "founding members are invited by the creator, who needs a grant of their own",
+            ));
         }
         let mut creation = SharedVaultCreation {
             vault_id,
@@ -207,6 +225,25 @@ impl Vault {
             self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         }
         SHARED_VAULT_CREATION.put(&self.store, &mut txn, &(), &creation)?;
+        if !invites.is_empty() {
+            // Invitations run on the store clock, as acceptance does.
+            let invited_at = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
+            for (member, role) in invites {
+                if crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &member)?
+                    .is_none()
+                {
+                    return Err(Error::EntityNotFound);
+                }
+                let role = if role == Role::Auditor {
+                    Role::Viewer
+                } else {
+                    role
+                };
+                self.invite_founding_member_in_txn(
+                    &mut txn, vault_id, actor, member, role, invited_at,
+                )?;
+            }
+        }
         txn.commit()?;
         Ok(creation)
     }

@@ -1478,6 +1478,7 @@ class SharedInvitation(TypedDict):
     issued_at: int
     expires_at: int
     state: SharedInvitationState
+    founding: bool
 class SharedInvitationRequest(TypedDict):
     vault_id: int
     invitation: str
