@@ -340,6 +340,7 @@ impl Vault {
                     },
                     permissions: &candidate.permissions,
                     qualification: None,
+                    world: None,
                 },
             )?;
             if let PackInstallDisposition::Installed(receipt) = &disposition {
