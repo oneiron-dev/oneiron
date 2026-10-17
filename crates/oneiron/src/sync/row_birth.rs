@@ -17,9 +17,12 @@ use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use crate::Vault;
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::birth::{RowBirth, WithheldKey, stamp_replicated_row_birth_in_txn};
+use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The window map that carries row births.
 pub(crate) const ROW_BIRTHS_MAP: &str = "row_births";
@@ -196,10 +199,36 @@ pub(crate) fn validate_carried_birth(
     Ok(())
 }
 
+/// Whether the birth `doc` carries for `id` may land on the live local row:
+/// `doc` carries that row as one of the same kind, and of a kind that
+/// replicates. A carrier the ladder skips because its kind never replicates
+/// (a local diagnostic observation, internal LFS chunk bytes) lends its birth
+/// to no local row.
+fn carried_row_lands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+    id: &EntityId,
+) -> Result<bool> {
+    let LiveEntityRow::Live { entity_type, .. } = live_entity_row_in_txn(&vault.store, txn, id)?
+    else {
+        return Ok(false);
+    };
+    let Some(carrier) = map_get_bytes(&doc.get_map("entities"), &id.to_hex()) else {
+        return Ok(false);
+    };
+    Ok(EntityMetadataHeader::parse(&carrier)
+        .is_some_and(|header| header.entity_type == entity_type)
+        && entity_type != ENTITY_TYPE_DIAGNOSTIC
+        && !crate::origin::lfs::is_lfs_chunk_blob(id, &carrier)
+        && !crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, txn, id)?)
+}
+
 /// Stamps the birth `doc` carries for `id` in `wtxn`, beside the row the same
-/// transaction admitted. A row with no carried birth stays unknown. A
-/// malformed or conflicting remote birth is left out with a warning: the row
-/// itself stands, and its stored birth is never replaced.
+/// transaction admitted. A row with no carried birth stays unknown, and so
+/// does a row the carrier may not lend its birth to. A malformed or
+/// conflicting remote birth is left out with a warning: the row itself
+/// stands, and its stored birth is never replaced.
 pub(in crate::sync) fn stamp_carried_birth_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -209,6 +238,9 @@ pub(in crate::sync) fn stamp_carried_birth_in_txn(
     let Some(bytes) = map_get_bytes(&births(doc), &id.to_hex()) else {
         return Ok(());
     };
+    if !carried_row_lands_in_txn(vault, wtxn, doc, id)? {
+        return Ok(());
+    }
     let Some(birth) = decode(&bytes) else {
         tracing::warn!(entity = %id.to_hex(), "row birth carrier does not decode; left out");
         return Ok(());
@@ -233,10 +265,11 @@ pub(in crate::sync) fn stamp_birth_or_warn(
 }
 
 /// Observer B for the birth map: a birth that lands after its row (a later
-/// import, or a promotion snapshot) is stamped once the row is live. A birth
-/// whose row has not landed waits: the entity pass stamps it on arrival.
+/// import, or a promotion snapshot) is stamped once the row is live, when the
+/// window carries that row as one that replicates. A birth whose row has not
+/// landed waits: the entity pass stamps it on arrival.
 pub(crate) fn materialize_births_from_delta(
-    _doc: &LoroDoc,
+    doc: &LoroDoc,
     delta: &loro::event::MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
@@ -259,7 +292,7 @@ pub(crate) fn materialize_births_from_delta(
     }
     let result = vault.with_write_txn_grouped(|wtxn| {
         for (id, birth) in &carried {
-            if crate::vault::live_entity_row_in_txn(&vault.store, wtxn, id)?.is_live() {
+            if carried_row_lands_in_txn(vault, wtxn, doc, id)? {
                 stamp_birth_or_warn(vault, wtxn, id, birth)?;
             }
         }
