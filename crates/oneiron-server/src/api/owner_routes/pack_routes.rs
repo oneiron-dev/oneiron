@@ -344,10 +344,11 @@ async fn qualify_hooks(
 ) -> OwnerReply<HookQualification> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let Some(runtime) = server.hook_runtime.get().cloned() else {
-        return Err(OwnerError::Refused("no hook sandbox runs on this server".to_owned()).into());
-    };
+    let runtime = server.hook_runtime.get().cloned();
     let qualified = blocking(move || {
+        let runtime = runtime.ok_or_else(|| {
+            OwnerError::Refused("no hook sandbox runs on this server".to_owned())
+        })?;
         let source = EntityId::from_hex(&request.source)
             .map_err(|_| OwnerError::Invalid("source is not an entity id".to_owned()))?;
         let qualified = server
