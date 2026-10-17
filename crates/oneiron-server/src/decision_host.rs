@@ -470,12 +470,18 @@ impl DecisionProvider for SystemOneRung {
         }
     }
 
+    /// The seat sends each image as a named asset beside the state.
+    fn reads_images(&self) -> bool {
+        true
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
         let request = SeatRequest {
             question: call.question.clone(),
             state: call.state.clone(),
             images: call.images.to_vec(),
+            audio: call.audio.to_vec(),
             score_levels: Vec::new(),
             posture: self.posture,
             remote_opt_in: self.remote_opt_in,

@@ -174,6 +174,15 @@ pub(super) fn validate_capabilities(
             "request includes image content",
         )?;
     }
+    if request.messages.iter().any(message_has_audio) {
+        // The Messages wire has no audio block, whatever the catalog row says.
+        return Err(FatalLlmError::Unsupported(UnsupportedCapability {
+            capability: LlmCapability::AudioInput,
+            model: Some(catalog.model.clone()),
+            reason: Some("this wire sends no audio".to_owned()),
+        })
+        .into());
+    }
     if matches!(
         request.envelope.response_format,
         ResponseFormat::Json { .. }
@@ -219,6 +228,13 @@ fn message_has_image(message: &LlmMessage) -> bool {
         .content
         .iter()
         .any(|part| matches!(part, ContentPart::Image { .. }))
+}
+
+fn message_has_audio(message: &LlmMessage) -> bool {
+    message
+        .content
+        .iter()
+        .any(|part| matches!(part, ContentPart::Audio { .. }))
 }
 
 fn message_has_tool_result(message: &LlmMessage) -> bool {
