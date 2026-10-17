@@ -582,7 +582,8 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             .map_or(finding.window.0, |record| {
                 record.claimed_at.unwrap_or(record.created_at)
             });
-        finding.blocked = said_blocked(vault, finding.subject, finding.task, began)?;
+        finding.blocked =
+            said_blocked(vault, finding.subject, finding.task, began, finding.attempt)?;
     }
 
     // Each finding's DIAGNOSTIC, in its own write: the event door opens one.
@@ -856,7 +857,7 @@ fn silent_findings(
             || traps.contains_key(id)
             || runner.parked_attempt(record.id)?.is_some();
         let task = task_of(record);
-        if waiting || said_blocked(vault, dispatch.actor, task, claimed)? {
+        if waiting || said_blocked(vault, dispatch.actor, task, claimed, Some(record.id))? {
             continue;
         }
         let Some(attempt) = entity(record.id) else {
@@ -1115,12 +1116,14 @@ fn p90(mut values: Vec<u64>) -> u64 {
 }
 
 /// Whether the agent said it was stuck: its TASK is Blocked, or it filed a
-/// blocked report (`self.report_blocked`) at or after `since`.
+/// blocked report (`self.report_blocked`) at or after `since` that is
+/// unbound or bound to `attempt`.
 fn said_blocked(
     vault: &Vault,
     actor: EntityId,
     task: Option<EntityId>,
     since: u64,
+    attempt: Option<AttemptId>,
 ) -> Result<bool> {
     let recent = {
         let rtxn = vault.store.env.read_txn()?;
@@ -1148,9 +1151,12 @@ fn said_blocked(
         }
         recent
     };
-    // The report reader opens its own snapshot.
+    // The report reader opens its own snapshot. A report the host bound to
+    // another attempt of the same agent speaks for that one only.
     for id in recent {
-        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?.is_some() {
+        if crate::code_run::blocked::read_blocked_receipt(vault, &id)?
+            .is_some_and(|receipt| receipt.speaks_for(attempt))
+        {
             return Ok(true);
         }
     }

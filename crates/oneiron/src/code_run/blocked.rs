@@ -33,6 +33,10 @@ pub struct BlockedReceipt {
     pub category: BlockedCategory,
     /// Escaped canonical leaf; never executable, never a routing selector.
     pub untrusted_detail: String,
+    /// The agent attempt the host ran the report under, lowercase hex.
+    /// Host-stamped, never guest text; a run with no agent attempt names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
 }
 impl BlockedReceipt {
     pub fn new(category: BlockedCategory, raw_detail: &str) -> Result<Self> {
@@ -41,7 +45,26 @@ impl BlockedReceipt {
             untrusted_detail: crate::self_heal::untrusted_text::canonical_untrusted_detail(
                 raw_detail,
             )?,
+            attempt: None,
         })
+    }
+    /// Binds the report to the agent attempt the host ran it under.
+    #[must_use]
+    pub(crate) fn for_attempt(mut self, attempt: Option<crate::AttemptId>) -> Self {
+        self.attempt =
+            attempt.map(|attempt| crate::entity_id::bytes_to_hex_lower(attempt.as_bytes()));
+        self
+    }
+    /// Whether the report speaks for `attempt`: a bound report for its own
+    /// attempt only, an unbound one for any.
+    #[must_use]
+    pub(crate) fn speaks_for(&self, attempt: Option<crate::AttemptId>) -> bool {
+        match (&self.attempt, attempt) {
+            (Some(bound), Some(attempt)) => {
+                *bound == crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
+            }
+            _ => true,
+        }
     }
     pub(crate) fn content(&self) -> Result<String> {
         crate::self_heal::untrusted_text::validate_untrusted_detail(&self.untrusted_detail)?;

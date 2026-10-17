@@ -572,8 +572,10 @@ impl<'a> ExecutorStorage<'a> {
         run_id: Option<EntityId>,
         call: &crate::code_run::blocked::SelfReportBlockedCall,
         actor: WriteActor,
+        attempt: Option<crate::AttemptId>,
     ) -> Result<EntityId> {
-        let receipt = crate::code_run::blocked::BlockedReceipt::new(call.category, &call.detail)?;
+        let receipt = crate::code_run::blocked::BlockedReceipt::new(call.category, &call.detail)?
+            .for_attempt(attempt);
         self.witness_executor_utterance(
             run_ref,
             run_id,
