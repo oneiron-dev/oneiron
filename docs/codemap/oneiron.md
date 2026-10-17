@@ -2544,7 +2544,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/persona_snapshot/standing.rs` | src | m | 4 struct · 1 enum · 11 fn | StandingBlockCache, StandingBlockEdit, StandingBlockEviction, StandingBlockHandle, StandingBlockSession | Named (agent, world) standing blocks compiled from gated persona claims |
 | `src/persona_snapshot/tests.rs` | test | L | — | — | — |
 | `src/persona_snapshot/types.rs` | src | m | 9 struct · 1 enum · 3 fn · 10 const · 22 crate-vis | PersonaSnapshotAgentTake, PersonaSnapshotArtifact, PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCompileStamp, PersonaSnapshotExportConsent, PersonaSnapshotExportRecord, PersonaSnapshotRow +2 | Snapshot/export row, consent, and artifact domain types with pinned key and schema consts |
-| `src/pipeline/affect.rs` | src | s | 1 struct · 1 fn · 3 const · 6 crate-vis | AffectRetrievalPolicy | Affect-weighted retrieval availability (OF-423; ARCH-0034 `scour:A53`, eiri pick A66) |
+| `src/pipeline/affect.rs` | src | m | 1 struct · 1 fn · 3 const · 7 crate-vis | AffectRetrievalPolicy | Affect-weighted retrieval availability (OF-423; ARCH-0034 `scour:A53`, eiri pick A66) |
 | `src/pipeline/authority.rs` | src | s | 6 crate-vis | — | Enforcement of gate-resolved retrieval authority |
 | `src/pipeline/authority_corpus_tests.rs` | test | s | 1 crate-vis | — | Current-main corpus channels and ONE-1388 authority must narrow together |
 | `src/pipeline/authority_tests.rs` | test | m | 1 crate-vis | — | ONE-1388 adapter tests |

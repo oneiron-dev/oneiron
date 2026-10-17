@@ -32095,7 +32095,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AffectRetrievalPolicy"
@@ -32104,7 +32104,7 @@
      "purpose": "Affect-weighted retrieval availability (OF-423; ARCH-0034 `scour:A53`, eiri pick A66)",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
