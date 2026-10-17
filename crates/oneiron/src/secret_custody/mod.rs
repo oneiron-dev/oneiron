@@ -137,12 +137,12 @@ pub use self::types::{
     SECRET_NAME_INDEX_PREFIX, SECRET_NAME_MAX_BYTES, SECRET_SCOPE_READ, SecretBinding,
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
-pub(crate) use self::use_handle::SecretUser;
 pub use self::use_handle::{
-    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_OPERATIONS, SECRET_USE_REASON,
-    SecretBindRequest, SecretBound, SecretUseDecision, SecretUseOperation, SecretUseOutcome,
-    SecretUseReceipt, SecretUseSend,
+    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS,
+    SECRET_USE_REASON, SecretBindRequest, SecretBound, SecretUseDecision, SecretUseOperation,
+    SecretUseOutcome, SecretUseReceipt, SecretUseSend,
 };
+pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser};
 
 #[cfg(test)]
 mod tests;

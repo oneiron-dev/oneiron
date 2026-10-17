@@ -212,6 +212,15 @@ impl Vault {
         REPLAY_RECORDS.get(&self.store, &rtxn, run_id)
     }
 
+    /// [`Self::get_code_run_replay_record`] in the caller's snapshot.
+    pub(crate) fn get_code_run_replay_record_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        run_id: &EntityId,
+    ) -> Result<Option<CodeRunReplayRecord>> {
+        REPLAY_RECORDS.get(&self.store, rtxn, run_id)
+    }
+
     /// A writer for one result body, into this vault's `bodies/`. Each value
     /// custody knows is replaced by its handle as it streams (OF-560 C).
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {

@@ -24,6 +24,13 @@
 //! expires a fixed time after it was first held (`connector_call_pending`).
 //! A held call the ledger already admitted resumes from that frozen row by
 //! its intent id (`connector_call_resume`), never from bytes prepared again.
+//!
+//! A `self.use` call (`Vault::call_connector_with_secret`, OF-560) names a
+//! custody record as its credential in place of the route's own secret. Its
+//! row keeps the record, so every pass presents the same one through the
+//! host ([`ConnectorCallHost::present_credential`]), the credential door
+//! rechecks the record's binding at each send, and a delivered reply is
+//! cleared of the value before it goes anywhere.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -67,6 +74,10 @@ const CONNECTOR_CALL_REF_DOMAIN: &[u8] = b"oneiron:connector-call-ref:v1";
 /// The reason a call gets when its host identity already names a held call
 /// with another request.
 const CONNECTOR_CALL_INVOCATION_CONFLICT: &str = "connector_call_invocation_conflict";
+
+/// The reason a call that names a custody record gets on a host that cannot
+/// present one: it is refused unsent.
+const CONNECTOR_CALL_CREDENTIAL_UNSUPPORTED: &str = "connector_call_credential_unsupported";
 
 /// One guest call: a catalog name, one of its tools, and the arguments. It
 /// carries no endpoint, credential, schema, grant or principal: the engine
@@ -159,6 +170,21 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// Takes the reply the last `send` read, kept before the ledger's scrub
     /// destroyed the raw bytes. `None` when that send read no reply.
     fn take_result(&mut self) -> Option<UntrustedToolResult>;
+
+    /// Presents the custody record `credential` as each send's credential
+    /// from here on, in place of the route's own secret, through the
+    /// credential door for the route's effector; `None` goes back to the
+    /// route's. False when this host cannot present a record: a call that
+    /// names one is then refused unsent.
+    fn present_credential(&mut self, credential: Option<EntityId>) -> bool {
+        credential.is_none()
+    }
+}
+
+/// The effector a call on `route` presents its credential for:
+/// `connector:<connector>`. A `self.use` binding names it.
+pub(crate) fn connector_call_effector(route: &ConnectorCallRoute) -> String {
+    format!("connector:{}", route.connector)
 }
 
 /// The exact request a held call re-enters with.
@@ -190,6 +216,10 @@ pub(super) struct PendingConnectorCall {
     /// the call asks once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_ask_seq: Option<u64>,
+    /// The custody record a `self.use` call presents as its credential, in
+    /// place of the route's own secret. Every pass presents it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) credential: Option<EntityId>,
 }
 
 impl PendingConnectorCall {
@@ -201,6 +231,7 @@ impl PendingConnectorCall {
             && self.tool == other.tool
             && self.mutation == other.mutation
             && self.principal_ref == other.principal_ref
+            && self.credential == other.credential
             && arguments(&self.arguments).is_some()
             && arguments(&self.arguments) == arguments(&other.arguments)
     }
@@ -355,6 +386,37 @@ impl Vault {
         invocation: Option<ConnectorCallInvocation>,
         host: &mut H,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
+        self.start_connector_call(memory, request, invocation, None, host)
+    }
+
+    /// [`Self::call_connector`] with the value of the custody record
+    /// `credential` as the call's credential, in place of the route's own
+    /// secret: the call `self.use` makes for a handle (OF-560). The call's
+    /// row keeps the record, so a resume presents the same one; the
+    /// credential door rechecks its binding at each send, and a delivered
+    /// reply comes back cleared of the value. The caller checked the binding
+    /// before, and wrote the use's record.
+    pub(crate) fn call_connector_with_secret<H: ConnectorCallHost>(
+        &self,
+        memory: &Memory<'_>,
+        request: ConnectorCallRequest,
+        invocation: Option<ConnectorCallInvocation>,
+        host: &mut H,
+        credential: EntityId,
+    ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
+        self.start_connector_call(memory, request, invocation, Some(credential), host)
+    }
+
+    /// The body of both calls: `credential` is the record a `self.use` call
+    /// presents, if any.
+    fn start_connector_call<H: ConnectorCallHost>(
+        &self,
+        memory: &Memory<'_>,
+        request: ConnectorCallRequest,
+        invocation: Option<ConnectorCallInvocation>,
+        credential: Option<EntityId>,
+        host: &mut H,
+    ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
         if !std::ptr::eq(memory.vault(), self) {
             return Err(IntentLedgerError::InvalidInput(
                 "the caller's scope is bound to another vault",
@@ -381,6 +443,7 @@ impl Vault {
             settled: None,
             held_reasons: Vec::new(),
             owner_ask_seq: None,
+            credential,
         };
         let Some(named) = named else {
             return self.drive_connector_call(None, None, pending, host);
@@ -526,15 +589,36 @@ impl Vault {
         mut pending: PendingConnectorCall,
         host: &mut H,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
-        // A call its row already holds resumes through the ledger row it
-        // admitted, if any; only a call with none resolves and prepares live.
-        let resumed = match call_ref {
-            Some(_) => self.resume_connector_call_intent(&pending, host)?,
-            None => None,
+        // A call that names a custody record sends with it or not at all.
+        let step = if host.present_credential(pending.credential) {
+            // A call its row already holds resumes through the ledger row it
+            // admitted, if any; only a call with none resolves and prepares
+            // live.
+            let resumed = match call_ref {
+                Some(_) => self.resume_connector_call_intent(&pending, host)?,
+                None => None,
+            };
+            match resumed {
+                Some(step) => step,
+                None => self.connector_call_step(&mut pending, host)?,
+            }
+        } else {
+            refused(CONNECTOR_CALL_CREDENTIAL_UNSUPPORTED)
         };
-        let step = match resumed {
-            Some(step) => step,
-            None => self.connector_call_step(&mut pending, host)?,
+        // A reply to a send that carried a record's value comes back cleared
+        // of it, or not at all.
+        let step = match (pending.credential, step) {
+            (
+                Some(custody),
+                Step::Delivered {
+                    intent,
+                    result: Some(result),
+                },
+            ) => Step::Delivered {
+                intent,
+                result: self.cleared_connector_reply(&custody, &pending.name, result),
+            },
+            (_, step) => step,
         };
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
@@ -612,6 +696,27 @@ impl Vault {
                 reasons,
             },
         })
+    }
+
+    /// `result`, a reply to a send that presented the value of the custody
+    /// record `custody`, with each copy of the value replaced by the
+    /// record's handle text; `None` (withheld) when the value could not be
+    /// read again to find it.
+    fn cleared_connector_reply(
+        &self,
+        custody: &EntityId,
+        name: &str,
+        mut result: UntrustedToolResult,
+    ) -> Option<UntrustedToolResult> {
+        let route = self.route_connector_call(name).ok().flatten()?;
+        let effector = connector_call_effector(&route);
+        let mut fields: Vec<&mut Value> = std::iter::once(&mut result.content)
+            .chain(result.structured_content.as_mut())
+            .chain(result.rpc_error.as_mut())
+            .collect();
+        self.clear_secret_record_from(custody, &effector, &mut fields)
+            .ok()?;
+        Some(result)
     }
 
     /// One pass: route, grant, governing key, approved schema, prepare,
