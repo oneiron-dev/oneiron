@@ -28,9 +28,10 @@ pub fn safe_read_asset_text<P: EntityStore + TombstoneStore>(
 }
 
 /// Whether `id`'s own words are withdrawn in this snapshot: deleted, marked
-/// stale, or covered by a pending source walk (I1, I2). A door that returns a
-/// stored body refuses such a row; maintenance and capture-before-purge read
-/// the raw ports instead.
+/// stale, covered by a pending source walk (I1, I2), or kept only under a
+/// legal-hold use limit after a refused privacy erasure (OF-470 C6). A door
+/// that returns a stored body refuses such a row; maintenance and
+/// capture-before-purge read the raw ports instead.
 pub(crate) fn withdrawn_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -38,7 +39,8 @@ pub(crate) fn withdrawn_in_txn(
 ) -> Result<bool> {
     Ok(
         super::TombstoneStoreRead::port_deletion_state(store, txn, id)?.deleted
-            || super::stale_in_txn(store, txn, id)?,
+            || super::stale_in_txn(store, txn, id)?
+            || crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some(),
     )
 }
 

@@ -206,6 +206,21 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.legal_holds.place" => {
+                    remote_agent_verb_output::<oneiron::deletion::LegalHold>(client, verb, &input)
+                }
+                "vault.legal_holds.widen" => {
+                    remote_agent_verb_output::<oneiron::deletion::LegalHold>(client, verb, &input)
+                }
+                "vault.legal_holds.list" => remote_agent_verb_output::<
+                    Vec<oneiron::deletion::LegalHold>,
+                >(client, verb, &input),
+                "vault.legal_holds.log" => remote_agent_verb_output::<
+                    Vec<oneiron::deletion::LegalHoldEvent>,
+                >(client, verb, &input),
+                "vault.legal_holds.lift_and_erase" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LegalHoldLiftAndErased,
+                >(client, verb, &input),
                 "vault.lenses.propose" => remote_agent_verb_output::<
                     oneiron::receipt::LensProposalReceipt,
                 >(client, verb, &input),
@@ -337,6 +352,15 @@ impl OneironClient {
                 "vault.rooms.consent" => remote_agent_verb_output::<
                     oneiron::workspace_roster::JoinOutcome,
                 >(client, verb, &input),
+                "vault.rooms.offer" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::OfferCard,
+                >(client, verb, &input),
+                "vault.rooms.offer.answer" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::OfferSettlement,
+                >(client, verb, &input),
+                "vault.rooms.offers" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::OffersPage,
+                >(client, verb, &input),
                 "vault.projects.goal.revisions" => remote_agent_verb_output::<
                     Vec<oneiron::skill_optimize::ProjectGoalRevisionProposal>,
                 >(client, verb, &input),
@@ -353,6 +377,12 @@ impl OneironClient {
                     oneiron::conversation::TurnActionReceipt,
                 >(client, verb, &input),
                 "vault.rooms.host" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomStanding,
+                >(client, verb, &input),
+                "vault.rooms.host.pin" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::RoomStanding,
+                >(client, verb, &input),
+                "vault.rooms.host.hand" => remote_agent_verb_output::<
                     oneiron::workspace_roster::RoomStanding,
                 >(client, verb, &input),
                 "vault.rooms.sharing" => remote_agent_verb_output::<
@@ -1201,6 +1231,66 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.authority.handoff_alarms.acknowledge", value)
     }
+    pub fn vault_legal_holds_place(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldPlaceRequest,
+    ) -> Result<oneiron::deletion::LegalHold, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.place", value)
+    }
+    pub fn vault_legal_holds_widen(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldWidenRequest,
+    ) -> Result<oneiron::deletion::LegalHold, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.widen", value)
+    }
+    pub fn vault_legal_holds_list(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::deletion::LegalHold>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.list", value)
+    }
+    pub fn vault_legal_holds_log(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::deletion::LegalHoldEvent>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.log", value)
+    }
+    pub fn vault_legal_holds_lift_and_erase(
+        &self,
+        input: &oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest,
+    ) -> Result<oneiron::task_verb::sdk::LegalHoldLiftAndErased, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.legal_holds.lift_and_erase", value)
+    }
     pub fn vault_lenses_propose(
         &self,
         input: &oneiron::lens::LensProposeRequest,
@@ -1732,6 +1822,42 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.rooms.consent", value)
     }
+    pub fn vault_rooms_offer(
+        &self,
+        input: &oneiron::workspace_roster::OfferDraft,
+    ) -> Result<oneiron::workspace_roster::OfferCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.offer", value)
+    }
+    pub fn vault_rooms_offer_answer(
+        &self,
+        input: &oneiron::workspace_roster::OfferAnswerRequest,
+    ) -> Result<oneiron::workspace_roster::OfferSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.offer.answer", value)
+    }
+    pub fn vault_rooms_offers(
+        &self,
+        input: &oneiron::workspace_roster::OffersRequest,
+    ) -> Result<oneiron::workspace_roster::OffersPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.offers", value)
+    }
     pub fn vault_projects_goal_revisions(
         &self,
         input: &oneiron::task_verb::sdk::ProjectRefRequest,
@@ -1803,6 +1929,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.host", value)
+    }
+    pub fn vault_rooms_host_pin(
+        &self,
+        input: &oneiron::workspace_roster::RoomHostPin,
+    ) -> Result<oneiron::workspace_roster::RoomStanding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.host.pin", value)
+    }
+    pub fn vault_rooms_host_hand(
+        &self,
+        input: &oneiron::workspace_roster::RoomHostHand,
+    ) -> Result<oneiron::workspace_roster::RoomStanding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.host.hand", value)
     }
     pub fn vault_rooms_sharing(
         &self,

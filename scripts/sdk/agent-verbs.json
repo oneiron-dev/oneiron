@@ -899,6 +899,58 @@
       "section": false
     },
     {
+      "name": "vault.legal_holds.place",
+      "input": "crate::task_verb::sdk::LegalHoldPlaceRequest",
+      "output": "crate::deletion::LegalHold",
+      "call": "crate::task_verb::sdk::place_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.place\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.legal_holds.widen",
+      "input": "crate::task_verb::sdk::LegalHoldWidenRequest",
+      "output": "crate::deletion::LegalHold",
+      "call": "crate::task_verb::sdk::widen_legal_hold_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.widen\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.legal_holds.list",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::deletion::LegalHold>",
+      "call": "crate::task_verb::sdk::read_legal_holds(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.list\")?)?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.legal_holds.log",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::deletion::LegalHoldEvent>",
+      "call": "crate::task_verb::sdk::read_legal_hold_log(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.log\")?)?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.legal_holds.lift_and_erase",
+      "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
+      "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
+      "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.lenses.propose",
       "input": "crate::lens::LensProposeRequest",
       "output": "crate::receipt::LensProposalReceipt",
@@ -1622,6 +1674,44 @@
       "section": false
     },
     {
+      "name": "vault.rooms.offer",
+      "input": "crate::workspace_roster::OfferDraft",
+      "output": "crate::workspace_roster::OfferCard",
+      "call": "memory.rooms_offer(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offer.answer",
+      "input": "crate::workspace_roster::OfferAnswerRequest",
+      "output": "crate::workspace_roster::OfferSettlement",
+      "call": "memory.rooms_offer_answer(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offers",
+      "input": "crate::workspace_roster::OffersRequest",
+      "output": "crate::workspace_roster::OffersPage",
+      "call": "memory.rooms_offers(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$", "room_ref": "=room"},
+      "page": {"rows": "rows", "cursor": "next_after"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.projects.goal.revisions",
       "input": "ProjectRefRequest",
       "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
@@ -1686,6 +1776,32 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.host.pin",
+      "input": "crate::workspace_roster::RoomHostPin",
+      "output": "crate::workspace_roster::RoomStanding",
+      "call": "memory.rooms_host_pin(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.host.hand",
+      "input": "crate::workspace_roster::RoomHostHand",
+      "output": "crate::workspace_roster::RoomStanding",
+      "call": "memory.rooms_host_hand(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {
         "spec": "$"
       },
@@ -1967,6 +2083,16 @@
       "input": "oneiron_browser::ClickInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.click(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.click_at",
+      "input": "oneiron_browser::PointInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click_at(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",

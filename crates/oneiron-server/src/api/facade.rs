@@ -24,6 +24,7 @@
 pub(super) mod action_routes;
 mod agent_verbs;
 pub(super) mod host_doors;
+mod legal_hold_doors;
 pub(super) mod role_picks;
 mod shared_act_doors;
 mod weave_doors;

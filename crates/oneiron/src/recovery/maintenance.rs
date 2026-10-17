@@ -1,6 +1,7 @@
 //! The canonical snapshot as one owner maintenance act (ARCH-0038 escape
 //! hatch and recovery ladder): capture a window, recover it from the
-//! artifact held in memory, and write no snapshot file.
+//! artifact held in memory, and write no snapshot file. The re-bootstrap act
+//! then installs the rebuilt state as the window's CRDT state (OF-005).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use super::canonical::{capture_canonical_window_within, invalid};
 use super::{CanonicalSnapshot, RecoveryBudget, RecoveryTier, recover_vault_window};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
+use crate::store::legal_hold::HoldActor;
 use crate::sync::types::WindowKey;
 use crate::{Vault, VaultWriterLease};
 
@@ -25,6 +27,20 @@ pub struct WindowRecoveryReport {
     pub obligations: Vec<String>,
     /// blake3 of the canonical artifact the act captured and recovered from.
     pub snapshot_blake3: [u8; 32],
+}
+
+/// What one canonical window re-bootstrap did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowRebootstrapReport {
+    /// The recovery the re-bootstrap ran first.
+    pub recovery: WindowRecoveryReport,
+    /// Root-map keys of the window's document that took their rebuilt value
+    /// or went because the rebuilt state lacks them.
+    pub rewritten_keys: usize,
+    /// The installed window's version vector, encoded. Its root is the
+    /// window's newest operation: a peer whose vector does not cover it
+    /// resyncs from a replacement.
+    pub version: Vec<u8>,
 }
 
 impl Vault {
@@ -52,6 +68,53 @@ impl Vault {
         dir: &Path,
         budget: RecoveryBudget,
     ) -> Result<WindowRecoveryReport> {
+        self.canonical_window_act(owner, window, dir, budget, false)
+            .map(|(recovery, _)| recovery)
+    }
+
+    /// Recovers `window` as [`Self::recover_window_from_canonical_snapshot`]
+    /// does, then re-bootstraps it (ARCH-0038, a pathological window): the
+    /// rebuilt state becomes the window's durable CRDT state, with no history
+    /// behind it, as one owner act. The window's document takes the rebuilt
+    /// value of each key it differs on and is cut to a shallow snapshot at its
+    /// newest operation, so it stays the same lineage and every peer resyncs
+    /// through the history-free door: a peer behind the cut takes a
+    /// replacement and writes its unseen writes back on top
+    /// ([`crate::sync::window::prepare_replacement`]).
+    ///
+    /// The cut drops every row's history, as an erase does: a legal hold on
+    /// any row the window carries refuses it before the recovery runs, and
+    /// again in the install transaction. The installed window must capture
+    /// to the very canonical artifact the act recovered from, or nothing is
+    /// installed.
+    pub fn rebootstrap_window_from_canonical_snapshot(
+        &self,
+        owner: &AuthenticatedOwner,
+        window: &str,
+        dir: &Path,
+        budget: RecoveryBudget,
+    ) -> Result<WindowRebootstrapReport> {
+        let (recovery, installed) = self.canonical_window_act(owner, window, dir, budget, true)?;
+        let (rewritten_keys, version) =
+            installed.ok_or_else(|| invalid("re-bootstrap installed nothing"))?;
+        Ok(WindowRebootstrapReport {
+            recovery,
+            rewritten_keys,
+            version,
+        })
+    }
+
+    /// The one canonical window act: recovery, and with `rebootstrap` the
+    /// install of the rebuilt state, returning the keys it rewrote and the
+    /// installed version.
+    fn canonical_window_act(
+        &self,
+        owner: &AuthenticatedOwner,
+        window: &str,
+        dir: &Path,
+        budget: RecoveryBudget,
+        rebootstrap: bool,
+    ) -> Result<(WindowRecoveryReport, Option<(usize, Vec<u8>)>)> {
         let key = WindowKey::try_new(window).ok_or_else(|| invalid("window key"))?;
         if !self
             .writer_lease()
@@ -72,7 +135,7 @@ impl Vault {
                 "window recovery needs the window's writers stopped",
             ));
         }
-        {
+        let actor = {
             let txn = self.store.env.read_txn()?;
             let actor = owner.revalidate_in_txn(self, &txn)?;
             // An authenticated human is not by that alone this vault's owner.
@@ -81,8 +144,12 @@ impl Vault {
                     "window recovery is an owner act, and the actor is no owner of this vault",
                 )));
             }
-        }
+            HoldActor::owner(actor)
+        };
         let doc = durable_window_doc(self, &key)?;
+        if rebootstrap {
+            crate::sync::window::reject_held_rebootstrap(self, &doc, &actor)?;
+        }
         // The artifact envelope round trip, in memory: what recovers is what
         // a written snapshot would have held, byte for byte.
         let bytes = capture_canonical_window_within(self, window, &doc, budget.max_bytes)?
@@ -99,14 +166,35 @@ impl Vault {
             &snapshot,
             budget,
         )?;
-        Ok(WindowRecoveryReport {
-            window: window.to_owned(),
-            tier: prepared.tier,
-            manifest_path,
-            quarantine_path: prepared.quarantine_path,
-            obligations: prepared.obligations,
-            snapshot_blake3,
-        })
+        let installed = if rebootstrap {
+            // The recovery left the rebuilt document equivalent to the
+            // artifact; the window's own cut of it must be too.
+            let cut = crate::sync::window::prepare_rebootstrap(self, &key, &prepared.window)?;
+            if capture_canonical_window_within(self, window, &cut.doc, budget.max_bytes)?
+                != snapshot
+            {
+                return Err(invalid("re-bootstrapped window is not equivalent"));
+            }
+            let rewritten = cut.rewritten;
+            let installed = cut.install(self, &actor)?;
+            Some((
+                rewritten,
+                crate::sync::loro_support::doc_version_vector(&installed),
+            ))
+        } else {
+            None
+        };
+        Ok((
+            WindowRecoveryReport {
+                window: window.to_owned(),
+                tier: prepared.tier,
+                manifest_path,
+                quarantine_path: prepared.quarantine_path,
+                obligations: prepared.obligations,
+                snapshot_blake3,
+            },
+            installed,
+        ))
     }
 }
 

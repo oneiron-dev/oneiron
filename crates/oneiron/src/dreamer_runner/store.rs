@@ -551,6 +551,18 @@ impl<'a> DreamerRunnerStore<'a> {
 
     /// Marks a leased Dreamer attempt complete through the generic queue.
     pub fn complete(&self, input: CompleteDreamerAttempt) -> Result<CompleteDreamerAttemptOutcome> {
+        self.complete_judged(input, None)
+    }
+
+    /// [`Self::complete`], with the runner's answer to its TASK's "Done means
+    /// met?" ([`crate::task_verb::runner_done_question`]), asked before this
+    /// write. Without one, a TASK with a brief asks up.
+    pub fn complete_judged(
+        &self,
+        input: CompleteDreamerAttempt,
+        judged: Option<crate::task_verb::RunnerDoneAnswer>,
+    ) -> Result<CompleteDreamerAttemptOutcome> {
+        use crate::task_verb::highway_runner::RunnerSettle;
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome = self.vault.with_write_txn_grouped(|wtxn| {
@@ -559,7 +571,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 self.vault,
                 wtxn,
                 attempt_id,
-                crate::task_verb::highway_runner::RunnerSettle::Done,
+                judged.map_or(RunnerSettle::Done, RunnerSettle::Judged),
             )?;
             let outcome = crate::ports::JobQueue::port_job_complete(
                 self.vault,
