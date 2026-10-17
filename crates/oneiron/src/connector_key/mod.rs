@@ -52,9 +52,9 @@ pub use self::record::{
     PendingConnectorManifest,
 };
 pub use self::setup::{
-    GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck,
-    PackConnectionEvidence, PackConnectionVerifier, ProviderConnectionChecks,
-    SLACK_AUTH_TEST_CHECK,
+    BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
+    PACK_CONNECTION_ACTOR_CLASS, PackConnectionCheck, PackConnectionEvidence,
+    PackConnectionVerifier, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 
