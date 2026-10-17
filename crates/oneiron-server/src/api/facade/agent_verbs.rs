@@ -178,6 +178,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.proposal_view", post(facade_route))
         .route("/vault.code.repo_diff", post(facade_route))
         .route("/vault.artifacts.export", post(facade_route))
+        .route("/vault.agents.export_pack", post(facade_route))
         .route("/vault.artifacts.born_from", post(facade_route))
         .route("/vault.artifacts.proposals", post(facade_route))
         .route("/vault.artifacts.waits", post(facade_route))

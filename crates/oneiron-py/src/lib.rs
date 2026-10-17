@@ -1717,6 +1717,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_agents_export_pack(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "vault.agents.export_pack")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.export_pack", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_born_from(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.artifacts.born_from")?;
         let output = py

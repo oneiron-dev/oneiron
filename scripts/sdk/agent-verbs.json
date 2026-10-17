@@ -2420,6 +2420,32 @@
       }
     },
     {
+      "name": "vault.agents.export_pack",
+      "description": "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home.",
+      "input": "crate::share_travel::AgentPackExportRequest",
+      "output": "crate::share_travel::AgentPackExport",
+      "call": "memory.export_agent_pack(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The agent's travelling AgentPack folder (files base64) and what stayed home.\n",
+          "ts": "/** The agent's travelling AgentPack folder (files base64) and what stayed home. */",
+          "py": "The agent's travelling AgentPack folder (files base64) and what stayed home."
+        }
+      }
+    },
+    {
       "name": "vault.artifacts.born_from",
       "description": "What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made.",
       "input": "crate::blob_artifact::BornFromRequest",

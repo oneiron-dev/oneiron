@@ -567,6 +567,9 @@ impl OneironClient {
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
+                "vault.agents.export_pack" => remote_agent_verb_output::<
+                    oneiron::share_travel::AgentPackExport,
+                >(client, verb, &input),
                 "vault.artifacts.born_from" => remote_agent_verb_output::<
                     oneiron::blob_artifact::BornFromView,
                 >(client, verb, &input),
@@ -3147,6 +3150,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.export", value)
+    }
+    /// The agent's travelling AgentPack folder (files base64) and what stayed home.
+    pub fn vault_agents_export_pack(
+        &self,
+        input: &oneiron::share_travel::AgentPackExportRequest,
+    ) -> Result<oneiron::share_travel::AgentPackExport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.export_pack", value)
     }
     /// The artifacts and versions a task, ask, run, skill or agent run produced.
     pub fn vault_artifacts_born_from(

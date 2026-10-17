@@ -174,6 +174,7 @@ pub enum AgentVerb {
     VaultCodeProposalView,
     VaultCodeRepoDiff,
     VaultArtifactsExport,
+    VaultAgentsExportPack,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
     VaultArtifactsWaits,
@@ -525,6 +526,7 @@ impl AgentVerb {
         Self::VaultCodeProposalView,
         Self::VaultCodeRepoDiff,
         Self::VaultArtifactsExport,
+        Self::VaultAgentsExportPack,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
         Self::VaultArtifactsWaits,
@@ -883,6 +885,7 @@ impl AgentVerb {
             Self::VaultCodeProposalView => "vault.code.proposal_view",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultArtifactsExport => "vault.artifacts.export",
+            Self::VaultAgentsExportPack => "vault.agents.export_pack",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
             Self::VaultArtifactsWaits => "vault.artifacts.waits",
@@ -1233,6 +1236,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -1591,6 +1595,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -1977,6 +1982,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -2567,6 +2573,7 @@ impl AgentVerb {
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
+            Self::VaultAgentsExportPack => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
@@ -2919,6 +2926,7 @@ impl AgentVerb {
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
+            Self::VaultAgentsExportPack => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
             Self::VaultArtifactsWaits => &["spec"],
@@ -3581,6 +3589,9 @@ impl AgentVerb {
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
+            }
+            Self::VaultAgentsExportPack => {
+                "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home."
             }
             Self::VaultArtifactsBornFrom => {
                 "What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made."

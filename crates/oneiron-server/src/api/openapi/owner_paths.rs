@@ -840,6 +840,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/packs/agent/world",
+        summary: "The owner's answer to a travelling AgentPack held for its world (needs_world).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/packs/defaults/import",
         summary: "Import hub skill.",
         row: None,
@@ -1352,6 +1358,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "get",
         path: "/status",
         summary: "The kits this vault issued, the current one, and each private world's no-kit state here.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/steer",
+        summary: "The steer verb's input (task_ref, instruction, key) and its receipt.",
         row: None,
     },
     OwnerRoute {
