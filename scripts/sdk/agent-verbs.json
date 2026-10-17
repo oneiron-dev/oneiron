@@ -5364,6 +5364,14 @@
       "effect": "Leader"
     },
     {
+      "name": "self.leader.split",
+      "input": "crate::code_run::LeaderSplitInput",
+      "output": "crate::code_run::LeaderSplitOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "LeaderSplit"
+    },
+    {
       "name": "self.skills.call",
       "input": "crate::code_run::SkillCallInput",
       "output": "serde_json::Value",
