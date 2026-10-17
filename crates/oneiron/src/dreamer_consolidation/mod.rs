@@ -59,6 +59,7 @@ pub mod selection;
 mod settle;
 mod sieve_attempt;
 mod step_charge;
+pub mod strength;
 mod support;
 mod task_realize;
 mod turn_text;

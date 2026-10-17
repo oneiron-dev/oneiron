@@ -309,6 +309,7 @@ impl Vault {
                 },
             ));
         }
+        crate::dreamer_consolidation::strength::restored_in_txn(self, wtxn, entity)?;
         person_provenance::clear_mint_evidence_in_txn(self, wtxn, entity)?;
         super::restore_task_attempts(self, wtxn, *entity)?;
         Ok(())

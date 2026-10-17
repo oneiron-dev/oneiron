@@ -185,7 +185,7 @@ impl Vault {
     /// The archive twin of [`Self::put_pending_tombstone_in_txn`], and
     /// deliberately NOT that function: an archive carries no propagation
     /// intent, so its record must live under a prefix no sync replay reads.
-    pub(super) fn put_archive_tombstone_in_txn(
+    pub(crate) fn put_archive_tombstone_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

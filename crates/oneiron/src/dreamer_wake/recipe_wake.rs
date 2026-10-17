@@ -124,6 +124,7 @@ fn nightly(
                 now,
             },
         )?;
+        store.enqueue_consolidation_strength_in_txn(txn, parent, run_id.clone(), now)?;
         store.enqueue_coach_retrieval_tune_in_txn(
             txn,
             Some(parent),
