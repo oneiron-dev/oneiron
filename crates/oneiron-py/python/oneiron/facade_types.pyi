@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 223 facade rows, 766 declarations.
+Census: 223 facade rows, 770 declarations.
 Inputs: 192 of 223 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 180 of 223 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
@@ -290,10 +290,17 @@ class PersonRequest(TypedDict):
     pr: str
 class EmptyRequest(TypedDict):
     ...
+ShapePreset = Literal["personal", "family", "team", "org", "community"]
+ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
 ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
 ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
 ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
+class ShapeTargetShared(TypedDict):
+    kind: Literal["shared"]
+class ShapeTargetMember(TypedDict):
+    kind: Literal["member"]
+    member: str
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -316,7 +323,15 @@ class ShapeTargetGrant(TypedDict):
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+class ShapeRowShared(TypedDict):
+    kind: Literal["shared"]
+    vault_id: int
+    preset: NotRequired[ShapePreset | None]
+class ShapeRowMember(TypedDict):
+    kind: Literal["member"]
+    member: str
+    role: ShapeMemberRole
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -348,7 +363,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):
@@ -395,8 +410,16 @@ class ShapeRead(TypedDict):
     seed: NotRequired[StoredShapeSeed | None]
     live: ShapeSeed
     applies: list[ShapeApplyReceipt]
+class ShapePresetMember(TypedDict):
+    member: str
+    role: NotRequired[ShapeMemberRole | None]
+class ShapePresetPick(TypedDict):
+    preset: ShapePreset
+    vault_id: int
+    members: NotRequired[list[ShapePresetMember]]
 class ShapePlanRequest(TypedDict):
     seed: NotRequired[ShapeSeed | None]
+    preset: NotRequired[ShapePresetPick | None]
 class ShapePlanSummary(TypedDict):
     changes: int
     needs_word: int

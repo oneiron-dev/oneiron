@@ -12,10 +12,11 @@ use super::live::world_name;
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
-use crate::authority::VerifiedSlip;
+use crate::authority::{HostSlipIssuer, VerifiedSlip};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
+use crate::federation::InitialSharedMember;
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
@@ -89,11 +90,15 @@ pub struct ShapeApplyReceipt {
     pub done: bool,
 }
 
-/// Who applies: the vault's owner, or another actor with the credential it
-/// presented, if any.
+/// Who applies: the vault's owner, with the host's slip issuer when the
+/// host has one (a member a change lowers or removes loses their slips), or
+/// another actor with the credential it presented, if any.
 #[derive(Debug, Clone, Copy)]
 pub enum ShapeApplier<'a> {
-    Owner(&'a AuthenticatedOwner),
+    Owner {
+        owner: &'a AuthenticatedOwner,
+        slips: Option<&'a HostSlipIssuer>,
+    },
     Actor {
         actor: EntityId,
         credential: Option<&'a VerifiedSlip>,
@@ -109,13 +114,55 @@ const fn open(state: &ShapeItemState) -> bool {
 
 /// Where an item rests before anyone may land it.
 fn held(item: &ShapePlanItem) -> ShapeItemState {
-    if item.door.is_none() {
-        ShapeItemState::NoDoor
-    } else if item.class == ShapeItemClass::Authority {
+    if item.class == ShapeItemClass::Authority {
         ShapeItemState::Ceremony
+    } else if item.door.is_none() {
+        ShapeItemState::NoDoor
     } else {
         ShapeItemState::Proposed
     }
+}
+
+/// The member rows a first sharing invites in its own writer: each new
+/// member the same apply approves. Under a preset the creator is its Owner
+/// already, so their own row is left to read as landed.
+fn founding_members(
+    items: &[ShapeApplyItem],
+    shared: &ShapePlanItem,
+    approve: &[u32],
+    creator: EntityId,
+) -> Vec<(usize, InitialSharedMember)> {
+    let preset = matches!(
+        shared.after,
+        Some(ShapeRow::Shared {
+            preset: Some(_),
+            ..
+        })
+    );
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(at, entry)| {
+            let (ShapeChange::Create, Some(ShapeRow::Member { member, role })) =
+                (entry.item.change, &entry.item.after)
+            else {
+                return None;
+            };
+            if !open(&entry.state) || !approve.contains(&entry.item.seq) {
+                return None;
+            }
+            let member = EntityId::from_hex(member).ok()?;
+            (!(preset && member == creator)).then(|| {
+                (
+                    at,
+                    InitialSharedMember {
+                        member_ref: member,
+                        role: Some((*role).into()),
+                    },
+                )
+            })
+        })
+        .collect()
 }
 
 /// The next version of a definition the shape updates: the next integer,
@@ -178,7 +225,7 @@ impl Vault {
     ) -> Result<ShapeApplyReceipt> {
         // The owner's proof names the author; it must still hold.
         let author = match applier {
-            ShapeApplier::Owner(owner) => owner.revalidate(self)?,
+            ShapeApplier::Owner { owner, .. } => owner.revalidate(self)?,
             ShapeApplier::Actor { actor, .. } => actor,
         };
         let mut journal = if let Some(journal) = self.shape_apply(&request.plan.frontier)? {
@@ -210,8 +257,8 @@ impl Vault {
             journal
         };
 
-        let owner = match applier {
-            ShapeApplier::Owner(owner) => owner,
+        let (owner, slips) = match applier {
+            ShapeApplier::Owner { owner, slips } => (owner, slips),
             ShapeApplier::Actor { credential, .. } => {
                 // An actor holds none of the owner's doors, so its apply
                 // lands nothing: each item waits for the owner (DEC-0006 is
@@ -228,35 +275,52 @@ impl Vault {
             }
         };
 
-        let live: LiveByTarget = self
-            .read_live_shape(&mut |_| Ok(true))?
-            .rows
-            .into_iter()
-            .map(|(row, entity)| (row.target(), (row, entity)))
-            .collect();
+        let mut live = self.live_by_target()?;
         for index in 0..journal.items.len() {
-            let entry = &journal.items[index];
-            if !open(&entry.state) {
+            if !open(&journal.items[index].state) {
                 continue;
             }
-            let item = &entry.item;
-            let state = match held(item) {
+            let item = journal.items[index].item.clone();
+            let state = match held(&item) {
                 ShapeItemState::Proposed
                     if item.class == ShapeItemClass::Widening
                         && !request.approve.contains(&item.seq) =>
                 {
-                    match &entry.state {
+                    match &journal.items[index].state {
                         // A filing keeps its inbox reference while it waits.
                         filed @ ShapeItemState::Filed { .. } => filed.clone(),
                         _ => ShapeItemState::Proposed,
                     }
                 }
-                ShapeItemState::Proposed => match self.land_shape_item(owner, item, &live, now) {
-                    Ok(receipt) => ShapeItemState::Landed { at: now, receipt },
-                    Err(error) => ShapeItemState::Refused {
-                        reason: error.to_string(),
-                    },
-                },
+                // Sharing the vault invites, in its own writer, each new
+                // member this apply approves: the founding members.
+                ShapeItemState::Proposed if item.target == ShapeTarget::Shared => {
+                    let founding = founding_members(&journal.items, &item, &request.approve, author);
+                    match self.share_vault(owner, &item, &founding, now) {
+                        Ok(receipt) => {
+                            for (at, _) in &founding {
+                                journal.items[*at].state = ShapeItemState::Landed {
+                                    at: now,
+                                    receipt: "founding member".to_owned(),
+                                };
+                            }
+                            // The members after it read the vault shared.
+                            live = self.live_by_target()?;
+                            ShapeItemState::Landed { at: now, receipt }
+                        }
+                        Err(error) => ShapeItemState::Refused {
+                            reason: error.to_string(),
+                        },
+                    }
+                }
+                ShapeItemState::Proposed => {
+                    match self.land_shape_item(owner, slips, &item, &live, now) {
+                        Ok(receipt) => ShapeItemState::Landed { at: now, receipt },
+                        Err(error) => ShapeItemState::Refused {
+                            reason: error.to_string(),
+                        },
+                    }
+                }
                 rest => rest,
             };
             journal.items[index].state = state;
@@ -309,9 +373,45 @@ impl Vault {
 
     /// Lands one item through its door, after checking the structure is
     /// still as the plan read it. An item already true is landed.
+    fn live_by_target(&self) -> Result<LiveByTarget> {
+        Ok(self
+            .read_live_shape(&mut |_| Ok(true))?
+            .rows
+            .into_iter()
+            .map(|(row, entity)| (row.target(), (row, entity)))
+            .collect())
+    }
+
+    /// Shares the vault as `item` declares, inviting `founding` in the
+    /// same writer.
+    fn share_vault(
+        &self,
+        owner: &AuthenticatedOwner,
+        item: &ShapePlanItem,
+        founding: &[(usize, InitialSharedMember)],
+        now: u64,
+    ) -> Result<String> {
+        let (ShapeChange::Create, Some(ShapeRow::Shared { vault_id, preset })) =
+            (item.change, &item.after)
+        else {
+            return Err(invalid("a shared vault is shared once; no seed reshares it"));
+        };
+        let members: Vec<InitialSharedMember> =
+            founding.iter().map(|(_, member)| member.clone()).collect();
+        let creation = self.initialize_shared_vault(
+            owner,
+            *vault_id,
+            (*preset).map(Into::into),
+            &members,
+            now,
+        )?;
+        Ok(creation.vault_id.to_string())
+    }
+
     fn land_shape_item(
         &self,
         owner: &AuthenticatedOwner,
+        slips: Option<&HostSlipIssuer>,
         item: &ShapePlanItem,
         live: &LiveByTarget,
         now: u64,
@@ -336,7 +436,35 @@ impl Vault {
             start: now,
             end: now,
         };
+        let shared = || match live.get(&ShapeTarget::Shared) {
+            Some((ShapeRow::Shared { vault_id, .. }, _)) => Ok(*vault_id),
+            _ => Err(invalid("the vault is not shared")),
+        };
+        let person = |member: &str| EntityId::from_hex(member).map_err(|_| stale());
         match (&item.change, &item.target, &item.after) {
+            (
+                ShapeChange::Create,
+                ShapeTarget::Member { member },
+                Some(ShapeRow::Member { role, .. }),
+            ) => Ok(self
+                .add_shared_member(owner, shared()?, person(member)?, Some((*role).into()))?
+                .id),
+            (
+                ShapeChange::Update,
+                ShapeTarget::Member { member },
+                Some(ShapeRow::Member { role, .. }),
+            ) => Ok(self
+                .change_shared_member_role(
+                    owner,
+                    shared()?,
+                    person(member)?,
+                    (*role).into(),
+                    slips,
+                )?
+                .id),
+            (ShapeChange::Retire, ShapeTarget::Member { member }, _) => Ok(self
+                .remove_shared_member(owner, shared()?, person(member)?, slips)?
+                .id),
             (ShapeChange::Create, ShapeTarget::World { name }, _) => {
                 Ok(self.create_world(owner, name, now)?.to_hex())
             }

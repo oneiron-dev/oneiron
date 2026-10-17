@@ -17,13 +17,14 @@ impl Memory<'_> {
             .shape_read_visible(&mut |id| read.is_entity_readable(id))?)
     }
 
-    /// `vault.shape.plan`: the difference between a seed, or the stored
-    /// one, and the vault. Writes nothing.
+    /// `vault.shape.plan`: the difference between a seed, a preset pick's
+    /// seed or the stored one, and the vault. Writes nothing.
     pub fn shape_plan(&self, input: &ShapePlanRequest) -> MemoryResult<ShapePlan> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let seed = input.seed_for(self.actor)?;
         Ok(self
             .vault
-            .plan_shape_visible(input.seed.as_ref(), &mut |id| read.is_entity_readable(id))?)
+            .plan_shape_visible(seed.as_ref(), &mut |id| read.is_entity_readable(id))?)
     }
 
     /// `vault.shape.apply`: lands a plan. On an embedded handle the vault's
@@ -34,7 +35,15 @@ impl Memory<'_> {
         if let Ok(owner) = self.embedded_owner("vault.shape.apply") {
             return Ok(self
                 .vault
-                .apply_shape(ShapeApplier::Owner(&owner), input, now, &mut |_| Ok(true))?);
+                .apply_shape(
+                    ShapeApplier::Owner {
+                        owner: &owner,
+                        slips: None,
+                    },
+                    input,
+                    now,
+                    &mut |_| Ok(true),
+                )?);
         }
         self.shape_apply_as_principal(input)
     }

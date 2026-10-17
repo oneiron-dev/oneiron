@@ -6,6 +6,7 @@
 //! handler and the MCP dispatcher both call this through `host_doors`.
 use std::sync::Arc;
 
+use oneiron::authority::HostSlipIssuer;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::vault_shape::{ShapeApplier, ShapeApplyReceipt, ShapeApplyRequest};
 
@@ -26,12 +27,21 @@ pub(crate) async fn vault_shape_apply(
     let server = Arc::clone(server);
     if let Ok(owner) = crate::api::owner_routes::owner(auth, &server) {
         return tokio::task::spawn_blocking(move || -> MemoryResult<ShapeApplyReceipt> {
-            Ok(server.vault().apply_shape(
-                ShapeApplier::Owner(&owner),
-                &input,
-                now,
-                &mut |_| Ok(true),
-            )?)
+            let apply = |slips: Option<&HostSlipIssuer>| -> MemoryResult<ShapeApplyReceipt> {
+                Ok(server.vault().apply_shape(
+                    ShapeApplier::Owner {
+                        owner: &owner,
+                        slips,
+                    },
+                    &input,
+                    now,
+                    &mut |_| Ok(true),
+                )?)
+            };
+            // With the host's slip issuer, a member the shape lowers or
+            // removes loses their slips; a host with none still applies.
+            crate::api::pairing::with_issuer(&server, |issuer| Ok(apply(Some(issuer))))
+                .unwrap_or_else(|_| apply(None))
         })
         .await
         .map_err(|_| internal(VERB))?;

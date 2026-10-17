@@ -1,7 +1,7 @@
 //! The live arrangement read as a shape: every setup-plane row the vault
 //! holds now, under the names a seed declares. Entity-backed rows and the
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
-use super::{ShapeGrantBound, ShapeRow, invalid};
+use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::channel_identity::decode_channel_identity_body;
 use crate::error::Result;
@@ -80,6 +80,26 @@ impl Vault {
                 }
                 let name = world_name(&body).unwrap_or_else(|| id.to_hex());
                 rows.push((ShapeRow::World { name }, Some(id)));
+            }
+            if let Some(shared) = self.shared_vault_creation_in_txn(&txn)? {
+                rows.push((
+                    ShapeRow::Shared {
+                        vault_id: shared.vault_id,
+                        preset: shared.preset.map(Into::into),
+                    },
+                    None,
+                ));
+                for (member, role) in self.shared_members_in_txn(&txn, shared.vault_id)? {
+                    if let Some(role) = ShapeMemberRole::of(role) {
+                        rows.push((
+                            ShapeRow::Member {
+                                member: member.to_hex(),
+                                role,
+                            },
+                            Some(member),
+                        ));
+                    }
+                }
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_AGENT_DEF)? {
                 let def = decode_agent_definition(&body)?;

@@ -4,7 +4,7 @@
 //! whose frontier has moved, so what the owner approved is what they saw.
 use super::live::LiveShape;
 use super::seed::{hex, seed_digest};
-use super::{ShapeCeiling, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
+use super::{ShapeCeiling, ShapeMemberRole, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 use schemars::JsonSchema;
@@ -35,7 +35,8 @@ pub enum ShapeItemClass {
     /// rides autonomy, whatever the rung.
     Widening,
     /// A key binding, an ownership transfer or a co-sign change: goes to the
-    /// AUTHORITY_LOG ceremony unchanged. No v1 row compiles to one.
+    /// AUTHORITY_LOG ceremony unchanged. A member row moving a role to or
+    /// from Owner compiles to one.
     Authority,
 }
 
@@ -87,11 +88,20 @@ pub struct ShapePlan {
 
 /// How a change to `target` lands. One policy, so a ruling moves one line.
 fn classify(change: ShapeChange, before: Option<&ShapeRow>, after: Option<&ShapeRow>) -> ShapeItemClass {
-    use ShapeItemClass::{Receipted, Widening};
+    use ShapeItemClass::{Authority, Receipted, Widening};
     if change == ShapeChange::Retire {
         return Widening;
     }
     match (before, after) {
+        (Some(ShapeRow::Member { role: was, .. }), Some(ShapeRow::Member { role: now, .. })) => {
+            if *was == ShapeMemberRole::Owner || *now == ShapeMemberRole::Owner {
+                Authority
+            } else if now.reach() > was.reach() {
+                Widening
+            } else {
+                Receipted
+            }
+        }
         (_, Some(ShapeRow::World { .. })) => Receipted,
         (None, Some(ShapeRow::Actor { ceiling, .. })) => match ceiling {
             ShapeCeiling::Auto => Widening,
@@ -125,6 +135,10 @@ fn classify(change: ShapeChange, before: Option<&ShapeRow>, after: Option<&Shape
 /// row mints only from the bound it carries.
 fn door(change: ShapeChange, target: &ShapeTarget, after: Option<&ShapeRow>) -> Option<&'static str> {
     match (change, target) {
+        (ShapeChange::Create, ShapeTarget::Shared) => Some("initialize_shared_vault"),
+        (ShapeChange::Create, ShapeTarget::Member { .. }) => Some("add_shared_member"),
+        (ShapeChange::Update, ShapeTarget::Member { .. }) => Some("change_shared_member_role"),
+        (ShapeChange::Retire, ShapeTarget::Member { .. }) => Some("remove_shared_member"),
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
