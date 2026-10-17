@@ -38194,6 +38194,38 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FoundKeyAction",
+      "FoundKeyCard",
+      "FoundKeyNotice",
+      "FoundKeySettled"
+     ],
+     "path": "src/secret_custody/found_keys.rs",
+     "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 9,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/found_keys/actions.rs",
+     "purpose": "The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -38202,7 +38234,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 3
      }
@@ -38214,8 +38246,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 15,
-      "re-export": 6
+      "crate-vis": 16,
+      "re-export": 7
      }
     },
     {
@@ -38243,7 +38275,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "HandleReveal",
@@ -38262,7 +38294,7 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 6,
-      "crate-vis": 10,
+      "crate-vis": 15,
       "enum": 5,
       "fn": 3,
       "struct": 6
@@ -38275,7 +38307,17 @@
      "path": "src/secret_custody/reveal/agent.rs",
      "purpose": "The agent's doors: `reveal`, `wait` and `describe` on a handle",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/file.rs",
+     "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -46393,8 +46435,9 @@
      "path": "src/task_verb/sdk_secret.rs",
      "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret's value by its handle (OF-560…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 8
      }
     },
@@ -52155,9 +52198,9 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 15,
+     "files": 18,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…"
     },
@@ -52526,9 +52569,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 152,
+   "over_bar": 153,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3177,
+   "source_files": 3180,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65118,6 +65161,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/secret_found_routes.rs",
+     "purpose": "`/v1/owner/secrets/found*`: the owner's side of the found-key notice (OF-560)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/secret_reveal_routes.rs",
      "purpose": "`/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check)",
      "surface": {
@@ -70859,7 +70912,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 287,
+     "files": 288,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71218,7 +71271,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 569,
+   "source_files": 570,
    "test_files": 182
   },
   "oneiron-spawn": {
