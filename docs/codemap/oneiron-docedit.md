@@ -66,11 +66,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
 | `src/lib.rs` | src | s | 1 struct · 1 enum · 9 fn · 14 mod · 5 re-export | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
 | `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 10 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
-| `src/live/held.rs` | src | s | 8 crate-vis | — | What a retained element is written as, in live-model terms: a shape's or connector's preset, a connector's… |
+| `src/live/held.rs` | src | m | 16 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
 | `src/live/mod.rs` | src | s | 1 enum · 2 mod · 2 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
-| `src/live/pptx.rs` | src | XL | 22 struct · 8 enum · 28 fn · 5 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, Conflict, ConnectorEnd, DeckDiff +22 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
+| `src/live/pptx.rs` | src | XL | 24 struct · 9 enum · 31 fn · 12 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict, ConnectorEnd +25 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
+| `src/live/reshape.rs` | src | L | 4 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
-| `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 2 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
+| `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 3 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |
 | `src/native_patch/tests.rs` | test | m | — | — | — |
 | `src/native_patch/workbook.rs` | src | m | 16 crate-vis | — | The embedded workbook: direct A1 ranges, a SpreadsheetML cell reader, and a writer that rebuilds only the… |
