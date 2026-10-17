@@ -256,15 +256,6 @@ impl ExecutorStorage<'_> {
         }
     }
 
-    /// The fold receipt run `owner` holds for its occurrence `folded`.
-    pub(crate) fn code_run_reader_fold(
-        &self,
-        owner: EntityId,
-        folded: EntityId,
-    ) -> Result<Option<ReaderFoldReceipt>> {
-        self.reader_read(|txn, dbs| FOLDS.get(&dbs, txn, &(owner, folded)))
-    }
-
     /// The summary memo key `memo` names, if one was made.
     pub(crate) fn code_run_summary_memo(&self, memo: &[u8; 32]) -> Result<Option<SummaryMemo>> {
         self.reader_read(|txn, dbs| MEMOS.get(&dbs, txn, memo))
