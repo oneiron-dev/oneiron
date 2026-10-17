@@ -70,6 +70,15 @@ impl SocketGuard {
         &self.path
     }
 
+    /// The nonblocking listener for an async host's own admission loop. The
+    /// guard still owns the socket: keep it until the clone is dropped.
+    pub fn try_clone_listener(&self) -> io::Result<UnixListener> {
+        self.listener
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "listener stopped"))?
+            .try_clone()
+    }
+
     #[must_use]
     pub fn shutdown_signal(&self) -> Shutdown {
         self.shutdown.clone()

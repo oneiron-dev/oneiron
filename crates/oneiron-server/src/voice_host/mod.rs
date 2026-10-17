@@ -13,6 +13,8 @@
 //! brain's reply past the session's sentence safeguards (`speech`).
 
 mod attachment;
+mod backend;
+mod boot;
 mod brain;
 mod connection;
 mod extraction;
@@ -21,6 +23,7 @@ mod serve_bindings;
 mod speech;
 mod wire;
 
+pub(crate) use boot::VoiceBoot;
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
