@@ -1,6 +1,10 @@
 //! The person's queue, kept durable: every request the ladder's last rung queues becomes an
-//! owner ask that the vault owner role answers. The answer is kept beside its ask, an answer
-//! that changed the ladder's is kept for the Coach, and every waiter on the ask wakes.
+//! ask put to a role (Q3 by role). The caller binds who it goes to ([`AskTo`]); the vault
+//! resolves the first role on its chain with a live holder when it is queued, and the next
+//! one when it climbs. A holder of that role answers it, checked again in the snapshot it
+//! answers in; the vault owner answers any ask whose chain reaches the owners. The answer is
+//! kept beside its ask, an answer that changed the ladder's is kept for the Coach, and every
+//! waiter on the ask wakes.
 //!
 //! Asks are numbered in arrival order, from 1, so an owner's list pages after the last
 //! number it read. Queueing the same open ask again (same question version, principal and
@@ -8,18 +12,23 @@
 //! The ask carries what the ladder hands the queue and nothing more; the host renders its
 //! own text from the question's.
 
+use std::collections::{BTreeSet, VecDeque};
 use std::ops::Bound;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use super::ladder::{HumanDecisionQueue, HumanDecisionRequest, PairedAnswer, ProviderDecision};
+use super::ladder::{
+    AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
+    PairedAnswer, ProviderDecision, ResolvedRole, RoleHolder, RoleRank,
+};
 use super::types::invalid;
 use super::{DecisionAnswer, DecisionQuestion, HumanAskReason, PairedReading, ProviderPin};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Error, Result, Vault};
+use crate::write_envelope::WriteActor;
+use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
 /// Every ask, keyed by its arrival number.
 const ASKS: SideTable<u64, DecisionAsk, Named> = SideTable::new(&side_table::DECISION_ASK);
@@ -27,7 +36,10 @@ const ASKS: SideTable<u64, DecisionAsk, Named> = SideTable::new(&side_table::DEC
 /// How far back a new ask looks for the same open ask.
 const SAME_ASK_SCAN: usize = 4_096;
 
-/// One ask the ladder queued for the vault owner role.
+/// The most project boards an ask's chain walks.
+const MAX_BOARD_WALK: usize = 64;
+
+/// One ask the ladder queued for a role.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionAsk {
@@ -47,6 +59,11 @@ pub struct DecisionAsk {
     /// The last provider read's answer, when a rung read one before the ask.
     pub prior: Option<AskPrior>,
     pub queue_pin: ProviderPin,
+    /// Who the ask goes to, as its caller bound it.
+    pub to: AskTo,
+    /// The role it is at and the live holders it was put to, resolved when it was queued
+    /// or last climbed; none while no role up to its ceiling has one.
+    pub role: Option<ResolvedRole>,
     /// `None` while the ask is open.
     pub answer: Option<AskAnswer>,
 }
@@ -62,16 +79,19 @@ pub struct AskPrior {
     pub person: Option<PairedReading>,
 }
 
-/// What the vault owner role answered.
+/// What a role's holder answered.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AskAnswer {
     pub answer: DecisionAnswer,
     /// Vault clock seconds when the answer landed.
     pub answered_at: u64,
-    /// The owner actor that answered.
+    /// The actor that answered, authenticated by its door.
     #[serde(with = "super::codec::entity")]
     pub by: EntityId,
+    /// The role it answered as, and whether it is a person or a bound agent.
+    pub role: AskRole,
+    pub kind: HolderKind,
     /// Whether the answer changed the ladder's prior (kept for the Coach).
     pub changed: bool,
 }
@@ -97,6 +117,7 @@ impl DecisionAsk {
             }),
             prior_provider: self.prior.as_ref().map(|prior| prior.provider.clone()),
             queue_pin: self.queue_pin.clone(),
+            to: self.to.clone(),
         }
     }
 
@@ -106,14 +127,17 @@ impl DecisionAsk {
             && self.question.version == request.question.version
             && self.principal == request.principal
             && self.evidence == request.evidence
+            && self.to == request.to
     }
 }
 
 impl Vault {
-    /// Keeps one ladder ask and returns its arrival number. An open ask for the same
-    /// question version, principal and evidence is that ask, and its number is returned.
+    /// Keeps one ladder ask, put to the first role on its chain with a live holder, and
+    /// returns its arrival number. An open ask for the same question version, principal,
+    /// evidence and role is that ask, and its number is returned.
     pub fn queue_decision_ask(&self, request: &HumanDecisionRequest) -> Result<u64> {
         request.question.validate()?;
+        request.to.validate()?;
         let prior = match (&request.prior, &request.prior_provider) {
             (None, _) => None,
             (Some(prior), Some(provider)) => Some(AskPrior {
@@ -144,6 +168,7 @@ impl Vault {
                     .checked_add(1)
                     .ok_or(Error::IndexOverflow("decision ask sequence"))?,
             };
+            let role = self.next_ask_role_in_txn(txn, &request.to, None)?;
             let ask = DecisionAsk {
                 seq,
                 id: EntityId::now(),
@@ -154,6 +179,8 @@ impl Vault {
                 reason: request.reason,
                 prior,
                 queue_pin: request.queue_pin.clone(),
+                to: request.to.clone(),
+                role,
                 answer: None,
             };
             ASKS.put(&self.store, txn, &seq, &ask)?;
@@ -222,10 +249,8 @@ impl Vault {
         Ok(None)
     }
 
-    /// The vault owner's answer to one ask. The answer must be one the question's contract
-    /// accepts, and never an abstention. An answer that changed the ladder's prior is kept
-    /// for the Coach, bound to the ask's id. The same answer again is a no-op; a different
-    /// one to an answered ask is refused.
+    /// The vault owner's answer to one ask whose chain reaches the owners, as the owner role.
+    /// Otherwise as [`Self::answer_decision_ask_as`].
     pub fn answer_decision_ask(
         &self,
         owner: &AuthenticatedOwner,
@@ -234,9 +259,67 @@ impl Vault {
     ) -> Result<DecisionAsk> {
         self.recheck_owner(owner)?;
         let by = owner.actor_for_read(self)?;
-        let ask = self
-            .decision_ask(seq)?
-            .ok_or_else(|| invalid("no such decision ask"))?;
+        self.settle_decision_ask(seq, answer, |_, ask| {
+            if ask.to.ceiling != RoleRank::Owner {
+                return Err(invalid("the decision ask does not reach the owners"));
+            }
+            Ok((by, AskRole::Owner, HolderKind::Person))
+        })
+    }
+
+    /// A role holder's answer to one ask: a person or a bound agent, verified as the writer
+    /// in each snapshot the answer reads, that holds the ask's role there (its holders are
+    /// read again, not taken from the queue). An e-signature or a payment takes only a
+    /// person. The answer must be one the question's contract accepts, and never an
+    /// abstention. An answer that changed the ladder's prior is kept for the Coach, bound
+    /// to the ask's id. The same answer again is a no-op; a different one to an answered
+    /// ask is refused.
+    pub fn answer_decision_ask_as(
+        &self,
+        holder: &WriteActor,
+        seq: u64,
+        answer: DecisionAnswer,
+    ) -> Result<DecisionAsk> {
+        let kind = match holder.actor_class() {
+            EdgeActorClass::Human => HolderKind::Person,
+            EdgeActorClass::Agent => HolderKind::Agent,
+            EdgeActorClass::System => return Err(invalid("a system actor holds no role")),
+        };
+        let actor = holder.entity_ref();
+        self.settle_decision_ask(seq, answer, |txn, ask| {
+            self.verify_write_actor_in_txn(txn, holder)?;
+            let role = ask
+                .role
+                .as_ref()
+                .ok_or_else(|| invalid("the decision ask has no role to answer for"))?;
+            let holds = self
+                .role_holders_in_txn(txn, &role.role, ask.to.act)?
+                .iter()
+                .any(|held| held.actor == actor && held.kind == kind);
+            if !holds {
+                return Err(invalid("the answerer does not hold the decision ask's role"));
+            }
+            Ok((actor, role.role.clone(), kind))
+        })
+    }
+
+    /// One answer to ask `seq`, authorised by `answerer` (the actor, the role it answers as
+    /// and its kind) in the snapshot the ask is read in and again in the one it is written
+    /// in.
+    fn settle_decision_ask(
+        &self,
+        seq: u64,
+        answer: DecisionAnswer,
+        answerer: impl Fn(&heed::RoTxn<'_>, &DecisionAsk) -> Result<(EntityId, AskRole, HolderKind)>,
+    ) -> Result<DecisionAsk> {
+        let ask = {
+            let txn = self.store.env.read_txn()?;
+            let ask = ASKS
+                .get(&self.store, &txn, &seq)?
+                .ok_or_else(|| invalid("no such decision ask"))?;
+            answerer(&txn, &ask)?;
+            ask
+        };
         if let Some(held) = &ask.answer {
             return if held.answer == answer {
                 Ok(ask)
@@ -258,15 +341,177 @@ impl Vault {
                 Some(_) => return Err(invalid("decision ask already answered")),
                 None => {}
             }
+            let read: &heed::RoTxn<'_> = txn;
+            let (by, role, kind) = answerer(read, &held)?;
             held.answer = Some(AskAnswer {
                 answer,
                 answered_at,
                 by,
+                role,
+                kind,
                 changed: changed.is_some(),
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
             Ok(held)
         })
+    }
+
+    /// Moves an open ask to the next role on its chain with a live holder, up to its
+    /// ceiling; an unresolved ask resolves from its first role again. None, and the ask
+    /// stays where it is, when no such role is left.
+    pub fn climb_decision_ask(&self, seq: u64) -> Result<Option<ResolvedRole>> {
+        self.with_write_txn_grouped(|txn| {
+            let mut ask = ASKS
+                .get(&self.store, &*txn, &seq)?
+                .ok_or_else(|| invalid("no such decision ask"))?;
+            if ask.answer.is_some() {
+                return Err(invalid("decision ask already answered"));
+            }
+            let next =
+                self.next_ask_role_in_txn(&*txn, &ask.to, ask.role.as_ref().map(|at| &at.role))?;
+            if let Some(role) = &next {
+                ask.role = Some(role.clone());
+                ASKS.put(&self.store, txn, &seq, &ask)?;
+            }
+            Ok(next)
+        })
+    }
+
+    /// [`AskRoleResolver::next_role`] in the caller's snapshot.
+    pub(crate) fn next_ask_role_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        to: &AskTo,
+        after: Option<&AskRole>,
+    ) -> Result<Option<ResolvedRole>> {
+        to.validate()?;
+        let chain = self.ask_chain_in_txn(txn, &to.role)?;
+        let start = match after {
+            None => 0,
+            Some(after) => match chain.iter().position(|(role, _)| role == after) {
+                Some(at) => at + 1,
+                None => return Ok(None),
+            },
+        };
+        for (role, named) in chain.into_iter().skip(start) {
+            if role.rank() > to.ceiling {
+                break;
+            }
+            let holders = self.live_holders_in_txn(txn, named, to.act)?;
+            if !holders.is_empty() {
+                return Ok(Some(ResolvedRole { role, holders }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The live actors holding `role` now who may answer for `act`.
+    fn role_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        role: &AskRole,
+        act: AskAct,
+    ) -> Result<Vec<RoleHolder>> {
+        let named = match role {
+            AskRole::Responsible { actor, .. } => vec![*actor],
+            AskRole::Board { project } => self
+                .board_in_txn(txn, *project)?
+                .map(|(board, _)| board)
+                .unwrap_or_default(),
+            AskRole::Owner => crate::policy_model::owners_in_txn(self, txn)?,
+        };
+        self.live_holders_in_txn(txn, named, act)
+    }
+
+    /// The chain an ask climbs from `role`, each role with the actors named to it: a
+    /// responsible actor; then the boards of its project, or of the asked board's, and
+    /// their parents', breadth first; then the owners.
+    fn ask_chain_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        role: &AskRole,
+    ) -> Result<Vec<(AskRole, Vec<EntityId>)>> {
+        let mut chain = Vec::new();
+        let project = match role {
+            AskRole::Responsible { actor, project } => {
+                chain.push((role.clone(), vec![*actor]));
+                *project
+            }
+            AskRole::Board { project } => Some(*project),
+            AskRole::Owner => None,
+        };
+        let mut queue: VecDeque<EntityId> = project.into_iter().collect();
+        let mut seen = BTreeSet::new();
+        while let Some(project) = queue.pop_front() {
+            if seen.len() >= MAX_BOARD_WALK || !seen.insert(project) {
+                continue;
+            }
+            let Some((board, parents)) = self.board_in_txn(txn, project)? else {
+                continue;
+            };
+            chain.push((AskRole::Board { project }, board));
+            queue.extend(parents);
+        }
+        chain.push((
+            AskRole::Owner,
+            crate::policy_model::owners_in_txn(self, txn)?,
+        ));
+        Ok(chain)
+    }
+
+    /// A project's effective board and parents.
+    fn board_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project: EntityId,
+    ) -> Result<Option<(Vec<EntityId>, Vec<EntityId>)>> {
+        Ok(self
+            .effective_project_in_txn(txn, project)?
+            .map(|(_, effective)| (ids(&effective.board), ids(&effective.parents))))
+    }
+
+    /// Of the actors `named` to a role, those who may answer for `act` now: a live person,
+    /// or a live bound agent unless the act takes only a person.
+    fn live_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        named: Vec<EntityId>,
+        act: AskAct,
+    ) -> Result<Vec<RoleHolder>> {
+        let mut holders: Vec<RoleHolder> = Vec::new();
+        for actor in named {
+            if holders.iter().any(|held| held.actor == actor) {
+                continue;
+            }
+            let kind = if crate::consent::person_is_live_in_txn(self, txn, &actor)? {
+                HolderKind::Person
+            } else if !act.person_only()
+                && self
+                    .verify_write_actor_in_txn(txn, &WriteActor::new(actor, EdgeActorClass::Agent))
+                    .is_ok()
+            {
+                HolderKind::Agent
+            } else {
+                continue;
+            };
+            holders.push(RoleHolder { actor, kind });
+        }
+        Ok(holders)
+    }
+}
+
+/// Hex entity references, the unreadable ones skipped.
+fn ids(hexes: &[String]) -> Vec<EntityId> {
+    hexes
+        .iter()
+        .filter_map(|hex| EntityId::from_hex(hex).ok())
+        .collect()
+}
+
+impl AskRoleResolver for Vault {
+    fn next_role(&self, to: &AskTo, after: Option<&AskRole>) -> Result<Option<ResolvedRole>> {
+        let txn = self.store.env.read_txn()?;
+        self.next_ask_role_in_txn(&txn, to, after)
     }
 }
 
@@ -321,6 +566,24 @@ impl DecisionAsks {
         let ask = self.vault.answer_decision_ask(owner, seq, answer)?;
         self.answered.send_replace(seq);
         Ok(ask)
+    }
+
+    /// Answers one ask as a holder of its role (see [`Vault::answer_decision_ask_as`]) and
+    /// wakes its waiters.
+    pub fn answer_as(
+        &self,
+        holder: &WriteActor,
+        seq: u64,
+        answer: DecisionAnswer,
+    ) -> Result<DecisionAsk> {
+        let ask = self.vault.answer_decision_ask_as(holder, seq, answer)?;
+        self.answered.send_replace(seq);
+        Ok(ask)
+    }
+
+    /// See [`Vault::climb_decision_ask`].
+    pub fn climb(&self, seq: u64) -> Result<Option<ResolvedRole>> {
+        self.vault.climb_decision_ask(seq)
     }
 
     /// Waits for the answer to ask `seq`. An ask answered before the wait, or before a

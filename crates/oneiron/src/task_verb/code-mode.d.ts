@@ -210,10 +210,14 @@ declare const vault: {
     propose(input: { compiled: unknown; intent_prompt: string; pack_content_hash: string; slot: object }): Promise<unknown>;
   };
   members: {
+    accept(input: { invitation: string; vault_id: number }): Promise<unknown>;
     add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
+    decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
+    invitations(input: { vault_id: number }): Promise<unknown>;
     leave(input: { vault_id: number }): Promise<unknown>;
     remove(input: { member: string; vault_id: number }): Promise<unknown>;
+    withdraw_invitation(input: { invitation: string; member: string; vault_id: number }): Promise<unknown>;
   };
   neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
   notes: {

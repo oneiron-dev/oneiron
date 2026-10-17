@@ -188,6 +188,9 @@ side_tables! {
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
+    /// One invitation of a person into the shared vault, pending until they accept, decline or an
+    /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
+    SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().

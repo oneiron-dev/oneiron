@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use super::SkillRecord;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason,
-    HumanDecisionRequest, ProviderPin,
+    AnswerContract, AskTo, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
+    HumanAskReason, HumanDecisionRequest, ProviderPin,
 };
 use crate::llm::run_admission::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
@@ -673,6 +673,7 @@ fn overrun_request(
             model: OVERRUN_QUEUE.to_owned(),
             version: OVERRUN_QUEUE_VERSION.to_owned(),
         },
+        to: AskTo::owner(),
     }
 }
 

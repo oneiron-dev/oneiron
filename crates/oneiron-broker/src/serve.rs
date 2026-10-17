@@ -209,6 +209,22 @@ async fn handle(mut stream: UnixStream, sender: &Sender) {
     let Ok(Ok(call)) = tokio::time::timeout(FRAME_DEADLINE, read_call(&mut stream)).await else {
         return;
     };
+    if call.header.shape.streams() {
+        // The reply is checked as it streams, so the key is wiped only after
+        // its last chunk.
+        let checked = call.header.check(&call.body);
+        sender
+            .stream(
+                &call.header,
+                checked,
+                &call.body,
+                &call.secret,
+                &mut stream,
+                FRAME_DEADLINE,
+            )
+            .await;
+        return;
+    }
     let (outcome, body) = match call.header.check(&call.body) {
         Ok(url) => {
             sender
