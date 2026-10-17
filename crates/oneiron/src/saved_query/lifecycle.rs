@@ -1,7 +1,7 @@
-use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::ModelId;
+use crate::{EdgeActorClass, Vault};
 
 use super::definition::{
     CreateSavedQueryRequest, SAVED_QUERY_SCHEMA_VERSION, SavedQueryDefinition, SavedQueryLifecycle,
@@ -15,7 +15,9 @@ use super::support::{MICROS_PER_UNIT, invalid, validate_bounded_text};
 ///
 /// `owner_actor` is set from `authenticated_principal` and from nowhere else —
 /// [`CreateSavedQueryRequest`] has no owner field, so an untrusted request
-/// cannot name a different owner even by accident.
+/// cannot name a different owner even by accident. `owner_actor_class` is the
+/// class the caller verified that principal as; every evaluation reads under
+/// it.
 ///
 /// # Errors
 ///
@@ -25,12 +27,14 @@ use super::support::{MICROS_PER_UNIT, invalid, validate_bounded_text};
 pub fn create_saved_query(
     vault: &Vault,
     authenticated_principal: EntityId,
+    owner_actor_class: EdgeActorClass,
     request: &CreateSavedQueryRequest,
     now: u64,
 ) -> Result<SavedQueryRecord> {
     let definition = SavedQueryDefinition {
         schema_version: request.schema_version,
         owner_actor: authenticated_principal,
+        owner_actor_class,
         scope: request.scope.clone(),
         definition_version: 1,
         filter: request.filter.clone(),
@@ -68,6 +72,20 @@ pub fn read_saved_query(
         .filter(|record| record.definition.owner_actor == authenticated_principal))
 }
 
+/// Reads a saved query whoever owns it, for an engine door that checks an
+/// owner relation itself (a campaign program's audience must share the
+/// campaign's owner) rather than a caller's ownership.
+///
+/// # Errors
+///
+/// Storage or decode errors propagate unchanged.
+pub(crate) fn load_saved_query(
+    vault: &Vault,
+    query_ref: EntityId,
+) -> Result<Option<SavedQueryRecord>> {
+    load_record(vault, query_ref)
+}
+
 /// Replaces a saved query's definition under a version CAS.
 ///
 /// The compare and the write share ONE write transaction. LMDB's single-writer
@@ -101,6 +119,7 @@ pub fn update_saved_query(
         let definition = SavedQueryDefinition {
             schema_version: record.definition.schema_version,
             owner_actor: record.definition.owner_actor,
+            owner_actor_class: record.definition.owner_actor_class,
             scope: request.scope.clone(),
             definition_version: next_version(record.definition.definition_version)?,
             filter: request.filter.clone(),

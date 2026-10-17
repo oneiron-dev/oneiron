@@ -1,9 +1,9 @@
 //! The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active
-//! Wake or Reactive saved query the vault owner holds is evaluated over the
-//! vault's people, one bounded wake a pass, each pass going on from where the
-//! last stopped. A query's LLM judge asks the membership question through the
-//! host's ladder, its first read on the query's named model, paid on the
-//! owner's line. Verdicts land in the query's memo; a person whose evidence
+//! Wake or Reactive saved query is evaluated over the vault's people under
+//! its owner's own read, one bounded wake a pass, each pass going on from
+//! where the last stopped. A query's LLM judge asks the membership question
+//! through the host's ladder, its first read on the query's named model, paid
+//! on the owner's line. Verdicts land in the query's memo; a person whose evidence
 //! has not moved costs nothing. A committed write also wakes a reactive pass:
 //! each Reactive query is re-checked at once for the people the vault's
 //! change log says a claim write moved, and its paged wake stays the backstop
@@ -14,15 +14,16 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::claim::ScopedReadActorKey;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::saved_query::{
     MatcherSpec, QueryScope, SWEEP_CANDIDATE_TYPE, SavedQueryEvaluator, SavedQueryJudgeBinding,
     SavedQueryRecord, WakeEvaluationReport, reactive_saved_queries, saved_query_change_head,
-    saved_query_changes_after, sweep_owner_grants, sweep_saved_queries,
+    saved_query_changes_after, sweep_owner_read, sweep_saved_queries,
 };
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetLease, CallClass, CallEnvelope, CallPurpose, EdgeActorClass,
-    EntityId, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmResult,
+    BudgetExhaustionPolicy, BudgetLease, CallClass, CallEnvelope, CallPurpose, EntityId,
+    FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmResult,
     LlmStreamResult, ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
     WriteActor,
 };
@@ -160,10 +161,10 @@ fn reactive_pass(
     }
     let page: Vec<EntityId> = changes.persons.into_iter().collect();
     for record in &queries {
-        let Some(grants) = sweep_owner_grants(vault, record.definition.owner_actor)? else {
+        let Some(read) = owner_read(vault, record) else {
             continue;
         };
-        match evaluate(server, record, &grants, &page, now) {
+        match evaluate(server, record, &read, &page, now) {
             Ok(report) => tracing::debug!(
                 query = %record.query_ref.to_hex(),
                 evaluated = report.evaluated,
@@ -191,11 +192,7 @@ fn sweep_pass(
     let queries = sweep_saved_queries(vault)?;
     cursors.retain(|query, _| queries.iter().any(|record| record.query_ref == *query));
     for record in &queries {
-        let Some(grants) = sweep_owner_grants(vault, record.definition.owner_actor)? else {
-            tracing::debug!(
-                query = %record.query_ref.to_hex(),
-                "the saved query's owner is not the vault owner; the sweep leaves it to an explicit evaluation"
-            );
+        let Some(read) = owner_read(vault, record) else {
             continue;
         };
         let wake = usize::try_from(record.definition.eval.max_entities_per_wake)
@@ -203,7 +200,7 @@ fn sweep_pass(
             .max(1);
         let after = cursors.get(&record.query_ref).copied();
         let page = vault.entities_by_type_page(SWEEP_CANDIDATE_TYPE, after.as_ref(), wake)?;
-        let report = match evaluate(server, record, &grants, &page, now) {
+        let report = match evaluate(server, record, &read, &page, now) {
             Ok(report) => report,
             Err(error) => {
                 tracing::warn!(
@@ -234,24 +231,58 @@ fn sweep_pass(
     Ok(())
 }
 
-/// One bounded wake of `record` over `page`. An LLM judge's first read goes
-/// on the query's named model under a run on the owner's line; a query whose
-/// model this server does not serve is not evaluated.
+/// The read `record` is evaluated under, resolved now as its owner's class.
+/// An owner with no usable read, or one whose authority cannot be computed,
+/// leaves the query unswept this pass; no default reach stands in.
+fn owner_read(vault: &Vault, record: &SavedQueryRecord) -> Option<ScopedReadActorKey> {
+    match sweep_owner_read(
+        vault,
+        record.definition.owner_actor,
+        record.definition.owner_actor_class,
+    ) {
+        Ok(Some(read)) => Some(read),
+        Ok(None) => {
+            tracing::debug!(
+                query = %record.query_ref.to_hex(),
+                "the saved query's owner has no usable read; the sweep skips it"
+            );
+            None
+        }
+        Err(error) => {
+            tracing::warn!(
+                query = %record.query_ref.to_hex(),
+                kind = ?error.kind(),
+                "the saved query's owner read could not be resolved; the sweep skips it this pass"
+            );
+            None
+        }
+    }
+}
+
+/// One bounded wake of `record` over `page`, read under `read`. An LLM
+/// judge's first read goes on the query's named model under a run on the
+/// owner's line; a query whose model this server does not serve is not
+/// evaluated.
 fn evaluate(
     server: &SyncServer,
     record: &SavedQueryRecord,
-    grants: &QueryScope,
+    read: &ScopedReadActorKey,
     page: &[EntityId],
     now: u64,
 ) -> oneiron::Result<WakeEvaluationReport> {
     let vault = server.vault();
+    // The owner's read is the authority; the scope axes stay as declared.
+    let reach = QueryScope::default();
     let MatcherSpec::LlmJudge { model_id, .. } = &record.definition.matcher else {
         let evaluator = SavedQueryEvaluator {
             vault,
-            owner_grants: grants,
+            owner_grants: &reach,
+            owner_read: read,
             judge: None,
         };
-        return block_on(evaluator.evaluate_wake_batch(record.query_ref, page, now));
+        return block_on(crate::campaign_enrollment::wake(
+            &evaluator, record, page, now,
+        ));
     };
     let model = ModelId::new(model_id.clone()).map_err(|_| {
         oneiron::Error::InvalidConfig("the saved query names no valid model".into())
@@ -267,7 +298,10 @@ fn evaluate(
                 model.as_str()
             ))
         })?;
-    let owner = WriteActor::new(record.definition.owner_actor, EdgeActorClass::Human);
+    let owner = WriteActor::new(
+        record.definition.owner_actor,
+        record.definition.owner_actor_class,
+    );
     let run_id = format!("saved_query:{}:{now}", record.query_ref.to_hex());
     let line = |run: String| {
         let units = server.ai.chat_settings().turn_budget_units;
@@ -310,7 +344,8 @@ fn evaluate(
     let decisions = server.decision_host().membership_decisions()?;
     let evaluator = SavedQueryEvaluator {
         vault,
-        owner_grants: grants,
+        owner_grants: &reach,
+        owner_read: read,
         judge: Some(SavedQueryJudgeBinding {
             backend: &backend,
             lease: &lease,
@@ -318,7 +353,9 @@ fn evaluate(
             decisions: &decisions,
         }),
     };
-    let report = block_on(evaluator.evaluate_wake_batch(record.query_ref, page, now));
+    let report = block_on(crate::campaign_enrollment::wake(
+        &evaluator, record, page, now,
+    ));
     let _ = carrier.abort(&lease);
     report
 }

@@ -57,8 +57,12 @@ pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
+// The owner's fan-out ruling doors (OF-393), likewise.
+pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The owner's historical secret lift sweep door (OF-067), likewise.
+pub(crate) use super::secret_lift_doors::*;
 // The owner's root wave door (OF-427), likewise.
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
@@ -71,6 +75,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::reaction_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
+// The default lens's door, which holds its card's frame (OF-181), likewise.
+pub(crate) use super::ui_action_routes::vault_lenses_default;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the

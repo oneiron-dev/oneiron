@@ -21,7 +21,10 @@ pub use model::{
 mod capability;
 mod ceremony;
 mod escalation;
-pub use escalation::{HOLD_ALLOW, HOLD_DECLINE, HeldSigning, HeldSigningAnswer, HeldSigningState};
+pub use escalation::{
+    ESIGN_ASK_CLIMB_HOURS, HOLD_ALLOW, HOLD_DECLINE, HeldSigning, HeldSigningAnswer,
+    HeldSigningState,
+};
 mod principals;
 pub use capability::EsignCapability;
 pub(crate) use capability::recipient_capability_unrevoked_in;
