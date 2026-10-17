@@ -6,71 +6,87 @@
 //! funded judge-ask minutes. The ask is the question the swap's hand-test
 //! asks, so a digest pick is the same label: it joins the skill's judge
 //! anchor, the next swap pass sides with it, and a pick that contradicts a
-//! takeover re-pins it back.
+//! takeover re-pins it back. The incumbent's own retest flips, a kept case it
+//! answered one way and, asked again, another, follow as uncertainty asks
+//! between its two answers; their picks join the same anchor.
 //!
 //! The pass only proposes. The person's authenticated digest delivers the
 //! asks and spends their minutes; a person who funded none is never asked.
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::skill_optimize::{self, JudgeSwapSettledBy};
+use crate::skill_optimize::{self, JudgeAskReason, JudgeSwapSettledBy};
 use crate::{EntityId, Error, Result, Vault};
 
 /// The nightly calibration-ask pass, a closed-form Coach job.
 pub const COACH_CALIBRATION_ASKS_FACET: &str = "coach.calibration_asks";
 
-/// One open disagreement, as the ask whose pick settles it.
+/// One open disagreement or retest flip, as the ask whose pick settles it.
 struct Candidate {
     skill: EntityId,
     campaign: String,
     evidence: String,
     options: [String; 2],
+    reason: JudgeAskReason,
 }
 
-/// Open disagreements, newest swap first and each case once, leaving out the
-/// cases a label already settled. Within a swap, the receipt's order.
+/// Open disagreements, newest swap first, then the incumbent's retest flips,
+/// newest first; each case once, leaving out the cases a label already
+/// settled. Within a swap, the receipt's order.
 fn candidates(vault: &Vault) -> Result<Vec<Candidate>> {
     let mut receipts = skill_optimize::judge_swap_receipts(vault)?;
     receipts.sort_by_key(|receipt| std::cmp::Reverse(receipt.at));
-    let mut seen = BTreeSet::new();
-    let mut labelled: BTreeMap<(EntityId, String), BTreeSet<String>> = BTreeMap::new();
-    let mut found = Vec::new();
+    let mut asks = Vec::new();
     for receipt in &receipts {
         for case in &receipt.disagreements {
             if case.settled_by != JudgeSwapSettledBy::Open {
                 continue;
             }
-            let Some((skill, campaign, options)) = skill_optimize::swap_case_ask(receipt, case)
-            else {
-                continue;
-            };
-            if !seen.insert((campaign.clone(), case.case_ref.clone())) {
-                continue;
+            if let Some(ask) = skill_optimize::swap_case_ask(receipt, case) {
+                asks.push((
+                    ask,
+                    case.case_ref.clone(),
+                    JudgeAskReason::RevisionDisagreement,
+                ));
             }
-            let settled = match labelled.entry((skill, campaign.clone())) {
-                Entry::Occupied(kept) => kept.into_mut(),
-                Entry::Vacant(slot) => slot.insert(
-                    skill_optimize::judge_label_anchor(vault, skill, &campaign)?
-                        .into_iter()
-                        .map(|label| label.ask.evidence)
-                        .collect(),
-                ),
-            };
-            if settled.contains(&case.case_ref) {
-                continue;
-            }
-            found.push(Candidate {
-                skill,
-                campaign,
-                evidence: case.case_ref.clone(),
-                options,
-            });
         }
+    }
+    for flip in skill_optimize::judge_retest_flips(vault)? {
+        if let Some(ask) = skill_optimize::retest_flip_ask(&flip) {
+            asks.push((ask, flip.case_ref, JudgeAskReason::Uncertainty));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    let mut labelled: BTreeMap<(EntityId, String), BTreeSet<String>> = BTreeMap::new();
+    let mut found = Vec::new();
+    for ((skill, campaign, options), evidence, reason) in asks {
+        if !seen.insert((campaign.clone(), evidence.clone())) {
+            continue;
+        }
+        let settled = match labelled.entry((skill, campaign.clone())) {
+            Entry::Occupied(kept) => kept.into_mut(),
+            Entry::Vacant(slot) => slot.insert(
+                skill_optimize::judge_label_anchor(vault, skill, &campaign)?
+                    .into_iter()
+                    .map(|label| label.ask.evidence)
+                    .collect(),
+            ),
+        };
+        if settled.contains(&evidence) {
+            continue;
+        }
+        found.push(Candidate {
+            skill,
+            campaign,
+            evidence,
+            options,
+            reason,
+        });
     }
     Ok(found)
 }
 
-/// One pass: each owner with funded room gets the open disagreements they
+/// One pass: each owner with funded room gets the open questions they
 /// were not yet asked, up to what their minutes buy beyond the asks already
 /// waiting. Returns how many asks it proposed.
 pub(super) fn run(vault: &Vault) -> Result<u32> {
@@ -104,7 +120,11 @@ pub(super) fn run(vault: &Vault) -> Result<u32> {
             if room.asked.contains(&key) {
                 continue;
             }
-            match skill_optimize::ask_judge_disagreement(
+            let ask = match candidate.reason {
+                JudgeAskReason::RevisionDisagreement => skill_optimize::ask_judge_disagreement,
+                JudgeAskReason::Uncertainty => skill_optimize::ask_judge_uncertainty,
+            };
+            match ask(
                 vault,
                 candidate.skill,
                 owner,
