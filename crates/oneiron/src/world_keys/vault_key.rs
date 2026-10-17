@@ -937,7 +937,7 @@ impl Vault {
     /// this handle does not hold the key. A sealed vault's mirror is staged
     /// first: the caller begins `transition` before its transaction and
     /// finishes it after the commit ([`WrapTransition`]).
-    pub(crate) fn put_vault_key_escrow_in_txn(
+    pub(super) fn put_vault_key_escrow_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         transition: &WrapTransition<'_>,

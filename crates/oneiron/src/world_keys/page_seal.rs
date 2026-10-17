@@ -355,6 +355,8 @@ pub(crate) fn seal_read_only(options: &mut heed::EnvOpenOptions, root: &Path) ->
 pub(crate) fn page_seal_open_error(error: heed::Error, keyed: bool) -> Error {
     let code = match &error {
         heed::Error::Mdb(heed::MdbError::Other(code)) => Some(*code),
+        // heed hands an LMDB code it has no name for over as a raw OS error.
+        heed::Error::Io(error) => error.raw_os_error(),
         _ => None,
     };
     match code {
