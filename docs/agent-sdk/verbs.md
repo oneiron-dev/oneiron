@@ -205,6 +205,8 @@ both bindings and their export-census tests in one change.
 - `self.decisions.asks`
 - `connector.list`
 - `connector.status`
+- `connector.call`
+- `connector.schema`
 - `vault.commit`
 - `vault.remember`
 - `vault.claims.retract`
