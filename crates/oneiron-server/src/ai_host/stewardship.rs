@@ -31,11 +31,19 @@ const SETTLE: Duration = Duration::from_secs(60);
 /// the Dreamer's thread and stops with it. A reach-out whose draft failed
 /// after its call is not asked again in this process: one failure costs one
 /// call, not one call per vault write.
-pub(super) async fn draft_loop(vault: Arc<Vault>, runtime: Arc<ModelRuntime>, budget_units: u64) {
+pub(super) async fn draft_loop(
+    vault: Arc<Vault>,
+    runtime: Arc<ModelRuntime>,
+    budget_units: u64,
+    admission: super::dreamer::PassAdmission,
+) {
     let mut changes = vault.subscribe_proactivity_changes();
     let mut failed = HashSet::new();
     loop {
-        if let Err(error) = draft_round(&vault, &runtime, budget_units, &mut failed).await {
+        // A round the host's gate refuses waits for the next change.
+        if let Some(_pass) = super::dreamer::admit(&admission)
+            && let Err(error) = draft_round(&vault, &runtime, budget_units, &mut failed).await
+        {
             // By kind only: an engine error can quote the vault.
             tracing::warn!(kind = ?error.kind(), "stewardship drafts could not be listed");
         }

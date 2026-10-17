@@ -657,6 +657,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // tells its workers to stop.
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
+    // The Dreamer's passes are admitted like a served write, and refused
+    // until the managed state below exists.
+    let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
+    ai.bind_pass_admission({
+        let gate = Arc::clone(&reap_gate);
+        Arc::new(move || {
+            gate.get()?
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
     let sync_server = Arc::new(sync_server);
     // The skill-edit gate's replay judge, on the ladder just built (OF-495).
     crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
@@ -693,6 +705,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::clone(&sync_server),
         ledger,
     ));
+    let _ = reap_gate.set(Arc::clone(&state));
 
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
