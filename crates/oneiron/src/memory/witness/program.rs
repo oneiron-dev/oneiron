@@ -363,19 +363,23 @@ impl Memory<'_> {
         // OF-063 prose links (Engine ruling 10-17): every AI-written message
         // this program lands, whatever door it came through, is read for
         // links its writer cannot resolve, receipt-only and before the writer
-        // opens. An overlay landing is a non-anonymous off-record session (an
-        // anonymous one was refused above), so its room speech keeps its
-        // receipt; only an anonymous session keeps none. An imported turn is
-        // a source's words, not this writer's.
-        if !matches!(
+        // opens; the receipt is written only once the turn has landed (Engine
+        // ruling 10-18: landed speech only). An overlay landing is a
+        // non-anonymous off-record session (an anonymous one was refused
+        // above), so its room speech keeps its receipt; only an anonymous
+        // session keeps none. An imported turn is a source's words, not this
+        // writer's.
+        let unlinked_prose = if matches!(
             landing,
             Landing::Base {
                 imported: Some(_),
                 ..
             }
         ) {
-            crate::gate::record_references::admit_witness_prose(self, turn);
-        }
+            Vec::new()
+        } else {
+            crate::gate::record_references::witness_prose_unlinked(self, turn)
+        };
         let plan = self.plan_witness(turn, &landing, door, admit)?;
         let held = match &landing {
             Landing::Base { held, .. } => *held,
@@ -575,7 +579,7 @@ impl Memory<'_> {
             Ok(landed)
         })?;
 
-        match landed {
+        let answer = match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
             Landed::Base(receipt) => {
                 // A stretch on record took this turn into base; a copy of the
@@ -602,7 +606,11 @@ impl Memory<'_> {
                 }
                 overlay_receipt(&plan, aliases)
             }
+        };
+        if answer.is_ok() {
+            crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
         }
+        answer
     }
 
     fn plan_witness<'t>(

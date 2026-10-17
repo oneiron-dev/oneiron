@@ -104,8 +104,9 @@ for row in ROWS:
     if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*|[a-z_][a-z0-9_]*))+', p) for p in pointers):
         raise ValueError(f'{row["name"]}: refs are distinct JSON pointers of field names and `*`')
 # OF-063 prose links (Engine ruling 10-17): `prose_links` lists a row's text
-# slots, read for `[label](oneiron://<ref>)` links before the engine call
-# (`prose_links_check`). A pointer may end at an opaque value (each of its
+# slots, read for `oneiron://` record links before the engine call
+# (`prose_links_check`) and receipted only once that call has landed the
+# write (`prose_links_landed`, Engine ruling 10-18). A pointer may end at an opaque value (each of its
 # strings is read) and `*[key=value]` takes only the array items whose `key`
 # is the string `value`, which declares them AI-written. An AI-written link
 # that does not resolve for its writer is receipted, never refused.
@@ -1015,10 +1016,17 @@ def record_refs_check(row):
     return f'crate::gate::record_references::admit_row_references(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
 
 def prose_links_check(row):
-    'OF-063 prose links: the receipt-only link check a row with `prose_links` runs before its engine call.'
+    'OF-063 prose links: the receipt-only link read a row with `prose_links` runs before its engine call.'
     if 'prose_links' not in row: return ''
     pointers = ', '.join(json.dumps(pointer) for pointer in row['prose_links'])
-    return f'crate::gate::record_references::admit_prose_links(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
+    return f'let unlinked_prose = crate::gate::record_references::unlinked_prose_links(memory, {json.dumps(row["name"])}, &input, &[{pointers}])?; '
+
+def prose_links_landed(row, call):
+    """OF-063 prose links (Engine ruling 10-18): the unlinked-prose receipt
+    means landed speech only, so a row with `prose_links` receipts what its
+    read found only once its engine call has returned success."""
+    if 'prose_links' not in row: return None
+    return f'let landed = {call}; crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose); Ok(landed)'
 
 def default_const(row, arg):
     'The engine constant that carries one binding default the manifest states.'
@@ -1285,7 +1293,7 @@ def outputs():
         binding = '_input' if r['input'] == 'EmptyRequest' else 'input'
         checks = r.get('admission', {}).get('validate', '')
         call = r['call']
-        result = call[:-1] if call.endswith('?') else f'Ok({call})'
+        result = prose_links_landed(r, call) or (call[:-1] if call.endswith('?') else f'Ok({call})')
         result = record_refs_check(r) + result
         result = prose_links_check(r) + result
         if r.get('context') == 'browser':

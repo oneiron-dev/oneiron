@@ -92,7 +92,11 @@ pub enum ShapeChannelBinding {
         facet: Option<String>,
     },
     /// A vault, by its shared-vault id.
-    Vault { vault_id: u64 },
+    Vault {
+        #[serde(with = "crate::federation::vault_id_decimal")]
+        #[schemars(with = "String")]
+        vault_id: u64,
+    },
 }
 
 impl ShapeChannelBinding {

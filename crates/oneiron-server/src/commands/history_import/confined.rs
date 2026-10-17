@@ -99,7 +99,7 @@ pub(super) fn walk_logs(
     }
 }
 
-/// Visits every `.md` file under `root`, passing over hidden files and
+/// Visits every `.md` and `.pdf` file under `root`, passing over hidden files and
 /// folders (an editor's settings, its trash, a `.git`): the path shown, and
 /// the file.
 pub(super) fn walk_notes(
@@ -124,14 +124,14 @@ pub(super) enum WalkRefused {
     TooManyEntries { folder: String, most: usize },
 }
 
-/// The files a walk visits: their extension, also in other case when
+/// The files a walk visits: their extensions, also in other case when
 /// `any_case`; whether hidden entries count; how deep it goes; and how many
 /// entries it lists before it is refused. Past `depth`, a log walk passes
 /// over the folder; a notes walk refuses, since a batch without those notes
 /// would read as the whole folder.
 #[derive(Clone, Copy)]
 pub(super) struct Wanted {
-    extension: &'static str,
+    extensions: &'static [&'static str],
     any_case: bool,
     hidden: bool,
     depth: usize,
@@ -140,7 +140,7 @@ pub(super) struct Wanted {
 }
 
 pub(super) const LOGS: Wanted = Wanted {
-    extension: "jsonl",
+    extensions: &["jsonl"],
     any_case: false,
     hidden: true,
     depth: MAX_WALK_DEPTH,
@@ -148,9 +148,11 @@ pub(super) const LOGS: Wanted = Wanted {
     entries: usize::MAX,
 };
 
-/// A note is `.md` in any case (`BETA.MD`): editors open it either way.
+/// A note is `.md` or `.pdf` in any case (`BETA.MD`): editors open it either
+/// way. A PDF's text is its note's (ARCH-0027: the first adapter reads a
+/// Markdown and PDF folder).
 const NOTES: Wanted = Wanted {
-    extension: "md",
+    extensions: &["md", "pdf"],
     any_case: true,
     hidden: false,
     depth: 32,
@@ -162,11 +164,13 @@ impl Wanted {
     /// Whether a file named `name` is one this walk visits.
     fn visits(self, name: &OsStr) -> bool {
         Path::new(name).extension().is_some_and(|extension| {
-            if self.any_case {
-                extension.eq_ignore_ascii_case(self.extension)
-            } else {
-                extension == self.extension
-            }
+            self.extensions.iter().any(|wanted| {
+                if self.any_case {
+                    extension.eq_ignore_ascii_case(wanted)
+                } else {
+                    extension == *wanted
+                }
+            })
         })
     }
 }
