@@ -38316,7 +38316,7 @@
      "purpose": "The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded…",
      "surface": {
       "const": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -38348,6 +38348,8 @@
      "notable": [
       "ClosedFormPredicate",
       "GraduatedT1",
+      "MintedExample",
+      "MintedRegistration",
       "MintedT2",
       "ReviewedFinding"
      ],
@@ -38356,8 +38358,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
-      "struct": 3
+      "fn": 8,
+      "struct": 5
      }
     },
     {
@@ -62411,7 +62413,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/self_heal_detectors.rs",
