@@ -95,6 +95,7 @@ impl SessionOverlay {
                 | crate::batch::BatchOp::Edge { .. }
                 | crate::batch::BatchOp::Text { .. }
                 | crate::batch::BatchOp::Vector { .. }
+                | crate::batch::BatchOp::MediaVector { .. }
                 | crate::batch::BatchOp::Delete { .. }
         ) {
             return Err(Error::InvariantViolation(
