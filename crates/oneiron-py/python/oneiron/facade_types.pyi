@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 302 facade rows, 1167 declarations.
-Inputs: 259 of 302 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 260 of 302 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 303 facade rows, 1171 declarations.
+Inputs: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 261 of 303 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -3697,6 +3697,22 @@ class ArtifactExportFile(TypedDict):
     content_hash: str
     born_with: BornWith
     content_base64: str
+class AgentPackExportRequest(TypedDict):
+    agent_ref: str
+    travel: NotRequired[TravelChoice | None]
+class OmittedKnowledge(TypedDict):
+    claim: str
+    reason: str
+class AgentPackExportFile(TypedDict):
+    path: str
+    content_base64: str
+class AgentPackExport(TypedDict):
+    agent_ref: str
+    version: str
+    content_hash: str
+    born_with: BornWith
+    omitted: list[OmittedKnowledge]
+    files: list[AgentPackExportFile]
 class BornFromRequest(TypedDict):
     task_ref: NotRequired[str | None]
     ask_ref: NotRequired[str | None]

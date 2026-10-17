@@ -16,11 +16,13 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{Result, Vault};
 
 pub mod agent_pack;
+mod agent_pack_export;
 
 pub use self::agent_pack::{
     AGENT_PACK_TRAVEL_SCHEMA, AgentPackKnowledge, AgentPackPolicy, AgentPackSkill,
     AgentPackTravelProjection,
 };
+pub use self::agent_pack_export::{AgentPackExport, AgentPackExportFile, AgentPackExportRequest};
 
 /// The share receipt field listing the born-with fields that travelled.
 pub const FIELD_TRAVELLED: &str = "travelled";
@@ -137,25 +139,69 @@ pub fn travelled_value(fields: impl IntoIterator<Item = BornWithField>) -> Strin
 pub enum ExportTarget {
     /// One version of an artifact.
     Artifact { artifact_ref: String, version: u64 },
-    /// An agent definition, sent as its travelling AgentPack.
-    AgentPack { agent_ref: String, version: String },
+    /// An agent definition, sent as its travelling AgentPack, with the
+    /// knowledge claims it kept home.
+    AgentPack {
+        agent_ref: String,
+        version: String,
+        omitted: Vec<OmittedKnowledge>,
+    },
+}
+
+/// A knowledge claim an AgentPack export kept home, and why: `ref_value`
+/// (its value names an entity or an edge) or `typed_value` (not text).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OmittedKnowledge {
+    /// The claim, as hex.
+    pub claim: String,
+    pub reason: String,
+}
+
+impl OmittedKnowledge {
+    pub(crate) fn new(claim: EntityId, reason: crate::agent_def::OmittedClaimReason) -> Self {
+        let reason = match reason {
+            crate::agent_def::OmittedClaimReason::RefValue => "ref_value",
+            crate::agent_def::OmittedClaimReason::TypedValue => "typed_value",
+        };
+        Self {
+            claim: claim.to_hex(),
+            reason: reason.to_owned(),
+        }
+    }
 }
 
 impl ExportTarget {
-    /// The share receipt's fields naming the target.
-    fn receipt_fields(&self) -> [(String, String); 2] {
+    /// The share receipt's fields naming the target. An AgentPack's
+    /// `omitted` lists each claim kept home as `<claim>:<reason>`,
+    /// comma-joined.
+    fn receipt_fields(&self) -> Vec<(String, String)> {
         match self {
             Self::Artifact {
                 artifact_ref,
                 version,
-            } => [
+            } => vec![
                 ("artifact".to_owned(), artifact_ref.clone()),
                 ("version".to_owned(), version.to_string()),
             ],
-            Self::AgentPack { agent_ref, version } => [
-                ("agent".to_owned(), agent_ref.clone()),
-                ("version".to_owned(), version.clone()),
-            ],
+            Self::AgentPack {
+                agent_ref,
+                version,
+                omitted,
+            } => {
+                let mut fields = vec![
+                    ("agent".to_owned(), agent_ref.clone()),
+                    ("version".to_owned(), version.clone()),
+                ];
+                if !omitted.is_empty() {
+                    let omitted = omitted
+                        .iter()
+                        .map(|row| format!("{}:{}", row.claim, row.reason))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    fields.push(("omitted".to_owned(), omitted));
+                }
+                fields
+            }
         }
     }
 }
@@ -385,8 +431,8 @@ impl Vault {
         )
     }
 
-    /// Record one travelling AgentPack's share receipt, on the same terms as
-    /// [`Self::record_export_travel`].
+    /// Record one travelling AgentPack's share receipt, with the knowledge
+    /// it kept home, on the same terms as [`Self::record_export_travel`].
     pub(crate) fn record_agent_pack_travel(
         &self,
         agent: &EntityId,
@@ -394,11 +440,13 @@ impl Vault {
         content_hash: String,
         by: &EntityId,
         born_with: &BornWith,
+        omitted: Vec<OmittedKnowledge>,
     ) -> Result<()> {
         self.record_travel(
             ExportTarget::AgentPack {
                 agent_ref: agent.to_hex(),
                 version,
+                omitted,
             },
             content_hash,
             by,
