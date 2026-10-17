@@ -102,6 +102,9 @@ pub enum AgentVerb {
     VaultProjectsGoalIntake,
     VaultRoomsJoin,
     VaultRoomsConsent,
+    VaultRoomsOffer,
+    VaultRoomsOfferAnswer,
+    VaultRoomsOffers,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
     VaultProjectsRouteTradeoff,
@@ -133,6 +136,7 @@ pub enum AgentVerb {
     SelfBrowserObserve,
     SelfBrowserFind,
     SelfBrowserClick,
+    SelfBrowserClickAt,
     SelfBrowserType,
     SelfBrowserSelect,
     SelfBrowserWaitFor,
@@ -270,6 +274,9 @@ impl AgentVerb {
         Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
         Self::VaultRoomsConsent,
+        Self::VaultRoomsOffer,
+        Self::VaultRoomsOfferAnswer,
+        Self::VaultRoomsOffers,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
         Self::VaultProjectsRouteTradeoff,
@@ -301,6 +308,7 @@ impl AgentVerb {
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
         Self::SelfBrowserClick,
+        Self::SelfBrowserClickAt,
         Self::SelfBrowserType,
         Self::SelfBrowserSelect,
         Self::SelfBrowserWaitFor,
@@ -443,6 +451,9 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsConsent => "vault.rooms.consent",
+            Self::VaultRoomsOffer => "vault.rooms.offer",
+            Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
+            Self::VaultRoomsOffers => "vault.rooms.offers",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
@@ -474,6 +485,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
             Self::SelfBrowserClick => "self.browser.click",
+            Self::SelfBrowserClickAt => "self.browser.click_at",
             Self::SelfBrowserType => "self.browser.type",
             Self::SelfBrowserSelect => "self.browser.select",
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
@@ -610,6 +622,9 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -670,6 +685,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -785,6 +801,9 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -877,6 +896,7 @@ impl AgentVerb {
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultProjectsProposals
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
                 | Self::ConnectorList
@@ -999,6 +1019,9 @@ impl AgentVerb {
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
@@ -1030,6 +1053,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -1115,6 +1139,8 @@ impl AgentVerb {
                 | Self::VaultProjectsConfirm
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
+                | Self::VaultRoomsOffer
+                | Self::VaultRoomsOfferAnswer
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -1133,6 +1159,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
@@ -1268,6 +1295,9 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsOffer => &["spec", "room_ref"],
+            Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -1299,6 +1329,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],
@@ -1437,6 +1468,9 @@ impl AgentVerb {
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
+            Self::VaultRoomsOffer => &["spec", "room_ref"],
+            Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
             Self::VaultProjectsRouteTradeoff => &["spec"],
@@ -1468,6 +1502,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],

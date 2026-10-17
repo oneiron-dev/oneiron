@@ -27,6 +27,7 @@ const ROOM_TURN_VERBS: &[&str] = &[
     "vault.rooms.reply_strips",
     "vault.rooms.claim",
     "vault.rooms.speak",
+    "vault.rooms.offer",
     "vault.rooms.host",
     "vault.rooms.host.hand",
     "vault.rooms.sharing",

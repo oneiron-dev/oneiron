@@ -25,8 +25,9 @@ declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
-    batch(input: { steps: (object | object | object | object | object | object | object)[]; subgoal?: string | null }): Promise<unknown>;
+    batch(input: { steps: (object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
+    click_at(input: { image: string; x: number; y: number }): Promise<unknown>;
     crop(input: { height: number; image: string; width: number; x: number; y: number }): Promise<unknown>;
     expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
     find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
@@ -226,6 +227,10 @@ declare const vault: {
     join(input: { branch?: string | null; intent_key: string; paid: boolean; room: string; spend_scope?: string | null; subject: object | object }): Promise<unknown>;
     list(input: object): Promise<unknown>;
     messages(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
+    offer: ((input: { agent: string; artifact_ref?: string | null; branch?: string | null; intent_key: string; room: string; spend_scope?: string | null; what: string }) => Promise<unknown>) & {
+      answer(input: { action: "join" | "not_now"; intent_key: string; offer_id: string }): Promise<unknown>;
+    };
+    offers(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     participants(input: { after?: string | null; branch?: string | null; limit?: number | null; room: string }): Promise<unknown>;
     render(input: { room_ref: string }): Promise<unknown>;
     reply_strips(input: { after?: string | null; limit?: number | null; room_ref: string; thread_ref: string }): Promise<unknown>;

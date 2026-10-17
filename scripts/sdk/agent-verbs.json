@@ -1664,6 +1664,44 @@
       "section": false
     },
     {
+      "name": "vault.rooms.offer",
+      "input": "crate::workspace_roster::OfferDraft",
+      "output": "crate::workspace_roster::OfferCard",
+      "call": "memory.rooms_offer(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offer.answer",
+      "input": "crate::workspace_roster::OfferAnswerRequest",
+      "output": "crate::workspace_roster::OfferSettlement",
+      "call": "memory.rooms_offer_answer(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offers",
+      "input": "crate::workspace_roster::OffersRequest",
+      "output": "crate::workspace_roster::OffersPage",
+      "call": "memory.rooms_offers(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$", "room_ref": "=room"},
+      "page": {"rows": "rows", "cursor": "next_after"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.projects.goal.revisions",
       "input": "ProjectRefRequest",
       "output": "Vec<crate::skill_optimize::ProjectGoalRevisionProposal>",
@@ -2035,6 +2073,16 @@
       "input": "oneiron_browser::ClickInput",
       "output": "oneiron_browser::Observation",
       "call": "driver.click(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.click_at",
+      "input": "oneiron_browser::PointInput",
+      "output": "oneiron_browser::Observation",
+      "call": "driver.click_at(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",

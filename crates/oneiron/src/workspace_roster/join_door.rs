@@ -58,7 +58,7 @@ pub struct JoinOutcome {
 }
 
 impl JoinOutcome {
-    fn of(receipt: &JoinReceipt) -> Self {
+    pub(super) fn of(receipt: &JoinReceipt) -> Self {
         Self {
             join_ref: receipt.join_ref.clone(),
             decision: JoinDecisionView {
@@ -218,13 +218,7 @@ pub fn rooms_consent_in_txn(
             ));
         }
         ConsentPart::Admission => {
-            if caller.actor_class() != EdgeActorClass::Human
-                || room_host_in_txn(vault, txn, receipt.request.room, caller)?.is_none()
-            {
-                return Err(refused(
-                    "only the room's owner or a delegated host answers its admission",
-                ));
-            }
+            require_admission_party_in_txn(vault, txn, receipt.request.room, caller)?;
             (caller.entity_ref(), None)
         }
         ConsentPart::Spend => {
@@ -427,6 +421,24 @@ fn caller_stands_for_in_txn(
     Err(refused(
         "a join is filed by its subject or the subject's principal",
     ))
+}
+
+/// Refuses `caller` unless it answers `room`'s admission: a human who owns
+/// the room or holds its delegated host role, read live.
+pub(super) fn require_admission_party_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<()> {
+    if caller.actor_class() != EdgeActorClass::Human
+        || room_host_in_txn(vault, txn, room, caller)?.is_none()
+    {
+        return Err(refused(
+            "only the room's owner or a delegated host answers its admission",
+        ));
+    }
+    Ok(())
 }
 
 fn answer_ref(vault: &Vault) -> Result<String> {
