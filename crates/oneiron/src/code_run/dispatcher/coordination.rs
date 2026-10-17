@@ -35,6 +35,9 @@ fn invalid() -> Error {
 pub(crate) struct CallableSkillLease {
     pub(crate) vault: Arc<Vault>,
     pub(crate) leased: AttemptRecord,
+    /// The key the run's door admitted the call with, which the call's verb
+    /// hooks read under; `None` when its host binds no door.
+    pub(crate) read_as: Option<crate::claim::ScopedReadActorKey>,
 }
 
 impl<'a> HostSelfDispatcher<'a> {
@@ -203,14 +206,27 @@ impl<'a> HostSelfDispatcher<'a> {
             return Err(invalid());
         }
         let now = crate::unix_seconds_now();
-        // OF-541: an ask is placed and planned on the host's planner over
-        // the agent's lease; without one, the target dispatches directly.
-        let (target, context) = match call.ask {
-            None => (call.target, call.context),
-            Some(_) if !self.planner_bound() => {
-                return Ok(Self::planner_unbound(SelfEffect::AgentsSpawn));
+        // OF-541: with the host's planner and the agent's lease, an ask is
+        // placed and planned; otherwise the named target runs, under the
+        // carve the ask's budget narrows.
+        let planned = self.planner_bound() && self.agent_lease.is_some();
+        let (target, context) = match (call.ask, call.target) {
+            (Some(ask), _) if planned => self.planned_spawn(call.context, ask, now)?,
+            (ask, Some(target)) => {
+                let mut context = call.context;
+                super::leader::narrow_budget(
+                    &mut context,
+                    ask.as_ref().and_then(|ask| ask.budget_cap_units.as_ref()),
+                );
+                (target, context)
             }
-            Some(ask) => self.planned_spawn(call.context, ask, now)?,
+            (Some(_), None) if self.planner_bound() => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "a planned spawn requires the agent's acquired lease",
+                )));
+            }
+            (Some(_), None) => return Ok(Self::planner_unbound(SelfEffect::AgentsSpawn)),
+            (None, None) => return Err(invalid()),
         };
         let result = AgentDispatcher::new(vault).dispatch_with_context(
             DispatchAgent {
@@ -332,14 +348,19 @@ impl<'a> HostSelfDispatcher<'a> {
                     ..refused
                 })));
             }
-            if let Err(refusal) = self.admit_run_call(RunCall::Bridge(effect))? {
-                return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                    effect,
-                    outcome: refusal.code,
-                    reason_codes: Vec::new(),
-                })));
-            }
-            self.callable_skill_lease()
+            let read_as = match self.admit_run_call(RunCall::Bridge(effect))? {
+                Ok(read_as) => read_as,
+                Err(refusal) => {
+                    return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
+                        effect,
+                        outcome: refusal.code,
+                        reason_codes: Vec::new(),
+                    })));
+                }
+            };
+            Ok(self
+                .callable_skill_lease()?
+                .map(|lease| CallableSkillLease { read_as, ..lease }))
         })
     }
 
@@ -375,6 +396,7 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(Ok(CallableSkillLease {
             vault: Arc::clone(vault),
             leased,
+            read_as: None,
         }))
     }
 

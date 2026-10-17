@@ -130,6 +130,15 @@ impl Vault {
         })
     }
 
+    /// The owner's label on one raised finding, if any.
+    pub(super) fn t3_label(&self, family: &str, event_id: &EntityId) -> Result<Option<bool>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(LABEL
+            .get(&self.store, &txn, &key(family, event_id))
+            .map_err(|_| Error::CorruptedIndex("distillation label"))?
+            .map(|label| label.positive))
+    }
+
     fn reviewed_findings(&self, family: &str) -> Result<Vec<ReviewedFinding>> {
         let txn = self.store.env.read_txn()?;
         let prefix = family_prefix(family);

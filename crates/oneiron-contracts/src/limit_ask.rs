@@ -54,6 +54,28 @@ pub enum EngineLimit {
     /// everything is okay and keeps queueing; it never refuses and never
     /// bounds the active window.
     CodeReaderBacklog,
+    /// Options one ask offers (`tasks.ask` `what.options`). Every option is
+    /// kept and validated past it.
+    AskOptions,
+    /// UTF-8 bytes of one ask option's display text, each option measured on
+    /// its own. The text is kept whole; a board or UI shows its own preview.
+    AskOptionTextBytes,
+    /// Context references one ask names (`what.context_refs`). Each is still
+    /// read and held to its disclosure past it.
+    AskContextRefs,
+    /// Recipients one ask resolves to, each a member TASK of its group.
+    AskRecipients,
+    /// MessagePack bytes of one ask spec as its caller sent it, before its
+    /// task's class fills it in.
+    AskSpecMsgpackBytes,
+    /// Reminder delays one ask carries once its class's are inherited.
+    AskReminders,
+    /// Provenance references one ask answer cites (`tasks.answer`).
+    AnswerProvenanceRefs,
+    /// Distinct wait identities one ask holds, consumed ones included: the
+    /// step keys external `tasks.wait` calls bind, or the waiting steps of
+    /// one run branch.
+    AskWaitIdentities,
     /// Messages a LINE Official Account has sent this month, as LINE counts
     /// them (`totalUsage`), read before each push. The bound is the account
     /// plan's monthly push allowance (`[line]`), told at the send itself.
@@ -64,7 +86,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 17] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -73,6 +95,14 @@ impl EngineLimit {
         Self::CodeResultSessionMemoryBytes,
         Self::ImageRoomBytes,
         Self::CodeReaderBacklog,
+        Self::AskOptions,
+        Self::AskOptionTextBytes,
+        Self::AskContextRefs,
+        Self::AskRecipients,
+        Self::AskSpecMsgpackBytes,
+        Self::AskReminders,
+        Self::AnswerProvenanceRefs,
+        Self::AskWaitIdentities,
         Self::LinePushMonthly,
     ];
 
@@ -87,6 +117,14 @@ impl EngineLimit {
             Self::CodeResultSessionMemoryBytes => "limits.code_result_session_memory_bytes",
             Self::ImageRoomBytes => "limits.image_room_bytes",
             Self::CodeReaderBacklog => "limits.code_reader_backlog",
+            Self::AskOptions => "limits.ask_options",
+            Self::AskOptionTextBytes => "limits.ask_option_text_bytes",
+            Self::AskContextRefs => "limits.ask_context_refs",
+            Self::AskRecipients => "limits.ask_recipients",
+            Self::AskSpecMsgpackBytes => "limits.ask_spec_msgpack_bytes",
+            Self::AskReminders => "limits.ask_reminders",
+            Self::AnswerProvenanceRefs => "limits.answer_provenance_refs",
+            Self::AskWaitIdentities => "limits.ask_wait_identities",
             Self::LinePushMonthly => "line.monthly_push_allowance",
         }
     }
@@ -102,6 +140,14 @@ impl EngineLimit {
             Self::CodeResultSessionMemoryBytes => memory_share(64),
             Self::ImageRoomBytes => 32 << 20,
             Self::CodeReaderBacklog => 256,
+            Self::AskOptions => 65_536,
+            Self::AskOptionTextBytes => 1 << 20,
+            Self::AskContextRefs => 65_536,
+            Self::AskRecipients => 65_536,
+            Self::AskSpecMsgpackBytes => 256 << 20,
+            Self::AskReminders => 65_536,
+            Self::AnswerProvenanceRefs => 65_536,
+            Self::AskWaitIdentities => 1 << 20,
             // LINE's free plan allowance, as the plan row defaults.
             Self::LinePushMonthly => 200,
         }

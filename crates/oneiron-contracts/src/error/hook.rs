@@ -1,5 +1,6 @@
 //! A verb hook's stop (ARCH-0080 §3): the typed answer a caller gets when a
-//! pre-hook skipped or asked, or a blocking hook failed safe.
+//! pre-hook skipped or asked, a blocking hook failed safe, or settlement
+//! already ran the call it stopped.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,19 @@ pub enum VerbHookStop {
     /// A blocking hook failed on a read, or a post-hook did before a result
     /// was released: the caller's view stays hidden.
     Hidden { hook: String },
+    /// The ask was answered proceed and settlement ran the call once: what
+    /// it returned. A row door answers with `result` itself.
+    Completed {
+        invocation: String,
+        result: serde_json::Value,
+    },
+    /// The ask was answered proceed and settlement ran the call once, which
+    /// failed: its error's code and message.
+    CompletedWithError {
+        invocation: String,
+        code: String,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for VerbHookStop {
@@ -28,6 +42,18 @@ impl std::fmt::Display for VerbHookStop {
                 )
             }
             Self::Hidden { hook } => write!(f, "hook {hook} failed safe; the result stays hidden"),
+            Self::Completed { invocation, .. } => write!(
+                f,
+                "invocation {invocation} already ran once its hook's ask was answered"
+            ),
+            Self::CompletedWithError {
+                invocation,
+                code,
+                message,
+            } => write!(
+                f,
+                "invocation {invocation} ran once its hook's ask was answered and failed: {code}: {message}"
+            ),
         }
     }
 }

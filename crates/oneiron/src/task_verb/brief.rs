@@ -29,6 +29,21 @@ const BRIEF_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.digest.v1";
 const PIN_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.brief.pin.v1";
 /// Largest encoded brief one TASK body carries.
 const MAX_BRIEF_BYTES: usize = 65_536;
+/// The typed record slots of a brief (OF-063): each must resolve under the
+/// writer's own read. The type ref is not among them: it names a node of the
+/// team's type tree, not a record.
+const BRIEF_RECORD_SLOTS: &[&str] = &[
+    "/context/pack/pack_ref",
+    "/context/read_first/*/target",
+    "/success/yes_if_all/*/evidence_ref",
+    "/success/no_if_any/*/evidence_ref",
+    "/constraints/policy_refs/*",
+    "/constraints/budget_ref",
+    "/settled/*",
+    "/project_ref",
+    "/escalation/question_ref/claim",
+    "/escalation/question_ref/turn",
+];
 
 /// Fixed-width byte strings travel as lowercase hex on every wire.
 pub(super) fn decode_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
@@ -412,6 +427,19 @@ fn require_text(text: &str, what: &str) -> MemoryResult<()> {
 }
 
 impl QueueTaskBrief {
+    /// Refuses a brief that names a record its writer cannot read (OF-063):
+    /// every typed slot must resolve under `memory`'s own scoped read, and a
+    /// refusal is receipted as the `row` write it refused. Run before the
+    /// write's own transaction; [`Self::validate_in`] still checks each
+    /// pin's digest and each ref's kind.
+    pub(super) fn admit_references(
+        &self,
+        memory: &Memory<'_>,
+        row: &'static str,
+    ) -> MemoryResult<()> {
+        crate::gate::record_references::admit_row_references(memory, row, self, BRIEF_RECORD_SLOTS)
+    }
+
     /// Refuses a brief before any write: a known schema, a non-blank
     /// objective and need, a done-means question with at least one
     /// criterion, a resolvable escalation target, and every pin resolvable
