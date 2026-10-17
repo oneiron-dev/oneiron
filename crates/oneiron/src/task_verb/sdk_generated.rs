@@ -229,6 +229,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.weave.owner.link.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
@@ -1554,6 +1559,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::team::TeamRecordInput>(),
             ),
             (
+                "self.team.submit",
+                crate::code_run::vault_read::request_schema::<crate::code_run::TeamSubmitInput>(),
+            ),
+            (
                 "self.spawn",
                 crate::code_run::vault_read::request_schema::<crate::code_run::ReaderSpawnInput>(),
             ),
@@ -1934,6 +1943,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.link.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.link.wrong" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3619,6 +3635,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
         }
+        "vault.weave.owner.link.wrong" => {
+            let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
@@ -4491,6 +4510,9 @@ pub fn invoke(
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
         "vault.weave.lens" => encode(vault_weave_lens(memory, decode(value)?)?),
         "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
+        "vault.weave.owner.link.wrong" => {
+            encode(vault_weave_owner_link_wrong(memory, decode(value)?)?)
+        }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
         "vault.packs.setup.get" => encode(vault_packs_setup_get(memory, decode(value)?)?),
@@ -5392,6 +5414,15 @@ pub fn vault_weave_link_wrong(
     memory.weave_wrong_link(
         None,
         &memory.embedded_owner("vault.weave.link.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_owner_link_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongLinkRequest,
+) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
+    memory.weave_owner_wrong_link(
+        &memory.embedded_owner("vault.weave.owner.link.wrong")?,
         &input,
     )
 }

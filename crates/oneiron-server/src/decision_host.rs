@@ -356,6 +356,25 @@ impl DecisionHost {
         })
     }
 
+    /// A ladder whose one rung is `role`'s seat on the Big rung (OF-568):
+    /// asked as the configured big model is, worded and on its meter, but
+    /// routed to that role's seat. Every other slot is empty and no person
+    /// is asked: run it with [`MODEL_DIAL`]. Fails when `[models.decisions.big]`
+    /// fills no Big rung, or no rung serves the role's seat.
+    pub fn ladder_for_role(&self, role: oneiron::llm::manifest::ModelRole) -> anyhow::Result<HeldLadder> {
+        let big = self
+            .big_model
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no [models.decisions.big] fills the Big rung"))?;
+        let seat = big.for_role(role)?;
+        let pin = seat.pin();
+        let provider = ModelDecisionProvider::new(pin, Arc::new(seat))?;
+        Ok(HeldLadder {
+            big: Some(Arc::new(provider)),
+            ..HeldLadder::unstaffed()
+        })
+    }
+
     /// The write gate's auto check through this ladder, worded `wording`,
     /// for `principal`.
     fn with_auto_check(mut self, wording: Option<&str>, principal: Option<EntityId>) -> Self {
@@ -725,6 +744,14 @@ impl SyncServer {
     /// [`DecisionHost::ladder_for_model`] on this server's ladder.
     pub fn decision_ladder_for_model(&self, model: &ModelId) -> anyhow::Result<HeldLadder> {
         self.decisions.ladder_for_model(model)
+    }
+
+    /// [`DecisionHost::ladder_for_role`] on this server's ladder.
+    pub fn decision_ladder_for_role(
+        &self,
+        role: oneiron::llm::manifest::ModelRole,
+    ) -> anyhow::Result<HeldLadder> {
+        self.decisions.ladder_for_role(role)
     }
 
     /// The family `model` belongs to, as its provider's config or its

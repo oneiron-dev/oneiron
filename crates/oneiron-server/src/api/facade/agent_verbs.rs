@@ -47,6 +47,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.weave.digest", post(facade_route))
         .route("/vault.weave.lens", post(facade_route))
         .route("/vault.weave.link.wrong", post(facade_route))
+        .route("/vault.weave.owner.link.wrong", post(facade_route))
         .route("/vault.packs.put", post(facade_route))
         .route("/vault.packs.setup.prepare", post(facade_route))
         .route("/vault.packs.setup.get", post(facade_route))
