@@ -2317,6 +2317,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn connector_call_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("connector.call_status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_commit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.commit", input)

@@ -187,6 +187,10 @@ side_tables! {
     /// One connector call held for consent or governance, or waiting on its delivery: the exact
     /// request a resume re-enters with (ONE-2510). Key: id16 (call ref).
     OUTBOUND_CONNECTOR_CALL_PENDING: VaultMeta b"outbound:connector_call:v1:" Named;
+    /// Who called one connector call a settler answered and acknowledged, and what it calls, so
+    /// its status read stays the caller's once the held row is gone (ONE-2510, FIX 2279). Key:
+    /// id16 (call ref).
+    OUTBOUND_CONNECTOR_CALL_CALLER: VaultMeta b"outbound:connector_call_caller:v1:" Named;
     /// Hash of semantic send key -> (intent id hash32, reservation timestamp u64be). Key: hash32.
     OUTBOUND_DEDUPE_RESERVATION: VaultMeta b"outbound:dedupe:v1:" Raw;
     /// Intent id -> semantic send key's full `outbound:dedupe:v1:` key. Key: hash32.

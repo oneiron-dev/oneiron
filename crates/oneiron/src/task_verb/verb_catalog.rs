@@ -252,6 +252,7 @@ pub enum AgentVerb {
     ConnectorStatus,
     ConnectorCall,
     ConnectorSchema,
+    ConnectorCallStatus,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -598,6 +599,7 @@ impl AgentVerb {
         Self::ConnectorStatus,
         Self::ConnectorCall,
         Self::ConnectorSchema,
+        Self::ConnectorCallStatus,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -951,6 +953,7 @@ impl AgentVerb {
             Self::ConnectorStatus => "connector.status",
             Self::ConnectorCall => "connector.call",
             Self::ConnectorSchema => "connector.schema",
+            Self::ConnectorCallStatus => "connector.call_status",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -1296,6 +1299,7 @@ impl AgentVerb {
                 | Self::ConnectorStatus
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
+                | Self::ConnectorCallStatus
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1649,6 +1653,7 @@ impl AgentVerb {
                 | Self::ConnectorStatus
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
+                | Self::ConnectorCallStatus
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -2030,6 +2035,7 @@ impl AgentVerb {
                 | Self::ConnectorStatus
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
+                | Self::ConnectorCallStatus
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -2612,6 +2618,7 @@ impl AgentVerb {
             Self::ConnectorStatus => &["spec"],
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
+            Self::ConnectorCallStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -2959,6 +2966,7 @@ impl AgentVerb {
             Self::ConnectorStatus => &["spec"],
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
+            Self::ConnectorCallStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -3728,6 +3736,9 @@ impl AgentVerb {
             }
             Self::ConnectorSchema => {
                 "One catalogued connector tool's approved input schema, as the caller's own grant resolves it."
+            }
+            Self::ConnectorCallStatus => {
+                "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."
             }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the run's own browser session and observes the page."

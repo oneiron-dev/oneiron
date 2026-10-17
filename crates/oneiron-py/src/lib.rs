@@ -2307,6 +2307,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn connector_call_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "connector.call_status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("connector.call_status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_commit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.commit")?;
         let output = py

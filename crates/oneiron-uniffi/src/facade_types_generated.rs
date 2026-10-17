@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 302 facade rows, 1003 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 258.
+// UniFFI census: 303 facade rows, 1005 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 259.
 // WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ResearchGoalPin.project (a tuple), RunTree.roots (the recursive type RunTreeNode), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
@@ -14120,6 +14120,44 @@ pub struct ConnectorSchemaReply {
     pub destructive: Option<bool>,
     #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
     pub reasons: Option<Vec<String>>,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorCallStatusRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorCallStatusRequest {
+    #[serde(rename = "call_ref")]
+    pub call_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_connector_call::ConnectorCallStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum ConnectorCallStatus {
+    #[serde(rename = "pending")]
+    Pending {
+        #[serde(rename = "call_ref")]
+        call_ref: String,
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "tool")]
+        tool: String,
+        #[serde(rename = "held_at_ms")]
+        held_at_ms: u64,
+        #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
+        reasons: Option<Vec<String>>,
+    },
+    #[serde(rename = "settled")]
+    Settled {
+        #[serde(rename = "call_ref")]
+        call_ref: String,
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "tool")]
+        tool: String,
+        #[serde(rename = "reply")]
+        reply: ConnectorCallReply,
+    },
 }
 
 /// `oneiron::lens::record_ref::ResolveRecordRefRequest`.

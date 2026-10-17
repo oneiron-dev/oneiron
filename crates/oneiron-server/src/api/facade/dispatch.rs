@@ -5515,6 +5515,28 @@ async fn connector_schema(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn connector_call_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "connector.call_status",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_commit(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7160,6 +7182,7 @@ pub(crate) async fn call_verb(
         "connector.status" => connector_status(server, call, input).await,
         "connector.call" => connector_call(server, call, input).await,
         "connector.schema" => connector_schema(server, call, input).await,
+        "connector.call_status" => connector_call_status(server, call, input).await,
         "vault.commit" => vault_commit(server, call, input).await,
         "vault.remember" => vault_remember(server, call, input).await,
         "vault.claims.retract" => vault_claims_retract(server, call, input).await,

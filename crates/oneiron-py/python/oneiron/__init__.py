@@ -1729,6 +1729,9 @@ class Oneiron:
         def schema(self, spec):
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
             return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
+        def call_status(self, spec):
+            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
+            return json.loads(_translate(lambda: self._client.connector_call_status(json.dumps(spec))))
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)

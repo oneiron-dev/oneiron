@@ -256,6 +256,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/connector.status", post(facade_route))
         .route("/connector.call", post(facade_route))
         .route("/connector.schema", post(facade_route))
+        .route("/connector.call_status", post(facade_route))
         .route("/vault.commit", post(facade_route))
         .route("/vault.remember", post(facade_route))
         .route("/vault.claims.retract", post(facade_route))

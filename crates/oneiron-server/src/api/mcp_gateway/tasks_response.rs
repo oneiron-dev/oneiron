@@ -1144,6 +1144,7 @@ fn mcp_agent_verb_input(
         "connector.status" => a.spec.clone().ok_or_else(invalid),
         "connector.call" => a.spec.clone().ok_or_else(invalid),
         "connector.schema" => a.spec.clone().ok_or_else(invalid),
+        "connector.call_status" => a.spec.clone().ok_or_else(invalid),
         "vault.commit" => a.spec.clone().ok_or_else(invalid),
         "vault.remember" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.retract" => a.spec.clone().ok_or_else(invalid),
@@ -2043,6 +2044,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.schema" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "connector.call_status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.commit" => {
@@ -5150,6 +5154,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::ConnectorSchemaRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::connector_schema(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "connector.call_status" => {
+            let input: oneiron::task_verb::sdk::ConnectorCallStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::connector_call_status(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

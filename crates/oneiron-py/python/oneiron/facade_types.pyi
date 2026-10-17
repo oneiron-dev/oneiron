@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 302 facade rows, 1166 declarations.
-Inputs: 256 of 302 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 250 of 302 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Census: 303 facade rows, 1168 declarations.
+Inputs: 257 of 303 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 250 of 303 fully typed, 42 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
 """
 
@@ -5130,6 +5130,22 @@ class ConnectorSchemaReply(TypedDict):
     input_schema: NotRequired[Any | None]
     destructive: NotRequired[bool | None]
     reasons: NotRequired[list[str]]
+class ConnectorCallStatusRequest(TypedDict):
+    call_ref: str
+class ConnectorCallStatusPending(TypedDict):
+    state: Literal["pending"]
+    call_ref: str
+    name: str
+    tool: str
+    held_at_ms: int
+    reasons: NotRequired[list[str]]
+class ConnectorCallStatusSettled(TypedDict):
+    state: Literal["settled"]
+    call_ref: str
+    name: str
+    tool: str
+    reply: ConnectorCallReply
+ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
 class ClaimRefRequest(TypedDict):
