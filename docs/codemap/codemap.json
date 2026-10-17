@@ -26437,7 +26437,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 4,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -26452,6 +26452,20 @@
      "surface": {
       "crate-vis": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PdfTextError"
+     ],
+     "path": "src/ingest/pdf.rs",
+     "purpose": "A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: \"The first adapter reads a…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -31131,7 +31145,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 3,
       "fn": 4,
       "re-export": 10,
@@ -31359,9 +31373,9 @@
      "purpose": "A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 5
      }
     },
@@ -53059,7 +53073,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53845,7 +53859,7 @@
    },
    "over_bar": 179,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3267,
+   "source_files": 3268,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68196,7 +68210,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import/notes/folder.rs",
-     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes that stays attached to the…",
+     "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes and PDFs that stays attached…",
      "surface": {
       "crate-vis": 4
      }
