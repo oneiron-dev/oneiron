@@ -306,7 +306,7 @@ declare const vault: {
     pause(input: { id: string; paused: boolean }): Promise<unknown>;
     read(input: { id: string; version?: number | null }): Promise<unknown>;
   };
-  recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
+  recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; media?: { bytes_b64: string; kinds?: ("text" | "image" | "audio")[]; mime: string; space: string } | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };

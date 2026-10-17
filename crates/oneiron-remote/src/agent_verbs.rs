@@ -1022,6 +1022,8 @@ impl OneironClient {
     /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the
     /// server admits them on a line of its own and reranks on its `[models]`
     /// reranker, or runs them unreranked and says so when it has none.
+    /// `media` is embedded by the server into its declared space; embedded,
+    /// it returns `MODEL_UNAVAILABLE`.
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -1035,6 +1037,7 @@ impl OneironClient {
         format: Option<&str>,
         as_of: Option<u64>,
         deadline_ms: Option<u64>,
+        media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery>,
     ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
         let input = oneiron::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
@@ -1044,6 +1047,7 @@ impl OneironClient {
             format: format.map(str::to_owned),
             as_of,
             deadline_ms,
+            media,
         };
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(

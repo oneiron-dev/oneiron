@@ -695,6 +695,9 @@ each failure in the vault with the candidate added to the failing agent's instru
 the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
 fetches or installs it. A file that no longer matches its pin stops the server at start. At most
 8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
+`GET /v1/owner/coach/code-fixes?limit=<n>` lists the Coach's code-fix work, newest first: each
+failure case's heal route, its class, the invented example's verdict and each candidate's fixed
+or not-fixed result. It holds no text of the failure.
 
 The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
@@ -708,6 +711,7 @@ The counts come from the Coach's detectors. Each diagnostic they raise counts on
 recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
 `other` with its detector named. Your own refusal of a single consent ask is never counted. A
 diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
+Counts wait in the vault, across restarts, until the publisher takes them.
 
 ## Model-graded self-heal detectors
 
@@ -1078,6 +1082,13 @@ locality. A space whose `@where` names no provider serving its rung embeds nothi
   With the text slot bound, a text query embeds through that space's text tower in the context
   pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
   holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
+  A `media` query (`{"space", "mime", "bytes_b64", "kinds"}`) seeds a search on its own: the
+  server embeds the bytes into that space through the `ai.embed` rung its id names and searches
+  that space's list. The context pack and the Context Board over HTTP, `/v1/core/query`, the
+  native MCP context pack, and `vault.recall` on every SDK take it. Recall refuses it at light
+  effort and in call mode, and refuses `kinds`. A client with no server (an embedded handle)
+  answers `MODEL_UNAVAILABLE` (`EMBEDDER_UNAVAILABLE` on the native context pack) and never
+  searches without the media.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
