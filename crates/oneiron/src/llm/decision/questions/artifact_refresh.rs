@@ -329,7 +329,7 @@ impl Asking<'_> {
             reversibility: Reversibility::ReversibleRead,
             decider: self.decider,
             evidence: &[],
-            budget: definition.deadline(),
+            budget: definition.deadline(vault)?,
             deadline: Instant::now() + ASK_DEADLINE,
             run_ref: &reference,
         };
