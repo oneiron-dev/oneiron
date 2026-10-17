@@ -9,7 +9,9 @@
 //! and the host speaks it past the session's safeguards. A cancel drops the
 //! turn's stream, and its run settles what it spent; what it had already
 //! said stays in the history, marked interrupted. Each safeguard notice said
-//! to the person enters the history too, and the next turn hears it.
+//! to the person enters the history too, and the next turn hears it. A turn
+//! assembled for a new audience revision, as after an attendee entered the
+//! call's room, starts from that audience's own history (OF-365 P5).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -38,6 +40,17 @@ const MEMORIES_TAINT_TURN: bool = true;
 /// How an interrupted answer's history entry ends: the person cut in after
 /// the brain had said this much.
 const INTERRUPTED_MARK: &str = " [interrupted: the person cut in here]";
+/// What the call's earlier turns become for a turn assembled for a new
+/// audience (CALLS.md: FIX 1389 history).
+const PRIOR_TURNS_ON_NEW_AUDIENCE: PriorTurns = PriorTurns::Dropped;
+
+/// The policies the call's earlier turns may follow when its audience moves.
+enum PriorTurns {
+    /// They leave the model's context. They carry no source or cut that a
+    /// new audience could be read under, so none is kept; the vault keeps
+    /// whatever was recorded.
+    Dropped,
+}
 
 fn refused(message: impl std::fmt::Display) -> oneiron::Error {
     oneiron::Error::InvalidConfig(format!("voice brain: {message}"))
@@ -65,6 +78,8 @@ pub struct ChatBrain {
     seat: Seat,
     /// This call's turns so far, the person's and the brain's.
     history: Arc<Mutex<Vec<LlmMessage>>>,
+    /// The audience revision `history` was heard under.
+    history_revision: Option<u64>,
     turn: Option<Running>,
 }
 
@@ -97,8 +112,26 @@ impl ChatBrain {
             bindings,
             seat,
             history: Arc::new(Mutex::new(Vec::new())),
+            history_revision: None,
             turn: None,
         })
+    }
+
+    /// The newcomer barrier's history half: a turn for a new audience
+    /// revision starts from that audience's history, never the old one's.
+    fn rebuild_history(&mut self, audience_revision: u64) -> oneiron::Result<()> {
+        if self.history_revision == Some(audience_revision) {
+            return Ok(());
+        }
+        match PRIOR_TURNS_ON_NEW_AUDIENCE {
+            PriorTurns::Dropped => self
+                .history
+                .lock()
+                .map_err(|_| refused("history poisoned"))?
+                .clear(),
+        }
+        self.history_revision = Some(audience_revision);
+        Ok(())
     }
 
     /// The turn's admitted stream, opened before anything is spoken, and
@@ -253,6 +286,7 @@ impl ChatBrain {
 impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
+        self.rebuild_history(request.audience_revision)?;
         let (stream, tainted) = self.open(request)?;
         let generation = request.generation;
         self.history

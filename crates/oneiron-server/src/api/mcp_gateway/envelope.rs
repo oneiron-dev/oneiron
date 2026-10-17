@@ -189,6 +189,11 @@ pub(crate) struct McpCallContext {
     /// surface: inside an anonymous one a reference refusal writes no
     /// receipt, as the call writes none (OF-063, OF-538).
     pub(crate) off_record_session: Option<String>,
+    /// The room the request's room turn names (`x-oneiron-room-turn`), as
+    /// the facade reads it: the room the caller's board renders as ROOM and
+    /// reads its MEMORIES in, once the caller's own read admits it (FIX
+    /// 1051). Never guessed from anything else.
+    pub(crate) room_turn: Option<oneiron::EntityId>,
     /// The drain's permit, on a call settlement runs again (ARCH-0080 §3
     /// Ask): its row's pre chain enters as the drain's run of it. Never a
     /// request's.
