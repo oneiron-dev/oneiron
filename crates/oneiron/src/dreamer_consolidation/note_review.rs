@@ -5,6 +5,17 @@
 //! cites byte ranges of the exact markdown read, so a model cannot ground a
 //! belief in text the note does not hold. A NOTE whose markdown has not
 //! changed since its last review is not read again.
+//!
+//! Each review records its verdict on the NOTE, the stage-2 classification
+//! (Engine ruling C, 10-17): `promote` when the model rates the note's
+//! importance at least [`PROMOTE_IMPORTANCE`], else `extract` when it
+//! grounded a belief, else `skip`. A NOTE's kind, privacy and write policy
+//! stay as born; the review never re-kinds one.
+//!
+//! A sealed scratchpad, whose kind extracts after the seal, is read once it
+//! is sealed (ARCH-0032 #scratchpad-marks): its `scratch` lines are blanked
+//! before the model reads it, each `keep` line is asked for, and every other
+//! line is the model's to decide.
 
 use std::collections::BTreeSet;
 
@@ -37,8 +48,33 @@ use crate::{EntityId, Result, Vault};
 
 const CURSOR: SideTable<(), EntityId, Named> =
     SideTable::new(&side_table::DREAMER_NOTE_REVIEW_CURSOR);
-const SEEN: SideTable<EntityId, [u8; 32], Named> =
+const SEEN: SideTable<EntityId, NoteReviewRecord, Named> =
     SideTable::new(&side_table::DREAMER_NOTE_REVIEW_SEEN);
+/// The importance at which a note's verdict is `promote` (ARCH-0032
+/// `dr:P16`: a scratchpad item promotes at `importance >= 0.75`).
+const PROMOTE_IMPORTANCE: f64 = 0.75;
+
+/// The review's verdict on one NOTE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NoteVerdict {
+    /// The note grounded at least one belief.
+    Extract,
+    /// Nothing in it is worth keeping.
+    Skip,
+    /// The note itself matters to keep.
+    Promote,
+}
+
+/// What the last review of one NOTE read and decided.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct NoteReviewRecord {
+    /// BLAKE3 of the markdown read: an unchanged NOTE is not read again.
+    fingerprint: [u8; 32],
+    verdict: NoteVerdict,
+    /// The model's importance for the note itself, 0 to 1, when it gave one.
+    importance: Option<f64>,
+}
 /// NOTEs per page. The cursor moves a page at a time, so a review cut by
 /// its deadline resumes where it stopped.
 const PAGE: usize = 32;
@@ -48,6 +84,8 @@ const PAGE: usize = 32;
 struct Note {
     id: EntityId,
     markdown: String,
+    /// A sealed scratchpad's review: whether a line is marked `keep`.
+    sealed_pad: Option<bool>,
     fingerprint: [u8; 32],
     facet: EntityId,
     project: EntityId,
@@ -75,16 +113,19 @@ impl ConsolidationExecutor<'_> {
             agent_actor: self.actor,
             now_ms: ctx.now_ms,
         };
-        // Only a kind whose extraction default is Allowed is read: a diary
-        // stays private strategy, an AfterSeal kind waits for a seal state
-        // NOTEs do not have yet, and a Disabled kind is never read.
-        let allowed: BTreeSet<String> = ctx
-            .vault
-            .note_kind_descriptors()?
-            .into_iter()
-            .filter(|kind| kind.extraction == ExtractionDefault::Allowed)
-            .map(|kind| kind.kind)
-            .collect();
+        // A kind whose extraction default is Allowed is read. An AfterSeal
+        // kind is read once sealed, and only a scratchpad has a seal yet. A
+        // diary stays private strategy, and a Disabled kind is never read.
+        let kinds = ctx.vault.note_kind_descriptors()?;
+        let of = |default: ExtractionDefault| -> BTreeSet<String> {
+            kinds
+                .iter()
+                .filter(|kind| kind.extraction == default)
+                .map(|kind| kind.kind.clone())
+                .collect()
+        };
+        let allowed = of(ExtractionDefault::Allowed);
+        let after_seal = of(ExtractionDefault::AfterSeal);
         let read = super::turn_text::dreamer_read(ctx.vault)?;
         let mut charges = StepChargeTally::default();
         loop {
@@ -98,7 +139,7 @@ impl ConsolidationExecutor<'_> {
             let page = ctx
                 .vault
                 .entities_by_type_page(ENTITY_TYPE_NOTE, after.as_ref(), PAGE)?;
-            for note in readable_notes(ctx.vault, &read, &page, &allowed)? {
+            for note in readable_notes(ctx.vault, &read, &page, &allowed, &after_seal)? {
                 if let Some(stop) = self
                     .review_note(attempt, ctx, &run, &note, &mut charges)
                     .await?
@@ -134,10 +175,11 @@ impl ConsolidationExecutor<'_> {
         let mut scope = crate::llm::Scope::default();
         scope.project = Some(note.project);
         scope.readable.insert(note.version.clone());
-        let request = match Self::note_request(&call, note.id, &note.markdown, &scope) {
-            Ok(request) => request,
-            Err(error) => return Ok(Some(charges.park(&error.to_string()))),
-        };
+        let request =
+            match Self::note_request(&call, note.id, &note.markdown, note.sealed_pad, &scope) {
+                Ok(request) => request,
+                Err(error) => return Ok(Some(charges.park(&error.to_string()))),
+            };
         let mut request =
             match ctx
                 .vault
@@ -216,6 +258,11 @@ impl ConsolidationExecutor<'_> {
             Ok(reply) => reply,
             Err(error) => return Ok(Some(charges.park(&error.to_string()))),
         };
+        let importance = reply
+            .importance
+            .as_ref()
+            .and_then(serde_json::Value::as_f64)
+            .filter(|importance| (0.0..=1.0).contains(importance));
         let mut candidates = Vec::new();
         for item in &reply.candidates {
             match note_candidate(item, note, run) {
@@ -228,6 +275,13 @@ impl ConsolidationExecutor<'_> {
                 ),
             }
         }
+        let verdict = if importance.is_some_and(|importance| importance >= PROMOTE_IMPORTANCE) {
+            NoteVerdict::Promote
+        } else if candidates.is_empty() {
+            NoteVerdict::Skip
+        } else {
+            NoteVerdict::Extract
+        };
         if !candidates.is_empty() {
             // A refusal is the gate's answer about one belief (a persona
             // belief, say, needs turns from two sessions), never a reason
@@ -243,21 +297,31 @@ impl ConsolidationExecutor<'_> {
             }
         }
         ctx.vault.with_write_txn_grouped(|txn| {
-            SEEN.put(&ctx.vault.store, txn, &note.id, &note.fingerprint)
+            SEEN.put(
+                &ctx.vault.store,
+                txn,
+                &note.id,
+                &NoteReviewRecord {
+                    fingerprint: note.fingerprint,
+                    verdict,
+                    importance,
+                },
+            )
         })?;
         Ok(None)
     }
 }
 
 /// The NOTEs on `page` the review reads: live and readable by the Dreamer,
-/// of an Allowed kind, changed since their last review, and with a birth
-/// facet and one project for their beliefs. Anything else is skipped, never
-/// widened.
+/// of an Allowed kind or a sealed scratchpad of an AfterSeal kind, changed
+/// since their last review, and with a birth facet and one project for their
+/// beliefs. Anything else is skipped, never widened.
 fn readable_notes(
     vault: &Vault,
     read: &ScopedRead<'_>,
     page: &[EntityId],
     allowed: &BTreeSet<String>,
+    after_seal: &BTreeSet<String>,
 ) -> Result<Vec<Note>> {
     let txn = super::turn_text::snapshot(vault)?;
     let mut notes = Vec::new();
@@ -274,11 +338,25 @@ fn readable_notes(
         let Ok(decoded) = crate::note::decode_note_body_in_txn(&vault.store, &txn, &body) else {
             continue;
         };
-        if !allowed.contains(decoded.kind.as_str().as_ref()) || decoded.markdown.trim().is_empty() {
+        let kind_name = decoded.kind.as_str();
+        let (markdown, sealed_pad) = if allowed.contains(kind_name.as_ref()) {
+            (decoded.markdown.clone(), None)
+        } else if after_seal.contains(kind_name.as_ref())
+            && vault.scratchpad_sealed_in_txn(&txn, *id)?
+        {
+            let (text, keep) = crate::context_board::sealed_pad_review_text(&decoded.markdown);
+            (text, Some(keep))
+        } else {
+            continue;
+        };
+        if markdown.trim().is_empty() {
             continue;
         }
         let fingerprint = *blake3::hash(decoded.markdown.as_bytes()).as_bytes();
-        if SEEN.get(&vault.store, &txn, id)? == Some(fingerprint) {
+        if SEEN
+            .get(&vault.store, &txn, id)?
+            .is_some_and(|seen| seen.fingerprint == fingerprint)
+        {
             continue;
         }
         let Some(facet) = crate::federation::record_scope::birth_facet(&vault.store, &txn, *id)?
@@ -292,7 +370,8 @@ fn readable_notes(
         notes.push(Note {
             id: *id,
             version: super::resources::document_version(*id, &body),
-            markdown: decoded.markdown,
+            markdown,
+            sealed_pad,
             fingerprint,
             facet,
             project,
@@ -353,10 +432,14 @@ fn note_candidate(
                 "note candidate cites something other than the note",
             ));
         };
+        // A blank range grounds nothing: a sealed pad's scratch lines read
+        // as blanks.
         if source_id != note.id
+            || start >= end
             || end > note.markdown.len()
             || !note.markdown.is_char_boundary(start)
             || !note.markdown.is_char_boundary(end)
+            || note.markdown[start..end].trim().is_empty()
         {
             return Err(invalid_consolidation(
                 "note candidate's evidence is not a range of the note",

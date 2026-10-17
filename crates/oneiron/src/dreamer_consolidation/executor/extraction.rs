@@ -29,24 +29,37 @@ impl ConsolidationExecutor<'_> {
     /// reply contract, with the NOTE's markdown as the only source. Its
     /// byte ranges count over that markdown, so the review can check each
     /// one against the exact text it read.
+    /// `sealed_pad` is a sealed scratchpad's review: `Some(keep)`, `keep`
+    /// when a line is marked `keep` (ARCH-0032 #scratchpad-marks).
     pub(in crate::dreamer_consolidation) fn note_request(
         call: &RoleCall<'_>,
         note: EntityId,
         markdown: &str,
+        sealed_pad: Option<bool>,
         scope: &crate::llm::Scope,
     ) -> Result<LlmRequest> {
         let id = bytes_to_hex_lower(note.as_bytes());
-        Self::request_over(
-            call,
-            Some(format!(
-                "The source is one note, not a conversation. Cite it as \
-                 {{\"source_id\": \"{id}\", \"byte_range\": [start, end]}}, a range of \
-                 UTF-8 bytes of the note's markdown, which starts on the line after its \
-                 header."
-            )),
-            format!("note {id}\n{markdown}"),
-            scope,
-        )
+        let mut rule = format!(
+            "The source is one note, not a conversation. Cite it as \
+             {{\"source_id\": \"{id}\", \"byte_range\": [start, end]}}, a range of \
+             UTF-8 bytes of the note's markdown, which starts on the line after its \
+             header. Also give the object a key \"importance\": a number from 0 to 1 \
+             for how much the note itself matters to keep."
+        );
+        if let Some(keep) = sealed_pad {
+            rule.push_str(
+                " The note is a sealed scratchpad. Blank lines held text its writer \
+                 marked scratch: cite none of them.",
+            );
+            if keep {
+                rule.push_str(
+                    " A line headed [keep] or [pin keep] states a fact its writer asked \
+                     to keep: extract each one.",
+                );
+            }
+            rule.push_str(" Decide each other line on its own.");
+        }
+        Self::request_over(call, Some(rule), format!("note {id}\n{markdown}"), scope)
     }
 
     fn request_over(
@@ -537,13 +550,16 @@ struct WorkedExample {
 /// An extraction reply in its contract's shape: an object whose
 /// `candidates`, when present, are objects, and whose `persons`, when
 /// present, each name a 32-hex id, a name and at least one 32-hex turn.
-/// Other keys are outside the contract and read by no one.
+/// `importance` is a NOTE review's, read by that review only. Other keys
+/// are outside the contract and read by no one.
 #[derive(serde::Deserialize)]
 pub(in crate::dreamer_consolidation) struct ExtractionReply {
     #[serde(default, deserialize_with = "objects")]
     pub(in crate::dreamer_consolidation) candidates: Vec<serde_json::Value>,
     #[serde(default)]
     pub(in crate::dreamer_consolidation) persons: Vec<ExtractedPerson>,
+    #[serde(default)]
+    pub(in crate::dreamer_consolidation) importance: Option<serde_json::Value>,
 }
 
 #[derive(serde::Deserialize)]

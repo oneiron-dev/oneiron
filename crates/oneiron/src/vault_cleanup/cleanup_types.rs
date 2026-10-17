@@ -103,6 +103,8 @@ pub enum CleanupKind {
     CompletedTask,
     /// A completed private attempt older than the retention period.
     CompletedAttempt,
+    /// A NOTE whose kind keeps it a set number of days, born longer ago.
+    RetainedNote,
 }
 
 impl CleanupKind {
@@ -114,6 +116,7 @@ impl CleanupKind {
             Self::EmptySummary => "empty_summary",
             Self::CompletedTask => "completed_task",
             Self::CompletedAttempt => "completed_attempt",
+            Self::RetainedNote => "retained_note",
         }
     }
 
@@ -125,6 +128,7 @@ impl CleanupKind {
             "empty_summary" => Some(Self::EmptySummary),
             "completed_task" => Some(Self::CompletedTask),
             "completed_attempt" => Some(Self::CompletedAttempt),
+            "retained_note" => Some(Self::RetainedNote),
             _ => None,
         }
     }

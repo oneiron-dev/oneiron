@@ -226,6 +226,22 @@ pub(crate) fn validate_registered_kind(
     context_in_txn(store, txn, kind.as_ref()).map(|_| ())
 }
 
+/// `kind`'s descriptor inside the caller's read: a registered descriptor
+/// first, as [`Vault::note_kind_descriptors`] resolves it, then the shipped
+/// one. `None` for a kind neither names.
+pub(crate) fn descriptor_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    kind: &str,
+) -> Result<Option<NoteKindDescriptor>> {
+    if let Some(descriptor) = NOTE_KIND.get(store, txn, &kind.to_owned())? {
+        return Ok(Some(descriptor));
+    }
+    Ok(shipped()
+        .into_iter()
+        .find(|descriptor| descriptor.kind == kind))
+}
+
 pub(super) fn context_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,

@@ -16,7 +16,9 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
+use crate::registry::{
+    ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
+};
 use crate::side_table::{self, Raw, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -66,7 +68,7 @@ type EmptinessPredicate = fn(&Vault, &heed::RoTxn<'_>, &EntityId) -> Result<bool
 /// The extension point the canon asks for. ARC_THREAD activates by adding one
 /// row here once that kind has an engine byte — no other edit, and nothing
 /// about the two shipped arms moves.
-pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 3] = [
+pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 4] = [
     (
         ENTITY_TYPE_PERSON,
         CleanupKind::ClaimlessExtractionPerson,
@@ -81,6 +83,11 @@ pub(super) const CLEANUP_CHECKS: [(u8, CleanupKind, EmptinessPredicate); 3] = [
         ENTITY_TYPE_TASK,
         CleanupKind::CompletedTask,
         super::retention::task_is_past_retention,
+    ),
+    (
+        ENTITY_TYPE_NOTE,
+        CleanupKind::RetainedNote,
+        super::retention::note_is_past_retention,
     ),
 ];
 
