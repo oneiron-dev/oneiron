@@ -1598,16 +1598,7 @@ async fn execute_agent_verb_listing(
         Some(session) => memory.in_off_record_session(session),
         None => memory,
     };
-    let hooks = crate::api::facade::row_hooks_pre(
-        server,
-        actor.actor_ref,
-        actor.actor_class,
-        Some(invocation),
-        tool,
-        input,
-    )
-    .await
-    .map_err(mcp_facade_error)?;
+    let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) =
         execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
