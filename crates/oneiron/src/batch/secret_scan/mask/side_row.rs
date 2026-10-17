@@ -271,9 +271,7 @@ pub(crate) fn admit_typed<T: Serialize + DeserializeOwned>(
     value: &mut T,
 ) -> Result<bool> {
     let mut parts = [SidePart::Value(named_tree(&*value)?)];
-    let reads_back = |parts: &[SidePart]| {
-        matches!(parts, [SidePart::Value(tree)] if from_named_tree::<T>(tree).is_some())
-    };
+    let reads_back = |parts: &[SidePart]| matches!(parts, [SidePart::Value(tree)] if from_named_tree::<T>(tree).is_some());
     if !admit_side_parts(dbs, wtxn, at, &mut parts, reads_back)? {
         return Ok(false);
     }

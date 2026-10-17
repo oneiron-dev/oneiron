@@ -723,10 +723,11 @@ impl CodeRunReplayRecord {
         };
         let mut record = self.clone();
         for (call, kept) in record.bridge_calls.iter_mut().zip(&held.bridge_calls) {
-            let stamp = |call: &CodeRunBridgeCall| {
-                (call.seq, call.effect, call.started_at_ms, call.finished_at_ms)
-            };
-            if stamp(call) == stamp(kept) {
+            if call.seq == kept.seq
+                && call.effect == kept.effect
+                && call.started_at_ms == kept.started_at_ms
+                && call.finished_at_ms == kept.finished_at_ms
+            {
                 call.clone_from(kept);
             }
         }

@@ -107,7 +107,12 @@ pub(super) fn append_change_in_txn(
     };
     // OF-067: the owner's row text and reasons as the side-row wall keeps them.
     let receipt_key = [RECEIPT, &next.to_be_bytes()].concat();
-    admit_typed(vault, txn, (RECEIPT_PLACE, receipt_key.as_slice()), &mut receipt)?;
+    admit_typed(
+        vault,
+        txn,
+        (RECEIPT_PLACE, receipt_key.as_slice()),
+        &mut receipt,
+    )?;
     let event = PolicyChangedEvent {
         kind: "policy.changed".to_owned(),
         receipt_id: id.clone(),
@@ -177,7 +182,10 @@ pub(super) fn put_proposal_in(
 ) -> Result<()> {
     let row_key = key(PROPOSAL, &proposal.proposal_id);
     admit_typed(vault, txn, (PROPOSAL_PLACE, row_key.as_slice()), proposal)?;
-    vault.store.vault_meta.put(txn, &row_key, &encode(proposal)?)?;
+    vault
+        .store
+        .vault_meta
+        .put(txn, &row_key, &encode(proposal)?)?;
     Ok(())
 }
 

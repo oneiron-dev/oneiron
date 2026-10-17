@@ -589,11 +589,7 @@ impl OffRecordSession<'_> {
             RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
                 route.revalidate()?;
                 let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                f(
-                    wtxn,
-                    RoutedDbs::Session(&view),
-                    RoutedDbs::Base(self.vault),
-                )
+                f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Base(self.vault))
             }),
         }
     }

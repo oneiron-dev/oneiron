@@ -143,8 +143,12 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
         if !DIRECT.contains(&vault.store, txn, &key)?
             && !thinner_duplicate(vault, txn, &row.logical_ref, &row.receipt)?
         {
-            row.receipt
-                .admit_free_text(vault, txn, (DIRECT_PLACE, key.as_slice()), &EVIDENCE_FIELDS)?;
+            row.receipt.admit_free_text(
+                vault,
+                txn,
+                (DIRECT_PLACE, key.as_slice()),
+                &EVIDENCE_FIELDS,
+            )?;
             DIRECT.put(&vault.store, txn, &key, &row)?;
         }
         Ok(())

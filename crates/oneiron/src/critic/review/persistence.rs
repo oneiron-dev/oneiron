@@ -48,7 +48,9 @@ pub(super) fn persist_review(
                 artifact_id: artifact.artifact_id.clone(),
             };
             if let Some(held) = CRITIQUE_ARTIFACT.get(&vault.store, txn, &key)? {
-                if held != *artifact && !admitted_from(&named_tree(&held)?, &named_tree(&*artifact)?)? {
+                if held != *artifact
+                    && !admitted_from(&named_tree(&held)?, &named_tree(&*artifact)?)?
+                {
                     return Err(invalid_critic_config("review artifact id already used"));
                 }
                 *artifact = held;
