@@ -33,6 +33,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod control_keys;
+mod decision_artifact;
 mod decision_graph;
 pub mod decision_host;
 mod decision_verdict;
@@ -41,6 +42,8 @@ mod embedder;
 pub mod error;
 pub mod feedback_delivery;
 mod handler;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod hook_verdict;
 mod http_listener;
 mod idempotency;
 mod linear_host;

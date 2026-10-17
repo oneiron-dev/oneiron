@@ -88,6 +88,34 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(dispatcher)
     }
 
+    /// The sealed binding a host lends this run's TASK creates (OF-532,
+    /// `Memory::with_task_host`): the running agent attempt, its lease owner
+    /// and generation, read live. `None` only for a canonical run bound to no
+    /// agent attempt. A run bound to one whose lease no longer holds, or that
+    /// never held it, is refused, never unbound; an off-record run is refused.
+    pub fn task_host_binding(&self) -> Result<Option<crate::task_verb::HostBinding>> {
+        let vault = self.coordination_vault()?;
+        let (parent, lease) = match (self.agent_parent, &self.agent_lease) {
+            (None, None) => return Ok(None),
+            (Some(parent), Some(lease)) if lease.attempt == parent => (parent, lease),
+            _ => return Err(invalid()),
+        };
+        let live = DreamerRunnerStore::new(vault)
+            .status(parent)?
+            .ok_or_else(invalid)?;
+        let input = decode_agent_dispatch_input(&live.payload.input)?;
+        if live.attempt.state != AttemptState::Leased
+            || live.attempt.lease_owner.as_deref() != Some(lease.owner.as_str())
+            || live.attempt.attempt_count != lease.generation
+            || agent_dispatch_actor(&input)? != self.actor
+        {
+            return Err(invalid());
+        }
+        crate::task_verb::HostBinding::from_leased(&live.attempt, None)
+            .map(Some)
+            .map_err(|_| invalid())
+    }
+
     /// Lends the run's own vault, as the host holds it, to the callable
     /// skills its program calls (`self.skills.call`, OF-353). A skill runs
     /// only under a leased agent attempt ([`Self::for_leased_agent_attempt`]);

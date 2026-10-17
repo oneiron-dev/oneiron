@@ -60,7 +60,8 @@ pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
-    ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
+    ArtifactAskOutcome, ArtifactAskSubmit, ArtifactAskUnits, ArtifactExportFile,
+    ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView, FolderItemInput,
     DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, KeptProposal, NativeOutputRequest,
     ProposalSettleRequest, ReleasedWait, SlideReviewOutcome, SlideReviewSubmit,
     SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
