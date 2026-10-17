@@ -10,7 +10,7 @@ use oneiron::attempt_queue::{
 use oneiron::compaction::output::{OutputRef, restore_output, store_output};
 use oneiron::wave_orchestration::{
     PlannedTask, VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION,
-    WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
+    WaveApplyOutcome, WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
 };
 use oneiron::{
     ContentPart, EdgeActorClass, EntityId, Error, LlmMessage, LlmMessageRole, ResponseFormat,
@@ -240,18 +240,28 @@ pub(super) fn run_once(
             constraints: job.constraints.input.clone(),
             now: super::unix_now(),
         })?;
-        vault.apply_wave_plan_attempt(actor, class, &attempt, plan, super::unix_now())
+        // Under the vault's fan-out approval mode (FIX 939). No host ladder
+        // rules here yet, so `auto` decides on its learned history alone.
+        vault.apply_wave_plan_attempt_gated(actor, class, &attempt, plan, None, super::unix_now())
     })();
     runner.forget(attempt.id);
     status.update(|status| {
         status.workflows.state = WorkState::Waiting;
-        if result.is_ok() {
-            status.workflows.completed += 1;
-        } else {
-            status.workflows.failed += 1;
-            status.workflows.last_error = Some("wave_plan_failed".to_owned());
+        match &result {
+            Ok(WaveApplyOutcome::Applied(_)) => status.workflows.completed += 1,
+            // A held cut parked its attempt in the same transaction: neither
+            // done nor failed, and never replanned. The owner's approval
+            // launches that exact cut and completes the attempt.
+            Ok(WaveApplyOutcome::Paused(_)) => {}
+            Err(_) => {
+                status.workflows.failed += 1;
+                status.workflows.last_error = Some("wave_plan_failed".to_owned());
+            }
         }
     });
+    if matches!(result, Ok(WaveApplyOutcome::Paused(_))) {
+        tracing::info!(attempt = ?attempt.id, "wave cut held for fan-out approval");
+    }
     if result.is_err() {
         // Keep provider output by reference and expose a stable failure reason.
         // The run-tree retry door can requeue a failed plan explicitly.
