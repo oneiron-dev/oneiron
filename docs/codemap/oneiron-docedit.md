@@ -83,8 +83,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
 | `src/retained_opc/xml/retained.rs` | src | m | 1 struct · 4 crate-vis | XmlLimits | One authoritative parse |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
-| `src/xlsx_body.rs` | src | L | 6 struct · 4 enum · 10 fn · 2 const | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxSheet +2 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
-| `src/xlsx_shift.rs` | src | s | 1 crate-vis | — | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
+| `src/xlsx_body.rs` | src | XL | 7 struct · 4 enum · 11 fn · 2 const · 1 re-export | XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxLock, XlsxName, XlsxSheet +3 | The XLSX face of a live office body (ARCH-0075: "XLSX is a map keyed by sheet and address") |
+| `src/xlsx_shift.rs` | src | m | 1 struct · 2 enum · 7 fn · 1 crate-vis | SheetFate, XlsxAxis, XlsxAxisEdit | Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its… |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
 | `tests/comment_anchors.rs` | test | m | — | — | Native Word comment ranges for the comment-anchor scenarios (owner ask 2026-10-16; the cases come from… |
