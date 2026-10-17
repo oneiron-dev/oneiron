@@ -15073,7 +15073,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 3
      }
@@ -15105,7 +15105,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 21
      }
     },
     {
@@ -29139,7 +29139,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -43146,7 +43146,7 @@
      "path": "src/tagging/provisional.rs",
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 5,
       "struct": 1
      }
@@ -47460,7 +47460,7 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "enum": 1
      }
     },
