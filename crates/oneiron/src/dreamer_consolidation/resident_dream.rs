@@ -35,7 +35,6 @@ use std::collections::BTreeMap;
 pub const RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS: u64 = 32_000;
 /// The share of the window its inputs may fill; the rest is the entry's.
 const INPUT_SHARE_DIVISOR: u64 = 2;
-const INBOX_PAGE: usize = 200;
 
 /// Each resident's committed progress: what its dreaming already read.
 const PROGRESS: SideTable<EntityId, ResidentDreamProgress, Named> =
@@ -48,13 +47,19 @@ const PADS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
 const LANDED: SideTable<crate::attempt_queue::AttemptId, EntityId, Named> =
     SideTable::new(&side_table::DREAMER_RESIDENT_LANDED);
 
-/// What a resident's dreaming has read so far.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What a resident's dreaming has read so far. Each source keeps the time
+/// and id of the last row it read, so a cut that stops inside one second
+/// resumes after that row, not after the second.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResidentDreamProgress {
     /// The newest receipt time it read, in Unix seconds.
     pub receipts_after: u64,
+    /// That receipt's `kind:id`.
+    pub receipt_after_id: String,
     /// The newest INBOX row time it read.
     pub inbox_after: u64,
+    /// That row's item id.
+    pub inbox_after_id: String,
     pub dreamed_at: u64,
     pub entries: u64,
 }
@@ -164,8 +169,18 @@ pub(crate) fn resident_dream_progress_in_txn(
 struct DreamCut {
     sections: Vec<(&'static str, Vec<String>)>,
     pads: Vec<EntityId>,
-    receipts_after: Option<u64>,
-    inbox_after: Option<u64>,
+    receipts_after: Option<(u64, String)>,
+    inbox_after: Option<(u64, String)>,
+}
+
+/// Moves a `(time, id)` read cursor forward, never back.
+fn advance(at: &mut u64, id: &mut String, read: Option<&(u64, String)>) {
+    if let Some((read_at, read_id)) = read
+        && (*read_at, read_id.as_str()) > (*at, id.as_str())
+    {
+        *at = *read_at;
+        id.clone_from(read_id);
+    }
 }
 
 impl DreamCut {
@@ -207,11 +222,13 @@ impl Room {
 }
 
 /// Reads what `resident` has not dreamed over yet, oldest first within each
-/// source, until the window's input share is full.
+/// source, until the window's input share is full. Every receipt and INBOX
+/// row past the cursor is a candidate, so a busy stretch is read over later
+/// dreamings rather than cut to its newest page.
 fn cut_for(
     vault: &Vault,
     resident: EntityId,
-    progress: ResidentDreamProgress,
+    progress: &ResidentDreamProgress,
     window_tokens: u64,
 ) -> Result<DreamCut> {
     let mut room = Room(window_tokens / INPUT_SHARE_DIVISOR);
@@ -244,17 +261,26 @@ fn cut_for(
     }
     cut.sections.push(("Sealed scratchpads", pad_lines));
 
-    let mut receipts = vault.receipts(
-        ReceiptQuery::default()
-            .with_actor(resident.to_hex())
-            .with_time_bounds(
-                (progress.receipts_after > 0).then(|| progress.receipts_after + 1),
-                None,
-            ),
-    )?;
-    receipts.sort_by(|a, b| (a.occurred_at, &a.receipt_id).cmp(&(b.occurred_at, &b.receipt_id)));
+    let after = (progress.receipts_after, progress.receipt_after_id.as_str());
+    let mut receipts: Vec<_> = vault
+        .receipts(
+            ReceiptQuery::new(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
+                .with_actor(resident.to_hex())
+                .with_time_bounds(
+                    (progress.receipts_after > 0).then_some(progress.receipts_after),
+                    None,
+                ),
+        )?
+        .into_iter()
+        .map(|receipt| {
+            let id = format!("{}:{}", receipt.receipt_kind.as_str(), receipt.receipt_id);
+            ((receipt.occurred_at, id), receipt)
+        })
+        .filter(|((at, id), _)| (*at, id.as_str()) > after)
+        .collect();
+    receipts.sort_by(|a, b| a.0.cmp(&b.0));
     let mut receipt_lines = Vec::new();
-    for receipt in receipts {
+    for (key, receipt) in receipts {
         let mut line = format!(
             "- {} {} {}",
             receipt.occurred_at,
@@ -268,14 +294,17 @@ fn cut_for(
             break;
         }
         receipt_lines.push(line);
-        cut.receipts_after = Some(receipt.occurred_at);
+        cut.receipts_after = Some(key);
     }
     cut.sections.push(("Receipts", receipt_lines));
 
+    // A standing membership with nothing on its thread yet has no time and
+    // nothing to read.
+    let after = (progress.inbox_after, progress.inbox_after_id.as_str());
     let mut inbox: Vec<_> = vault
-        .agent_inbox_slice(resident, INBOX_PAGE, None)?
+        .agent_inbox_slice(resident, usize::MAX, None)?
         .into_iter()
-        .filter(|item| item.occurred_at > progress.inbox_after)
+        .filter(|item| item.occurred_at > 0 && (item.occurred_at, item.item_id.as_str()) > after)
         .collect();
     inbox.sort_by(|a, b| (a.occurred_at, &a.item_id).cmp(&(b.occurred_at, &b.item_id)));
     let mut inbox_lines = Vec::new();
@@ -295,7 +324,7 @@ fn cut_for(
             break;
         }
         inbox_lines.push(line);
-        cut.inbox_after = Some(item.occurred_at);
+        cut.inbox_after = Some((item.occurred_at, item.item_id));
     }
     cut.sections.push(("Inbox", inbox_lines));
     Ok(cut)
@@ -331,7 +360,7 @@ pub async fn run_resident_dream(
     let cut = cut_for(
         ctx.vault,
         resident_id,
-        progress,
+        &progress,
         model
             .window_tokens
             .unwrap_or(RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS),
@@ -474,12 +503,16 @@ pub async fn run_resident_dream(
         let mut progress = PROGRESS
             .get(&ctx.vault.store, txn, &resident_id)?
             .unwrap_or_default();
-        if let Some(at) = cut.receipts_after {
-            progress.receipts_after = progress.receipts_after.max(at);
-        }
-        if let Some(at) = cut.inbox_after {
-            progress.inbox_after = progress.inbox_after.max(at);
-        }
+        advance(
+            &mut progress.receipts_after,
+            &mut progress.receipt_after_id,
+            cut.receipts_after.as_ref(),
+        );
+        advance(
+            &mut progress.inbox_after,
+            &mut progress.inbox_after_id,
+            cut.inbox_after.as_ref(),
+        );
         progress.dreamed_at = now;
         progress.entries += 1;
         PROGRESS.put(&ctx.vault.store, txn, &resident_id, &progress)

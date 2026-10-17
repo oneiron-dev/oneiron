@@ -25,7 +25,7 @@ use crate::attempt_queue::{
     decode_record,
 };
 use crate::embed::EmbedderLocality;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::memory::extraction::{EncoderOutput, ExtractionEncoder};
 
 const DEFAULT_LEASE_OWNER: &str = "oneironer-tagging";
@@ -209,10 +209,11 @@ impl TaggingReconciler {
             let mut stale = Vec::new();
             let mut stranded = Vec::new();
             let mut unindexed = Vec::new();
-            for row in self.vault.store.attempt_records.iter(&txn)? {
-                let (key, raw) = row?;
-                let Ok(id) = AttemptId::from_bytes(&key) else {
-                    continue;
+            for row in crate::ports::JobQueueRead::port_job_rows(&self.vault.store, &txn, None)? {
+                let (id, raw) = match row {
+                    Ok(row) => row,
+                    Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))) => continue,
+                    Err(error) => return Err(error),
                 };
                 let Ok(record) = decode_record(&raw, id) else {
                     continue;
@@ -540,12 +541,9 @@ impl TaggingReconciler {
             .unwrap_or_else(PoisonError::into_inner);
         while let Some((record, reason)) = unsettled.last() {
             self.vault.try_with_write_txn_grouped(|txn| -> Result<()> {
-                let current = self
-                    .vault
-                    .store
-                    .attempt_records
-                    .get(txn, record.id.as_bytes())?
-                    .and_then(|raw| decode_record(&raw, record.id).ok());
+                let current =
+                    crate::ports::JobQueueRead::port_job_row(&self.vault.store, txn, &record.id)?
+                        .and_then(|raw| decode_record(&raw, record.id).ok());
                 let still_held = current.is_some_and(|current| {
                     current.state == AttemptState::Leased
                         && current.lease_owner == record.lease_owner
