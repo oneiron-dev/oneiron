@@ -16,6 +16,7 @@ type NativeErrorPayload = {
   attempted?: string
   replacement?: string
   schemaRef?: string
+  hook?: unknown
 }
 
 /** A `WRONG_ROOT` refusal's correction: call `replacement`, never `attempted`. */
@@ -24,6 +25,19 @@ export type WrongRoot = {
   readonly replacement: string
   readonly schemaRef: string
 }
+
+/**
+ * A verb hook's stop behind a refusal (ARCH-0080 §3), as the engine's
+ * MemoryError names it in `hook`. On a `PENDING_ASK` it is `pending`: the
+ * invocation the stopped call ran under and the ask's handle, which
+ * `Oneiron.retry` resends under.
+ */
+export type HookStop =
+  | {readonly status: "skipped"; readonly hook: string; readonly reason: string}
+  | {readonly status: "pending"; readonly invocation: string; readonly ask: string}
+  | {readonly status: "hidden"; readonly hook: string}
+  | {readonly status: "completed"; readonly invocation: string; readonly result: unknown}
+  | {readonly status: "completed_with_error"; readonly invocation: string; readonly code: string; readonly message: string}
 
 /** Every constructor and verb failure reaches user code as this. */
 export class OneironError extends Error {
@@ -36,13 +50,30 @@ export class OneironError extends Error {
   /** Present on a `WRONG_ROOT` refusal: the name written and the verb meant. */
   readonly wrongRoot?: WrongRoot
 
-  constructor(code: string, message: string, suggestions: readonly string[], wrongRoot?: WrongRoot) {
+  /**
+   * Present when a verb hook stopped the call. On `PENDING_ASK` it names the
+   * call's invocation; pass this error to `Oneiron.retry` to resend the call
+   * under it.
+   */
+  readonly hook?: HookStop
+
+  constructor(code: string, message: string, suggestions: readonly string[], wrongRoot?: WrongRoot, hook?: HookStop) {
     super(message)
     this.name = "OneironError"
     this.code = code
     this.suggestions = Object.freeze([...suggestions])
     if (wrongRoot) this.wrongRoot = Object.freeze({...wrongRoot})
+    if (hook) this.hook = Object.freeze({...hook})
   }
+}
+
+/**
+ * Narrows the payload's `hook` to a stop: an object with a string `status`.
+ * The engine owns the variants; this only refuses what is not one.
+ */
+function hookStop(value: unknown): HookStop | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  return typeof (value as Record<string, unknown>).status === "string" ? (value as HookStop) : undefined
 }
 
 /**
@@ -92,7 +123,7 @@ export function translateNativeError(error: unknown): OneironError {
       typeof attempted === "string" && typeof replacement === "string" && typeof schemaRef === "string"
         ? {attempted, replacement, schemaRef}
         : undefined
-    return new OneironError(parsed.code, parsed.message, suggestions, wrongRoot)
+    return new OneironError(parsed.code, parsed.message, suggestions, wrongRoot, hookStop(parsed.hook))
   }
 
   return new OneironError("INTERNAL_SERVER_ERROR", raw, [

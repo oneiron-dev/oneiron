@@ -12,6 +12,8 @@
 //!
 //! The custody records a mask mints go through their own door, into tables
 //! the catalog does not class as authored, so nothing here reads them again.
+//! [`admit_seeded_parts`] is the one core a record's own parts admit through
+//! too (`admit`): a stream's text, a NOTE's body.
 
 use std::borrow::Cow;
 
@@ -21,6 +23,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
+use super::admit::Lifted;
 use super::{HANDLE_OPEN, Masker, STAND_IN};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
@@ -49,24 +52,20 @@ impl SidePart {
         })
     }
 
-    /// Replaces each secret `masker` places with its handle.
-    fn mask(&mut self, masker: &mut Masker) -> Result<()> {
-        match self {
-            Self::Body(bytes) => {
-                if let Some(masked) = mask_body(masker, bytes)? {
-                    *bytes = masked;
-                }
-            }
-            Self::Text(text) => {
-                if let Some(masked) = masker.mask_text(text)? {
-                    *text = masked;
-                }
-            }
-            Self::Value(value) => {
-                mask_tree(masker, value)?;
-            }
-        }
-        Ok(())
+    /// Replaces each secret `masker` places with its handle; whether it
+    /// placed one.
+    fn mask(&mut self, masker: &mut Masker) -> Result<bool> {
+        Ok(match self {
+            Self::Body(bytes) => mask_body(masker, bytes)?.is_some_and(|masked| {
+                *bytes = masked;
+                true
+            }),
+            Self::Text(text) => masker.mask_text(text)?.is_some_and(|masked| {
+                *text = masked;
+                true
+            }),
+            Self::Value(value) => mask_tree(masker, value)?,
+        })
     }
 }
 
@@ -168,8 +167,40 @@ pub(crate) fn admit_side_parts(
     parts: &mut [SidePart],
     accepts: impl Fn(&[SidePart]) -> bool,
 ) -> Result<bool> {
+    let origins = vec![(origin(place, key)?, place); parts.len()];
+    admit_seeded_parts(dbs, wtxn, &origins, parts, &mut Lifted::default(), accepts)
+}
+
+/// The wall's one admission, for a side row and for a record's own parts
+/// alike. With the owner's switch on, parts the door would refuse are
+/// planned on a copy with a stand-in for each secret their spans place, and
+/// the copy is read again: only a clean copy the row's own reading `accepts`
+/// mints custody records, one per value. The parts then hold their handles.
+/// A hit the plan leaves refuses the write with the door's reason, before
+/// anything is minted.
+///
+/// `origins` names, for each part in turn, the record and the place each
+/// custody record minted from it names. `seed` holds the handles this writer
+/// minted before, by value: a value in it keeps its handle and mints
+/// nothing, and each value minted here joins it. A writer that keeps it past
+/// this transaction (a stream, between checkpoints) adopts the grown copy
+/// only once the transaction commits. Each record is stamped with the
+/// transaction's time.
+pub(crate) fn admit_seeded_parts(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    origins: &[(EntityId, &str)],
+    parts: &mut [SidePart],
+    seed: &mut Lifted,
+    accepts: impl Fn(&[SidePart]) -> bool,
+) -> Result<bool> {
     if secret_scan_mode_in_txn(dbs, &*wtxn)? == SecretScanMode::Off {
         return Ok(false);
+    }
+    if origins.len() != parts.len() {
+        return Err(Error::InvariantViolation(
+            "a part the side-row wall reads names no origin",
+        ));
     }
     let mut refusal = None;
     for part in parts.iter() {
@@ -183,14 +214,18 @@ pub(crate) fn admit_side_parts(
     };
     let mut planned = parts.to_vec();
     let mut plan = Masker {
+        handles: seed.0.clone(),
         mints: true,
-        at: Some((origin(place, key)?, place.to_owned())),
         ..Masker::default()
     };
-    for part in &mut planned {
-        part.mask(&mut plan)?;
+    let mut placed = false;
+    for (part, (record, place)) in planned.iter_mut().zip(origins) {
+        plan.at = Some((*record, (*place).to_owned()));
+        placed |= part.mask(&mut plan)?;
     }
-    if plan.found.is_empty() {
+    // Nothing placed, not even a value the seed holds: the hit is the
+    // door's.
+    if !placed {
         return Err(refusal);
     }
     // A hit no span places is still in the copy, and refuses as before.
@@ -204,13 +239,14 @@ pub(crate) fn admit_side_parts(
     let Some(custody) = dbs.side_custody() else {
         return Err(refusal);
     };
-    let at = custody.store.clock.now_recorded_at();
-    let mut minted = Masker {
-        handles: plan
-            .mint(&custody, wtxn, at)?
+    let at = crate::ports::recorded_at_in_txn(custody.store, wtxn)?;
+    seed.0.extend(
+        plan.mint(&custody, wtxn, at)?
             .into_iter()
-            .map(|(value, (handle, _))| (value, handle))
-            .collect(),
+            .map(|(value, (handle, _))| (value, handle)),
+    );
+    let mut minted = Masker {
+        handles: seed.0.clone(),
         minted: true,
         ..Masker::default()
     };
