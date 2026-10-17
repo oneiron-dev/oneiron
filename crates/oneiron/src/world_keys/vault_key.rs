@@ -172,6 +172,24 @@ impl StoredWrap {
             envelope: *blake3::hash(&self.envelope).as_bytes(),
         }
     }
+
+    /// An escrow capsule presented from outside the vault's wraps, filed as
+    /// escrow wrap `label` would be, so it opens under that wrap's id. None
+    /// of it is stored, so it names no time.
+    fn presented_escrow(label: &str, capsule: &[u8]) -> Result<Self> {
+        check_name(label)?;
+        let kind = VaultKeyWrapKind::Escrow {
+            label: label.to_owned(),
+        };
+        Ok(Self {
+            info: VaultKeyWrapInfo {
+                id: kind.id(),
+                kind,
+                created_at: 0,
+            },
+            envelope: capsule.to_vec(),
+        })
+    }
 }
 
 /// One wrap as a page-seal mirror carries it (OF-570): its id, which names
@@ -254,6 +272,18 @@ pub enum VaultKeyUnlock<'a> {
     },
     Escrow {
         label: &'a str,
+        secret: &'a HybridSecretKey,
+    },
+    /// An escrow capsule presented from outside the carried wraps: one a
+    /// registry kept (CROSS-ARCH-0022 #ov-custody), opened with its
+    /// recipient's released secret. It opens as escrow wrap `label` would,
+    /// bound to the vault id, the wrap id and the key's commitment, so a
+    /// capsule of another vault or key opens nothing. The artifact need not
+    /// carry the wrap; a sealed vault admits it at open only while it holds
+    /// that very capsule ([`unlock_page_seal`](super::unlock_page_seal)).
+    EscrowCapsule {
+        label: &'a str,
+        capsule: &'a [u8],
         secret: &'a HybridSecretKey,
     },
 }
@@ -393,6 +423,14 @@ impl CarriedVaultKey {
                 }) {
                     attempt(stored, &secret);
                 }
+            }
+            VaultKeyUnlock::EscrowCapsule {
+                label,
+                capsule,
+                secret,
+            } => {
+                let presented = StoredWrap::presented_escrow(label, capsule)?;
+                attempt(&presented, &UnlockSecret::Hybrid(secret));
             }
         }
         match key {
@@ -867,6 +905,35 @@ impl Vault {
             label: label.to_owned(),
         };
         self.unlock_vault_key_with(&kind.id(), &UnlockSecret::Hybrid(secret))
+    }
+
+    /// Unlocks the vault data key with an escrow capsule presented from
+    /// outside its wraps ([`VaultKeyUnlock::EscrowCapsule`]): a registry's,
+    /// opened with its recipient's released secret, for a vault restored from
+    /// an artifact that predates or lacks that wrap. It opens only to the key
+    /// the vault's commitment names, bound to its id and the wrap id `label`
+    /// makes.
+    pub fn unlock_vault_key_with_escrow_capsule(
+        &self,
+        label: &str,
+        capsule: &[u8],
+        secret: &HybridSecretKey,
+    ) -> Result<()> {
+        let presented = StoredWrap::presented_escrow(label, capsule)?;
+        let state = {
+            let txn = self.store.env.read_txn()?;
+            STATE
+                .get(&self.store, &txn, &())?
+                .ok_or_else(|| refused("the vault has no data key"))?
+        };
+        let key = open_wrap(
+            self.vault_id().as_bytes(),
+            &state.commitment,
+            &presented,
+            &UnlockSecret::Hybrid(secret),
+        )?;
+        self.hold_vault_key(key);
+        Ok(())
     }
 
     fn unlock_vault_key_with(&self, id: &str, secret: &UnlockSecret<'_>) -> Result<()> {
