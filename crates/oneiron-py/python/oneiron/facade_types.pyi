@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 162 facade rows, 587 declarations.
-Inputs: 140 of 162 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 136 of 162 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 163 facade rows, 594 declarations.
+Inputs: 141 of 163 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 137 of 163 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
 """
 
@@ -1257,6 +1257,24 @@ class SharedMemberRoleRequest(TypedDict):
 class SharedMemberRequest(TypedDict):
     vault_id: int
     member: str
+class GuestRevokeRequest(TypedDict):
+    grant_ref: EntityId
+GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
+NotRecallable = bool
+GuestCopyState = Literal["unknown"]
+GuestDeletionRequestStatus = Literal["not_requested", "queued", "sent"]
+class GuestRevokeDisclosure(TypedDict):
+    copied_bytes_recallable: NotRecallable
+    recipient_copy_state: GuestCopyState
+    deletion_request_status: GuestDeletionRequestStatus
+class GuestRevokeResponse(TypedDict):
+    grant_ref: EntityId
+    guest_ref: EntityId
+    changed: bool
+    revoked_at: int
+    revoked_slip_refs: NotRequired[list[str]]
+    pact_standing: GuestPactStanding
+    disclosure: GuestRevokeDisclosure
 class AuthorityHandoffAlarmAck(TypedDict):
     by: str
     at: int

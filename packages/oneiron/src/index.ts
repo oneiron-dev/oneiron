@@ -287,6 +287,9 @@ export class Oneiron {
       /** A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead. */
       leave: (input: Facade.SharedVaultRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersLeave(input) as Facade.SharedActExecutionReceipt),
     },
+    guests: {
+      revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),

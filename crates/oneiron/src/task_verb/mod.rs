@@ -221,6 +221,7 @@ pub mod sdk;
 mod sdk_connector;
 mod sdk_diary;
 mod sdk_disclosure;
+mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
 mod sdk_self;

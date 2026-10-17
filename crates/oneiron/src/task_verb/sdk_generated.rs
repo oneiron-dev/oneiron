@@ -254,6 +254,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.guests.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestRevokeRequest,
+                >(),
+            ),
+            (
                 "vault.authority.handoff_alarms",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -1041,6 +1047,10 @@ pub fn mcp_arguments_schema_from_input(
                 "label".to_owned(),
                 schema.pointer("/properties/label")?.clone(),
             );
+            properties.insert(
+                "assignee".to_owned(),
+                schema.pointer("/properties/assignee")?.clone(),
+            );
             &["spec"]
         }
         "tasks.update" => {
@@ -1276,6 +1286,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.members.leave" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.guests.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2262,6 +2279,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.leave" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
         }
+        "vault.guests.revoke" => {
+            let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
+        }
         "vault.authority.handoff_alarms" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -2749,6 +2769,7 @@ pub fn invoke(
         "vault.members.change" => encode(vault_members_change(memory, decode(value)?)?),
         "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
+        "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.authority.handoff_alarms" => {
             encode(vault_authority_handoff_alarms(memory, decode(value)?)?)
         }
@@ -3432,6 +3453,12 @@ pub fn vault_members_leave(
         None,
         input,
     )
+}
+pub fn vault_guests_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestRevokeRequest,
+) -> MemoryResult<crate::receipt::GuestRevokeResponse> {
+    crate::task_verb::sdk::revoke_guest_embedded(memory, input)
 }
 pub fn vault_authority_handoff_alarms(
     memory: &Memory<'_>,

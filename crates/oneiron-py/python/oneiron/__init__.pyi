@@ -327,6 +327,8 @@ class Oneiron:
         @property
         def members(self) -> "Oneiron._VaultMembersVerbs": ...
         @property
+        def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
         def lenses(self) -> "Oneiron._VaultLensesVerbs": ...
@@ -467,6 +469,8 @@ class Oneiron:
             """An Admin removes one member from a shared vault."""
         def leave(self, spec: Facade.SharedVaultRequest) -> Facade.SharedActExecutionReceipt:
             """A member leaves a shared vault under their own proof; an Owner leaves through remove_owner instead."""
+    class _VaultGuestsVerbs:
+        def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""

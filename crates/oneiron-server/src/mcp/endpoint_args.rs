@@ -252,10 +252,13 @@ pub struct McpVerbArguments {
     pub request: Option<Value>,
     #[serde(default)]
     pub label: Option<String>,
+    /// `tasks.create`'s typed assignee (OF-532), decoded with the input.
+    #[serde(default)]
+    pub assignee: Option<Value>,
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 11] {
+    fn present_fields(&self) -> [(&'static str, bool); 12] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -268,6 +271,7 @@ impl McpVerbArguments {
             ("spec", self.spec.is_some()),
             ("request", self.request.is_some()),
             ("label", self.label.is_some()),
+            ("assignee", self.assignee.is_some()),
         ]
     }
 

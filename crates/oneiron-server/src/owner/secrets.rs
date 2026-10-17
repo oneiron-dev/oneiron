@@ -418,3 +418,31 @@ impl From<oneiron::secret_rotation::RotationReceipt> for Rotated {
         }
     }
 }
+
+/// Reads a revoke request, `{"name"}`, into the secret's custody name. It
+/// carries no value, but the body goes through [`OwnedBody`] all the same,
+/// under the same limit as the others.
+pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RevokeFields {
+        name: String,
+    }
+    let body = OwnedBody::read(body).await?;
+    let fields: RevokeFields = serde_json::from_slice(&body.0).map_err(|_| invalid_body())?;
+    secret_name(fields.name)
+}
+
+/// Revokes a secret on the owner's behalf (OF-422): the record goes terminal
+/// and every lease over it is revoked, stamped on the vault clock as a
+/// rotation is. The receipt reads as a rotation's does, with
+/// `from_generation` equal to `to_generation`: nothing replaced the value.
+pub(crate) fn revoke(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    name: &str,
+) -> OwnerResult<Rotated> {
+    Ok(vault
+        .revoke_secret_as_owner(owner, name, vault.now_recorded_at())?
+        .into())
+}

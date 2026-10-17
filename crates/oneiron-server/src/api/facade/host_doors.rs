@@ -40,6 +40,8 @@ use crate::server::SyncServer;
 pub(crate) use super::shared_act_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
+// The owner's guest revoke door (OF-232) too.
+pub(crate) use super::guest_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
