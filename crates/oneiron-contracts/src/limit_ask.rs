@@ -82,11 +82,19 @@ pub enum EngineLimit {
     /// Past it the push still goes: a paid plan bills the overage, and LINE
     /// itself refuses a free plan's.
     LinePushMonthly,
+    /// Bytes of text one notes import or folder rescan holds, every note of
+    /// the folder together, while their links resolve. Past it the folder is
+    /// read and imported whole.
+    ImportFolderTextBytes,
+    /// Notes one notes import or folder rescan reads from its folder,
+    /// continuation parts included. Past it the folder is read and imported
+    /// whole.
+    ImportFolderNotes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -104,6 +112,8 @@ impl EngineLimit {
         Self::AnswerProvenanceRefs,
         Self::AskWaitIdentities,
         Self::LinePushMonthly,
+        Self::ImportFolderTextBytes,
+        Self::ImportFolderNotes,
     ];
 
     /// The config key that sets the row.
@@ -126,6 +136,8 @@ impl EngineLimit {
             Self::AnswerProvenanceRefs => "limits.answer_provenance_refs",
             Self::AskWaitIdentities => "limits.ask_wait_identities",
             Self::LinePushMonthly => "line.monthly_push_allowance",
+            Self::ImportFolderTextBytes => "limits.import_folder_text_bytes",
+            Self::ImportFolderNotes => "limits.import_folder_notes",
         }
     }
 
@@ -150,6 +162,8 @@ impl EngineLimit {
             Self::AskWaitIdentities => 1 << 20,
             // LINE's free plan allowance, as the plan row defaults.
             Self::LinePushMonthly => 200,
+            Self::ImportFolderTextBytes => 256 << 20,
+            Self::ImportFolderNotes => 100_000,
         }
     }
 }
