@@ -11248,7 +11248,7 @@
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -11557,6 +11557,8 @@
       "LeaderPatternFile",
       "LeaderPatternInput",
       "LeaderPatternOutput",
+      "LeaderSplitInput",
+      "LeaderSplitOutput",
       "MemoryClaimInput",
       "MemoryEdgeInput",
       "MemoryEdgeOutput",
@@ -11584,7 +11586,7 @@
       "const": 1,
       "enum": 7,
       "fn": 1,
-      "struct": 20
+      "struct": 22
      }
     },
     {
@@ -56703,7 +56705,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 48,
+      "const": 49,
       "crate-vis": 1
      }
     },
