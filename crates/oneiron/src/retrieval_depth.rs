@@ -42,7 +42,7 @@ use crate::vault::Vault;
 
 mod accumulation;
 mod controls;
-pub use controls::{RecallExecution, RetrievalDeadline};
+pub use controls::{RecallExecution, RecallMediaSeed, RecallQueryVectors, RetrievalDeadline};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use controls::{SlowRetrievalStage, still_deadline_clock_for_test};
 mod session_scope;

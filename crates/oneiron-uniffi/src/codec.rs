@@ -22,14 +22,14 @@ use oneiron::task_verb::sdk;
 
 use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitReceipt, DeleteReceipt, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput,
-    LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance, MentionProvenance,
-    NeighborHit, NeighborHits, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt,
-    PendingWrite, QuoteSpan, ReadReceipt, ReadScope, RecallScope, RerankReport, RerankSkip,
-    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
-    StructuralPutInput, TemporalHint, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt,
-    WitnessTurn,
+    ClaimListFilter, ClaimView, ClaimViews, CommitReceipt, ConsolidationJobInput, DeleteReceipt,
+    DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
+    FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
+    MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QuoteSpan, ReadReceipt, ReadScope,
+    RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
+    SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -779,6 +779,52 @@ impl Lift<sdk::BlobContent> for Vec<u8> {
         base64::engine::general_purpose::STANDARD
             .decode(&value.content_base64)
             .map_err(|error| internal(format!("the blob content is not base64: {error}")))
+    }
+}
+
+// ── consolidation jobs ──────────────────────────────────────────────────
+
+impl Lower<sdk::ConsolidationEnqueueRequest> for ConsolidationJobInput {
+    fn lower(self) -> Result<sdk::ConsolidationEnqueueRequest, OneironError> {
+        Ok(sdk::ConsolidationEnqueueRequest {
+            scope: self.scope,
+            input: self.input.lower()?,
+            run_id: self.run_id,
+            dedupe_key: self.dedupe_key,
+            now: optional_seconds("now", self.now)?,
+        })
+    }
+}
+
+impl Lower<sdk::ConsolidationStatusRequest> for String {
+    fn lower(self) -> Result<sdk::ConsolidationStatusRequest, OneironError> {
+        Ok(sdk::ConsolidationStatusRequest { job_ref: self })
+    }
+}
+
+impl Lift<engine::DreamerAttemptRef> for DreamerJobRef {
+    fn lift(job: engine::DreamerAttemptRef) -> Result<Self, OneironError> {
+        Ok(Self {
+            job_ref: job.job_ref,
+            state: job.state,
+            existing: job.existing,
+        })
+    }
+}
+
+impl Lift<engine::DreamerAttemptView> for DreamerJobView {
+    fn lift(job: engine::DreamerAttemptView) -> Result<Self, OneironError> {
+        Ok(Self {
+            job_ref: job.job_ref,
+            state: job.state,
+            kind: job.kind,
+            lease_owner: job.lease_owner,
+            attempt_count: job.attempt_count,
+            run_id: job.run_id,
+            last_error: job.last_error,
+            created_at: signed_seconds("created_at", job.created_at)?,
+            updated_at: signed_seconds("updated_at", job.updated_at)?,
+        })
     }
 }
 

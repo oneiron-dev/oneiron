@@ -4,6 +4,7 @@ mod body;
 mod deletion;
 mod membership;
 mod preview;
+mod privacy_erase;
 mod roles;
 mod session;
 mod turn_actions;
@@ -20,6 +21,7 @@ pub(crate) use deletion::{
 };
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
+pub use privacy_erase::RoomPersonEraseOutcome;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
 pub use session::{SessionMode, SessionPresence};
 pub use turn_actions::{

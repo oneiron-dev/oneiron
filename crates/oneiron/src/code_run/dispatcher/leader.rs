@@ -2,15 +2,20 @@
 
 use super::HostSelfDispatcher;
 use crate::agent_dispatch::{
-    AgentDispatcher, LeaderStarter, LeaderStarterSkills, LeaderTeamPlanner, LivePlanRequest,
-    PlannerDecisions, PlannerSeat, PlannerSkills, SpawnPlanReceipt, VaultLeaderTeamPlanner,
-    agent_dispatch_actor, decode_agent_dispatch_input,
+    AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, LeaderStarter, LeaderStarterSkills,
+    LeaderTeamPlanner, LivePlanRequest, PlannerDecisions, PlannerSeat, PlannerSkills,
+    SpawnPlanReceipt, VaultLeaderTeamPlanner, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::AttemptRecord;
 use crate::code_run::storage::ExecutorStorage;
+use crate::code_run::{
+    SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfLeaderCall, SelfSpawnAsk,
+};
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
 use crate::memory::MemoryResult;
+use crate::skill::LoadedSkillPack;
+use crate::task_type::PlacementDecisions;
 use crate::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
 use crate::{EntityId, Vault};
 
@@ -20,7 +25,120 @@ fn invalid() -> Error {
     ))
 }
 
+/// The host's planner (OF-541, OF-389): the skills, seats, executor and
+/// ladders a planned spawn, its type placement and the leader's advice read
+/// on this run. Host configuration only: no guest call, transcript or replay
+/// row reaches it.
+pub struct HostPlannerBinding<'a> {
+    pub skills: PlannerSkills,
+    pub seats: Vec<PlannerSeat>,
+    /// The planner's `model@revision`, stamped on its pack loads.
+    pub executor: String,
+    /// The host's planner ladder; unset, the deterministic plan answers.
+    pub planner: Option<&'a PlannerDecisions<'a>>,
+    /// The host's placement ladder; unset, the placement skill's rule rung
+    /// reads alone.
+    pub placement: Option<&'a PlacementDecisions<'a>>,
+    /// The leader's starter, pattern and team-shape skills.
+    pub leader: LeaderStarterSkills,
+    /// How many shapes advice returns when the leader names no count.
+    pub top: usize,
+}
+
+impl<'a> HostSelfDispatcher<'a> {
+    /// Lends the run the host's planner. Without one, a planned spawn and
+    /// the leader's calls answer `planner_unbound`.
+    #[must_use]
+    pub fn with_planner(mut self, planner: HostPlannerBinding<'a>) -> Self {
+        self.planner = Some(planner);
+        self
+    }
+}
+
 impl HostSelfDispatcher<'_> {
+    pub(super) fn planner_unbound(effect: SelfEffect) -> SelfDispatchOutcome {
+        SelfDispatchOutcome::Failed(SelfFailedResult {
+            effect,
+            error: "planner_unbound".to_owned(),
+        })
+    }
+
+    pub(super) const fn planner_bound(&self) -> bool {
+        self.planner.is_some()
+    }
+
+    /// OF-541: a leased agent's spawn, placed once and planned on the host's
+    /// planner. The plan's seat is the target, its receipt and stamp ride
+    /// the context, and a budget the ask sets narrows the child's carve.
+    pub(super) fn planned_spawn(
+        &self,
+        mut context: AgentSpawnContext,
+        ask: SelfSpawnAsk,
+        at: u64,
+    ) -> Result<(AgentDispatchTarget, AgentSpawnContext)> {
+        if self.agent_lease.is_none() {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a planned spawn requires the agent's acquired lease",
+            )));
+        }
+        let planner = self.planner.as_ref().ok_or_else(invalid)?;
+        let type_ref =
+            self.place_agent_spawn_type(&ask.need, context.type_ref.as_ref(), planner.placement)?;
+        let receipt = self.plan_agent_spawn(
+            &LivePlanRequest {
+                need: ask.into_need(type_ref),
+                seats: &planner.seats,
+                skills: &planner.skills,
+                executor: &planner.executor,
+                decisions: planner.planner,
+            },
+            at,
+        )?;
+        narrow_budget(&mut context, receipt.asked.budget_cap_units.as_ref());
+        context.type_ref = Some(receipt.asked.type_ref.clone());
+        let target = AgentDispatchTarget::Custom(receipt.plan.agent_def);
+        context.plan = Some(receipt);
+        Ok((target, context))
+    }
+
+    /// `self.leader.advice` and `self.leader.pattern` (OF-389), on the
+    /// host's planner over the leader's host-bound lease.
+    pub(super) fn dispatch_leader(&self, call: SelfLeaderCall) -> Result<SelfDispatchOutcome> {
+        let Some(planner) = self.planner.as_ref() else {
+            return Ok(Self::planner_unbound(SelfEffect::Leader));
+        };
+        let at = crate::unix_seconds_now();
+        let answer = match call {
+            SelfLeaderCall::Advice { top } => self.leader_advice(
+                &planner.leader,
+                planner.skills.clone(),
+                planner.seats.clone(),
+                &planner.executor,
+                planner.planner,
+                top.map_or(planner.top, |top| {
+                    usize::try_from(top).unwrap_or(usize::MAX)
+                }),
+                at,
+            )?,
+            SelfLeaderCall::Pattern { skill } => {
+                pattern_json(&self.reload_leader_pattern(skill, &planner.executor, at)?)
+            }
+        };
+        Ok(SelfDispatchOutcome::Leader(answer.to_string()))
+    }
+
+    /// OF-389: load the pattern the leader picked from her advice, through
+    /// the lease-fenced manifest door, after re-reading her live task.
+    pub fn reload_leader_pattern(
+        &self,
+        pattern: EntityId,
+        executor: &str,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
+        let (vault, leased) = self.leader_attempt()?;
+        AgentDispatcher::new(vault).reload_leader_pattern(&leased, pattern, executor, at)
+    }
+
     /// Load the starter and an optional CEO-selected pattern before running
     /// the leader. Host bindings supply identity and lease, not guest text.
     pub fn prepare_leader_starter(
@@ -215,4 +333,37 @@ impl HostSelfDispatcher<'_> {
         }
         Ok((vault, status.attempt))
     }
+}
+
+/// A budget the spawner set, seed or pin, narrows the child's hard carve; it
+/// never widens it.
+pub(super) fn narrow_budget(
+    context: &mut AgentSpawnContext,
+    asked: Option<&crate::agent_dispatch::SpawnOverride<u64>>,
+) {
+    if let Some(asked) = asked.map(|cap| *cap.value()) {
+        context.budget = Some(context.budget.map_or(asked, |carve| carve.min(asked)));
+    }
+}
+
+/// A loaded pattern as the leader reads it: the entity that loaded (an
+/// exploration trial may route to its proposal), its revision and its files.
+fn pattern_json(loaded: &LoadedSkillPack) -> serde_json::Value {
+    serde_json::json!({
+        "skill": loaded.entity.to_hex(),
+        "skill_id": loaded.record.skill_id,
+        "version": loaded.record.version,
+        "desc": loaded.record.desc,
+        "files": loaded.source_files.as_ref().map(|files| {
+            files
+                .iter()
+                .map(|file| {
+                    serde_json::json!({
+                        "path": file.path,
+                        "text": String::from_utf8_lossy(&file.content),
+                    })
+                })
+                .collect::<Vec<_>>()
+        }),
+    })
 }

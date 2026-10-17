@@ -166,6 +166,7 @@ impl Vault {
                 value,
                 decision,
                 source: Some(pin),
+                judged_version: Some(head.version),
             });
         }
         let bundle = SheetAnswerBundle {
@@ -184,6 +185,7 @@ impl Vault {
             },
             answers,
             max_count_override: request.max_count_override,
+            reads: None,
         };
         Ok(ArtifactAskRun {
             proposal: self.stage_sheet_answers(output, bundle, ask.run_ref, version, frontier)?,
