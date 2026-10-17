@@ -76,6 +76,8 @@ const PLANNER_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
+/// The ThinkThreshold row's version a host's start value takes.
+const THINK_THRESHOLD_VERSION: u32 = 1;
 /// How long the person row may trail an accept whose commit sent no change
 /// signal.
 const PERSON_THRESHOLD_SWEEP: std::time::Duration = std::time::Duration::from_secs(60);
@@ -127,6 +129,7 @@ impl DecisionHost {
                 big: None,
                 human: asks.clone(),
                 human_pin: pin(DecisionRung::Human, OWNER_ASKS, ONE),
+                paired: None,
                 person: None,
                 presence: None,
             },
@@ -143,13 +146,15 @@ impl DecisionHost {
     }
 
     /// The house model's decision read on the escalation rung, read on
-    /// `meter`, and its recipe's person question as the ladder's. Without a
-    /// paired question in the recipe the rung stays empty.
+    /// `meter`, and its recipe's paired and person questions as the ladder's,
+    /// each with its threshold row. Without a paired question in the recipe
+    /// the rung stays empty.
     pub(crate) fn with_house_read(
         mut self,
         read: Option<&(DecisionReadDoor, BudgetGuard)>,
     ) -> Self {
         self.ladder.escalation = None;
+        self.ladder.paired = None;
         self.ladder.person = None;
         self.ladder.presence = None;
         self.bands = DecisionBandPolicy::default();
@@ -163,27 +168,40 @@ impl DecisionHost {
             );
             return self;
         };
+        // Q2: the house read asks it jointly; a generated read asks the
+        // ladder's beside each of its questions.
+        let paired = match THINK_MORE.question(&[], probe.paired.clone(), AnswerContract::Noul) {
+            Ok(paired) => Some(paired),
+            Err(error) => {
+                tracing::warn!(%error, "the recipe's paired question is invalid");
+                None
+            }
+        };
+        let mut bands = DecisionBandPolicy::default();
+        // Q2's threshold home: a paired reading at the row climbs a rung.
+        if let Some(threshold) = door.think_threshold()
+            && let Err(error) = bands.set_think_threshold(threshold, THINK_THRESHOLD_VERSION)
+        {
+            tracing::warn!(%error, "the think threshold is invalid");
+        }
         if let Some(wording) = &probe.person {
             match ASK_UP.question(&[], wording.clone(), AnswerContract::Noul) {
-                Ok(person) => {
-                    let mut bands = DecisionBandPolicy::default();
-                    // Q3's threshold home: an accepted Coach row replaces this
-                    // start value with a higher version
-                    // ([`Self::refresh_person_threshold`]).
-                    match bands
-                        .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
-                    {
-                        Ok(()) => {
-                            self.ladder.person = Some(person);
-                            self.person_start = bands.person_threshold();
-                            self.bands = bands;
-                        }
-                        Err(error) => tracing::warn!(%error, "the person threshold is invalid"),
+                // Q3's threshold home: an accepted Coach row replaces this
+                // start value with a higher version
+                // ([`Self::refresh_person_threshold`]).
+                Ok(person) => match bands
+                    .set_person_threshold(door.person_threshold(), PERSON_THRESHOLD_VERSION)
+                {
+                    Ok(()) => {
+                        self.ladder.person = Some(person);
+                        self.person_start = bands.person_threshold();
                     }
-                }
+                    Err(error) => tracing::warn!(%error, "the person threshold is invalid"),
+                },
                 Err(error) => tracing::warn!(%error, "the recipe's person question is invalid"),
             }
         }
+        self.bands = bands;
         // A Box or Point call asks the recipe's presence question first.
         if let Some(wording) = &probe.presence {
             match IMAGE_PRESENCE.question(&[], wording.clone(), AnswerContract::Noul) {
@@ -191,11 +209,15 @@ impl DecisionHost {
                 Err(error) => tracing::warn!(%error, "the recipe's presence question is invalid"),
             }
         }
+        self.ladder.paired.clone_from(&paired);
+        let Some(paired) = paired else {
+            return self;
+        };
         // The read takes the ladder's person question, which it reads apart.
         match HouseRead::new(
             door.reader(),
             meter.clone(),
-            &probe.paired,
+            paired,
             self.ladder.person.clone(),
             door.connector().locality == ModelLocality::ThirdParty,
         ) {
@@ -794,13 +816,13 @@ impl HouseRead {
     fn new(
         reader: Arc<dyn LabelReadModel>,
         guard: BudgetGuard,
-        paired: &str,
+        paired: DecisionQuestion,
         person: Option<DecisionQuestion>,
         leaves: bool,
     ) -> oneiron::Result<Self> {
         let read = Self {
             pin: pin(DecisionRung::Escalation, reader.model(), reader.revision()),
-            paired: THINK_MORE.question(&[], paired.to_owned(), AnswerContract::Noul)?,
+            paired,
             person,
             reader,
             guard,

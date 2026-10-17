@@ -1321,6 +1321,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EditNoteRequest>(),
             ),
             (
+                "vault.notes.seal",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
+            ),
+            (
+                "vault.notes.lifecycle",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
+            ),
+            (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -3068,6 +3076,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.seal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.lifecycle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -3957,6 +3979,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.edit" => {
             let _input: EditNoteRequest = decode(value.clone())?;
         }
+        "vault.notes.seal" => {
+            let _input: crate::note::NoteRefRequest = decode(value.clone())?;
+        }
+        "vault.notes.lifecycle" => {
+            let _input: crate::note::NoteRefRequest = decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -4314,6 +4342,8 @@ pub fn invoke(
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
+        "vault.notes.seal" => encode(vault_notes_seal(memory, decode(value)?)?),
+        "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     })
 }
@@ -6636,4 +6666,28 @@ pub fn vault_notes_edit(
         &["/note_ref"],
     )?;
     memory.edit_note(&input.note_ref, &input.edit)
+}
+pub fn vault_notes_seal(
+    memory: &Memory<'_>,
+    input: crate::note::NoteRefRequest,
+) -> MemoryResult<crate::note::NoteSeal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.seal",
+        &input,
+        &["/note_ref"],
+    )?;
+    memory.seal_note(&input)
+}
+pub fn vault_notes_lifecycle(
+    memory: &Memory<'_>,
+    input: crate::note::NoteRefRequest,
+) -> MemoryResult<crate::note::NoteLifecycleView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.lifecycle",
+        &input,
+        &["/note_ref"],
+    )?;
+    memory.note_lifecycle(&input)
 }

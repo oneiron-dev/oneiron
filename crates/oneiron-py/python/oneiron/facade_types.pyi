@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 233 facade rows, 803 declarations.
-Inputs: 197 of 233 fully typed, 35 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 186 of 233 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 235 facade rows, 808 declarations.
+Inputs: 199 of 235 fully typed, 35 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 188 of 235 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 59; unread shapes: 1.
 """
 
@@ -82,6 +82,7 @@ class DiaryReadRecord(TypedDict):
     entries: list[EntityId]
     grants: list[str]
     request: NotRequired[EntityId | None]
+    source: str
 DiaryReviewState = Literal["pending", "approved", "declined", "used"]
 class DiaryReadRequest(TypedDict):
     request: EntityId
@@ -305,6 +306,9 @@ class PersonRequest(TypedDict):
 class EmptyRequest(TypedDict):
     ...
 ShapeCeiling = Literal["auto", "proposed"]
+ShapeGrantBoundAction = TypedDict("ShapeGrantBoundAction", {"domain": Literal["action"], "actor": str, "actor_class": NotRequired[str | None], "class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": NotRequired[bool]})
+ShapeGrantBoundDisclosure = TypedDict("ShapeGrantBoundDisclosure", {"domain": Literal["disclosure"], "audience": list[str], "class": str, "selectors": list[str]})
+ShapeGrantBound = ShapeGrantBoundAction | ShapeGrantBoundDisclosure
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
@@ -350,7 +354,8 @@ class ShapeRowChannel(TypedDict):
     address: str
 class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
-    grant_ref: str
+    grant_ref: NotRequired[str]
+    bound: NotRequired[ShapeGrantBound | None]
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -379,6 +384,10 @@ class ShapeItemStateLanded(TypedDict):
     receipt: str
 class ShapeItemStateProposed(TypedDict):
     state: Literal["proposed"]
+class ShapeItemStateFiled(TypedDict):
+    state: Literal["filed"]
+    proposal_ref: str
+    expires_at: int
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -386,7 +395,7 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
@@ -3713,6 +3722,7 @@ class DecisionAsk(TypedDict):
     prior: NotRequired[AskPrior | None]
     queue_pin: ProviderPin
     to: AskTo
+    correlation: NotRequired[str | None]
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
 class DecisionAskClimbRequest(TypedDict):
@@ -4086,3 +4096,15 @@ class NoteEditOutcomeReviewRequired(TypedDict):
     outcome: Literal["review_required"]
     receipt: CommitReceipt
 NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
+class NoteRefRequest(TypedDict):
+    note_ref: str
+class NoteSeal(TypedDict):
+    note: str
+    document: str
+    frontier: list[int]
+    sealed_by: str
+    sealed_at: int
+NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
+class NoteLifecycleView(TypedDict):
+    status: NoteLifecycleStatus
+    seal: NotRequired[NoteSeal | None]
