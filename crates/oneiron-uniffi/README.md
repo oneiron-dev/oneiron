@@ -73,8 +73,8 @@ no generic `call(name, json)`.
   `describe(taskRef:)`, `vaultExport(format:)`.
 - **Generated input, hand-written result (2):** `vault.notes.create`,
   `vault.notes.from_entity` (both return `EntityRefReceipt`).
-- **Generated in and out:** every other facade row, host doors included (137
-  of the 166 facade rows on this table). The generated files are the
+- **Generated in and out:** every other facade row, host doors included (141
+  of the 170 facade rows on this table). The generated files are the
   authoritative list; each method is named for its row (`vault.kv.get` is
   `vaultKvGet(input:)` over the `KeyValueAddress` record).
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
