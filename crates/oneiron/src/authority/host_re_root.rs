@@ -220,6 +220,9 @@ fn carried_by_live_root(
 }
 
 /// Whether the logged entry `head` is the ReRoot that made `key` the root.
+/// On a vault that adopted a checkpoint image, a covered ReRoot it does not
+/// store is read from the body the image carries, and judged the same way
+/// (OF-469, slice E).
 fn head_re_roots_to(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -227,13 +230,18 @@ fn head_re_roots_to(
     key: &AuthorityKey,
 ) -> Result<bool> {
     let id = authority_log_entity_id_from_hash(head)?;
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-        return Ok(false);
+    let entry = match crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? {
+        Some(raw) => {
+            let body = raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("authority head header"))?;
+            decode_authority_log_entry_body(body)?
+        }
+        None => match super::adopted_evidence::CarriedRows::default().get(store, txn, head)? {
+            Some(entry) => entry,
+            None => return Ok(false),
+        },
     };
-    let body = raw
-        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-        .ok_or(Error::CorruptedIndex("authority head header"))?;
-    let entry = decode_authority_log_entry_body(body)?;
     Ok(authority_entry_hash(&entry)? == *head
         && matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *key))
 }

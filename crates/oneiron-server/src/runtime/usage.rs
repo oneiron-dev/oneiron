@@ -99,12 +99,15 @@ impl VaultUsage {
                     .expect("usage rates lock poisoned")
                     .get(&facts.offer)
                     .cloned();
-                // A room-paid call bills its payer PERSON's own account, or
-                // the vault's when the owners approved that on its
-                // payer-needed ask; a call no room pays for, the vault's.
+                // A room-paid call bills its payer PERSON's own account, which
+                // for a live Owner is the vault's; the vault's too when the
+                // owners approved that on its payer-needed ask; a call no
+                // room pays for, the vault's.
                 let owner = match facts.payer_person.as_ref().map(|payer| &payer.account) {
                     Some(PayerAccount::Person { account }) => account.clone(),
-                    Some(PayerAccount::VaultApproved { .. }) | None => self.owner.clone(),
+                    Some(PayerAccount::VaultOwner | PayerAccount::VaultApproved { .. }) | None => {
+                        self.owner.clone()
+                    }
                 };
                 self.calls
                     .lock()
@@ -222,7 +225,7 @@ impl VaultUsage {
                         payer_scope: payer.map(|payer| payer.root_scope.to_string()),
                         payer_ask: payer.and_then(|payer| match payer.account {
                             PayerAccount::VaultApproved { ask } => Some(ask),
-                            PayerAccount::Person { .. } => None,
+                            PayerAccount::Person { .. } | PayerAccount::VaultOwner => None,
                         }),
                         reserved_units: facts.reserved_units,
                         settled_units: *units,
