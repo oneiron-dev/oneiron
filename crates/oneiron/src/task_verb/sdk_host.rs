@@ -10,7 +10,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
-use crate::connector_key::ProviderConnectionChecks;
+use crate::connector_key::{PackConnectionVerifier, ProviderConnectionChecks};
 use crate::consent::AuthenticatedOwner;
 use crate::lens::GeneratedUiStateSnapshot;
 use crate::llm::media::{AiOperation, MediaJobState, MediaPart, MediaResponse, MediaUsage};
@@ -680,12 +680,13 @@ pub fn pack_setup_as_owner(
     PackSetupReceipt::new(vault.pack_setup(owner, &input.pack, input.source.as_deref())?)
 }
 
-/// `vault.packs.setup.verify` under the owner's proof: the engine's fixed
-/// read-only provider check for the connection's declared check name.
+/// `vault.packs.setup.verify` under the owner's proof: the host's fixed
+/// check for the connection's declared check name.
 pub fn verify_pack_setup_as_owner(
     vault: &crate::Vault,
     owner: &AuthenticatedOwner,
     input: &PackSetupVerifyRequest,
+    checks: &dyn PackConnectionVerifier,
 ) -> MemoryResult<PackSetupReceipt> {
     verify_pack_connection_as_owner(
         vault,
@@ -693,6 +694,7 @@ pub fn verify_pack_setup_as_owner(
         &input.pack,
         input.source.as_deref(),
         &input.connection,
+        checks,
     )
 }
 
@@ -706,6 +708,7 @@ pub fn answer_pack_setup_as_owner(
     vault: &crate::Vault,
     owner: &AuthenticatedOwner,
     input: &PackSetupAnswerRequest,
+    checks: &dyn PackConnectionVerifier,
 ) -> MemoryResult<PackSetupReceipt> {
     let source = input.source.as_deref();
     let answer = match (&input.answer, &input.card_action) {
@@ -721,6 +724,7 @@ pub fn answer_pack_setup_as_owner(
                         &input.pack,
                         source,
                         &connection,
+                        checks,
                     );
                 }
                 PackSetupCardAction::StoreSecret {
@@ -763,9 +767,9 @@ fn verify_pack_connection_as_owner(
     pack: &str,
     source: Option<&str>,
     connection: &str,
+    checks: &dyn PackConnectionVerifier,
 ) -> MemoryResult<PackSetupReceipt> {
-    let checks = ProviderConnectionChecks::new()?;
-    PackSetupReceipt::new(vault.verify_pack_connection(owner, pack, source, connection, &checks)?)
+    PackSetupReceipt::new(vault.verify_pack_connection(owner, pack, source, connection, checks)?)
 }
 
 /// `vault.packs.setup.prepare` on an embedded handle, as the vault's
@@ -797,7 +801,7 @@ pub fn answer_pack_setup_embedded(
     let owner = memory.embedded_owner("vault.packs.setup.answer")?;
     let vault = memory.vault();
     off_async_runtime("vault.packs.setup.answer", || {
-        answer_pack_setup_as_owner(vault, &owner, &input)
+        answer_pack_setup_as_owner(vault, &owner, &input, &ProviderConnectionChecks::new()?)
     })
 }
 
@@ -810,7 +814,7 @@ pub fn verify_pack_setup_embedded(
     let owner = memory.embedded_owner("vault.packs.setup.verify")?;
     let vault = memory.vault();
     off_async_runtime("vault.packs.setup.verify", || {
-        verify_pack_setup_as_owner(vault, &owner, &input)
+        verify_pack_setup_as_owner(vault, &owner, &input, &ProviderConnectionChecks::new()?)
     })
 }
 

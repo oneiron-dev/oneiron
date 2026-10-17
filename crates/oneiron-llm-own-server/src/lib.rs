@@ -91,6 +91,8 @@ fn validate_terminal(
             } => call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object(),
             // Tool results are history from a tool, never an assistant generation.
             oneiron::ContentPart::ToolResult { .. } => true,
+            // Input audio is history, never an assistant generation.
+            oneiron::ContentPart::Audio { .. } => true,
             oneiron::ContentPart::Image { media_type, image } => {
                 media_type.trim().is_empty()
                     || match image {

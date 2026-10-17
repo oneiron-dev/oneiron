@@ -188,6 +188,8 @@ side_tables! {
     EMERGENCY_REQUEST_PLAN_INDEX: VaultMeta b"booking:emergency_request_plan:v1:" Raw;
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
+    /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
+    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().
@@ -291,6 +293,12 @@ side_tables! {
     /// One agent-health card (OF-568): the Coach's merged evidence, routing and outcome for one
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named;
+    /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
+    /// the receipt.
+    COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
+    /// The proposed heal the Coach filed for a blocked report or a failure-ladder case, so a
+    /// replay files none twice. Key: id16 of the receipt or the case.
+    COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
     /// A case where a person changed the decision ladder's answer, kept until the Coach's
     /// person-threshold run reads it. Key: id16 of the source the host bound the answer to.
     COACH_PERSON_CHANGED: VaultMeta b"coach:person_changed:v1:" Named;
