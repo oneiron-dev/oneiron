@@ -696,14 +696,14 @@ fn sides_with(answers: &[JudgeShadowAnswer], reference: &DecisionAnswer) -> Opti
 }
 
 /// Cases sided with `judge`, by any settler.
-fn sided<'a>(cases: impl Iterator<Item = &'a JudgeSwapDisagreement>, judge: &str) -> usize {
+fn sided(cases: impl Iterator<Item = &'_ JudgeSwapDisagreement>, judge: &str) -> usize {
     cases
         .filter(|case| case.sided_with.as_deref() == Some(judge))
         .count()
 }
 
 /// Cases an anchor (a pick or a settled outcome) sided with `judge`.
-fn anchored<'a>(cases: impl Iterator<Item = &'a JudgeSwapDisagreement>, judge: &str) -> usize {
+fn anchored(cases: impl Iterator<Item = &'_ JudgeSwapDisagreement>, judge: &str) -> usize {
     sided(
         cases.filter(|case| {
             matches!(
