@@ -3,7 +3,9 @@
 use super::ConsultPayloadRef;
 use crate::consent::{ActionClass, ActionEnvelope};
 use crate::entity_id::EntityId;
+use crate::lens::RecordRef;
 use crate::memory::{MemoryError, MemoryResult};
+use crate::registry::ENTITY_TYPE_TASK;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -546,6 +548,9 @@ pub struct TaskAskReceipt {
     /// returns the frozen copy. `None` only on a code-mode replay record,
     /// which does not carry it yet.
     pub statement: Option<crate::agent_dispatch::FanoutStatement>,
+    /// The member TASKs as typed record refs (OF-063), in `task_refs`
+    /// order, built from their ids with no read.
+    pub task_records: Vec<RecordRef>,
 }
 impl TaskAskReceipt {
     /// A receipt from today's fields. Build receipts here rather than by
@@ -557,24 +562,61 @@ impl TaskAskReceipt {
         idempotent_replay: bool,
         statement: Option<crate::agent_dispatch::FanoutStatement>,
     ) -> Self {
+        let task_records = task_refs
+            .iter()
+            .map(|id| RecordRef::from_id(ENTITY_TYPE_TASK, id, None))
+            .collect();
         Self {
             handle,
             task_refs,
             hold,
             idempotent_replay,
             statement,
+            task_records,
         }
     }
 }
 
 /// One admitted word's durable identity. This is evidence, never approval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskAnswer {
     pub task_ref: EntityId,
     pub actor_ref: EntityId,
     pub result_ref: EntityId,
     pub word_ref: EntityId,
+    /// The ids above as typed record refs (OF-063), built with no read. The
+    /// member TASK and the word, a protected TASK fact, are TASKs; the actor
+    /// and the result carry the kinds the word's fact recorded at admission.
+    pub task_record: RecordRef,
+    pub actor_record: RecordRef,
+    pub result_record: RecordRef,
+    pub word_record: RecordRef,
+}
+impl TaskAskAnswer {
+    /// The answer with its typed refs named from the ids and the actor and
+    /// result kinds its fact stores, so a replay names them without reading
+    /// a result that may since be erased.
+    #[must_use]
+    pub(super) fn new(
+        task_ref: EntityId,
+        actor_ref: EntityId,
+        result_ref: EntityId,
+        word_ref: EntityId,
+        actor_kind: u8,
+        result_kind: u8,
+    ) -> Self {
+        Self {
+            task_ref,
+            actor_ref,
+            result_ref,
+            word_ref,
+            task_record: RecordRef::from_id(ENTITY_TYPE_TASK, &task_ref, None),
+            actor_record: RecordRef::from_id(actor_kind, &actor_ref, None),
+            result_record: RecordRef::from_id(result_kind, &result_ref, None),
+            word_record: RecordRef::from_id(ENTITY_TYPE_TASK, &word_ref, None),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

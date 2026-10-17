@@ -617,19 +617,20 @@ fn replay_receipt(
             "ask intent key was used for different arguments",
         ));
     }
-    Ok(TaskAskReceipt {
-        handle: TaskAskHandle { group_ref: id },
-        task_refs: group
-            .members
-            .iter()
-            .map(|m| ask_record::entity(&m.task))
-            .collect::<crate::Result<Vec<_>>>()?,
-        hold: group
+    let task_refs = group
+        .members
+        .iter()
+        .map(|m| ask_record::entity(&m.task))
+        .collect::<crate::Result<Vec<_>>>()?;
+    Ok(TaskAskReceipt::new(
+        TaskAskHandle { group_ref: id },
+        task_refs,
+        group
             .no_live_route
             .then_some(TaskAskHoldReason::NoLiveRoute),
-        idempotent_replay: true,
-        statement: Some(group.statement),
-    })
+        true,
+        Some(group.statement),
+    ))
 }
 
 /// Owner and admitted responders read an ask; anyone else is refused.

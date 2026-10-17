@@ -389,7 +389,7 @@ impl Memory<'_> {
                 now,
             )?;
             if word.inform_for.is_none() && word.companion_for.is_none() {
-                complete_ask_member_in_txn(self.vault(), txn, answer, word, now)?;
+                complete_ask_member_in_txn(self.vault(), txn, &answer, word, now)?;
             }
             super::ask_settlement::settle_with_owner_in(
                 self.vault(),
@@ -424,7 +424,7 @@ impl Memory<'_> {
 pub(super) fn complete_ask_member_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    answer: super::TaskAskAnswer,
+    answer: &super::TaskAskAnswer,
     word: &super::TaskAskWord,
     now: u64,
 ) -> MemoryResult<()> {

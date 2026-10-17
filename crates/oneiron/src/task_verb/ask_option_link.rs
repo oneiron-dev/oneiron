@@ -378,10 +378,10 @@ impl Vault {
             &word,
             now,
         )?;
-        super::lifecycle_facade::complete_ask_member_in_txn(self, &mut txn, answer, &word, now)?;
+        super::lifecycle_facade::complete_ask_member_in_txn(self, &mut txn, &answer, &word, now)?;
         row.state = LinkState::Answered {
             option: option.clone(),
-            answer,
+            answer: answer.clone(),
         };
         put_row(self, &mut txn, &digest, &row)?;
         super::ask_settlement::settle_in(self, &mut txn, row.group, now)?;

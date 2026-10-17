@@ -98,8 +98,12 @@ struct AskAnswerFact {
     group: EntityId,
     task: EntityId,
     actor: EntityId,
+    /// The actor's and the result's entity types at admission, so the
+    /// answer's typed refs survive the result's later erasure.
+    actor_kind: u8,
     source: TaskAskSource,
     word: TaskAskWord,
+    result_kind: u8,
     #[serde(default)]
     link_proof: Option<link_proof::LinkProof>,
     order: u64,
@@ -492,12 +496,14 @@ pub(super) fn evidence_in(
             )?;
         }
         evidence.push(TaskAskEvidence {
-            answer: TaskAskAnswer {
-                task_ref: fact.task,
-                actor_ref: fact.actor,
-                result_ref: fact.word.result_ref,
+            answer: TaskAskAnswer::new(
+                fact.task,
+                fact.actor,
+                fact.word.result_ref,
                 word_ref,
-            },
+                fact.actor_kind,
+                fact.result_kind,
+            ),
             word: fact.word,
             source: fact.source,
             person_ref: person,

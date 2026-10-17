@@ -558,7 +558,7 @@ fn reduce(
             }) {
                 TaskAskDecision::No
             } else {
-                TaskAskDecision::First(entry.answer)
+                TaskAskDecision::First(entry.answer.clone())
             }
         }),
         // A tied opposing electorate is surfaced, never broken by arrival order.
