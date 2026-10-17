@@ -361,12 +361,12 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 3,
-      "mod": 2,
+      "mod": 3,
       "re-export": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ModeGateInputs",
@@ -377,6 +377,7 @@
      "purpose": "Provenance-carrying composite state for mode selection, never a diagnostic label",
      "surface": {
       "const": 3,
+      "crate-vis": 2,
       "fn": 4,
       "struct": 3
      }
@@ -388,6 +389,19 @@
      "path": "src/affect/state_index/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "StateWindow"
+     ],
+     "path": "src/affect/state_inputs.rs",
+     "purpose": "The composite state index's inputs, measured from the subject's own records (OF-335)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -17592,6 +17606,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActionModePolicy",
+      "ActionModeRule"
+     ],
+     "path": "src/dreamer_runner/maintenance/action_mode.rs",
+     "purpose": "Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -17782,7 +17812,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 9,
+      "mod": 10,
       "re-export": 3
      }
     },
@@ -48846,7 +48876,7 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49343,7 +49373,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50325,7 +50355,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3040,
+   "source_files": 3042,
    "test_files": 903
   },
   "oneiron-android": {
