@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::{ManifestDbs, Store};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
@@ -261,16 +261,15 @@ pub(crate) fn read_secret_custody_admission_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyAdmission>> {
-    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
-        return Ok(None);
-    };
-    let Some(header) = EntityMetadataHeader::parse(&raw) else {
-        return Err(Error::CorruptedIndex("secret custody entity header"));
-    };
-    if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
-        return Err(Error::CorruptedIndex("secret custody entity type"));
-    }
-    decode_secret_custody_admission_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
+    store.port_entity_with_raw(txn, id, |raw| {
+        let Some(header) = EntityMetadataHeader::parse(raw) else {
+            return Err(Error::CorruptedIndex("secret custody entity header"));
+        };
+        if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(Error::CorruptedIndex("secret custody entity type"));
+        }
+        decode_secret_custody_admission_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+    })
 }
 
 // ---------------------------------------------------------------------------

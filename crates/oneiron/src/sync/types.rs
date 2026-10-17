@@ -427,11 +427,10 @@ pub(crate) fn tombstone_residence_in(
     id: &crate::EntityId,
     key: &WindowKey,
 ) -> crate::error::Result<TombstoneResidence> {
-    let mapped_key = format!("m:dw:{}", id.to_hex());
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
     let mapped = vault
         .store
-        .sync_state
-        .get(txn, &mapped_key)?
+        .port_deletion_marker(txn, DeletionMarker::WindowAddress, id)?
         .map(|raw| {
             std::str::from_utf8(&raw)
                 .ok()

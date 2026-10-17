@@ -243,10 +243,11 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // manipulation.
     if tombstones.contains(id)
         || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)?
-        || crate::deletion::ROW_DELETION_FENCE.contains(
+        || crate::ports::TombstoneStoreRead::port_deletion_marked(
             &vault.store,
-            wtxn,
-            &crate::side_table::HexId(*id),
+            &*wtxn,
+            crate::ports::DeletionMarker::RowFence,
+            id,
         )?
     {
         return Ok(EndpointHydration::Deferred);

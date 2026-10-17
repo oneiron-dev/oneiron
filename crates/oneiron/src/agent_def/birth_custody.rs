@@ -1,8 +1,9 @@
 //! Physical custody of captured agent source, without authorship or delete grants.
 use super::portable_source::{birth_source_id, decode_birth_source};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET};
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{
     entity_id::EntityId,
     error::{Error, Result},
@@ -19,10 +20,6 @@ const BINDING: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::AGENT_DEF_BIRTH_ASSET_BINDING);
 /// Empty marker: an agent's birth source has been retired.
 const RETIRED: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::AGENT_DEF_BIRTH_RETIRED);
-/// The ARCH-0023b global local hard-delete marker (owned by
-/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn invalid() -> Error {
     Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(
@@ -49,7 +46,7 @@ pub(super) fn check_birth_custody(
     child: &EntityId,
 ) -> Result<()> {
     if RETIRED.contains(store, txn, child)?
-        || HARD_DELETE_MARKER.contains(store, txn, &HexId(*child))?
+        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, child)?
         || store.off_record_sessions.contains_entity(child)?
     {
         return Err(invalid());

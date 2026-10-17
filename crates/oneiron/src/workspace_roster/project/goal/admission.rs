@@ -150,7 +150,8 @@ pub(crate) fn guard_claim_put(
             };
             if project_bytes != *project.as_bytes()
                 || payload_hash != *blake3::hash(payload).as_bytes()
-                || crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &id)?.is_some()
+                || crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |_| Ok(()))?
+                    .is_some()
                 || body.lifecycle != ClaimLifecycleStatus::Active
             {
                 return Err(invalid());
@@ -383,11 +384,10 @@ pub(crate) fn precheck_delete(
         }
     }
     if let Some(kind) = super::super::project_type(store)
-        && crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &id)?.is_some_and(
-            |raw| {
-                EntityMetadataHeader::parse(&raw).is_some_and(|header| header.entity_type == kind)
-            },
-        )
+        && crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
+            Ok(EntityMetadataHeader::parse(raw).is_some_and(|header| header.entity_type == kind))
+        })?
+        .unwrap_or(false)
         && let Some(project) =
             super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?
         && project.goal.is_some()
@@ -460,11 +460,10 @@ pub(crate) fn guard_goal_delete(store: &Store, txn: &RoTxn<'_>, id: EntityId) ->
         return Err(invalid());
     }
     if let Some(kind) = super::super::project_type(store)
-        && crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &id)?.is_some_and(
-            |raw| {
-                EntityMetadataHeader::parse(&raw).is_some_and(|header| header.entity_type == kind)
-            },
-        )
+        && crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
+            Ok(EntityMetadataHeader::parse(raw).is_some_and(|header| header.entity_type == kind))
+        })?
+        .unwrap_or(false)
         && let Some(project) =
             super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?
         && project.goal.is_some()

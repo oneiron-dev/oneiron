@@ -3,7 +3,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
-use crate::ports::EntityStoreRead;
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
     ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD,
@@ -536,11 +536,10 @@ fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bo
         .local_hard_delete_marker_exists_in_txn(txn, id)
         .and_then(|hard| {
             Ok(hard
-                || crate::deletion::ROW_DELETION_FENCE.contains(
-                    &ctx.vault.store,
-                    txn,
-                    &crate::side_table::HexId(*id),
-                )?)
+                || ctx
+                    .vault
+                    .store
+                    .port_deletion_marked(txn, DeletionMarker::RowFence, id)?)
         });
     match marked {
         Ok(false) => false,

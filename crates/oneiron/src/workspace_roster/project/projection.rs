@@ -2,14 +2,8 @@
 use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::RecordError;
-use crate::side_table::HexId;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::store::Store;
-
-/// Existence check against the deletion module's local hard-delete marker
-/// (`dt:`, `crate::deletion::LOCAL_HARD_DELETE_PREFIX`) — not owned by this
-/// module; only presence is read here, so no value shape commitment is made.
-const HARD_DELETE_MARKERS: SideTable<HexId, (), Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn invalid() -> Error {
     RecordError::InvalidProjectBody("invalid project or ancestry").into()
@@ -24,7 +18,7 @@ pub(super) fn dependency(
     kind: u8,
 ) -> Result<ProjectRecord> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-        if HARD_DELETE_MARKERS.contains(store, txn, &HexId(id))? {
+        if store.port_deletion_marked(txn, DeletionMarker::HardDelete, &id)? {
             return Err(invalid());
         }
         return Err(RecordError::ProjectDependencyPending.into());
@@ -284,7 +278,7 @@ pub(crate) fn reconcile_project_rooms(
             let Some(message) =
                 crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &source)?
             else {
-                if HARD_DELETE_MARKERS.contains(store, txn, &HexId(source))? {
+                if store.port_deletion_marked(txn, DeletionMarker::HardDelete, &source)? {
                     return Err(invalid());
                 }
                 return Err(RecordError::ProjectDependencyPending.into());

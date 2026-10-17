@@ -224,16 +224,14 @@ impl Vault {
     /// holds its manifest before its first byte, so a server counts this
     /// before the read starts. `None` when no live object has the id.
     pub fn lfs_manifest_row_bytes(&self, oid: LfsOid) -> Result<Option<u64>> {
-        use crate::store::ManifestDbs as _;
+        use crate::ports::EntityStoreRead as _;
         let Some(object) = self.lfs_object(oid)? else {
             return Ok(None);
         };
         let txn = self.store.env.read_txn()?;
         Ok(self
             .store
-            .entities()
-            .get(&txn, object.asset_id.as_bytes())?
-            .map(|row| row.len() as u64))
+            .port_entity_with_raw(&txn, &object.asset_id, |row| Ok(row.len() as u64))?)
     }
 
     /// Whether a live object has this exact declared size.

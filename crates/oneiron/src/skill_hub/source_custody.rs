@@ -5,8 +5,9 @@ use super::source_carrier::{decode_source_carrier, source_carrier_id};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SKILL};
-use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::{SkillContentHash, SkillRecord};
 use crate::store::Store;
 
@@ -43,10 +44,6 @@ const INDEX: SideTable<(EntityId, [u8; 32]), CustodyState, Raw> =
     SideTable::new(&side_table::SKILL_HUB_SOURCE_CUSTODY);
 /// Empty-marker that a source holder's custody has been permanently retired.
 const RETIRED: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::SKILL_HUB_SOURCE_RETIRED);
-/// The ARCH-0023b global local hard-delete marker (owned by
-/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 /// Fixed 48-byte carrier/hash binding recorded for a pending or materialized
 /// source holder.
@@ -119,7 +116,9 @@ pub(super) fn check_source_target(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if RETIRED.contains(store, txn, id)? || HARD_DELETE_MARKER.contains(store, txn, &HexId(*id))? {
+    if RETIRED.contains(store, txn, id)?
+        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, id)?
+    {
         return Err(invalid("source custody target has been retired"));
     }
     Ok(())

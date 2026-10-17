@@ -5,8 +5,8 @@ use super::lifecycle::{DELETED, GC, JOURNAL, REVERSE};
 use super::store::{LfsObjectRecord, OBJECTS};
 use super::{LfsOid, LfsPutOutcome, VaultLfsObject};
 use crate::error::{Error, GateError, Result};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::side_table::HexId;
 use crate::{EntityId, TimeRange, Vault};
 use fastcdc::v2020::{Normalization, StreamCDC};
 use sha2::{Digest, Sha256};
@@ -22,12 +22,6 @@ pub const LFS_DEFAULT_OBJECT_CAP: u64 = 2 * 1024 * 1024 * 1024;
 /// field, value or JSON member of it. Above it, each chunk is read alone and
 /// the stream seam reads what each edge splits.
 pub const LFS_WHOLE_SCAN_MAX: u64 = 8 * 1024 * 1024;
-
-/// Local hard-delete marker (`deletion::tombstone` owns the writer side; this is a read-only
-/// existence check bound to the SAME declaration, never decoding the value — presence-only,
-/// exactly as every other reader of this row treats it). Key: hex32.
-const HARD_DELETE_MARKERS: crate::side_table::SideTable<HexId, Vec<u8>, crate::side_table::Raw> =
-    crate::side_table::SideTable::new(&crate::side_table::DELETION_HARD_DELETE_MARKER);
 
 impl Vault {
     /// Uploads any-sized object with bounded resident bytes and bounded writers.
@@ -179,7 +173,9 @@ impl Vault {
         let owner = EntityId::now();
         self.with_write_txn_grouped(|txn| {
             if DELETED.contains(&self.store, txn, &oid)?
-                || HARD_DELETE_MARKERS.contains(&self.store, txn, &HexId(asset_id))?
+                || self
+                    .store
+                    .port_deletion_marked(txn, DeletionMarker::HardDelete, &asset_id)?
             {
                 return Err(chunks::invalid("lfs object was permanently deleted"));
             }

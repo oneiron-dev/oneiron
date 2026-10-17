@@ -59,16 +59,10 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::sync::bridge::Materializer;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, PENDING_TOMBSTONE, WINDOW_UPDATE};
-
-/// The permanent local hard-delete marker (`dt:{entity_hex}`), value = the exact tombstone
-/// bytes. Owned by `deletion::tombstone`; bound here for this module's one read, as the
-/// reassert drain binds it.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn rejected() -> Error {
     Error::Sync(SyncError::SyncProtocolError {
@@ -612,7 +606,10 @@ fn carry_over_hard_deletes(vault: &Vault, old: &LoroDoc, candidate: &LoroDoc) ->
     {
         let rtxn = vault.store.env.read_txn()?;
         for id in ids {
-            if let Some(value) = HARD_DELETE_MARKER.get(&vault.store, &rtxn, &HexId(id))?
+            if let Some(value) =
+                vault
+                    .store
+                    .port_deletion_marker(&rtxn, DeletionMarker::HardDelete, &id)?
                 && !tombstones
                     .values_for(&id)
                     .iter()

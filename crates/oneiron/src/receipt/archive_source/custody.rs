@@ -4,8 +4,9 @@ use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     entity_id::EntityId,
     error::{Error, Result},
+    ports::{DeletionMarker, TombstoneStoreRead},
     registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM},
-    side_table::{self, HexId, Raw, SideTable},
+    side_table::{self, Raw, SideTable},
     store::Store,
 };
 use std::collections::BTreeSet;
@@ -28,10 +29,6 @@ const RETIRED_HOLDER: SideTable<EntityId, (), Raw> =
 /// Marks one archived receipt-source ASSET id as retired. Key: id16.
 const RETIRED_SOURCE: SideTable<EntityId, (), Raw> =
     SideTable::new(&side_table::RECEIPT_ARCHIVE_SOURCE_RETIRED);
-/// The ARCH-0023b global local hard-delete marker (owned by
-/// `crate::deletion::tombstone`); read-only here for the retired/deleted check.
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn slot_key(source: &ReceiptArchive) -> Result<(EntityId, [u8; 64], String)> {
     let hash: [u8; 64] = source
@@ -52,7 +49,7 @@ fn retired(
     id: &EntityId,
 ) -> Result<bool> {
     Ok(table.contains(store, txn, id)?
-        || HARD_DELETE_MARKER.contains(store, txn, &HexId(*id))?
+        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, id)?
         || store.off_record_sessions.contains_entity(id)?)
 }
 

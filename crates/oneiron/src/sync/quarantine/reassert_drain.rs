@@ -4,17 +4,9 @@ use std::sync::Arc;
 
 use crate::Vault;
 use crate::error::{Error, Result, SyncError};
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::sync::types::{WindowKey, parse_window_key_str};
 use crate::sync::window_rows::{REASSERT_MARKER, WindowEntityHexKey};
-
-/// The permanent local hard-delete marker (`dt:{entity_hex}`), value = the
-/// exact tombstone bytes. Owned by `deletion::tombstone` (see its
-/// `HARD_DELETE_MARKER` doc comment); this binds the SAME declaration
-/// independently for this module's one read (two typed tables, one
-/// declaration).
-const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
-    SideTable::new(&side_table::DELETION_HARD_DELETE_MARKER);
 
 fn reassert_window_entity_key(
     window_key: &str,
@@ -68,7 +60,10 @@ pub(in crate::sync) fn enqueue_tombstone_reassert_marker_in_txn(
     window_key: &str,
     id: &crate::entity_id::EntityId,
 ) -> Result<bool> {
-    let Some(dt_value) = HARD_DELETE_MARKER.get(&vault.store, wtxn, &HexId(*id))? else {
+    let Some(dt_value) = vault
+        .store
+        .port_deletion_marker(wtxn, DeletionMarker::HardDelete, id)?
+    else {
         return Ok(false);
     };
     REASSERT_MARKER.put(
