@@ -50,6 +50,13 @@ impl ProviderKind {
         !matches!(self, Self::Oneironer) && !self.media_only()
     }
 
+    /// Whether a `key_secret` key of this kind can leave through the
+    /// credential broker: a chat wire's, or the Gemini API's media wire's.
+    #[must_use]
+    pub fn brokers(self) -> bool {
+        self.generates() || matches!(self, Self::Gemini)
+    }
+
     /// Whether this kind serves media seats and nothing else.
     #[must_use]
     pub fn media_only(self) -> bool {
@@ -352,8 +359,10 @@ fn validate_key_secret(
             "models.providers.{name}.key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
         );
     }
-    if !kind.generates() {
-        anyhow::bail!("models.providers.{name}.key_secret applies to generating providers only");
+    if !kind.brokers() {
+        anyhow::bail!(
+            "models.providers.{name}.key_secret applies to generating and gemini providers only"
+        );
     }
     if !base_url.starts_with("https://") {
         anyhow::bail!(

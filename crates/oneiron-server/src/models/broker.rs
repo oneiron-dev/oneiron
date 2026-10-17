@@ -9,8 +9,10 @@
 //! sends once over verified TLS and strips the key from the reply. A refused
 //! or unreachable call never reads the key.
 //!
-//! A streamed call is refused before its permit starts: the broker buffers
-//! and strips whole replies only.
+//! A streamed chat call is refused before its permit starts: the broker
+//! buffers and strips whole chat replies. A `key_secret` provider's media
+//! calls go through the same broker, call by call
+//! ([`super::broker_media`]).
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,7 +49,7 @@ pub const BROKER_EFFECTOR: &str = "broker:model";
 
 /// How long the daemon waits for a reply past the provider's own timeout,
 /// which the broker's send runs under.
-const REPLY_MARGIN: Duration = Duration::from_secs(15);
+pub(super) const REPLY_MARGIN: Duration = Duration::from_secs(15);
 
 /// Reads a provider key at the vault's custody door, for one call.
 pub trait KeyDoor: Send + Sync {
@@ -310,48 +312,12 @@ impl BrokerBackend {
         header: &CallHeader,
         body: &[u8],
     ) -> LlmResult<oneiron_broker::BrokerReply> {
-        let connection = self.client.connect().await.map_err(broker_error)?;
-        let keys = Arc::clone(&self.keys);
-        let secret = self.secret.clone();
-        let key = tokio::task::spawn_blocking(move || keys.read(&secret))
-            .await
-            .map_err(|_| LlmError::from(FatalLlmError::Auth))?
-            .map_err(|_| {
-                tracing::warn!(
-                    reason = "key_custody_refused",
-                    "the custody door refused a provider key"
-                );
-                LlmError::from(FatalLlmError::Auth)
-            })?;
-        connection
-            .call(header, body, key)
-            .await
-            .map_err(broker_error)
+        call_with_key(&self.client, &self.keys, &self.secret, header, body).await
     }
 
     /// The provider's answer as the adapter reads it.
     fn answer(&self, outcome: Outcome, body: &[u8]) -> LlmResult<LlmResponse> {
-        let (status, headers) = match outcome {
-            Outcome::Answered { status, headers } => (status, headers),
-            // Nothing reached the provider.
-            Outcome::Refused {
-                reason: Refusal::Connect,
-            } => return Err(RetryableLlmError::StreamCut.into()),
-            Outcome::Refused { .. } => return Err(FatalLlmError::InvalidRequest.into()),
-            Outcome::Failed {
-                reason: Failure::Timeout,
-            } => return Err(RetryableLlmError::Timeout.into()),
-            Outcome::Failed {
-                reason: Failure::Send,
-            } => return Err(RetryableLlmError::StreamCut.into()),
-            Outcome::Failed {
-                reason:
-                    Failure::ReplyTooLarge
-                    | Failure::ReplyEncoded
-                    | Failure::Redirect
-                    | Failure::ReplyHoldsKey,
-            } => return Err(RetryableLlmError::ServerError.into()),
-        };
+        let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
         if !(200..300).contains(&status) {
             let headers: BTreeMap<String, String> = headers
@@ -378,9 +344,64 @@ impl BrokerBackend {
     }
 }
 
+/// Connects to the broker at `client`, reads the key `secret` at the door,
+/// and makes the one call `header` checks. Nothing reads the key before the
+/// broker is reached.
+pub(super) async fn call_with_key(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+    header: &CallHeader,
+    body: &[u8],
+) -> LlmResult<oneiron_broker::BrokerReply> {
+    let connection = client.connect().await.map_err(broker_error)?;
+    let keys = Arc::clone(keys);
+    let secret = secret.to_owned();
+    let key = tokio::task::spawn_blocking(move || keys.read(&secret))
+        .await
+        .map_err(|_| LlmError::from(FatalLlmError::Auth))?
+        .map_err(|_| {
+            tracing::warn!(
+                reason = "key_custody_refused",
+                "the custody door refused a provider key"
+            );
+            LlmError::from(FatalLlmError::Auth)
+        })?;
+    connection
+        .call(header, body, key)
+        .await
+        .map_err(broker_error)
+}
+
+/// The provider's status and headers when it answered, or the error a call
+/// with no answer is.
+pub(super) fn answered(outcome: Outcome) -> LlmResult<(u16, Vec<(String, String)>)> {
+    match outcome {
+        Outcome::Answered { status, headers } => Ok((status, headers)),
+        // Nothing reached the provider.
+        Outcome::Refused {
+            reason: Refusal::Connect,
+        } => Err(RetryableLlmError::StreamCut.into()),
+        Outcome::Refused { .. } => Err(FatalLlmError::InvalidRequest.into()),
+        Outcome::Failed {
+            reason: Failure::Timeout,
+        } => Err(RetryableLlmError::Timeout.into()),
+        Outcome::Failed {
+            reason: Failure::Send,
+        } => Err(RetryableLlmError::StreamCut.into()),
+        Outcome::Failed {
+            reason:
+                Failure::ReplyTooLarge
+                | Failure::ReplyEncoded
+                | Failure::Redirect
+                | Failure::ReplyHoldsKey,
+        } => Err(RetryableLlmError::ServerError.into()),
+    }
+}
+
 /// The base URL's path prefix and a protocol path. A prefix that already
 /// ends in `/v1` absorbs the path's own `/v1`, as the HTTP transport does.
-fn join(prefix: &str, path: &str) -> String {
+pub(super) fn join(prefix: &str, path: &str) -> String {
     match (prefix.strip_suffix("/v1"), path.strip_prefix("/v1/")) {
         (Some(base), Some(rest)) => format!("{base}/v1/{rest}"),
         _ => format!("{prefix}{path}"),

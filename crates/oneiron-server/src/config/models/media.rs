@@ -182,13 +182,9 @@ impl MediaSeatFile {
                         && operation == AiOperation::Transcribe),
                 "models.media.{key}: {model} is not on an OpenAI-compatible provider; media calls speak its /v1 media paths, a cartesia, elevenlabs or voxcpm2 provider serves the speech seat only, a gemini provider the image and video seats only, and a soniox provider the transcribe seat only"
             );
-            // The credential broker sends chat calls only. A media call sent
-            // without it would carry no key, while its offer says the broker
-            // holds one.
-            anyhow::ensure!(
-                provider.key_secret.is_none(),
-                "models.media.{key}: {model} is on a key_secret provider; the credential broker sends chat calls only"
-            );
+            // A key_secret provider's media calls go through the credential
+            // broker, which has a shape for every OpenAI-compatible media
+            // path and for the Gemini API's image and video calls.
             anyhow::ensure!(
                 !rungs.contains(&model),
                 "models.media.{key}: {model} appears twice in one ladder"

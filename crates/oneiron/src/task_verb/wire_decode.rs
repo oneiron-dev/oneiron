@@ -313,7 +313,20 @@ pub(super) fn decode_task_verb_body(body: &[u8]) -> Result<TaskVerbBody> {
         subproject_ref: task_body_optional(entries, "subproject_ref")?
             .map(|value| decode_entity_ref(value, "tasks.body.subproject_ref"))
             .transpose()?,
+        team: task_body_optional(entries, "team")?
+            .map(decode_team_stamp)
+            .transpose()?,
     })
+}
+
+/// Inverse of `wire_encode::team_stamp_value`: a stamp `TeamReceipt` would
+/// refuse is a corrupt body.
+fn decode_team_stamp(value: &Value) -> Result<crate::agent_dispatch::TeamRunStamp> {
+    let bytes = super::wire_encode::canonical_bytes(value);
+    let team: crate::agent_dispatch::TeamRunStamp = rmp_serde::from_slice(&bytes)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("tasks.body.team")))?;
+    team.validate()?;
+    Ok(team)
 }
 
 /// Inverse of `wire_encode::task_refusal_record_value`.

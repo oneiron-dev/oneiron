@@ -245,15 +245,34 @@ impl Vault {
                 body = Value::Null;
                 nulled = true;
             }
-            records.push(serde_json::json!({
-                "id": id.to_hex(), "entity_type": header.entity_type,
-                "occurred_start": header.occurred_start, "occurred_end": header.occurred_end,
-                "learned_at": header.learned_at, "body": body,
-            }));
+            records.push((
+                *id,
+                serde_json::json!({
+                    "id": id.to_hex(), "entity_type": header.entity_type,
+                    "occurred_start": header.occurred_start, "occurred_end": header.occurred_end,
+                    "learned_at": header.learned_at, "body": body,
+                }),
+            ));
+        }
+        // A birth leaves naming only the rows this bundle carries (Q26 = B);
+        // one key per export, so its handles link to no other copy.
+        let ships: std::collections::BTreeSet<EntityId> =
+            records.iter().map(|(id, _)| *id).collect();
+        let key = crate::provenance::birth::WithheldKey::for_export();
+        let mut entities = Vec::with_capacity(records.len());
+        for (id, mut record) in records {
+            if let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.store, &txn, &id)?
+                && let Some(fields) = record.as_object_mut()
+            {
+                let birth = serde_json::to_value(birth.masked(|row| ships.contains(row), &key))
+                    .map_err(|_| Error::InvariantViolation("export birth JSON encode failed"))?;
+                fields.insert("birth".into(), birth);
+            }
+            entities.push(record);
         }
         let manifest =
             ExportManifest::from_secrets_nulled(ExportSecretsNulledManifest::from_redacted(nulled));
-        serde_json::to_vec(&serde_json::json!({"manifest": manifest, "entities": records}))
+        serde_json::to_vec(&serde_json::json!({"manifest": manifest, "entities": entities}))
             .map_err(|_| Error::InvariantViolation("entity export JSON encode failed"))
     }
 }
