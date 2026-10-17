@@ -58062,6 +58062,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArmedLane",
       "CommitmentDeadline",
       "DeadlineSource",
       "HintSignal",
@@ -58074,7 +58075,7 @@
      "purpose": "Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and…",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
+      "enum": 2,
       "struct": 4,
       "trait": 2
      }
@@ -58105,9 +58106,9 @@
      "path": "src/tick/push.rs",
      "purpose": "Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -61609,7 +61610,7 @@
      "path": "src/embedded.rs",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -61644,7 +61645,7 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 14,
+      "fn": 15,
       "mod": 1,
       "re-export": 3,
       "struct": 2
@@ -63087,7 +63088,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -66440,7 +66441,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 12,
       "re-export": 19,
       "struct": 1
@@ -66780,7 +66781,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 11
      }
     },
     {
@@ -67531,6 +67532,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embedded.rs",
+     "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/embedder/admitted.rs",
      "purpose": "A remote embedder's requests under run admission (ARCH-0053 `#run-admission`)",
      "surface": {
@@ -68084,7 +68095,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "fn": 3,
-      "mod": 23,
+      "mod": 24,
       "re-export": 1
      }
     },
@@ -70115,7 +70126,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 3
      }
     },
@@ -71109,6 +71120,13 @@
      "layout": "file",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
+    "embedded": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
+    },
     "embedder": {
      "files": 24,
      "impl_vault": false,
@@ -71343,7 +71361,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 570,
+   "source_files": 571,
    "test_files": 182
   },
   "oneiron-spawn": {
