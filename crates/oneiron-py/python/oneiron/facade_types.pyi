@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 231 facade rows, 797 declarations.
-Inputs: 196 of 231 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 186 of 231 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 232 facade rows, 808 declarations.
+Inputs: 197 of 232 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 187 of 232 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 54; unread shapes: 1.
 """
 
@@ -1951,6 +1951,53 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+class SecretLiftRequest(TypedDict):
+    start: NotRequired[bool]
+SecretScanMode = Literal["on", "off"]
+LiftTrigger = Literal["switch", "owner"]
+LiftFamily = Literal["records", "side_rows", "carriers"]
+class LiftCounts(TypedDict):
+    family: LiftFamily
+    read: int
+    masked: int
+    proposals: int
+    failed: int
+class SecretLiftProgress(TypedDict):
+    run_id: str
+    trigger: LiftTrigger
+    requested_at: int
+    family: LiftFamily
+    retrying: int
+    counts: list[LiftCounts]
+class SecretLiftReceipt(TypedDict):
+    receipt_id: str
+    trigger: LiftTrigger
+    requested_by: NotRequired[str | None]
+    requested_at: int
+    finished_at: int
+    families: list[LiftCounts]
+    masked: int
+    proposals: int
+    failed: int
+LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class SecretLiftProposal(TypedDict):
+    path: str
+    detector_reason: str
+    suggested_secret_name: str
+    project_id: str
+class SecretLiftHistoryProposal(TypedDict):
+    family: LiftFamily
+    cause: LiftCause
+    proposal: SecretLiftProposal
+    run_id: str
+    filed_at: int
+class SecretLiftStatus(TypedDict):
+    mode: SecretScanMode
+    paused: bool
+    running: NotRequired[SecretLiftProgress | None]
+    last: NotRequired[SecretLiftReceipt | None]
+    open_proposals: int
+    proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
     state: NotRequired[WidenProposalState | None]

@@ -425,6 +425,22 @@ pub(crate) fn live_frontier_in_txn(
     Ok(document_store::load(vault, txn, id)?.view()?.frontier)
 }
 
+/// The historical lift sweep's door to a NOTE (OF-067): its live document,
+/// stored again as this host's own write. Its live text is admitted as an
+/// edit's is, a masked document keeps no history, and the text index is
+/// written again from the live text. A title or a pin quote that holds a hit
+/// refuses, as at an edit. Returns whether the live text changed.
+pub(crate) fn lift_note_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+) -> Result<bool> {
+    let doc = document_store::load(vault, txn, id)?;
+    let before = doc.view()?.markdown;
+    document_store::persist_authoritative(vault, txn, &doc)?;
+    Ok(doc.view()?.markdown != before)
+}
+
 mod document_store;
 mod folder_source;
 pub use folder_source::{

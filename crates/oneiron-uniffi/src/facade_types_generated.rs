@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 231 facade rows, 667 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 191.
+// UniFFI census: 232 facade rows, 678 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 192.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -4509,6 +4509,164 @@ pub struct LearningSettingClear {
     pub project: Option<String>,
     #[serde(rename = "task_type", default, skip_serializing_if = "Option::is_none")]
     pub task_type: Option<String>,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::SecretLiftRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretLiftRequest {
+    #[serde(rename = "start", default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<bool>,
+}
+
+/// `oneiron::batch::secret_scan::SecretScanMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SecretScanMode {
+    #[serde(rename = "on")]
+    On,
+    #[serde(rename = "off")]
+    Off,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::LiftTrigger`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LiftTrigger {
+    #[serde(rename = "switch")]
+    Switch,
+    #[serde(rename = "owner")]
+    Owner,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::LiftFamily`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LiftFamily {
+    #[serde(rename = "records")]
+    Records,
+    #[serde(rename = "side_rows")]
+    SideRows,
+    #[serde(rename = "carriers")]
+    Carriers,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::LiftCounts`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LiftCounts {
+    #[serde(rename = "family")]
+    pub family: LiftFamily,
+    #[serde(rename = "read")]
+    pub read: u64,
+    #[serde(rename = "masked")]
+    pub masked: u64,
+    #[serde(rename = "proposals")]
+    pub proposals: u64,
+    #[serde(rename = "failed")]
+    pub failed: u64,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::SecretLiftProgress`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretLiftProgress {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "trigger")]
+    pub trigger: LiftTrigger,
+    #[serde(rename = "requested_at")]
+    pub requested_at: u64,
+    #[serde(rename = "family")]
+    pub family: LiftFamily,
+    #[serde(rename = "retrying")]
+    pub retrying: u64,
+    #[serde(rename = "counts")]
+    pub counts: Vec<LiftCounts>,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::SecretLiftReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretLiftReceipt {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+    #[serde(rename = "trigger")]
+    pub trigger: LiftTrigger,
+    #[serde(
+        rename = "requested_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requested_by: Option<String>,
+    #[serde(rename = "requested_at")]
+    pub requested_at: u64,
+    #[serde(rename = "finished_at")]
+    pub finished_at: u64,
+    #[serde(rename = "families")]
+    pub families: Vec<LiftCounts>,
+    #[serde(rename = "masked")]
+    pub masked: u64,
+    #[serde(rename = "proposals")]
+    pub proposals: u64,
+    #[serde(rename = "failed")]
+    pub failed: u64,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::LiftCause`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LiftCause {
+    #[serde(rename = "unplaceable")]
+    Unplaceable,
+    #[serde(rename = "immutable")]
+    Immutable,
+    #[serde(rename = "held")]
+    Held,
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "no_door")]
+    NoDoor,
+    #[serde(rename = "history")]
+    History,
+}
+
+/// `oneiron::secret_snapshot::SecretLiftProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretLiftProposal {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "detector_reason")]
+    pub detector_reason: String,
+    #[serde(rename = "suggested_secret_name")]
+    pub suggested_secret_name: String,
+    #[serde(rename = "project_id")]
+    pub project_id: String,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::SecretLiftHistoryProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretLiftHistoryProposal {
+    #[serde(rename = "family")]
+    pub family: LiftFamily,
+    #[serde(rename = "cause")]
+    pub cause: LiftCause,
+    #[serde(rename = "proposal")]
+    pub proposal: SecretLiftProposal,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "filed_at")]
+    pub filed_at: u64,
+}
+
+/// `oneiron::batch::secret_scan::lift_history::SecretLiftStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretLiftStatus {
+    #[serde(rename = "mode")]
+    pub mode: SecretScanMode,
+    #[serde(rename = "paused")]
+    pub paused: bool,
+    #[serde(rename = "running", default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<SecretLiftProgress>,
+    #[serde(rename = "last", default, skip_serializing_if = "Option::is_none")]
+    pub last: Option<SecretLiftReceipt>,
+    #[serde(rename = "open_proposals")]
+    pub open_proposals: u64,
+    #[serde(rename = "proposals")]
+    pub proposals: Vec<SecretLiftHistoryProposal>,
 }
 
 /// `oneiron::agent_dispatch::widen_doors::WidenProposalState`.

@@ -104,6 +104,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.settings.learning", post(facade_route))
         .route("/vault.settings.learning.put", post(facade_route))
         .route("/vault.settings.learning.clear", post(facade_route))
+        .route("/vault.secrets.lift_history", post(facade_route))
         .route("/vault.widen_proposals", post(facade_route))
         .route("/vault.widen_proposals.approve", post(facade_route))
         .route("/vault.widen_proposals.decline", post(facade_route))

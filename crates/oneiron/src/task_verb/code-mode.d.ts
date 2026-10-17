@@ -371,6 +371,9 @@ declare const vault: {
   search: ((input: { limit?: number | null; query: string }) => Promise<unknown>) & {
     bm25(input: { limit: number; query: string }): Promise<unknown>;
   };
+  secrets: {
+    lift_history(input: { start?: boolean }): Promise<unknown>;
+  };
   settings: {
     inference_defaults: ((input: object) => Promise<unknown>) & {
       replace(input: { defaults: unknown; idempotency_key: string }): Promise<unknown>;
