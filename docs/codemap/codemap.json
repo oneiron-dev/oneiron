@@ -1741,6 +1741,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/engine/place.rs",
+     "purpose": "Placement inside a caller-owned writer: a row enqueued in the same transaction takes its worker and parent…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/engine/prune.rs",
      "purpose": "The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried…",
      "surface": {
@@ -14476,7 +14486,7 @@
      "surface": {
       "crate-vis": 6,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -24619,7 +24629,7 @@
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
       "crate-vis": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -24689,6 +24699,20 @@
      "surface": {
       "enum": 2,
       "fn": 8,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapePlanCard",
+      "ShapePlanCardItem"
+     ],
+     "path": "src/genui/shape_plan.rs",
+     "purpose": "The vault shape's plan card (ARCH-0070 `shape:plan-apply`, the plan card door): a plan as the owner meets it…",
+     "surface": {
+      "fn": 3,
       "struct": 2
      }
     },
@@ -30396,7 +30420,7 @@
      "path": "src/memory/shape_doors.rs",
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -49383,6 +49407,7 @@
      "path": "src/vault_shape/apply.rs",
      "purpose": "Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has",
      "surface": {
+      "crate-vis": 4,
       "enum": 2,
       "fn": 5,
       "struct": 3
@@ -49431,6 +49456,20 @@
      "surface": {
       "enum": 1,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeInboxGroup",
+      "ShapeInboxMember"
+     ],
+     "path": "src/vault_shape/group.rs",
+     "purpose": "The apply's inbox group (ARCH-0070 `shape:plan-apply`): one group per apply, keyed by its run-tree root…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -49487,8 +49526,8 @@
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 4,
-      "re-export": 9,
+      "fn": 5,
+      "re-export": 11,
       "struct": 3
      }
     },
@@ -49506,7 +49545,7 @@
      "purpose": "Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item…",
      "surface": {
       "enum": 2,
-      "fn": 4,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -49527,6 +49566,21 @@
       "enum": 1,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ShapeApplyRun"
+     ],
+     "path": "src/vault_shape/run.rs",
+     "purpose": "The apply's run tree (ARCH-0070 `shape:plan-apply`): one run-tree root per apply and one child row per item…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -52620,7 +52674,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53208,7 +53262,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -54013,7 +54067,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 12,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54078,7 +54132,7 @@
    },
    "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3283,
+   "source_files": 3287,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74542,6 +74596,7 @@
       "ShapeApplyItem",
       "ShapeApplyReceipt",
       "ShapeApplyRequest",
+      "ShapeApplyRun",
       "ShapeCard",
       "ShapeCeiling",
       "ShapeChange",
@@ -74776,7 +74831,7 @@
      "purpose": "—",
      "surface": {
       "enum": 300,
-      "struct": 786
+      "struct": 787
      }
     },
     {

@@ -146,6 +146,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/attempt_queue/engine/enqueue_claim.rs` | src | L | 5 fn · 13 crate-vis | — | Enqueue doors plus kind-scoped claim machinery and read-repair scans |
 | `src/attempt_queue/engine/mod.rs` | src | s | 1 struct · 4 crate-vis | AttemptQueue | The [`AttemptQueue`] handle and its lease state machine |
 | `src/attempt_queue/engine/mutate.rs` | src | m | 5 fn · 7 crate-vis | — | Retry/intervene/manifest append plus lease-cleanup mutation doors |
+| `src/attempt_queue/engine/place.rs` | src | s | 1 crate-vis | — | Placement inside a caller-owned writer: a row enqueued in the same transaction takes its worker and parent… |
 | `src/attempt_queue/engine/prune.rs` | src | s | 2 crate-vis | — | The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried… |
 | `src/attempt_queue/engine/reads.rs` | src | m | 4 fn · 23 crate-vis | — | Point/list/dedupe reads plus retry-chain and dreamer-root walks |
 | `src/attempt_queue/engine/redirect.rs` | src | s | 1 fn | — | Atomic operator placement changes with lease fencing and cycle refusal |
@@ -1147,7 +1148,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/tests/owner_tier.rs` | test | m | — | — | A native host's proof shows a live person, not whose vault this is, so an owner door asks for both (F18 tier… |
 | `src/consent/tests/shared_brief.rs` | test | s | — | — | — |
 | `src/consent/tests/stale_proofs.rs` | test | s | — | — | An owner proof acts only while it still holds, checked in the transaction that writes the act… |
-| `src/consent/widen.rs` | src | m | 1 struct · 1 enum · 8 fn · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
+| `src/consent/widen.rs` | src | m | 1 struct · 1 enum · 9 fn · 6 crate-vis | WidenKind, WidenProposal | Propose-only authority widening |
 | `src/consent_graduation/doors.rs` | src | m | 11 fn · 1 crate-vis | — | Public Vault doors plus the shared accept-offer txn helper used by ED-05 |
 | `src/consent_graduation/fold.rs` | src | m | 14 crate-vis | — | Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold |
 | `src/consent_graduation/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that… |
@@ -1946,11 +1947,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/consent_eval.rs` | src | m | 3 struct · 6 enum · 11 fn · 5 const · 10 crate-vis | ConsentActionDecision, ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentConfirmOutcome, ConsentSurface, GrantMintIntent +1 | DEC-0006 action vocabulary, request/decision/intent types and evaluation helpers |
 | `src/genui/failure_card.rs` | src | s | 4 struct · 1 enum · 1 fn · 1 const · 1 crate-vis | FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SurfacedFailureCard, SurfacedFailureCardInput | ONE-1887 surfaced-failure card composer and QA validators |
 | `src/genui/failure_card_validation.rs` | src | s | 2 crate-vis | — | Read-only integrity checks for surfaced failure cards |
-| `src/genui/mod.rs` | src | s | 8 re-export · 1 crate-vis | — | OF-336 generated-UI component contract |
+| `src/genui/mod.rs` | src | s | 9 re-export · 1 crate-vis | — | OF-336 generated-UI component contract |
 | `src/genui/offer_card.rs` | src | m | 4 struct · 3 enum · 15 fn · 5 const | OfferAnswerIntent, OfferCardIntent, OfferCardOutcome, OfferCardPayload, OfferCardPhase, OfferReopenIntent, OfferVoteIntent | The offer card's render-neutral payload and its write-free intents (OF-530): the host's answer, a room… |
 | `src/genui/project_proposal.rs` | src | m | 4 struct · 7 fn · 1 const | ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard, ProjectProposalPicks | Typed project proposal and owner-confirmed, write-free mint intent (OF-501) |
 | `src/genui/protocol.rs` | src | s | 1 struct · 1 enum · 1 fn | Of336ActionDescriptor, Of336ComponentKind | OF-336 component discriminators and the action descriptor every card advertises |
 | `src/genui/receipt_view.rs` | src | s | 2 struct · 2 enum · 8 fn | ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution | Receipt view component, deep-link kinds and commitment link resolver |
+| `src/genui/shape_plan.rs` | src | s | 2 struct · 3 fn | ShapePlanCard, ShapePlanCardItem | The vault shape's plan card (ARCH-0070 `shape:plan-apply`, the plan card door): a plan as the owner meets it… |
 | `src/genui/tests.rs` | test | m | — | — | — |
 | `src/genui/tests/failure_integrity.rs` | test | s | — | — | — |
 | `src/genui/voice_offer.rs` | src | m | 1 struct · 3 fn | VoiceGrantOffer | Voice-only disclosure widening is an offer, not an authorization |
@@ -2366,7 +2368,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/recall/scope_honesty.rs` | src | s | 1 crate-vis | — | Scope-honesty world names come only from actor-admitted claim rows |
 | `src/memory/report.rs` | src | s | 4 fn | — | A report files evidence, not authority |
 | `src/memory/room_turn.rs` | src | s | 1 struct · 14 fn · 3 crate-vis | RoomTurnHandle | A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope |
-| `src/memory/shape_doors.rs` | src | s | 5 fn | — | The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and… |
+| `src/memory/shape_doors.rs` | src | s | 6 fn | — | The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and… |
 | `src/memory/skill_authoring.rs` | src | m | 1 struct · 4 fn · 2 crate-vis | SkillAuthoringReceipt | Authored skill saves and forks over the existing skill lifecycle gate |
 | `src/memory/structural/affiliated.rs` | src | s | 4 fn · 1 crate-vis | — | Attributed takes and imported-claim admission verbs |
 | `src/memory/structural/codec.rs` | src | s | 3 crate-vis | — | Edge weight and registry kind lookups for structural puts |
@@ -3921,16 +3923,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_cleanup/tests.rs` | test | m | — | — | ARCH-0073 vault auto-cleanup fixtures (ONE-1931) |
 | `src/vault_cleanup/tripwire.rs` | src | m | 6 fn · 1 const · 7 crate-vis | — | Closed-form cleanup checks, the posture door, and the job body |
 | `src/vault_cleanup/visibility.rs` | src | s | 1 crate-vis | — | Local archive visibility |
-| `src/vault_shape/apply.rs` | src | L | 3 struct · 2 enum · 5 fn | ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState | Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has |
+| `src/vault_shape/apply.rs` | src | L | 3 struct · 2 enum · 5 fn · 4 crate-vis | ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState | Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has |
 | `src/vault_shape/card.rs` | src | s | 1 struct · 1 fn | ShapeCard | `describe(vault)`'s card (ARCH-0070 doors): the arrangement at a glance and what its actors can send, a free… |
 | `src/vault_shape/channel.rs` | src | s | 1 struct · 5 enum · 3 crate-vis | ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision, ShapeMailScope, ShapeSelfHeld | How a declared channel identity is held, bound and fulfilled, as a seed writes it (ARCH-0063) |
 | `src/vault_shape/grant.rs` | src | s | 1 enum · 3 fn | ShapeGrantBound | A standing grant's bound as a seed writes it (DEC-0006): who, which class, which envelope |
+| `src/vault_shape/group.rs` | src | s | 2 struct · 2 fn | ShapeInboxGroup, ShapeInboxMember | The apply's inbox group (ARCH-0070 `shape:plan-apply`): one group per apply, keyed by its run-tree root… |
 | `src/vault_shape/live.rs` | src | m | 7 crate-vis | — | The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed… |
 | `src/vault_shape/manifest.rs` | src | s | 2 crate-vis | — | A policy manifest as a seed writes it (DEC-0005): its entity id and its exact MessagePack body, as hex |
 | `src/vault_shape/member.rs` | src | s | 2 struct · 2 enum · 2 fn · 1 crate-vis | ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick | Shared-vault membership as shape rows (ARCH-0043 presets as seeds) |
-| `src/vault_shape/mod.rs` | src | m | 3 struct · 3 enum · 4 fn · 2 const · 9 re-export | ShapeCeiling, ShapePlanRequest, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget | Vault shape as code (ARCH-0070): the setup plane held in one hand |
-| `src/vault_shape/plan.rs` | src | m | 3 struct · 2 enum · 4 fn | ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary | Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item… |
+| `src/vault_shape/mod.rs` | src | m | 3 struct · 3 enum · 5 fn · 2 const · 11 re-export | ShapeCeiling, ShapePlanRequest, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget | Vault shape as code (ARCH-0070): the setup plane held in one hand |
+| `src/vault_shape/plan.rs` | src | m | 3 struct · 2 enum · 6 fn | ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary | Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item… |
 | `src/vault_shape/reach.rs` | src | m | 3 struct · 1 enum · 1 fn · 3 const · 8 crate-vis | ShapePlanReach, ShapeReach, ShapeReachFact, ShapeReachVerdict | The reach line (ARCH-0070 `shape:reach-line`, OSH p3): what each actor can send, read as a set join over… |
+| `src/vault_shape/run.rs` | src | m | 1 struct · 2 fn · 2 const · 2 crate-vis | ShapeApplyRun | The apply's run tree (ARCH-0070 `shape:plan-apply`): one run-tree root per apply and one child row per item… |
 | `src/vault_shape/seed.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | StoredShapeSeed | The seed's store: each revision is one immutable ASSET row in the replicated ledger, the same carrier a… |
 | `src/vault_shape/skill.rs` | src | s | 1 enum · 2 crate-vis | ShapeSkillSource | Where a declared skill comes from, as a seed writes it (ARCH-0053) |
 | `src/voice_cascade.rs` | src | s | 6 mod · 6 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
