@@ -35,8 +35,8 @@ use serde::{Deserialize, Serialize};
 
 use super::confined::open_file;
 use super::{
-    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, no_hook_root, own_second,
-    queue_dreamer, queued_stamp, read_queued,
+    Decoded, ImportWarning, QueuedSession, Totals, below, crossed_decoded, earliest_first,
+    no_hook_root, own_second, queue_dreamer, queued_stamp, read_queued,
 };
 use crate::config::{ImportConfig, ServeConfig};
 use crate::server::SyncServer;
@@ -182,11 +182,11 @@ struct Chosen {
     waits: Vec<Claimed>,
 }
 
-/// What a pass landed, and the logs it left out.
+/// What a pass landed, and what it held decoded.
 #[derive(Default)]
 struct Landed {
     totals: Totals,
-    left_out: Vec<ImportWarning>,
+    decoded: Decoded,
 }
 
 #[cfg(test)]
@@ -304,7 +304,7 @@ impl ImportQueue {
         let mut done = Vec::new();
         for (held, Log { source, session }) in landing {
             entries.push((source, session.conversations));
-            landed.left_out.extend(session.left_out);
+            landed.decoded = landed.decoded.and(session.decoded);
             done.push((held, session.mid_line));
         }
         landed.totals = land(vault, entries)
@@ -317,17 +317,21 @@ impl ImportQueue {
             unreadable = totals.not_kept.unreadable,
             changed = totals.changed,
             refused = totals.refused,
-            too_large = landed.left_out.len(),
             "queued import landed"
         );
-        for left_out in &landed.left_out {
-            if let ImportWarning::LogTooLarge { path, bytes, limit } = left_out {
+        // A session past the pass budget lands alone, whole; its rows ask.
+        for crossed in crossed_decoded(vault, landed.decoded) {
+            if let ImportWarning::LimitCrossed {
+                row,
+                limit,
+                observed,
+            } = crossed
+            {
                 tracing::warn!(
-                    warning = "log_too_large",
-                    path = %path,
-                    bytes,
+                    row,
                     limit,
-                    "queued import left out a session log over the per-log limit; the rest landed"
+                    observed,
+                    "queued import held more than a [limits] row decoded; it landed whole, and the row asks"
                 );
             }
         }
