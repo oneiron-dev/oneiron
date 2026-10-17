@@ -8,6 +8,7 @@
 mod admission;
 pub(crate) use admission::admit_federated_entity_blob;
 mod authorize;
+mod born_with;
 mod codec;
 mod document_admission;
 mod epoch_egress;
@@ -43,6 +44,8 @@ pub(in crate::sync) use self::admission::{
     revalidate_admitted_federated_claims, staged_births,
 };
 pub use self::authorize::authorize_sync_selector;
+pub use self::born_with::GrantTravel;
+pub(crate) use self::born_with::carried_born_with;
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,

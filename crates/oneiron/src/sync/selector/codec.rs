@@ -20,6 +20,7 @@ use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
 use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
+use super::born_with::carry_born_with;
 use crate::provenance::birth::WithheldKey;
 use crate::sync::row_birth::BirthReach;
 
@@ -324,7 +325,7 @@ pub fn filtered_window_doc_for_peer(
         selector,
         vault.store.clock.now_recorded_at(),
     )?;
-    filter_window_doc(
+    let out = filter_window_doc(
         vault,
         source,
         key,
@@ -332,7 +333,12 @@ pub fn filtered_window_doc_for_peer(
         &position,
         Withhold::Peer(peer),
         reach,
-    )
+    )?;
+    // Beside the masked births goes the text the grant's owner lets travel.
+    if matches!(reach, BirthReach::OtherVault(_)) {
+        carry_born_with(vault, &out, &selector.grant_id)?;
+    }
+    Ok(out)
 }
 
 /// [`filtered_window_doc`] for the machine a residence read serves: the
@@ -435,6 +441,7 @@ pub fn guest_share_envelope_body(
         BirthReach::OtherVault(&withheld),
     )?;
     let stripped = strip_guest_share_metadata(&filtered, key, &withheld)?;
+    carry_born_with(vault, &stripped, &selector.grant_id)?;
     let update = stripped
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;

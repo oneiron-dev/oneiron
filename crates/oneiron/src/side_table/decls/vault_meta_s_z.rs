@@ -478,6 +478,13 @@ side_tables! {
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named;
+    /// Born-with text a copy from another vault carried for one row: the fields its sharer let
+    /// travel (OF-491), prose only, never a ref. Key: id16 (the row).
+    SYNC_BORN_WITH_CARRIED: VaultMeta b"sync:born_with:carried:v1:" Named;
+    /// The born-with text the owner lets one federation grant's windows carry to another vault,
+    /// set on this device and never synced or taken from the wire (OF-491). Key: id16 (the
+    /// grant).
+    SYNC_BORN_WITH_GRANT: VaultMeta b"sync:born_with:grant:v1:" Named;
     /// Which turns' saved tag sets name one entity, real or provisional: derived, local, never
     /// synced. Empty marker. Key: entity id16 + turn id16.
     TAGGING_MENTION_REF: VaultMeta b"tagging:mention_ref:v1:" Raw;
