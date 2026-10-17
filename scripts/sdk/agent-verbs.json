@@ -679,6 +679,16 @@
       "section": false
     },
     {
+      "name": "vault.weave.link.wrong",
+      "input": "crate::claim::WeaveWrongLinkRequest",
+      "output": "crate::claim::WeaveLinkCorrectionView",
+      "call": "memory.weave_wrong_link(None, &memory.embedded_owner(\"vault.weave.link.wrong\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.packs.put",
       "input": "PackPutRequest",
       "output": "crate::task_verb::sdk::PackPutReceipt",
@@ -2174,6 +2184,36 @@
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::BatchOutput",
       "call": "driver.batch(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.find",
+      "input": "oneiron_browser::LibraryFindInput",
+      "output": "oneiron_browser::LibraryFindOutput",
+      "call": "driver.library_find(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.propose",
+      "input": "oneiron_browser::ProposeInput",
+      "output": "oneiron_browser::ProposeOutput",
+      "call": "driver.library_propose(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.library.run",
+      "input": "oneiron_browser::LibraryRunInput",
+      "output": "oneiron_browser::LibraryRunOutput",
+      "call": "driver.library_run(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",

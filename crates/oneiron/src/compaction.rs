@@ -64,6 +64,7 @@ mod epoch;
 mod fold_words;
 mod folds;
 mod gate;
+mod hooks;
 pub mod output;
 mod stored_epoch;
 mod withdrawn;
@@ -92,6 +93,7 @@ pub use gate::{
     CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,
     gate_compaction,
 };
+pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
 pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };

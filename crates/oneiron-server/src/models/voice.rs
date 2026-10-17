@@ -88,3 +88,16 @@ impl AiMediaDoor for ModelRuntime {
         Box::pin(self.media.run(request))
     }
 }
+
+/// The door the voice cascade opens a live stream through
+/// ([`oneiron::voice_cascade::media::LeasedAsrStream`]): each stream is a
+/// run of its own on the media meter, on one permit.
+impl oneiron::voice_cascade::media::VoiceStreamDoor for ModelRuntime {
+    fn open_stream<'a>(
+        &'a self,
+        request: MediaRequest,
+        bound_ms: u64,
+    ) -> MediaFuture<'a, oneiron::llm::run_admission::MediaStreamLease> {
+        Box::pin(async move { self.media.open_stream(request, bound_ms) })
+    }
+}
