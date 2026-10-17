@@ -64578,7 +64578,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -67624,16 +67624,18 @@
       "OutputLimitField",
       "ProviderConfig",
       "ProviderKind",
+      "RequestCodec",
+      "RequestCompression",
       "ResponseFormatWire",
       "ResponsesSocket"
      ],
      "path": "src/config/models/provider.rs",
      "purpose": "One provider entry: how to reach a model server, as data",
      "surface": {
-      "crate-vis": 4,
-      "enum": 3,
+      "crate-vis": 5,
+      "enum": 4,
       "fn": 7,
-      "struct": 2
+      "struct": 3
      }
     },
     {
