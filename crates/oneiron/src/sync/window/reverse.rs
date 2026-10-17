@@ -471,6 +471,16 @@ fn reverse_rematerialize_scan(
             {
                 wrote_any = true;
             }
+            // FIX 853: a MESSAGE's document quote pins ride beside it.
+            if window_key.world().is_none()
+                && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                    header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE
+                })
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::document_pins::mirror_document_pins(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
         }
 
         backfill_sources.push(*id);

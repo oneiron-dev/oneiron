@@ -503,6 +503,8 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
     // FIX 1794: an erased room's or thread's side rows leave it too.
     crate::sync::room_facts::scrub_room_facts(vault, doc, Some(key))?;
+    // FIX 853: and the document quote pins of an erased message or reply.
+    crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     // A persisted or returned snapshot carries the same project history as
     // a delta does (Astra #1434 r9 F5).
     if super::project_history::carry_project_history(vault, doc)? {
