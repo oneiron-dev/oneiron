@@ -817,7 +817,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Uncertain identities are decided, or asked of the person (OF-123).
     ladder_workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
-    ladder_workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
+    ladder_workers.push(crate::ai_host::coach_heal::spawn(
+        &sync_server,
+        config.failure_signals.publisher_candidates()?,
+    ));
     // The owner's model-graded detectors read the retrieval telemetry (OF-418).
     ladder_workers.extend(crate::ai_host::self_heal_detectors::spawn(
         &sync_server,
