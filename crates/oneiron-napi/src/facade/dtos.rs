@@ -595,6 +595,27 @@ pub struct NapiOutboundDraftInput {
     pub apns_interruption_level: Option<String>,
     /// `plain_chat` | `push` — the resolved level for a compatibility verb.
     pub resolved_level: Option<String>,
+    /// The saved mention `target` came from, when the agent named the
+    /// person (OF-123): the send refuses with IDENTITY_UNSETTLED while that
+    /// mention is unsettled.
+    pub mention: Option<NapiMentionProvenance>,
+}
+
+/// The saved person mention an effect's target came from (OF-123 act-now
+/// guard): the turn whose tags hold it and its message, as 32 hex, and its
+/// byte span in the message text. The engine refuses the effect while the
+/// mention is unsettled; `self.identity.settle` settles it.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NapiMentionProvenance {
+    /// The turn whose tags hold the mention, as 32 hex.
+    pub turn: String,
+    /// The message the mention is in, as 32 hex.
+    pub message: String,
+    /// Byte offset where the mention starts.
+    pub start: i64,
+    /// Byte offset where the mention ends (exclusive).
+    pub end: i64,
 }
 
 /// Receipt for one scheduled outbound intent.
@@ -688,6 +709,10 @@ pub struct NapiCalendarInviteInput {
     pub ics_blob_ref: String,
     /// Delivery target.
     pub recipient: String,
+    /// The saved mention `recipient` came from, when the agent named the
+    /// person (OF-123): the invite refuses with IDENTITY_UNSETTLED while that
+    /// mention is unsettled.
+    pub mention: Option<NapiMentionProvenance>,
 }
 
 /// Selector for `forget`: a claim short ref, or `{subjectRef, predicate}`.
