@@ -2521,7 +2521,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 19,
-      "re-export": 29
+      "re-export": 30
      }
     },
     {
@@ -2767,11 +2767,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "AdmittedTaskGrant"
+     ],
      "path": "src/authority/task_actor.rs",
      "purpose": "Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -29344,7 +29348,8 @@
      "path": "src/memory/presented_credential.rs",
      "purpose": "The verified credential a host bound to a handle, for the engine doors that take the caller's own credential…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -29613,7 +29618,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 43,
-      "fn": 24,
+      "fn": 25,
       "struct": 2,
       "type": 1
      }
@@ -44858,7 +44863,7 @@
      "path": "src/task_verb/ask_guest.rs",
      "purpose": "Ask-scoped guest authority: reuse a person's owner-stamped bounds",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -45530,7 +45535,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 2,
       "re-export": 23
      }
