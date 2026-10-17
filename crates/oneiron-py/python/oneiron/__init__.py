@@ -482,6 +482,9 @@ class Oneiron:
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs":
+            return Oneiron._VaultSecretsVerbs(self._client)
+        @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
         @property
@@ -926,6 +929,12 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def lift_history(self, spec):
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
     class _VaultWidenProposalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

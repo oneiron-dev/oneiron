@@ -15,7 +15,7 @@ use crate::managed;
 use crate::server::SyncServer;
 
 /// How long open connections get to finish after a stop is requested.
-const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The plist's `Sockets` key and the keychain service launchd's daemon reads
 /// its secrets from, as `deploy/launchd/com.oneiron.server.plist` names them.
@@ -84,10 +84,6 @@ pub(super) async fn serve_with_config(
     let mut rehearsal_config = vault_config.clone();
     rehearsal_config.page_seal = None;
     let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, rehearsal_config);
-    #[cfg(unix)]
-    let import_queue = super::history_import::queue::ImportQueue::from_config(&config);
-    #[cfg(unix)]
-    let folder_rescans = super::history_import::notes::folder::FolderRescans::from_config(&config);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
@@ -138,7 +134,128 @@ pub(super) async fn serve_with_config(
     // Built before the listener binds: a reachable endpoint that serves the
     // wrong embedding space must stop serve rather than fill a vault from two
     // spaces. The local provider downloads nothing here — that is the worker's.
-    //
+    let (sync_server, gpu_poller) =
+        build_server(Arc::new(vault), &config, server_config, owner_host).await?;
+    // The host's socket: adopted from the service manager, or host:port
+    // bound here. Bound before any worker starts, so a refused bind leaves
+    // nothing running. An adopted socket is judged by where it listens.
+    let ActivatedListener::Tcp(listener) = host.listener()? else {
+        anyhow::bail!("serve listens on TCP; activate it with ListenStream=<host>:<port>");
+    };
+    refuse_unauthenticated_public_bind(&config, listener.local_addr()?)?;
+    listener.set_nonblocking(true)?;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
+    #[cfg(unix)]
+    let bound = listener.local_addr()?;
+    // `/a/` on an origin of its own, so a code bundle's scripts never run on
+    // the API's: same host, its own port. Bound before any worker starts too.
+    let artifact_bind = SocketAddr::new(addr.ip(), config.artifact_port);
+    let artifact_listener = tokio::net::TcpListener::bind(artifact_bind)
+        .await
+        .map_err(|error| anyhow::anyhow!("artifact listener bind {artifact_bind}: {error}"))?;
+    let artifact_addr = artifact_listener.local_addr()?;
+    let sync_server = sync_server.with_artifact_listener(artifact_addr.port());
+    tracing::info!(%addr, artifacts = %artifact_addr, "listening");
+    // Borrowed uniquely, so the closure is `Send` whenever the host is.
+    let awake_host = &mut host;
+    let started = start_desktop_workers(
+        sync_server,
+        &config,
+        gpu_poller,
+        move || -> crate::server::HousekeepingAdmission {
+            // A wake pass keeps a plugged-in laptop awake until it ends; on battery
+            // normal idle sleep holds (ruled 2026-10-08).
+            let awake = awake_host.keep_awake(AwakePolicy::default());
+            // A live model run holds the same assertion through each admitted call,
+            // not only a wake pass (Docs Q18).
+            oneiron_vault_contract::host_adapters::hold_awake_for_runs({
+                let awake = awake.clone();
+                move || Box::new(awake.hold()) as Box<dyn Send>
+            });
+            let admit = crate::server::admit_every_pass();
+            Arc::new(move || {
+                let pass = admit()?;
+                Some(Box::new((pass, awake.hold())) as Box<dyn Send>)
+            })
+        },
+    )
+    .await?;
+    let sync_server = started.server;
+    let artifact_app = started.artifact_app;
+    let questions = started.questions;
+    #[cfg(unix)]
+    let vault_id = started.vault_id;
+    let (stopping, mut stopped) = (started.stopping, started.stopped);
+    let workers = started.workers;
+    let mesh_server = Arc::clone(&sync_server);
+    let app = build_app(sync_server).layer(cors_layer);
+    // The paired-machine mesh listener (OF-535): off unless the host names
+    // its bind address.
+    let mesh = crate::handler::mesh::start(
+        mesh_server,
+        &crate::handler::mesh::MeshConfig::from_env()?,
+        &app,
+        config.limits.connections(),
+    )
+    .await?;
+    host.ready()?;
+    // Ready and bound: a client on this host can find it now. The file goes
+    // when this returns, a clean stop or a late startup error alike.
+    #[cfg(unix)]
+    let _registered =
+        super::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
+    #[cfg(not(unix))]
+    let _ = config_file;
+    let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
+        let _ = stopped.wait_for(|stop| *stop).await;
+    };
+    let (api_stop, artifact_stop) = (stop(stopped.clone()), stop(stopped.clone()));
+    // Connections are admitted, and their headers timed, before any route
+    // runs. Both listeners draw on one pool, so the descriptor floor and each
+    // address's unauthenticated share hold for the daemon, not per socket.
+    let limits = config.limits.connections();
+    let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
+    let api = crate::http_listener::serve_with_pool(listener, app, &pool, limits, api_stop);
+    let artifacts = crate::http_listener::serve_with_pool(
+        artifact_listener,
+        artifact_app,
+        &pool,
+        limits,
+        artifact_stop,
+    );
+    let serving = async {
+        let stop_on_signal = async {
+            stop_requested().await;
+            let _ = stopping.send(true);
+        };
+        tokio::join!(stop_on_signal, api, artifacts);
+    };
+    tokio::select! {
+        () = serving => {}
+        () = async {
+            let _ = stopped.wait_for(|stop| *stop).await;
+            tokio::time::sleep(DRAIN_GRACE).await;
+        } => {
+            tracing::warn!("connections still open after the drain grace; stopping anyway");
+        }
+    }
+    if let Some(mesh) = mesh {
+        mesh.stop().await;
+    }
+    workers.shutdown(|| host.on_stop()).await?;
+
+    Ok(())
+}
+
+/// The server over `vault`, with the embedder and tagger slots and the hosts
+/// `config` names, and the GPU pool's health poller, already running when
+/// `[gpu]` names a pool. Embedded serve builds its server here too.
+pub(crate) async fn build_server(
+    vault: Arc<oneiron::Vault>,
+    config: &ServeConfig,
+    server_config: crate::config::SyncServerConfig,
+    owner_host: crate::owner::schedule::OwnerHost,
+) -> anyhow::Result<(SyncServer, Option<tokio::task::JoinHandle<()>>)> {
     // On a blocking thread because the endpoint probe is a blocking HTTP call,
     // which must not run on a runtime worker.
     // The batch lane's rented GPU pods (ARCH-0019 §5), when `[gpu]` names
@@ -169,7 +286,7 @@ pub(super) async fn serve_with_config(
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
-    let sync_server = SyncServer::new(Arc::new(vault), server_config)
+    let sync_server = SyncServer::new(vault, server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
@@ -195,26 +312,55 @@ pub(super) async fn serve_with_config(
                     .map(zeroize::Zeroizing::new),
             }
         }));
-    // The host's socket: adopted from the service manager, or host:port
-    // bound here. Bound before any worker starts, so a refused bind leaves
-    // nothing running. An adopted socket is judged by where it listens.
-    let ActivatedListener::Tcp(listener) = host.listener()? else {
-        anyhow::bail!("serve listens on TCP; activate it with ListenStream=<host>:<port>");
-    };
-    refuse_unauthenticated_public_bind(&config, listener.local_addr()?)?;
-    listener.set_nonblocking(true)?;
-    let listener = tokio::net::TcpListener::from_std(listener)?;
+    Ok((sync_server, gpu_poller))
+}
+
+/// What [`start_desktop_workers`] hands the transport half of a serve path.
+pub(crate) struct StartedWorkers {
+    /// The server every worker runs on.
+    pub(crate) server: Arc<SyncServer>,
+    /// The artifact-only router, for an origin of its own.
+    pub(crate) artifact_app: axum::Router,
+    /// What a connection pool asks when a limit is met.
+    pub(crate) questions: Arc<crate::wire_telemetry::LimitQuestions>,
+    /// The vault's id, for the local runtime file.
     #[cfg(unix)]
-    let bound = listener.local_addr()?;
-    // `/a/` on an origin of its own, so a code bundle's scripts never run on
-    // the API's: same host, its own port. Bound before any worker starts too.
-    let artifact_bind = SocketAddr::new(addr.ip(), config.artifact_port);
-    let artifact_listener = tokio::net::TcpListener::bind(artifact_bind)
-        .await
-        .map_err(|error| anyhow::anyhow!("artifact listener bind {artifact_bind}: {error}"))?;
-    let artifact_addr = artifact_listener.local_addr()?;
-    let sync_server = sync_server.with_artifact_listener(artifact_addr.port());
-    tracing::info!(%addr, artifacts = %artifact_addr, "listening");
+    pub(crate) vault_id: Option<String>,
+    /// Turns `true` when serving stops; the fact hooks stop on it too.
+    pub(crate) stopping: tokio::sync::watch::Sender<bool>,
+    pub(crate) stopped: tokio::sync::watch::Receiver<bool>,
+    /// The workers themselves, until [`DesktopWorkers::shutdown`].
+    pub(crate) workers: DesktopWorkers,
+}
+
+/// The workers [`start_desktop_workers`] started, stopped together by
+/// [`Self::shutdown`].
+pub(crate) struct DesktopWorkers {
+    #[cfg(unix)]
+    voice: Option<crate::voice_host::VoiceBoot>,
+    ai: crate::ai_host::AiHost,
+    oversight: crate::server::HealerOversight,
+    lifecycle: crate::server::LifecycleScheduler,
+    linear_handle: Option<tokio::task::JoinHandle<()>>,
+    workers: Vec<tokio::task::JoinHandle<()>>,
+}
+
+/// Starts every worker the unmanaged serve path runs on `sync_server`, in
+/// serve's order, once the host's listeners are bound. `gpu_poller` is the
+/// GPU pool's health poller, already running. `lifecycle_admission` is
+/// called where the lifecycle scheduler starts, after the Linear mirror,
+/// and gates each housekeeping pass. Embedded serve starts the same workers
+/// through here.
+pub(crate) async fn start_desktop_workers(
+    sync_server: SyncServer,
+    config: &ServeConfig,
+    gpu_poller: Option<tokio::task::JoinHandle<()>>,
+    lifecycle_admission: impl FnOnce() -> crate::server::HousekeepingAdmission,
+) -> anyhow::Result<StartedWorkers> {
+    #[cfg(unix)]
+    let import_queue = super::history_import::queue::ImportQueue::from_config(config);
+    #[cfg(unix)]
+    let folder_rescans = super::history_import::notes::folder::FolderRescans::from_config(config);
     // Model seats, the Dreamer and the workflow pump, from `[models]`. With
     // no section every seat stays empty and the model-free server is whole.
     // A startup error below drops `ai`, which tells its workers to stop.
@@ -229,20 +375,7 @@ pub(super) async fn serve_with_config(
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
-    // A wake pass keeps a plugged-in laptop awake until it ends; on battery
-    // normal idle sleep holds (ruled 2026-10-08).
-    let awake = host.keep_awake(AwakePolicy::default());
-    // A live model run holds the same assertion through each admitted call,
-    // not only a wake pass (Docs Q18).
-    oneiron_vault_contract::host_adapters::hold_awake_for_runs({
-        let awake = awake.clone();
-        move || Box::new(awake.hold()) as Box<dyn Send>
-    });
-    let admit = crate::server::admit_every_pass();
-    let lifecycle = sync_server.spawn_lifecycle_scheduler(Arc::new(move || {
-        let pass = admit()?;
-        Some(Box::new((pass, awake.hold())) as Box<dyn Send>)
-    }));
+    let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admission());
     let mut workers = sync_server.spawn_slot_workers();
     workers.extend(gpu_poller);
     workers.push(sync_server.spawn_board_publisher());
@@ -260,6 +393,11 @@ pub(super) async fn serve_with_config(
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     workers.push(crate::saved_query_sweep::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
+    // Queued campaign enrollments land on the campaign's home node (ARCH-0059).
+    workers.push(crate::campaign_enrollment::spawn(
         &sync_server,
         crate::server::admit_every_pass(),
     ));
@@ -323,7 +461,7 @@ pub(super) async fn serve_with_config(
     #[cfg(unix)]
     workers.extend(folder_rescans.map(|rescans| rescans.spawn(Arc::clone(&sync_server))));
     // Open sockets may never close by themselves, so the drain is bounded.
-    let (stopping, mut stopped) = tokio::sync::watch::channel(false);
+    let (stopping, stopped) = tokio::sync::watch::channel(false);
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
@@ -351,84 +489,63 @@ pub(super) async fn serve_with_config(
         &sync_server,
         config.models.as_ref().map(|models| &models.voice),
     );
-    let mesh_server = Arc::clone(&sync_server);
-    let app = build_app(sync_server).layer(cors_layer);
-    // The paired-machine mesh listener (OF-535): off unless the host names
-    // its bind address.
-    let mesh = crate::handler::mesh::start(
-        mesh_server,
-        &crate::handler::mesh::MeshConfig::from_env()?,
-        &app,
-        config.limits.connections(),
-    )
-    .await?;
-    host.ready()?;
-    // Ready and bound: a client on this host can find it now. The file goes
-    // when this returns, a clean stop or a late startup error alike.
-    #[cfg(unix)]
-    let _registered =
-        super::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
-    #[cfg(not(unix))]
-    let _ = config_file;
-    let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
-        let _ = stopped.wait_for(|stop| *stop).await;
-    };
-    let (api_stop, artifact_stop) = (stop(stopped.clone()), stop(stopped.clone()));
-    // Connections are admitted, and their headers timed, before any route
-    // runs. Both listeners draw on one pool, so the descriptor floor and each
-    // address's unauthenticated share hold for the daemon, not per socket.
-    let limits = config.limits.connections();
-    let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
-    let api = crate::http_listener::serve_with_pool(listener, app, &pool, limits, api_stop);
-    let artifacts = crate::http_listener::serve_with_pool(
-        artifact_listener,
+    Ok(StartedWorkers {
+        server: sync_server,
         artifact_app,
-        &pool,
-        limits,
-        artifact_stop,
-    );
-    let serving = async {
-        let stop_on_signal = async {
-            stop_requested().await;
-            let _ = stopping.send(true);
-        };
-        tokio::join!(stop_on_signal, api, artifacts);
-    };
-    tokio::select! {
-        () = serving => {}
-        () = async {
-            let _ = stopped.wait_for(|stop| *stop).await;
-            tokio::time::sleep(DRAIN_GRACE).await;
-        } => {
-            tracing::warn!("connections still open after the drain grace; stopping anyway");
-        }
-    }
-    if let Some(mesh) = mesh {
-        mesh.stop().await;
-    }
-    // A voice call in flight ends through its own teardown before the
-    // models it speaks on stop.
-    #[cfg(unix)]
-    if let Some(voice) = voice {
-        voice.stop().await;
-    }
-    // A pass or step in flight reaches its own boundary before this returns.
-    ai.shutdown().await;
-    // A receipt write already admitted ends before the process does.
-    oversight.stop().await;
-    host.on_stop()?;
-    // A housekeeping pass in flight stops at its next sweep or page.
-    lifecycle.stop().await;
-    if let Some(handle) = linear_handle {
-        handle.abort();
-        let _ = handle.await;
-    }
-    for handle in workers {
-        handle.abort();
-        let _ = handle.await;
+        questions,
+        #[cfg(unix)]
+        vault_id,
+        stopping,
+        stopped,
+        workers: DesktopWorkers {
+            #[cfg(unix)]
+            voice,
+            ai,
+            oversight,
+            lifecycle,
+            linear_handle,
+            workers,
+        },
+    })
+}
+
+impl DesktopWorkers {
+    /// The AI workers, for a host that forwards its wakes to them.
+    pub(crate) fn ai(&self) -> &crate::ai_host::AiHost {
+        &self.ai
     }
 
-    Ok(())
+    /// Stops every worker in serve's order, once serving has stopped.
+    /// `on_stop` is the host's stop, made where serve has always made it:
+    /// after oversight stops and before the lifecycle scheduler does. Its
+    /// error ends the shutdown there.
+    pub(crate) async fn shutdown(
+        self,
+        on_stop: impl FnOnce() -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        // A voice call in flight ends through its own teardown before the
+        // models it speaks on stop.
+        #[cfg(unix)]
+        if let Some(voice) = self.voice {
+            voice.stop().await;
+        }
+        // A pass or step in flight reaches its own boundary before this returns.
+        self.ai.shutdown().await;
+        // A receipt write already admitted ends before the process does.
+        self.oversight.stop().await;
+        on_stop()?;
+        // A housekeeping pass in flight stops at its next sweep or page.
+        self.lifecycle.stop().await;
+        if let Some(handle) = self.linear_handle {
+            handle.abort();
+            let _ = handle.await;
+        }
+        for handle in self.workers {
+            handle.abort();
+            let _ = handle.await;
+        }
+        Ok(())
+    }
 }
 
 /// Builds the hook sandbox off the runtime (it compiles and probes the
@@ -505,7 +622,10 @@ fn refuse_unauthenticated_public_bind(
 /// signature here, through the host's project.write slip (OF-497). A host
 /// with no secret has no issuer, and a relay signs nothing; either leaves the
 /// root unsigned. A root that is already signed is left alone.
-fn sign_root_project(vault: &oneiron::Vault, secret: Option<&str>) -> anyhow::Result<()> {
+pub(crate) fn sign_root_project(
+    vault: &oneiron::Vault,
+    secret: Option<&str>,
+) -> anyhow::Result<()> {
     let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
         return Ok(());
     };
