@@ -1081,8 +1081,9 @@ locality. A space whose `@where` names no provider serving its rung embeds nothi
   `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
   refuse a slot an open move carries until the move ends.
   With the text slot bound, a text query embeds through that space's text tower in the context
-  pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
-  holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
+  pack (HTTP and the native MCP pack), the Context Board, `/v1/core/query`, recall (HTTP,
+  WebSocket and MCP) and `/api/search/semantic`, and its list holds every kind of item the space
+  holds. `/api/search/vector` reads the text index unless it names `space`.
   A `media` query (`{"space", "mime", "bytes_b64", "kinds"}`) seeds a search on its own: the
   server embeds the bytes into that space through the `ai.embed` rung its id names and searches
   that space's list. The context pack and the Context Board over HTTP, `/v1/core/query`, the
