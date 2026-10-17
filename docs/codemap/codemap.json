@@ -11092,7 +11092,7 @@
      "path": "src/code_run/blocked.rs",
      "purpose": "Witnessed, reference-addressed self-reports",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 2
