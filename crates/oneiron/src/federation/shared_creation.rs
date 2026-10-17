@@ -95,8 +95,8 @@ impl Vault {
     /// preset, or the role they name for themselves. Every other founding member
     /// is invited at their role and joins on acceptance (OF-531, Engine ruling
     /// 2026-10-17), so the creator needs a grant of their own to invite anyone.
-    /// A founding co-Owner is refused: another Owner joins after creation
-    /// through an ownership act.
+    /// A founding co-Owner's invitation names the Owner role (OF-150); until
+    /// it is accepted the creator is the vault's only Owner.
     pub fn initialize_shared_vault(
         &self,
         owner: &AuthenticatedOwner,
@@ -128,10 +128,6 @@ impl Vault {
                 .ok_or_else(|| invalid("no preset requires an explicit role"))?;
             let fresh = if member.member_ref == actor {
                 rows.insert(actor, role).is_none()
-            } else if role == Role::Owner {
-                return Err(invalid(
-                    "a founding co-Owner is refused; another Owner joins through an ownership act",
-                ));
             } else {
                 invites.insert(member.member_ref, role).is_none()
             };
