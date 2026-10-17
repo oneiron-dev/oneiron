@@ -248,8 +248,7 @@ impl Package {
     }
 
     /// Remove `source`'s relationship `id`. Its target stays in the archive,
-    /// unreachable: a cache the opening application rebuilds when it is
-    /// missing (a workbook's calculation chain) goes this way.
+    /// unreachable, until [`Self::remove_part`] takes it out.
     pub fn unrelate(&mut self, source: &str, id: &str) -> Result<()> {
         let rels = rels_name(source);
         let bytes = self

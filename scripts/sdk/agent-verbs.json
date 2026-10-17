@@ -651,23 +651,27 @@
       "section": false,
       "binding": {
         "assemble": true,
-        "defaults": true,
         "args": [
           {
             "name": "limit",
             "kind": "limit",
             "default": 100
+          },
+          {
+            "name": "kinds",
+            "kind": "kinds"
           }
         ],
         "docs": {
-          "remote": "    /// Lists governance receipts, newest first.\n",
-          "ts": "/** Governance receipts, newest first. */",
-          "py": "Governance receipts, newest first."
+          "remote": "    /// Lists governance receipts, newest first: the gate decision ledger, or\n    /// the receipts of the named kinds.\n",
+          "ts": "/** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */",
+          "py": "Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds."
         }
       },
       "uniffi": {
         "args": {
-          "limit": "u32"
+          "limit": "u32",
+          "kinds": "Option<Vec<String>>"
         },
         "output": "Vec<FacadeReceipt>"
       }
@@ -2358,7 +2362,14 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": true
+      "section": true,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "handle", "type": "crate::task_verb::TaskAskHandle"},
+          {"name": "step_key", "type": "String", "default": "sdk.wait"}
+        ]
+      }
     },
     {
       "name": "tasks.answer",
@@ -2374,7 +2385,14 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": true
+      "section": true,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "handle", "type": "crate::task_verb::TaskAskHandle"},
+          {"name": "word", "type": "crate::task_verb::TaskAskWord"}
+        ]
+      }
     },
     {
       "name": "tasks.outcomes",
@@ -2392,7 +2410,13 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": true
+      "section": true,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "handle", "field": "$", "type": "crate::task_verb::TaskAskHandle"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.list",
@@ -2403,7 +2427,8 @@
       "scope": "Read",
       "mcp_fields": {},
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {"generic": true, "args": []}
     },
     {
       "name": "vault.rooms.messages",
@@ -2425,7 +2450,15 @@
         "resume": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "after", "type": "Option<String>"},
+          {"name": "limit", "type": "Option<usize>"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.participants",
@@ -2459,7 +2492,13 @@
         "room_ref": "room_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.find",
@@ -2484,7 +2523,15 @@
         "resume": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "after", "type": "Option<String>"},
+          {"name": "limit", "type": "Option<usize>"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.get",
@@ -2501,7 +2548,14 @@
         "turn_ref": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "turn_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.trunk",
@@ -2518,7 +2572,14 @@
         "turn_ref": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "turn_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.reply_strips",
@@ -2545,7 +2606,14 @@
         "turn_ref": "turn_ref"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "binding": {
+        "generic": true,
+        "args": [
+          {"name": "room_ref", "type": "String"},
+          {"name": "turn_ref", "type": "String"}
+        ]
+      }
     },
     {
       "name": "vault.rooms.speak",
@@ -3037,7 +3105,7 @@
     },
     {
       "name": "ai.video.poll",
-      "description": "Where a video job stands; a finished one answers with its clip, once.",
+      "description": "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it.",
       "input": "AiVideoJobRequest",
       "output": "crate::task_verb::sdk::AiVideoJob",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
@@ -4196,12 +4264,12 @@
     },
     {
       "name": "vault.artifacts.body.commits",
-      "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by.",
+      "description": "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone.",
       "refs": [
         "/artifact_ref"
       ],
-      "input": "crate::office_body::OfficeBodyArtifactRequest",
-      "output": "Vec<crate::provenance::text_commit::TextCommitReceipt>",
+      "input": "crate::office_body::OfficeBodyCommitsRequest",
+      "output": "Vec<crate::office_body::OfficeBodyCommitView>",
       "call": "memory.artifacts_body_commits(&input)?",
       "scope": "Read",
       "admission": {
@@ -4220,9 +4288,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// Every commit receipt of a live body, in commit order.\n",
-          "ts": "/** Every commit receipt of a live body, in commit order. */",
-          "py": "Every commit receipt of a live body, in commit order."
+          "remote": "    /// Every commit receipt of a live body, in commit order, or one actor's.\n",
+          "ts": "/** Every commit receipt of a live body, in commit order, or one actor's. */",
+          "py": "Every commit receipt of a live body, in commit order, or one actor's."
         }
       }
     },
@@ -4537,11 +4605,11 @@
     },
     {
       "name": "vault.artifacts.body.preview",
-      "description": "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands.",
+      "description": "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands.",
       "refs": [
         "/artifact_ref"
       ],
-      "input": "crate::office_body::OfficeBodyArtifactRequest",
+      "input": "crate::office_body::OfficeBodyPreviewRequest",
       "output": "crate::office_body::XlsxPreview",
       "call": "memory.artifacts_body_preview(&input)?",
       "scope": "Read",

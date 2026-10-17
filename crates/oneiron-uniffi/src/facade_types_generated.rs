@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 269 facade rows, 846 generated types.
+// UniFFI census: 269 facade rows, 851 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 225.
 // WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -3304,6 +3304,12 @@ pub struct CallReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub result_digest: Option<String>,
+    #[serde(
+        rename = "action_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub action_digest: Option<String>,
     #[serde(rename = "served")]
     pub served: Vec<String>,
     #[serde(
@@ -10275,6 +10281,29 @@ pub enum AiPart {
     },
 }
 
+/// `oneiron::task_verb::sdk_host::AiVoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum AiVoice {
+    #[serde(rename = "stock")]
+    Stock {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "bank")]
+    Bank {
+        #[serde(rename = "voice_id")]
+        voice_id: String,
+        #[serde(
+            rename = "include_generated",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        include_generated: Option<bool>,
+    },
+}
+
 /// `oneiron::task_verb::sdk_host::AiCallRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -10293,6 +10322,8 @@ pub struct AiCallRequest {
     pub references: Option<Vec<AiPart>>,
     #[serde(rename = "params", default, skip_serializing_if = "Option::is_none")]
     pub params: Option<std::collections::HashMap<String, crate::WireJson>>,
+    #[serde(rename = "voice", default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<AiVoice>,
 }
 
 /// `oneiron_model::llm::media::MediaUsage`.
@@ -12530,6 +12561,16 @@ pub enum OfficeBodyView {
     },
 }
 
+/// `oneiron::office_body::verbs::OfficeBodyCommitsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyCommitsRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "actor_ref", default, skip_serializing_if = "Option::is_none")]
+    pub actor_ref: Option<String>,
+}
+
 /// `oneiron::provenance::text_commit::TextCommitReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -12544,6 +12585,24 @@ pub struct TextCommitReceipt {
     pub end: i32,
     #[serde(rename = "made_by")]
     pub made_by: MadeBy,
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyCommitGap`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OfficeBodyCommitGap {
+    #[serde(rename = "receipt_missing")]
+    ReceiptMissing,
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyCommitView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OfficeBodyCommitView {
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<TextCommitReceipt>,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<OfficeBodyCommitGap>,
 }
 
 /// `oneiron::office_body::docx::DocxBodyOp`.
@@ -13161,6 +13220,18 @@ pub struct OfficeBodyExportVerbRequest {
     pub author: Option<String>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<crate::WireJson>,
+    #[serde(
+        rename = "utc_offset_minutes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub utc_offset_minutes: Option<i16>,
+    #[serde(
+        rename = "iana_timezone",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub iana_timezone: Option<String>,
 }
 
 /// `oneiron::office_body::OfficeBodyExportRecord`.
@@ -13193,6 +13264,26 @@ pub struct OfficeBodyExportView {
     pub frontier: Vec<u8>,
     #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
     pub record: Option<OfficeBodyExportRecord>,
+}
+
+/// `oneiron::office_body::verbs::OfficeBodyPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyPreviewRequest {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(
+        rename = "utc_offset_minutes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub utc_offset_minutes: Option<i16>,
+    #[serde(
+        rename = "iana_timezone",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub iana_timezone: Option<String>,
 }
 
 /// `oneiron_docedit::xlsx_body::XlsxCell`.
