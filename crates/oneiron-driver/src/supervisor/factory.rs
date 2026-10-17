@@ -161,6 +161,9 @@ pub struct ConsolidationExecutorFactory {
     /// The host's instruction for declared scope summaries. `None` leaves a
     /// declaration unable to run; the host refuses declarations up front.
     summary_instruction: Option<String>,
+    /// The host's wording for PERSON `about` lines. `None` writes them with
+    /// the engine's own.
+    person_about_instruction: Option<String>,
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
     attachment: Option<Box<dyn PassAttachmentSource>>,
@@ -195,6 +198,7 @@ impl ConsolidationExecutorFactory {
             weave_recipe_runtime: None,
             connector_event_responder: None,
             summary_instruction: None,
+            person_about_instruction: None,
             wave_planner: None,
             wave_dispatch: None,
             attachment: None,
@@ -268,6 +272,14 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_scope_summary_instruction(mut self, instruction: String) -> Self {
         self.summary_instruction = Some(instruction);
+        self
+    }
+
+    /// The instruction PERSON `about` lines are written with (ARCH-0067).
+    /// Host configuration; without it the engine's own applies.
+    #[must_use]
+    pub fn with_person_about_instruction(mut self, instruction: String) -> Self {
+        self.person_about_instruction = Some(instruction);
         self
     }
 
@@ -416,7 +428,7 @@ impl ConsolidationExecutorFactory {
                     binding: narrative.inference.binding.clone(),
                     extraction_egress: narrative.inference.extraction_egress,
                 },
-                None,
+                self.person_about_instruction.as_deref(),
             );
             let inner = WeaveRecipeExecutor {
                 inner,

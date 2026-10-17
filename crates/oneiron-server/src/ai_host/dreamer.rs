@@ -232,6 +232,7 @@ async fn supervise(
             egress,
             summary_instruction: settings.summary_instruction.clone(),
             resident_instruction: settings.resident_instruction.clone(),
+            person_about_instruction: settings.person_about_instruction.clone(),
             task_instruction: settings.task_instruction.clone().unwrap_or_else(|| {
                 oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
             }),
@@ -349,6 +350,9 @@ struct ObservedFactory {
     summary_instruction: Option<String>,
     /// Each resident's own dreaming is written with this (OF-490).
     resident_instruction: Option<String>,
+    /// PERSON `about` lines are written with this: the host's wording, else
+    /// the engine's own.
+    person_about_instruction: Option<String>,
     /// A Dreamer-lane TASK realizes with this: the host's wording, else the
     /// catalogue's own.
     task_instruction: String,
@@ -465,6 +469,9 @@ impl ObservedFactory {
         ))?;
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
+        }
+        if let Some(instruction) = &self.person_about_instruction {
+            factory = factory.with_person_about_instruction(instruction.clone());
         }
         if let Some(host) = host {
             factory = factory.with_decisions(host.consolidation_decisions()?);
