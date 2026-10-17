@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 369 code-mode rows (349 host rows, 20 run rows), 1297 declarations.
+// Census: 369 code-mode rows (349 host rows, 20 run rows), 1302 declarations.
 // Replies: 316 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -250,7 +250,8 @@ declare namespace Sdk {
   type QuoteSpan = { message: EntityId; start: number; end: number };
   type WitnessAuthor = "user" | "companion" | "system";
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number };
-  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number };
+  type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
+  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
@@ -1083,6 +1084,9 @@ declare namespace Sdk {
   type HandoverInput = { reason: string };
   type HandoverOutput = { reason: string; asked_at_ms: number };
   type CommitRequest = { claims: ClaimInput[] };
+  type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
+  type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
+  type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
   type ClaimRefRequest = { claim_ref: string };
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
@@ -1139,7 +1143,8 @@ declare namespace Sdk {
   type XlsxLock = "shared_formula" | "array_formula" | "data_table" | "rich_value" | "table_row" | "unsupported" | "builtin_name";
   type BodyCell = { address: string; value: XlsxValue; formula?: string | null; style?: number | null; format?: string | null; locked?: XlsxLock | null };
   type XlsxArea = { first: [number, number]; last: [number, number]; lock: XlsxLock };
-  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[] };
+  type XlsxTable = { name: string; first: [number, number]; last: [number, number]; header_rows: number; totals_rows: number; columns: string[]; worksheet: boolean };
+  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
   type BodyName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxStyle = { num_fmt: number; format?: string | null };
   type XlsxColor = { kind: "rgb"; argb: string } | { kind: "theme"; theme: number; tint?: number | null } | { kind: "indexed"; index: number } | { kind: "auto" };
@@ -1209,7 +1214,7 @@ declare namespace Sdk {
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
-  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[] };
+  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
@@ -1678,8 +1683,8 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.MemoryClaimInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
     retract(input: Sdk.ClaimRefRequest): Promise<Sdk.CommitReceipt | StoredResult>;
-    /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
-    seed(input: Sdk.CommitRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
+    /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
+    seed(input: Sdk.CommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
     upsert(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
@@ -1694,8 +1699,8 @@ declare const vault: Sdk.VaultHost & {
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
     repo_diff(input: Sdk.CodeRepoDiffRequest): Promise<Sdk.CodeRepoDiffView | null | StoredResult>;
   };
-  /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
-  commit(input: Sdk.CommitRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
+  /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
+  commit(input: Sdk.CommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
   companions: {
     sharing: {
       /** One contact's clearance in a companion's source vault, for the principal who controls that vault. */

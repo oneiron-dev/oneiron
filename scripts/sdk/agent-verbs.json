@@ -103,7 +103,6 @@
     {
       "name": "self.memory.diary",
       "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
-      "prose_links": ["/content"],
       "input": "DiaryEntryRequest",
       "output": "crate::task_verb::sdk::DiaryEntryReceipt",
       "call": "crate::task_verb::sdk::self_memory_diary_write(memory, input)?",
@@ -831,7 +830,6 @@
     {
       "name": "vault.kv.put",
       "description": "Synchronous gated write of one key; a write that needs review fails without changing the key.",
-      "prose_links": ["/value"],
       "input": "crate::memory::KeyValuePut",
       "output": "crate::memory::KeyValuePutReceipt",
       "call": "memory.key_value_put(&input)?",
@@ -3127,6 +3125,7 @@
       "call": "memory.projects_confirm(&input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_session": true,
       "scope": "Write",
       "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
@@ -4196,16 +4195,16 @@
     },
     {
       "name": "vault.commit",
-      "description": "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist.",
+      "description": "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
         },
-        "output": "Vec<CommitReceipt>"
+        "output": "Vec<CommitOutcome>"
       },
       "input": "CommitRequest",
-      "output": "Vec<crate::memory::CommitReceipt>",
+      "output": "Vec<crate::memory::CommitOutcome>",
       "call": "memory.commit(&input.claims)?",
       "scope": "Write",
       "admission": {
@@ -5400,16 +5399,16 @@
     },
     {
       "name": "vault.claims.seed",
-      "description": "Seeds claims through their individual gates, forced proposed, returning one receipt per claim.",
+      "description": "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.",
       "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
         },
-        "output": "Vec<CommitReceipt>"
+        "output": "Vec<CommitOutcome>"
       },
       "input": "CommitRequest",
-      "output": "Vec<crate::memory::CommitReceipt>",
+      "output": "Vec<crate::memory::CommitOutcome>",
       "call": "memory_requests::seed_claims(memory, input)?",
       "scope": "Write",
       "admission": {

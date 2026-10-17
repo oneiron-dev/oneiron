@@ -88,6 +88,7 @@ impl WitnessTurnInput {
             thread_audience: self.thread_audience,
             messages,
             occurred_at,
+            assertions: Default::default(),
         })
     }
 }
@@ -123,6 +124,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             policy_denial: None,
             wrong_root: None,
             hook: None,
+            retry_after: None,
         })
     })
 }
@@ -139,6 +141,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         policy_denial: None,
         wrong_root: None,
         hook: None,
+        retry_after: None,
     })
 }
 

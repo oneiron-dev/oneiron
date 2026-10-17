@@ -91,6 +91,11 @@ pub const COACH_JUDGE_SWAP_FACET: &str = "coach.judge_swap";
 /// and drawn random audit, checked on the host by a judge other than the
 /// model that produced the result (see [`super::seal_checks`]).
 pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
+/// The attribution judge's held-out audits (ARCH-0053, OF-542): both built-in
+/// fixture sets through the host's model rungs, so the
+/// `attribution_unclear_floor` fitter reads model answers (see
+/// [`super::attribution_audits`]).
+pub const COACH_ATTRIBUTION_AUDITS_FACET: &str = "coach.attribution_audits";
 /// Type-tree upkeep (ARCH-0079 #task-type, OF-541): the vault tree recounted
 /// from its receipts, split and merged on anchored decisions, its new types
 /// named on the host, and a changed tree put in force (see
@@ -112,7 +117,7 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 8] = [
+const HOST_FACETS: [&str; 9] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -121,6 +126,7 @@ const HOST_FACETS: [&str; 8] = [
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,
     COACH_TYPE_TREE_UPKEEP_FACET,
+    COACH_ATTRIBUTION_AUDITS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 10] = [
@@ -461,8 +467,8 @@ impl Vault {
 
     /// Records what the receipts since showed against one offer's promise,
     /// under the leased `coach.offer_check` attempt its check date queued. A
-    /// check that read whether the promise held is an outcome for the
-    /// Coach's own offer record; an unknown one is none.
+    /// check that read whether the promise held is an outcome for the offer
+    /// skill that drafted it (`record_offer_check`); an unknown one is none.
     pub fn run_coach_offer_check(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -471,19 +477,7 @@ impl Vault {
     ) -> Result<crate::skill_optimize::OfferCheck> {
         self.require_coach_attempt(attempt, COACH_OFFER_CHECK_FACET)?;
         let offer = offer_check_target(&attempt.status.payload.input)?;
-        let check = crate::skill_optimize::record_offer_check(self, &offer, input, now)?;
-        if let Some(held) = check.held {
-            super::coach_learning::record_coach_outcome(
-                self,
-                super::coach_learning::COACH_OFFER_AXIS,
-                format!("offer_check:{}", check.id.to_hex()),
-                check.at,
-                crate::learning::Anchor::WorldOutcome,
-                held,
-                now,
-            )?;
-        }
-        Ok(check)
+        crate::skill_optimize::record_offer_check(self, &offer, input, now)
     }
 
     /// The leased attempt is this facet's, stamped for the Coach.

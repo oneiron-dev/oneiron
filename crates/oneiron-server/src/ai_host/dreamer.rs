@@ -691,7 +691,7 @@ fn settle_parked(
     now_secs: u64,
 ) -> Option<oneiron::EntityId> {
     let vault = server.vault();
-    match crate::decision_graph::at_home(vault, now_secs) {
+    match crate::decision_graph::at_home(server, now_secs) {
         Ok(true) => {}
         Ok(false) => return after,
         Err(error) => {
@@ -866,7 +866,7 @@ impl ResidentLend<'_> {
             // admission charges the resident, not the pass. A separate meter
             // from the backend's: one meter on both layers would charge twice.
             let step = self.vault.policy_budget_guard(
-                format!("{DREAMER_PASS_RUN}/resident/{}/step", resident.to_hex()),
+                resident_step_line(resident),
                 self.guard.read().limit_units,
                 self.guard.reserve_units(),
                 oneiron::BudgetExhaustionPolicy::Suspend,
@@ -918,6 +918,11 @@ impl ResidentLend<'_> {
         )
         .await
     }
+}
+
+/// The runner and step line a resident dreaming on its own model debits.
+fn resident_step_line(resident: oneiron::EntityId) -> String {
+    format!("{DREAMER_PASS_RUN}/resident/{}/step", resident.to_hex())
 }
 
 /// A resident's own dreaming slot (OF-490): its dreaming model, else its
@@ -1040,6 +1045,30 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             }
         });
         outcome
+    }
+
+    /// A resident dreaming on its own served model reserves and settles on
+    /// its own runner line, the one its durable step meters (FIX 1152). An
+    /// unresolved slot, a slot that fails to read and every other attempt
+    /// keep the pass's line; execution meets any such error as before.
+    fn runner_budget_id(
+        &mut self,
+        candidate: &oneiron::attempt_queue::AttemptRecord,
+    ) -> Option<String> {
+        let resident = self.resident.and_then(|lend| {
+            let payload =
+                oneiron::dreamer_runner::decode_dreamer_attempt_payload(&candidate.payload).ok()?;
+            if payload.attempt_type != oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+            {
+                return None;
+            }
+            let resident = resident_of_dream_input(&payload.input).ok()?;
+            let slot = own_dreaming_slot(lend.vault, resident).ok()??;
+            served_slot_model(lend.vault, lend.runtime, &slot)
+                .ok()?
+                .map(|_| resident_step_line(resident))
+        });
+        resident.or_else(|| self.inner.runner_budget_id(candidate))
     }
 
     /// Asks the Done question on the server's task ladder, as the resident

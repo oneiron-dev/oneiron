@@ -22,14 +22,15 @@ use oneiron::task_verb::sdk;
 
 use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitReceipt, ConsolidationJobInput, DeleteReceipt,
-    DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
-    FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
-    MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
-    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
-    ReadScope, RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation,
-    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput,
-    TemporalHint, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
+    DeleteReceipt, DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView,
+    EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
+    MemoryItem, MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits,
+    NeighborOpts, OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan,
+    ReadReceipt, ReadScope, RecallMedia, RecallScope, RecordRefusal, RefusalReason, RerankReport,
+    RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason,
+    ScopeHonesty, StructuralPutInput, TemporalHint, WireJson, WitnessAuthor, WitnessMessage,
+    WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -322,6 +323,7 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
             thread_audience,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+            assertions: Default::default(),
         })
     }
 }
@@ -427,6 +429,38 @@ impl Lift<engine::CommitReceipt> for CommitReceipt {
             approval: value.approval,
             superseded_short_id: value.superseded_short_id,
             receipt_ref: value.receipt_ref,
+        })
+    }
+}
+
+impl Lift<engine::CommitOutcome> for CommitOutcome {
+    fn lift(value: engine::CommitOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::CommitOutcome::Landed(receipt) => Self::Landed {
+                receipt: CommitReceipt::lift(receipt)?,
+            },
+            engine::CommitOutcome::Refused {
+                refusal,
+                receipt_ref,
+            } => Self::Refused {
+                refusal: RecordRefusal::lift(refusal)?,
+                receipt_ref,
+            },
+        })
+    }
+}
+
+impl Lift<engine::RecordRefusal> for RecordRefusal {
+    fn lift(value: engine::RecordRefusal) -> Result<Self, OneironError> {
+        Ok(Self {
+            reason: match value.reason {
+                engine::RefusalReason::InventedReference => RefusalReason::InventedReference,
+                engine::RefusalReason::GateRefused => RefusalReason::GateRefused,
+            },
+            code: value.code,
+            message: value.message,
+            suggestions: value.suggestions,
+            field: value.field,
         })
     }
 }

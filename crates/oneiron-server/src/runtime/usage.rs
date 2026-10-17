@@ -1,10 +1,12 @@
 //! Trusted-host attribution of served run settlements to one vault.
-//! No wallet, billing price, account balance or tax policy lives here.
+//! No wallet, billing price, account balance or tax policy lives here. A
+//! room-paid call is billed to the account its run bound at admission
+//! (OF-531), never re-read at settlement.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use oneiron::EntityId;
-use oneiron::llm::run_admission::{Payer, PermitFacts, RunEvent, RunReceipt};
+use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, RunReceipt};
 
 use crate::usage::{
     UsageAllocation, UsageCostInput, UsageCostRates, UsageError, UsageEvent, UsageEventType,
@@ -25,6 +27,8 @@ pub struct VaultUsage {
 struct AdmittedCall {
     facts: PermitFacts,
     rates: Option<UsageCostRates>,
+    /// The billing owner the call's usage lands on, fixed at admission.
+    owner: String,
 }
 
 impl VaultUsage {
@@ -95,6 +99,16 @@ impl VaultUsage {
                     .expect("usage rates lock poisoned")
                     .get(&facts.offer)
                     .cloned();
+                // A room-paid call bills its payer PERSON's own account, which
+                // for a live Owner is the vault's; the vault's too when the
+                // owners approved that on its payer-needed ask; a call no
+                // room pays for, the vault's.
+                let owner = match facts.payer_person.as_ref().map(|payer| &payer.account) {
+                    Some(PayerAccount::Person { account }) => account.clone(),
+                    Some(PayerAccount::VaultOwner | PayerAccount::VaultApproved { .. }) | None => {
+                        self.owner.clone()
+                    }
+                };
                 self.calls
                     .lock()
                     .expect("usage calls lock poisoned")
@@ -103,6 +117,7 @@ impl VaultUsage {
                         AdmittedCall {
                             facts: *facts.clone(),
                             rates,
+                            owner,
                         },
                     );
             }
@@ -123,7 +138,12 @@ impl VaultUsage {
                     .lock()
                     .expect("usage calls lock poisoned")
                     .remove(&(receipt.instance, lease.clone()));
-                let Some(AdmittedCall { facts, rates }) = facts.filter(|_| *dispatched) else {
+                let Some(AdmittedCall {
+                    facts,
+                    rates,
+                    owner,
+                }) = facts.filter(|_| *dispatched)
+                else {
                     return;
                 };
                 let source = match facts.payer {
@@ -164,8 +184,9 @@ impl VaultUsage {
                         || usage.input.cache_read != 0
                         || usage.input.cache_write != 0
                 }) || service_quantity.is_some();
+                let payer = facts.payer_person.as_ref();
                 let event = UsageEvent {
-                    owner: self.owner.clone(),
+                    owner,
                     vault_id: self.vault_id.clone(),
                     idempotency_key: format!(
                         "run:{}:{}",
@@ -200,6 +221,12 @@ impl VaultUsage {
                         route: facts.route,
                         catalog_revision: facts.catalog_revision,
                         payer: facts.payer,
+                        payer_person: payer.map(|payer| payer.person.to_hex()),
+                        payer_scope: payer.map(|payer| payer.root_scope.to_string()),
+                        payer_ask: payer.and_then(|payer| match payer.account {
+                            PayerAccount::VaultApproved { ask } => Some(ask),
+                            PayerAccount::Person { .. } | PayerAccount::VaultOwner => None,
+                        }),
                         reserved_units: facts.reserved_units,
                         settled_units: *units,
                         unit: unit.as_str().to_owned(),

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 308 facade rows, 1187 declarations.
+Census: 308 facade rows, 1192 declarations.
 Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -1203,6 +1203,9 @@ class WitnessMessage(TypedDict):
     metadata: NotRequired[Any | None]
     is_visible: bool
     order: int
+class WitnessAssertions(TypedDict):
+    cited: list[RecordRef]
+    created: list[RecordRef]
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
@@ -1210,6 +1213,7 @@ class WitnessTurn(TypedDict):
     thread_audience: NotRequired[list[EntityId] | None]
     messages: list[WitnessMessage]
     occurred_at: int
+    assertions: NotRequired[WitnessAssertions]
 class ClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
@@ -5233,6 +5237,20 @@ class ConnectorCallStatusSettled(TypedDict):
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
+RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
+class RecordRefusal(TypedDict):
+    reason: RefusalReason
+    code: str
+    message: str
+    suggestions: list[str]
+    field: str
+class CommitOutcomeLanded(CommitReceipt):
+    outcome: Literal["landed"]
+class CommitOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    refusal: RecordRefusal
+    receipt_ref: NotRequired[str | None]
+CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):
@@ -5490,10 +5508,19 @@ class XlsxArea(TypedDict):
     first: tuple[int, int]
     last: tuple[int, int]
     lock: XlsxLock
+class XlsxTable(TypedDict):
+    name: str
+    first: tuple[int, int]
+    last: tuple[int, int]
+    header_rows: int
+    totals_rows: int
+    columns: list[str]
+    worksheet: bool
 class XlsxSheetView(TypedDict):
     name: str
     cells: list[BodyCell]
     locked: list[XlsxArea]
+    tables: list[XlsxTable]
 class BodyName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
@@ -5998,6 +6025,7 @@ class XlsxSheet(TypedDict):
     name: str
     cells: list[XlsxCell]
     locked: list[XlsxArea]
+    tables: list[XlsxTable]
 class XlsxName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
