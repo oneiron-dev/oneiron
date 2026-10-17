@@ -26596,7 +26596,7 @@
      "surface": {
       "crate-vis": 20,
       "mod": 193,
-      "re-export": 74
+      "re-export": 75
      }
     },
     {
@@ -48945,9 +48945,9 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 2
      }
     },
@@ -48964,6 +48964,21 @@
       "crate-vis": 15,
       "enum": 1,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VaultPageSeal"
+     ],
+     "path": "src/world_keys/page_seal.rs",
+     "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
+     "surface": {
+      "const": 1,
+      "crate-vis": 9,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -49111,7 +49126,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 17,
       "enum": 4,
       "fn": 23,
       "struct": 2
@@ -51483,7 +51498,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51499,7 +51514,7 @@
    },
    "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3112,
+   "source_files": 3113,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65022,6 +65037,7 @@
       "SecretsCommand",
       "ServeOnlyArgs",
       "UnlockMethod",
+      "VaultKeyAddDeviceArgs",
       "VaultKeyArgs",
       "VaultKeyCommand",
       "VaultKeyNamedArgs",
@@ -65031,7 +65047,7 @@
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 14,
-      "struct": 41
+      "struct": 42
      }
     },
     {
@@ -65351,7 +65367,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 18,
       "re-export": 2
      }
@@ -65382,7 +65398,7 @@
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -65641,7 +65657,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1,
       "struct": 1
      }
@@ -68345,7 +68361,7 @@
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
