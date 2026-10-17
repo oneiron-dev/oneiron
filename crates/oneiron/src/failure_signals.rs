@@ -24,7 +24,9 @@ pub use code_fix::{
     FailureSource, FixOutcome, InventedExampleDraft, InventedFailureExample, InventedMessage,
     InventedRole, ReplayRun, ScrubRun, ShadowRun,
 };
-pub(crate) use code_fix::{code_fix_subject_in, failed_case_in};
+pub(crate) use code_fix::{
+    SealedCodeFix, Sealing, code_fix_subject_in, failed_case_in, queue_sealed_in_txn,
+};
 pub use delivery::{
     FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,
     FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport,

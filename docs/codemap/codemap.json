@@ -6845,12 +6845,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "Retired",
       "WorkflowRecord"
      ],
      "path": "src/browser_library.rs",
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
-      "fn": 5,
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -13578,7 +13581,7 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 8,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6,
       "struct": 3,
       "trait": 1
@@ -13767,7 +13770,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 24,
       "struct": 2
      }
@@ -21711,7 +21714,7 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
-      "crate-vis": 3,
+      "crate-vis": 8,
       "enum": 9,
       "fn": 5,
       "struct": 6,
@@ -37861,7 +37864,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LandedHeader"
@@ -38350,7 +38353,7 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -40663,7 +40666,7 @@
      "path": "src/skill_hub/pack_catalog/setup_session.rs",
      "purpose": "Source-bound guided pack setup (OF-378)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 3,
       "struct": 9
@@ -45381,13 +45384,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway.rs",
      "purpose": "The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 6
      }
     },
@@ -45917,7 +45920,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 292
+      "fn": 294
      }
     },
     {
@@ -48466,7 +48469,7 @@
       "SpendConsent"
      ],
      "path": "src/workspace_roster/join_consent.rs",
-     "purpose": "Three consents, three parties (OF-531): one typed decision that joins a payer's spend, a vault's membership…",
+     "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
       "crate-vis": 5,
       "enum": 9,
@@ -48485,7 +48488,7 @@
      "path": "src/workspace_roster/join_door.rs",
      "purpose": "The room join and consent doors (OF-531)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5,
       "struct": 3
      }
@@ -48819,7 +48822,7 @@
       "crate-vis": 45,
       "enum": 3,
       "fn": 17,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 8
      }
     },
@@ -48982,11 +48985,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ProjectRosterWriteOutcome",
+      "ProjectRosterWriteRequest"
+     ],
      "path": "src/workspace_roster/project/roster.rs",
      "purpose": "The authenticated roster-update door (OF-417 slice 2)",
      "surface": {
-      "fn": 1
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -49509,7 +49516,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/workplace_join.rs",
-     "purpose": "Workplace actors join rooms through the three consents (OF-417 slice 2)",
+     "purpose": "Workplace actors join rooms through the OF-531 consents (OF-417 slice 2)",
      "surface": {
       "crate-vis": 5
      }
@@ -51807,7 +51814,7 @@
     "scope_summary": {
      "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
@@ -52183,7 +52190,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 149,
+   "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3156,
    "test_files": 903
@@ -54407,6 +54414,8 @@
       "LibraryCard",
       "LibraryFindInput",
       "LibraryFindOutput",
+      "LibraryRetireInput",
+      "LibraryRetireOutput",
       "LibraryRunInput",
       "LibraryRunOutput",
       "ProposeInput",
@@ -54423,7 +54432,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 3,
-      "struct": 9,
+      "struct": 11,
       "trait": 1
      }
     },
@@ -60076,7 +60085,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 247
+      "fn": 248
      }
     },
     {
@@ -61092,7 +61101,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 248
+      "fn": 249
      }
     },
     {
@@ -71056,6 +71065,7 @@
       "ConsentPart",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
+      "ConsentStateEntityId",
       "ConsentStateMembershipConsent",
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
@@ -71372,6 +71382,8 @@
       "ProjectProposalRequest",
       "ProjectRefRequest",
       "ProjectRoom",
+      "ProjectRosterWriteOutcome",
+      "ProjectRosterWriteRequest",
       "ProjectTradeoffRouteRequest",
       "ProposalSettleRequest",
       "ProseSpan",
@@ -71655,8 +71667,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 203,
-      "struct": 518
+      "enum": 204,
+      "struct": 520
      }
     },
     {
