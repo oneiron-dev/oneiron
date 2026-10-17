@@ -851,6 +851,21 @@ impl Vault {
         Ok(policy.organ_limits())
     }
 
+    /// [`Self::docedit_package_limits`] as `txn` sees the policy rows, for a
+    /// reader inside a write transaction.
+    pub(crate) fn docedit_package_limits_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<oneiron_docedit::retained_opc::Limits> {
+        let resolution = resolve_policy_manifest(&self.store, txn)?;
+        let policy = resolution.docedit_resource_policy().ok_or_else(|| {
+            Error::InvalidConfig(
+                "document resource policy is unavailable or fail-closed".to_owned(),
+            )
+        })?;
+        Ok(policy.organ_limits())
+    }
+
     /// Builds the ONE policy-aware LLM budget meter for one wake pass: the
     /// same `BudgetGuard`, bound at construction to the engine-stamped actor
     /// and to the live manifest's resolved `budget_policy` table.
