@@ -174,6 +174,18 @@ impl OneironClient {
                 "vault.kv.namespaces" => {
                     remote_agent_verb_output::<Vec<Vec<String>>>(client, verb, &input)
                 }
+                "vault.campaign.program.create" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramRecord,
+                >(client, verb, &input),
+                "vault.campaign.program.read" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramReadResult,
+                >(client, verb, &input),
+                "vault.campaign.program.update" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramRecord,
+                >(client, verb, &input),
+                "vault.campaign.program.archive" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::CampaignProgramRecord,
+                >(client, verb, &input),
                 "vault.weave.report" => {
                     remote_agent_verb_output::<oneiron::claim::WeaveReportView>(
                         client, verb, &input,
@@ -1455,6 +1467,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.kv.namespaces", value)
+    }
+    pub fn vault_campaign_program_create(
+        &self,
+        input: &oneiron::campaign::surface::CreateCampaignProgramRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.create", value)
+    }
+    pub fn vault_campaign_program_read(
+        &self,
+        input: &oneiron::campaign::surface::CampaignProgramReadRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramReadResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.read", value)
+    }
+    pub fn vault_campaign_program_update(
+        &self,
+        input: &oneiron::campaign::surface::UpdateCampaignProgramRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.update", value)
+    }
+    pub fn vault_campaign_program_archive(
+        &self,
+        input: &oneiron::campaign::surface::ArchiveCampaignProgramRequest,
+    ) -> Result<oneiron::campaign::surface::CampaignProgramRecord, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.campaign.program.archive", value)
     }
     pub fn vault_weave_report(
         &self,

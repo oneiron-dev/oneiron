@@ -50,6 +50,13 @@ pub use self::home_node::{
     require_campaign_home_node,
 };
 pub use self::program::{
+    AuthoredCampaignProgram, CAMPAIGN_PROGRAM_MAX_STEPS, CAMPAIGN_PROGRAM_NAME_MAX_BYTES,
+    CAMPAIGN_PROGRAM_OUTBOUND_PAYLOAD_MAX_BYTES, CAMPAIGN_PROGRAM_OUTBOUND_VERB_MAX_BYTES,
+    CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition, CampaignProgramDraft,
+    CampaignProgramStepDraft, archive_campaign_program, create_campaign_program,
+    read_campaign_program, update_campaign_program,
+};
+pub use self::program::{
     CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, campaign_program,
     campaign_program_step, put_campaign_program, put_campaign_program_step,
 };

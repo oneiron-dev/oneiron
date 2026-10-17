@@ -452,6 +452,9 @@ class Oneiron:
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
         @property
+        def campaign(self) -> "Oneiron._VaultCampaignVerbs":
+            return Oneiron._VaultCampaignVerbs(self._client)
+        @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
         @property
@@ -667,6 +670,27 @@ class Oneiron:
         def namespaces(self, request: dict[str, Any]) -> list[list[str]]:
             """Exact actor-owned worldless keyed memory; typed engine errors pass through."""
             return json.loads(_translate(lambda: self._client.vault_kv_namespaces(json.dumps(request, allow_nan=False))))
+    class _VaultCampaignVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def program(self) -> "Oneiron._VaultCampaignProgramVerbs":
+            return Oneiron._VaultCampaignProgramVerbs(self._client)
+    class _VaultCampaignProgramVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_create(json.dumps(spec))))
+        def read(self, spec):
+            """One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_read(json.dumps(spec))))
+        def update(self, spec):
+            """Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_update(json.dumps(spec))))
+        def archive(self, spec):
+            """Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."""
+            return json.loads(_translate(lambda: self._client.vault_campaign_program_archive(json.dumps(spec))))
     class _VaultWeaveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

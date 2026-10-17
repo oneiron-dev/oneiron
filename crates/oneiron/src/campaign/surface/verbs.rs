@@ -10,7 +10,7 @@ use super::parse::{
     required_u64,
 };
 use super::{campaign_record_to_json, saved_query_record_to_json};
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 
 /// `self.*` verb: create a CAMPAIGN owned by the authenticated principal.
 pub const SELF_CAMPAIGN_CREATE: &str = "self.campaign.create";
@@ -41,6 +41,32 @@ pub const SELF_SAVED_QUERY_ARCHIVE: &str = "self.saved_query.archive";
 
 /// `self.*` verb: page a SAVED_QUERY's derived membership, read-only.
 pub const SELF_SAVED_QUERY_MEMBERS: &str = "self.saved_query.members";
+
+/// `vault.*` verb: create a campaign program under a campaign the caller owns.
+pub const VAULT_CAMPAIGN_PROGRAM_CREATE: &str = "vault.campaign.program.create";
+
+/// `vault.*` verb: read one campaign program under a campaign the caller owns.
+pub const VAULT_CAMPAIGN_PROGRAM_READ: &str = "vault.campaign.program.read";
+
+/// `vault.*` verb: replace a campaign program's definition whole, under a CAS.
+pub const VAULT_CAMPAIGN_PROGRAM_UPDATE: &str = "vault.campaign.program.update";
+
+/// `vault.*` verb: archive a campaign program; a lifecycle transition, never a
+/// delete.
+pub const VAULT_CAMPAIGN_PROGRAM_ARCHIVE: &str = "vault.campaign.program.archive";
+
+/// The campaign program verbs, in dispatch order.
+///
+/// They are SDK rows (`scripts/sdk/agent-verbs.json`), so the verb table
+/// lists them to MCP, code mode and discovery; this door serves them to the
+/// resource routes. They are not in [`CAMPAIGN_SELF_VERBS`], which discovery
+/// advertises as bare code-mode tokens.
+pub const CAMPAIGN_PROGRAM_VERBS: &[&str] = &[
+    VAULT_CAMPAIGN_PROGRAM_CREATE,
+    VAULT_CAMPAIGN_PROGRAM_READ,
+    VAULT_CAMPAIGN_PROGRAM_UPDATE,
+    VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
+];
 
 /// The whole surface vocabulary, in dispatch order.
 ///
@@ -83,6 +109,14 @@ pub enum CampaignSurfaceVerb {
     SavedQueryArchive,
     /// [`SELF_SAVED_QUERY_MEMBERS`].
     SavedQueryMembers,
+    /// [`VAULT_CAMPAIGN_PROGRAM_CREATE`].
+    ProgramCreate,
+    /// [`VAULT_CAMPAIGN_PROGRAM_READ`].
+    ProgramRead,
+    /// [`VAULT_CAMPAIGN_PROGRAM_UPDATE`].
+    ProgramUpdate,
+    /// [`VAULT_CAMPAIGN_PROGRAM_ARCHIVE`].
+    ProgramArchive,
 }
 
 impl CampaignSurfaceVerb {
@@ -100,6 +134,14 @@ impl CampaignSurfaceVerb {
         Self::SavedQueryMembers,
     ];
 
+    /// The program verbs, in the order [`CAMPAIGN_PROGRAM_VERBS`] lists them.
+    pub const PROGRAM: [Self; 4] = [
+        Self::ProgramCreate,
+        Self::ProgramRead,
+        Self::ProgramUpdate,
+        Self::ProgramArchive,
+    ];
+
     /// Parses a verb name against the closed list.
     ///
     /// Exact equality, deliberately: a prefix, a suffix, or a case variant of a
@@ -107,7 +149,10 @@ impl CampaignSurfaceVerb {
     /// string a caller sent is the string that must match.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|verb| verb.as_str() == value)
+        Self::ALL
+            .into_iter()
+            .chain(Self::PROGRAM)
+            .find(|verb| verb.as_str() == value)
     }
 
     /// The wire name of this verb.
@@ -124,6 +169,10 @@ impl CampaignSurfaceVerb {
             Self::SavedQueryUpdate => SELF_SAVED_QUERY_UPDATE,
             Self::SavedQueryArchive => SELF_SAVED_QUERY_ARCHIVE,
             Self::SavedQueryMembers => SELF_SAVED_QUERY_MEMBERS,
+            Self::ProgramCreate => VAULT_CAMPAIGN_PROGRAM_CREATE,
+            Self::ProgramRead => VAULT_CAMPAIGN_PROGRAM_READ,
+            Self::ProgramUpdate => VAULT_CAMPAIGN_PROGRAM_UPDATE,
+            Self::ProgramArchive => VAULT_CAMPAIGN_PROGRAM_ARCHIVE,
         }
     }
 
@@ -141,6 +190,9 @@ impl CampaignSurfaceVerb {
                 | Self::SavedQueryCreate
                 | Self::SavedQueryUpdate
                 | Self::SavedQueryArchive
+                | Self::ProgramCreate
+                | Self::ProgramUpdate
+                | Self::ProgramArchive
         )
     }
 }
@@ -148,7 +200,8 @@ impl CampaignSurfaceVerb {
 /// One surface invocation: a verb name and its JSON body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SurfaceCall {
-    /// Verb name; must be one of [`CAMPAIGN_SELF_VERBS`].
+    /// Verb name; must be one of [`CAMPAIGN_SELF_VERBS`] or
+    /// [`CAMPAIGN_PROGRAM_VERBS`].
     pub verb: String,
     /// Verb-specific request body.
     pub body: Value,
@@ -172,9 +225,10 @@ pub struct SurfaceReply {
 ///
 /// # Errors
 ///
-/// A verb outside [`CAMPAIGN_SELF_VERBS`] and every malformed body are
-/// `BAD_REQUEST`; the domain's own not-found, stale-version, and gate outcomes
-/// propagate through [`MemoryError`] unchanged.
+/// A verb outside [`CAMPAIGN_SELF_VERBS`] and [`CAMPAIGN_PROGRAM_VERBS`], and
+/// every malformed body, are `BAD_REQUEST`; the domain's own not-found,
+/// stale-version, and gate outcomes propagate through [`MemoryError`]
+/// unchanged.
 pub fn invoke_campaign_surface(
     facade: &Memory<'_>,
     call: SurfaceCall,
@@ -238,10 +292,44 @@ pub fn invoke_campaign_surface(
             let request = parse_membership_request(&body, "query_ref")?;
             membership_page_to_json(&facade.saved_query_members(&request)?)
         }
+        CampaignSurfaceVerb::ProgramCreate => {
+            reply_json(&facade.campaign_program_create(&typed_body(body)?)?)?
+        }
+        CampaignSurfaceVerb::ProgramRead => {
+            reply_json(&facade.campaign_program_read(&typed_body(body)?)?)?
+        }
+        CampaignSurfaceVerb::ProgramUpdate => {
+            reply_json(&facade.campaign_program_update(&typed_body(body)?)?)?
+        }
+        CampaignSurfaceVerb::ProgramArchive => {
+            reply_json(&facade.campaign_program_archive(&typed_body(body)?)?)?
+        }
     };
     Ok(SurfaceReply {
         verb: verb.as_str().to_owned(),
         body: payload,
+    })
+}
+
+/// Decodes a program verb's body as its SDK row's typed input, so the
+/// resource routes and the verb table accept exactly the same documents.
+fn typed_body<T: serde::de::DeserializeOwned>(body: Value) -> MemoryResult<T> {
+    serde_json::from_value(body).map_err(|error| {
+        MemoryError::bad_request_with(
+            format!("the campaign program request body is invalid: {error}"),
+            &["Send the fields the verb's input schema names, and no others."],
+        )
+    })
+}
+
+/// Encodes a program verb's typed output as its reply body.
+fn reply_json<T: Serialize>(output: &T) -> MemoryResult<Value> {
+    serde_json::to_value(output).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "the campaign program reply could not be encoded",
+            &[],
+        )
     })
 }
 

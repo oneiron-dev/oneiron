@@ -86,6 +86,22 @@ pub(crate) fn load_saved_query(
     load_record(vault, query_ref)
 }
 
+/// [`load_saved_query`] through the caller's transaction, for an engine door
+/// that checks the owner relation inside its own write (a campaign program
+/// binding its audience).
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] when the SAVED_QUERY kind is not registered;
+/// storage or decode errors propagate unchanged.
+pub(crate) fn load_saved_query_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+) -> Result<Option<SavedQueryRecord>> {
+    load_record_in_txn(vault, txn, query_ref, saved_query_type_byte(vault)?)
+}
+
 /// Replaces a saved query's definition under a version CAS.
 ///
 /// The compare and the write share ONE write transaction. LMDB's single-writer

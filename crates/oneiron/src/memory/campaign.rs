@@ -188,4 +188,104 @@ impl Memory<'_> {
             self.vault, request,
         )?)
     }
+
+    // ── campaign program `vault.campaign.program.*` verbs (decide-host 1193) ─
+    //
+    // The campaign doors' rule, unchanged: the BOUND actor is re-verified and
+    // is the principal the domain checks. A program's owner is its
+    // campaign's, so each write proves the caller owns the campaign through
+    // the owned read `self.campaign.update` makes, inside the write's own
+    // transaction. Before it opens, each step's basis evidence and sender
+    // must resolve under the caller's own scoped read (OF-063's admission,
+    // here rather than as row `refs` so the resource routes meet it too).
+
+    /// `vault.campaign.program.create` — an authored program under a
+    /// campaign the bound actor owns.
+    pub fn campaign_program_create(
+        &self,
+        request: &crate::campaign::surface::CreateCampaignProgramRequest,
+    ) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        crate::gate::record_references::admit_row_references(
+            self,
+            crate::campaign::surface::VAULT_CAMPAIGN_PROGRAM_CREATE,
+            request,
+            crate::campaign::surface::CAMPAIGN_PROGRAM_STEP_REFS,
+        )?;
+        let draft = request.draft()?;
+        let program = crate::campaign::enrollment::create_campaign_program(
+            self.vault,
+            self.actor,
+            request.campaign_ref,
+            request.schema_version,
+            &draft,
+            self.vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::campaign::surface::campaign_program_record(&program))
+    }
+
+    /// `vault.campaign.program.read` — a program under a campaign the bound
+    /// actor owns; any other reads as not found.
+    pub fn campaign_program_read(
+        &self,
+        request: &crate::campaign::surface::CampaignProgramReadRequest,
+    ) -> MemoryResult<crate::campaign::surface::CampaignProgramReadResult> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        let program = crate::campaign::enrollment::read_campaign_program(
+            self.vault,
+            self.actor,
+            request.campaign_ref,
+            request.program_ref,
+        )?;
+        Ok(crate::campaign::surface::CampaignProgramReadResult {
+            found: program.is_some(),
+            record: program
+                .as_ref()
+                .map(crate::campaign::surface::campaign_program_record),
+        })
+    }
+
+    /// `vault.campaign.program.update` — replaces a program's definition,
+    /// steps and audience whole, under a CAS.
+    pub fn campaign_program_update(
+        &self,
+        request: &crate::campaign::surface::UpdateCampaignProgramRequest,
+    ) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        crate::gate::record_references::admit_row_references(
+            self,
+            crate::campaign::surface::VAULT_CAMPAIGN_PROGRAM_UPDATE,
+            request,
+            crate::campaign::surface::CAMPAIGN_PROGRAM_STEP_REFS,
+        )?;
+        let draft = request.draft()?;
+        let program = crate::campaign::enrollment::update_campaign_program(
+            self.vault,
+            self.actor,
+            request.campaign_ref,
+            request.program_ref,
+            request.expected_definition_version,
+            &draft,
+            self.vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::campaign::surface::campaign_program_record(&program))
+    }
+
+    /// `vault.campaign.program.archive` — the lifecycle transition; there is
+    /// no program delete verb, by design.
+    pub fn campaign_program_archive(
+        &self,
+        request: &crate::campaign::surface::ArchiveCampaignProgramRequest,
+    ) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
+        verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        let program = crate::campaign::enrollment::archive_campaign_program(
+            self.vault,
+            self.actor,
+            request.campaign_ref,
+            request.program_ref,
+            request.expected_definition_version,
+            self.vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::campaign::surface::campaign_program_record(&program))
+    }
 }

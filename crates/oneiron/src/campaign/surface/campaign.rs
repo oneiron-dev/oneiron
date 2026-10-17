@@ -244,7 +244,7 @@ fn validate_campaign_definition(definition: &CampaignDefinition) -> Result<()> {
 
 /// Loads a campaign the principal owns THROUGH the caller's transaction, or
 /// reports it as absent. Ownership is part of the read, not a post-filter.
-fn owned_campaign_in_txn(
+pub(crate) fn owned_campaign_in_txn(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     authenticated_principal: EntityId,
@@ -272,7 +272,7 @@ fn next_campaign_version(current: u64) -> Result<u64> {
 }
 
 /// The vault-scoped CAMPAIGN type byte, assigned at pack registration.
-fn campaign_type_byte(vault: &Vault) -> Result<u8> {
+pub(crate) fn campaign_type_byte(vault: &Vault) -> Result<u8> {
     vault
         .structural_kind_registrations()
         .into_iter()
@@ -290,7 +290,7 @@ fn load_campaign(vault: &Vault, campaign_ref: EntityId) -> Result<Option<Campaig
     load_campaign_in_txn(vault, &rtxn, campaign_ref, kind)
 }
 
-fn load_campaign_in_txn(
+pub(crate) fn load_campaign_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     campaign_ref: EntityId,
