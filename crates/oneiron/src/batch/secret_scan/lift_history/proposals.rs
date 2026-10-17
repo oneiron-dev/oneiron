@@ -94,7 +94,9 @@ pub(super) fn open_in_page(
 }
 
 /// Closes the open proposal `key`'s row holds of its own once the row reads
-/// clean: `read_clean`, or `deleted` when it is gone. `true` when one closed.
+/// clean: `read_clean`, or `deleted` when it is gone. A `file` proposal's
+/// row keeps its bytes, and its door reads it clean once marked, so only its
+/// row's delete closes it here. `true` when one closed.
 pub(super) fn close_clean_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -108,10 +110,12 @@ pub(super) fn close_clean_in_txn(
     if !held.is_open() {
         return Ok(false);
     }
-    let reason = if row_exists(vault, txn, family, key)? {
-        LiftCloseReason::ReadClean
-    } else {
+    let reason = if !row_exists(vault, txn, family, key)? {
         LiftCloseReason::Deleted
+    } else if held.cause == LiftCause::File {
+        return Ok(false);
+    } else {
+        LiftCloseReason::ReadClean
     };
     if !AUTO_CLOSE.contains(&reason) {
         return Ok(false);

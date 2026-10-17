@@ -91,7 +91,14 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         }
         ENTITY_TYPE_ASSET => {
             mark_file(vault, txn, &id, &header, &raw)?;
-            Ok(Done::Propose(LiftCause::File, reason))
+            // A file whose only hit was in its index text reads clean now.
+            match raw
+                .get(ENTITY_METADATA_HEADER_LEN..)
+                .and_then(write_payload_hit)
+            {
+                Some(_) => Ok(Done::Propose(LiftCause::File, reason)),
+                None => after_rewrite(vault, txn, &id, reason, false),
+            }
         }
         _ => rewrite(vault, txn, &id, &header, &raw, reason),
     }
