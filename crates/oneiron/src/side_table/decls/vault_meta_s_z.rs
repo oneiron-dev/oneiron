@@ -62,9 +62,9 @@ side_tables! {
     /// Where a mask on write found the secret one custody record holds: the record, the field and
     /// the key's kind (OF-560). Key: id16 (custody record id).
     SECRET_MASK_ORIGIN: VaultMeta b"secret_mask:origin:v1:" Named Custody;
-    /// A file stored with keys in it: each key's span in its bytes and the custody record that
-    /// holds it, and its band (OF-560, owner ruling G04 binary = C2). Key: hash32 (blake3 of the
-    /// stored bytes).
+    /// A file stored with keys in it: each key's span in its bytes, or in a container member it
+    /// holds (OF-067 C), the custody record that holds it, and its band (OF-560, owner ruling G04
+    /// binary = C2). Key: hash32 (blake3 of the stored bytes).
     SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named Custody;
     /// One reveal of a secret's value by its handle: the agent's ask, the owner's answer and the
     /// lease that delivered it, or the owner's own read with its reason (OF-560). Holds no value.

@@ -4,7 +4,8 @@ use super::*;
 // lopdf's Flate helper deliberately accepts truncated data/checksum errors.
 // Preparation must not turn recovered partial content into a signed original.
 // Reuse the existing native flate2 decoder and require an actual stream end.
-pub(super) fn decode_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>> {
+// The secret scan's PDF reader decodes streams with it too.
+pub(crate) fn decode_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>> {
     if !stream.dict.has(b"Filter") {
         if stream.content.len() > limit {
             return Err(PdfPreparationError::Limit);
