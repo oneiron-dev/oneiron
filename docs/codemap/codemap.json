@@ -31741,7 +31741,7 @@
      "purpose": "Stateless, memory-free chat beside (not inside) agent chat and off-record promote",
      "surface": {
       "enum": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 2,
       "trait": 1
      }
@@ -31853,7 +31853,7 @@
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
       "crate-vis": 35,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -31910,7 +31910,7 @@
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
       "crate-vis": 4,
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -62207,7 +62207,7 @@
      "purpose": "VaultBridge root and ActorScopedVault handle plus the facade() accessor",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -62222,7 +62222,7 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -63271,7 +63271,7 @@
      "path": "src/embedded.rs",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 1
      }
     },
@@ -63338,7 +63338,7 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 16,
+      "fn": 17,
       "mod": 1,
       "re-export": 5,
       "struct": 2
@@ -63376,7 +63376,7 @@
      "path": "src/remote/mod.rs",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -65468,7 +65468,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -68016,7 +68016,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 40
      }
     },
     {
@@ -74884,7 +74884,7 @@
      "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
      "surface": {
       "const": 1,
-      "fn": 9,
+      "fn": 10,
       "re-export": 4,
       "struct": 1
      }
