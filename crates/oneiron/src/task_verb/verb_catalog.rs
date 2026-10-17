@@ -2051,7 +2051,7 @@ impl AgentVerb {
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
             Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2350,7 +2350,7 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2695,7 +2695,7 @@ impl AgentVerb {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
             }
             Self::TasksUpdate => {
-                "Records the owner's acknowledgement of a failed TASK; any other task stays as it was."
+                "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."
             }
             Self::VaultWitness => {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
