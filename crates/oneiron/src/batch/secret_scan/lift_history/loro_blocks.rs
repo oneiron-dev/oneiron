@@ -1,12 +1,16 @@
 //! Loro blocks a carrier stores, read decompressed before the census scans
 //! them (OF-067). A document's snapshot or update keeps its operations in
 //! blocks Loro compresses, so a scan of the stored bytes cannot see a key
-//! typed into one. Each block, the row itself or one a MessagePack member of
-//! the row holds, is imported into a fresh document and read twice: every
-//! operation it holds, as Loro's JSON export, and its state as JSON. A binary
-//! value in either is read as a body too. An entity document's pending
-//! update is imported on top of its snapshot and the updates before it, so
-//! its operations apply and only those it adds are read.
+//! typed into one. The carriers read here are the document family's
+//! ([`LORO_CARRIERS`]); a carrier whose own module reads its documents
+//! decoded is read there.
+//!
+//! Each block, the row itself or one a MessagePack member of the row holds,
+//! is imported into a fresh document and read twice: every operation it
+//! holds, as Loro's JSON export, and its state as JSON. A binary value in
+//! either is read as a body too. An entity document's pending update is
+//! imported on top of its snapshot and the updates before it, so its
+//! operations apply and only those it adds are read.
 
 use heed::RoTxn;
 use loro::{LoroDoc, VersionVector};
@@ -21,6 +25,15 @@ use crate::side_table::{self as t, SideTableDecl};
 /// What every Loro export starts with.
 const MAGIC: &[u8] = b"loro";
 
+/// The carriers whose rows are Loro documents with no decoded reading of
+/// their own: an entity document's or a NOTE's snapshot, an entity
+/// document's pending update, and a NOTE proposal's document.
+static LORO_CARRIERS: &[&SideTableDecl] = &[
+    &t::DOCUMENT_SNAPSHOT,
+    &t::DOCUMENT_UPDATE,
+    &t::NOTE_PROPOSAL_DOC,
+];
+
 /// The shortest run of byte values read as a binary value.
 const MIN_BINARY: usize = 8;
 
@@ -32,6 +45,12 @@ pub(super) fn hit(
     key: &[u8],
     row: &[u8],
 ) -> Result<Option<&'static str>> {
+    if !LORO_CARRIERS
+        .iter()
+        .any(|carrier| carrier.name == decl.name)
+    {
+        return Ok(None);
+    }
     if decl.name == t::DOCUMENT_UPDATE.name && row.starts_with(MAGIC) {
         return update_hit(vault, txn, key, row);
     }
