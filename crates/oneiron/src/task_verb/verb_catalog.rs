@@ -98,6 +98,9 @@ pub enum AgentVerb {
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
+    VaultWidenProposals,
+    VaultWidenProposalsApprove,
+    VaultWidenProposalsDecline,
     VaultSettingsWakePolicySet,
     VaultSettingsInferenceDefaults,
     VaultSettingsInferenceDefaultsReplace,
@@ -154,6 +157,7 @@ pub enum AgentVerb {
     VaultProjectsRouteTradeoff,
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
+    VaultMessagesReact,
     VaultRoomsHost,
     VaultRoomsHostPin,
     VaultRoomsHostHand,
@@ -238,6 +242,7 @@ pub enum AgentVerb {
     VaultStructuralPut,
     VaultHabitsCheckin,
     VaultClaimsAdmit,
+    VaultArtifactsCreate,
     VaultArtifactsPut,
     VaultArtifactsAppend,
     VaultArtifactsRead,
@@ -348,6 +353,9 @@ impl AgentVerb {
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
+        Self::VaultWidenProposals,
+        Self::VaultWidenProposalsApprove,
+        Self::VaultWidenProposalsDecline,
         Self::VaultSettingsWakePolicySet,
         Self::VaultSettingsInferenceDefaults,
         Self::VaultSettingsInferenceDefaultsReplace,
@@ -404,6 +412,7 @@ impl AgentVerb {
         Self::VaultProjectsRouteTradeoff,
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
+        Self::VaultMessagesReact,
         Self::VaultRoomsHost,
         Self::VaultRoomsHostPin,
         Self::VaultRoomsHostHand,
@@ -488,6 +497,7 @@ impl AgentVerb {
         Self::VaultStructuralPut,
         Self::VaultHabitsCheckin,
         Self::VaultClaimsAdmit,
+        Self::VaultArtifactsCreate,
         Self::VaultArtifactsPut,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
@@ -603,6 +613,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
+            Self::VaultWidenProposals => "vault.widen_proposals",
+            Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
+            Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
             Self::VaultSettingsWakePolicySet => "vault.settings.wake_policy.set",
             Self::VaultSettingsInferenceDefaults => "vault.settings.inference_defaults",
             Self::VaultSettingsInferenceDefaultsReplace => {
@@ -661,6 +674,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
+            Self::VaultMessagesReact => "vault.messages.react",
             Self::VaultRoomsHost => "vault.rooms.host",
             Self::VaultRoomsHostPin => "vault.rooms.host.pin",
             Self::VaultRoomsHostHand => "vault.rooms.host.hand",
@@ -745,6 +759,7 @@ impl AgentVerb {
             Self::VaultStructuralPut => "vault.structural.put",
             Self::VaultHabitsCheckin => "vault.habits.checkin",
             Self::VaultClaimsAdmit => "vault.claims.admit",
+            Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultArtifactsPut => "vault.artifacts.put",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
@@ -854,6 +869,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -910,6 +928,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
@@ -958,6 +977,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1111,6 +1131,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1167,6 +1190,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
@@ -1215,6 +1239,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1393,6 +1418,9 @@ impl AgentVerb {
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposals
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaults
                 | Self::VaultSettingsInferenceDefaultsReplace
@@ -1449,6 +1477,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
@@ -1525,6 +1554,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
@@ -1600,6 +1630,8 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesDelete
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
+                | Self::VaultWidenProposalsApprove
+                | Self::VaultWidenProposalsDecline
                 | Self::VaultSettingsWakePolicySet
                 | Self::VaultSettingsInferenceDefaultsReplace
                 | Self::VaultLensesPropose
@@ -1631,6 +1663,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultMessagesReact
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
                 | Self::VaultCompanionsSharingSet
@@ -1673,6 +1706,7 @@ impl AgentVerb {
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultClaimsAdmit
+                | Self::VaultArtifactsCreate
                 | Self::VaultArtifactsPut
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
@@ -1797,6 +1831,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultWidenProposals => &["spec"],
+            Self::VaultWidenProposalsApprove => &["spec"],
+            Self::VaultWidenProposalsDecline => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -1853,6 +1890,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
+            Self::VaultMessagesReact => &["spec"],
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
             Self::VaultRoomsHostHand => &["spec"],
@@ -1937,6 +1975,7 @@ impl AgentVerb {
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
+            Self::VaultArtifactsCreate => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2048,6 +2087,9 @@ impl AgentVerb {
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
+            Self::VaultWidenProposals => &["spec"],
+            Self::VaultWidenProposalsApprove => &["spec"],
+            Self::VaultWidenProposalsDecline => &["spec"],
             Self::VaultSettingsWakePolicySet => &["spec"],
             Self::VaultSettingsInferenceDefaults => &[],
             Self::VaultSettingsInferenceDefaultsReplace => &["spec"],
@@ -2104,6 +2146,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
+            Self::VaultMessagesReact => &["spec"],
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
             Self::VaultRoomsHostHand => &["spec"],
@@ -2188,6 +2231,7 @@ impl AgentVerb {
             Self::VaultStructuralPut => &["spec"],
             Self::VaultHabitsCheckin => &["spec"],
             Self::VaultClaimsAdmit => &["spec"],
+            Self::VaultArtifactsCreate => &["spec"],
             Self::VaultArtifactsPut => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
@@ -2464,6 +2508,15 @@ impl AgentVerb {
             Self::VaultSettingsLearningClear => {
                 "The owner clears one learned-setting row of a key, mode and scope."
             }
+            Self::VaultWidenProposals => {
+                "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."
+            }
+            Self::VaultWidenProposalsApprove => {
+                "The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued."
+            }
+            Self::VaultWidenProposalsDecline => {
+                "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record."
+            }
             Self::VaultSettingsWakePolicySet => {
                 "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof."
             }
@@ -2613,6 +2666,9 @@ impl AgentVerb {
             }
             Self::VaultConversationsTurnRetry => {
                 "Queues a new answer to the user turn an assistant turn answered; the old reply stays."
+            }
+            Self::VaultMessagesReact => {
+                "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."
             }
             Self::VaultRoomsHost => {
                 "Who hosts a room now, and the caller's own speaking role there."
@@ -2795,6 +2851,9 @@ impl AgentVerb {
             Self::VaultHabitsCheckin => "Appends one immutable check-in under a Habit TASK.",
             Self::VaultClaimsAdmit => {
                 "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."
+            }
+            Self::VaultArtifactsCreate => {
+                "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run."
             }
             Self::VaultArtifactsPut => {
                 "Registers one blob artifact; its bytes ride vault.artifacts.append."

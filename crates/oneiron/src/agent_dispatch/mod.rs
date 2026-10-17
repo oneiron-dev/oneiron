@@ -53,6 +53,7 @@ mod team_shape;
 mod team_stamp;
 mod types;
 mod widen;
+pub mod widen_doors;
 mod widen_record;
 mod workflow;
 mod workflow_host;

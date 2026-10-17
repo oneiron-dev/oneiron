@@ -23,7 +23,7 @@ mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
-pub use self::core::SyncServer;
+pub use self::core::{SyncServer, TaskWorkTurn};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
 pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
@@ -35,7 +35,6 @@ pub(crate) use self::reader_runner::{
 };
 pub(crate) use self::recall::blocking;
 pub(crate) use self::run_host_door::answer_as_agent;
-pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]
 mod housekeeping_tests;

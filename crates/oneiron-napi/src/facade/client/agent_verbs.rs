@@ -190,6 +190,7 @@ impl NativeClient {
         format: Option<String>,
         as_of: Option<f64>,
         deadline_ms: Option<f64>,
+        media: Option<NapiRecallMedia>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
@@ -208,6 +209,10 @@ impl NativeClient {
             .map(oneiron_remote::check_deadline_ms_number)
             .transpose()
             .map_err(facade_error)?;
+        let media = media
+            .map(recall_media_to_engine)
+            .transpose()
+            .map_err(facade_error)?;
         let output = self
             .inner
             .vault_recall(
@@ -218,6 +223,7 @@ impl NativeClient {
                 format.as_deref(),
                 as_of,
                 deadline_ms,
+                media,
             )
             .map_err(facade_error)?;
         memory_pack_from_engine(output).map_err(boundary_error)
@@ -872,6 +878,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_widen_proposals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.widen_proposals", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_widen_proposals_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.widen_proposals.approve", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_widen_proposals_decline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.widen_proposals.decline", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_settings_wake_policy_set(
         &self,
         input: serde_json::Value,
@@ -1474,6 +1507,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_messages_react(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.messages.react", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_host(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.rooms.host", input)
@@ -1816,6 +1858,15 @@ impl NativeClient {
     pub fn vault_claims_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.admit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.create", input)
             .map_err(facade_error)
     }
     #[napi]
