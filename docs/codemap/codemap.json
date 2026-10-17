@@ -64456,6 +64456,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/lens_callbacks.rs",
+     "purpose": "OF-181 (FIX 2611): a lens card's model round trip goes back to the agent that emitted the card, as that…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -64475,7 +64485,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 21,
       "re-export": 1,
       "struct": 2
@@ -72753,7 +72763,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73154,7 +73164,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 609,
+   "source_files": 610,
    "test_files": 182
   },
   "oneiron-spawn": {
