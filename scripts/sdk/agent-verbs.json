@@ -340,6 +340,7 @@
     {
       "name": "steer",
       "description": "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt.",
+      "refs": ["/task_ref"],
       "input": "SteerRequest",
       "output": "crate::task_verb::sdk::SteerReceipt",
       "call": "crate::task_verb::sdk::steer_child(memory, input)?",
@@ -399,7 +400,7 @@
     {
       "name": "tasks.create",
       "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal.",
-      "prose_links": ["/label", "/spec"],
+      "prose_links": ["/label", "/spec/title", "/spec/description", "/spec/brief", "/spec/notes", "/spec/instructions"],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
@@ -4043,6 +4044,7 @@
     {
       "name": "vault.delete",
       "description": "Deletes one entity under a named reason; an owner verb that only a verified human may call.",
+      "refs": ["/entity_ref"],
       "uniffi": {
         "args": {
           "entity_ref": "String",

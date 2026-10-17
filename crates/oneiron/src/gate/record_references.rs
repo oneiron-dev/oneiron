@@ -27,12 +27,14 @@
 //! reader's own read (`vault.refs.links`, through the `vault.refs.resolve`
 //! door); an AI-written link that does not resolve for its writer never
 //! refuses or rewrites the text, it leaves the same reference-refusal receipt
-//! with the outcome `unlinked` ([`admit_prose_links`]), written before the
-//! engine call, so it records the attempt even when that call then fails.
-//! The witness program reads every AI-written message it lands this way,
-//! whatever door it came through ([`admit_witness_prose`]), and a streamed
-//! continuation its appended text ([`admit_prose_text`]). No grant, scope or
-//! authority path reads a prose link.
+//! with the outcome `unlinked` ([`unlinked_prose_links`]). The receipt
+//! means landed speech only (Engine ruling 10-18): the links are read before
+//! the engine call, and the receipt is written only once that call has
+//! landed the text ([`receipt_landed_prose`]), so an attempt that never
+//! lands leaves none. The witness program reads every AI-written message it
+//! lands this way, whatever door it came through ([`witness_prose_unlinked`]),
+//! and a streamed continuation its appended text ([`prose_text_unlinked`]).
+//! No grant, scope or authority path reads a prose link.
 
 mod blocks;
 
@@ -660,29 +662,30 @@ fn texts_in<'v>(
     }
 }
 
-/// The generated prose-link check a row with `prose_links` runs before its
+/// The generated prose-link read a row with `prose_links` runs before its
 /// engine call (OF-063 prose links: Engine ruling 10-17).
 ///
 /// Each AI-written text slot (its writer is an agent or a system actor, or
 /// its item declares it AI-written through a `*[key=value]` filter) is read
 /// for `oneiron://` links, and each link must resolve under the writer's own
-/// scoped read. A slot with a link that does not is receipted once, on its
-/// own grouped write, as a reference refusal with the outcome `unlinked`:
-/// the actor, `row`, the slot's pointer and the time, never the ref. The
-/// text is neither refused nor rewritten, and the write goes on; a reader
-/// sees such a link as its plain label. The receipt is written before the
-/// engine call, so it records the attempt and stands even when that call
-/// then fails. Inside an anonymous off-record session nothing is written. If
-/// the receipts cannot be written the store's error is returned.
-pub(crate) fn admit_prose_links<T: serde::Serialize>(
+/// scoped read. A slot with a link that does not earns one reference
+/// refusal with the outcome `unlinked`: the actor, `row`, the slot's pointer
+/// and the time, never the ref. The text is neither refused nor rewritten,
+/// and the write goes on; a reader sees such a link as its plain label.
+/// Nothing is written here: the generated fn hands these facts to
+/// [`receipt_landed_prose`] once its engine call has landed the write
+/// (Engine ruling 10-18: the receipt means landed speech only), so a write
+/// that fails, is refused or never runs leaves none. A read that fails
+/// returns its error.
+pub(crate) fn unlinked_prose_links<T: serde::Serialize>(
     memory: &Memory<'_>,
     row: &'static str,
     input: &T,
     pointers: &[&str],
-) -> MemoryResult<()> {
+) -> MemoryResult<Vec<ReferenceRefusalFacts>> {
     let writer_is_ai = memory.actor_class() != crate::EdgeActorClass::Human;
     if !writer_is_ai && !pointers.iter().any(|pointer| pointer.contains("*[")) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let value = serde_json::to_value(input).map_err(|_| {
         MemoryError::bad_request("the verb input could not be read for the records its text links")
@@ -698,8 +701,20 @@ pub(crate) fn admit_prose_links<T: serde::Serialize>(
             unlinked.push(facts);
         }
     }
-    receipt_reference_refusals(memory, &unlinked)?;
-    Ok(())
+    Ok(unlinked)
+}
+
+/// Receipts the `unlinked` facts of text that has now landed, each on its
+/// own grouped write (Engine ruling 10-18: the durable unlinked-prose
+/// receipt means landed speech only). Called only after the write that
+/// carried the text returned success. Inside an anonymous off-record
+/// session nothing is written. Best effort, as every receipt of a landed
+/// effect: a receipt that cannot be written is logged and the landed write's
+/// answer stands.
+pub(crate) fn receipt_landed_prose(memory: &Memory<'_>, unlinked: &[ReferenceRefusalFacts]) {
+    if let Err(error) = receipt_reference_refusals(memory, unlinked) {
+        tracing::warn!(%error, "landed AI text's unresolved links went unreceipted");
+    }
 }
 
 /// The `unlinked` facts one AI-written `text` at `pointer` earns for its
@@ -738,33 +753,62 @@ pub(crate) const WITNESS_PROSE_ROW: &str = "vault.witness";
 /// The AI-written text of a witnessed turn: each companion message's content.
 const WITNESS_PROSE_SLOT: &str = "/messages/*[author=companion]/content";
 
-/// The witness program's prose-link check (OF-063 prose links: Engine
+/// The witness program's prose-link read (OF-063 prose links: Engine
 /// ruling 10-17), run once for every turn it lands, at base or in a
 /// non-anonymous off-record session's overlay, whatever door the turn came
 /// through: the verb table's `vault.witness` and `vault.rooms.speak`,
 /// first-party speech, a streamed message's final witness, the AI chat
 /// reply. An imported turn is not read. Each companion message is read as
-/// [`admit_prose_links`] reads a declared slot. Receipt-only: it never
-/// refuses or rewrites the message, and a read or receipt that fails is
-/// logged and the witness goes on.
-pub(crate) fn admit_witness_prose(memory: &Memory<'_>, turn: &crate::memory::WitnessTurn) {
+/// [`unlinked_prose_links`] reads a declared slot, before the writer opens;
+/// the program hands the facts to [`receipt_landed_prose`] once the turn has
+/// landed. It never refuses or rewrites the message, and a read that fails
+/// is logged and reads as no link.
+pub(crate) fn witness_prose_unlinked(
+    memory: &Memory<'_>,
+    turn: &crate::memory::WitnessTurn,
+) -> Vec<ReferenceRefusalFacts> {
     // Most turns name no link: they are not read at all.
     if !turn.messages.iter().any(|message| {
         message.author == crate::memory::WitnessAuthor::Companion
             && message.content.contains(PROSE_LINK_SCHEME)
     }) {
-        return;
+        return Vec::new();
     }
-    if let Err(error) = admit_prose_links(memory, WITNESS_PROSE_ROW, turn, &[WITNESS_PROSE_SLOT]) {
-        tracing::warn!(%error, "witnessed AI text's unresolved links went unreceipted");
+    unlinked_prose_links(memory, WITNESS_PROSE_ROW, turn, &[WITNESS_PROSE_SLOT]).unwrap_or_else(
+        |error| {
+            tracing::warn!(%error, "witnessed AI text's links could not be read");
+            Vec::new()
+        },
+    )
+}
+
+/// The prose-link read of text appended to an AI-written message (a
+/// streamed continuation's finalize), before its writer opens: `text` is
+/// the message's whole text, whose first `from` bytes were read when they
+/// landed, so only links that end past them are read. The finalize hands
+/// the facts to [`receipt_landed_prose`] once it has landed; a read that
+/// fails is logged and reads as no link.
+pub(crate) fn prose_text_unlinked(
+    memory: &Memory<'_>,
+    row: &'static str,
+    field: &str,
+    text: &str,
+    from: usize,
+) -> Vec<ReferenceRefusalFacts> {
+    match unlinked_text(memory, row, field.to_owned(), text, from) {
+        Ok(facts) => facts.into_iter().collect(),
+        Err(error) => {
+            tracing::warn!(%error, "appended AI text's links could not be read");
+            Vec::new()
+        }
     }
 }
 
-/// The prose-link check of text appended to an AI-written message (a
-/// streamed continuation's finalize): `text` is the message's whole text,
-/// whose first `from` bytes were read when they landed, so only links that
-/// end past them are read. Receipted under `row` at `field`, receipt-only:
-/// a read or receipt that fails is logged and the finalize goes on.
+/// The prose-link check of AI-written text that has already landed (a DAG
+/// append's or a summary reply's TURN prose, read once its writer closed):
+/// links that end past byte `from` of `text` are read and receipted under
+/// `row` at `field`, receipt-only: a read or receipt that fails is logged
+/// and the landed write's answer stands.
 pub(crate) fn admit_prose_text(
     memory: &Memory<'_>,
     row: &'static str,

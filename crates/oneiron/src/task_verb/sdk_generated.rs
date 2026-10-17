@@ -5494,13 +5494,15 @@ pub fn self_memory_diary(
     memory: &Memory<'_>,
     input: DiaryEntryRequest,
 ) -> MemoryResult<crate::task_verb::sdk::DiaryEntryReceipt> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "self.memory.diary",
         &input,
         &["/content"],
     )?;
-    crate::task_verb::sdk::self_memory_diary_write(memory, input)
+    let landed = crate::task_verb::sdk::self_memory_diary_write(memory, input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn self_memory_diary_reads(
     memory: &Memory<'_>,
@@ -5621,6 +5623,7 @@ pub fn steer(
     memory: &Memory<'_>,
     input: SteerRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SteerReceipt> {
+    crate::gate::record_references::admit_row_references(memory, "steer", &input, &["/task_ref"])?;
     crate::task_verb::sdk::steer_child(memory, input)
 }
 pub fn describe(
@@ -5655,13 +5658,22 @@ pub fn tasks_create(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
 ) -> MemoryResult<crate::task_verb::TaskCreateReceipt> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "tasks.create",
         &input,
-        &["/label", "/spec"],
+        &[
+            "/label",
+            "/spec/title",
+            "/spec/description",
+            "/spec/brief",
+            "/spec/notes",
+            "/spec/instructions",
+        ],
     )?;
-    memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)
+    let landed = memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn tasks_wave(
     memory: &Memory<'_>,
@@ -5795,8 +5807,15 @@ pub fn vault_kv_put(
     memory: &Memory<'_>,
     input: crate::memory::KeyValuePut,
 ) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
-    crate::gate::record_references::admit_prose_links(memory, "vault.kv.put", &input, &["/value"])?;
-    memory.key_value_put(&input)
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.kv.put",
+        &input,
+        &["/value"],
+    )?;
+    let landed = memory.key_value_put(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn vault_kv_delete(
     memory: &Memory<'_>,
@@ -7577,6 +7596,12 @@ pub fn vault_delete(
     memory: &Memory<'_>,
     input: SafeDeleteRequest,
 ) -> MemoryResult<crate::memory::DeleteReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.delete",
+        &input,
+        &["/entity_ref"],
+    )?;
     memory.safe_delete(&input.entity_ref, input.reason)
 }
 pub fn vault_writes_pending(
@@ -8018,13 +8043,15 @@ pub fn vault_notes_create(
     memory: &Memory<'_>,
     input: CreateNoteRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "vault.notes.create",
         &input,
         &["/markdown"],
     )?;
-    memory.create_note(&input.kind, &input.markdown)
+    let landed = memory.create_note(&input.kind, &input.markdown)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn vault_notes_from_entity(
     memory: &Memory<'_>,
@@ -8042,7 +8069,7 @@ pub fn vault_notes_edit(
     memory: &Memory<'_>,
     input: EditNoteRequest,
 ) -> MemoryResult<crate::note::NoteProgramEditOutcome> {
-    crate::gate::record_references::admit_prose_links(
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
         memory,
         "vault.notes.edit",
         &input,
@@ -8054,7 +8081,9 @@ pub fn vault_notes_edit(
         &input,
         &["/note_ref"],
     )?;
-    memory.edit_note(&input.note_ref, &input.edit)
+    let landed = memory.edit_note(&input.note_ref, &input.edit)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
 }
 pub fn vault_notes_seal(
     memory: &Memory<'_>,
