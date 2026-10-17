@@ -997,7 +997,7 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 15
      }
     },
@@ -3526,6 +3526,7 @@
      "path": "src/autoreason_campaign/authoring.rs",
      "purpose": "The claim-authoring tournament as a strategy skill on an OF-351 campaign (OF-366)",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 8,
       "struct": 4
@@ -11358,7 +11359,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 11,
       "struct": 2
      }
@@ -13484,7 +13485,7 @@
      "path": "src/connector_key/lifecycle/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -13537,7 +13538,7 @@
      "purpose": "The owner's consent to a catalog connector's tools (ONE-1794, OF-189)",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 2,
       "struct": 5
@@ -13562,7 +13563,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConnectorDispatchTelemetry",
@@ -13586,7 +13587,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 12
      }
@@ -38856,7 +38857,7 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 8
@@ -42507,7 +42508,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 36
      }
     },
     {
@@ -43670,7 +43671,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/authority.rs",
@@ -52908,7 +52909,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 161,
+   "over_bar": 162,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3203,
    "test_files": 903
@@ -69793,7 +69794,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/models/soniox.rs",
@@ -70250,7 +70251,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "JournalRow",
@@ -70262,7 +70263,7 @@
      "purpose": "The serve host's skill judge (OF-495)",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -71748,7 +71749,7 @@
     "replay_judge": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The serve host's skill judge (OF-495)"
     },
@@ -71837,7 +71838,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 45,
+   "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 584,
    "test_files": 182
