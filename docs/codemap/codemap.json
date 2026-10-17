@@ -18557,6 +18557,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/calibration_asks.rs",
+     "purpose": "Calibration asks (OF-420; ARCH-0053 #the-judge, ARCH-0042's judge re-pin protocol): \"On uncertainty…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -18761,7 +18772,7 @@
       "crate-vis": 7,
       "fn": 1,
       "mod": 12,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -41996,7 +42007,7 @@
      "purpose": "The judge-swap shadow ladder (ARCH-0053, ARCH-0079 #model-swaps, OF-184)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 4,
       "fn": 5,
       "struct": 7,
@@ -42014,9 +42025,9 @@
      "path": "src/skill_optimize/labels.rs",
      "purpose": "Human-calibrated judge asks and the append-only label anchor",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -52029,7 +52040,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53032,7 +53043,7 @@
    },
    "over_bar": 164,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3211,
+   "source_files": 3212,
    "test_files": 902
   },
   "oneiron-android": {
