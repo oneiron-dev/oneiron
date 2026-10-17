@@ -797,6 +797,9 @@ impl From<MemoryError> for FacadeApiError {
             MEMORY_CODE_INVALID_STATE
             | MEMORY_CODE_OFF_RECORD_SESSION_DOOR
             | MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER => StatusCode::CONFLICT,
+            // OF-123: the person the effect names is not settled yet; the
+            // same request succeeds once `self.identity.settle` settles it.
+            oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,
             // A paid call its line cannot cover, as a chat turn's is.
             MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
             // A verb hook asked first: accepted, not run, and the body names

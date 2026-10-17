@@ -109,6 +109,7 @@ impl Vault {
                     trigger_ref: notice.task_ref.to_hex(),
                     job_ref: None,
                     occurred_at: None,
+                    mention: None,
                 };
                 match self
                     .memory(companion, EdgeActorClass::Agent)
