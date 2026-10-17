@@ -108,6 +108,8 @@ pub struct LoadedWindow {
     _observer_b: (Subscription, Subscription, Subscription, Subscription),
     /// Observer B for the custody map (OF-422), on a base window only.
     _observer_custody: Option<Subscription>,
+    /// Observer B for the room turn map (OF-522), on a base window only.
+    _observer_room_turns: Option<Subscription>,
     /// Observer A state for pending bytes tracking.
     pub observer_a_state: Arc<ObserverAState>,
 }
@@ -173,6 +175,10 @@ impl LoadedWindow {
             .world()
             .is_none()
             .then(|| bridge::register_custody_observer(&doc, vault, materializer, key.as_str()));
+        let observer_room_turns = key
+            .world()
+            .is_none()
+            .then(|| bridge::register_room_turns_observer(&doc, vault, materializer, key.as_str()));
 
         Self {
             doc,
@@ -180,6 +186,7 @@ impl LoadedWindow {
             _observer_a: observer_a,
             _observer_b: observer_b,
             _observer_custody: observer_custody,
+            _observer_room_turns: observer_room_turns,
             observer_a_state,
         }
     }
