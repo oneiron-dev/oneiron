@@ -49811,7 +49811,7 @@
      "surface": {
       "crate-vis": 19,
       "enum": 4,
-      "fn": 23,
+      "fn": 24,
       "struct": 2
      }
     },
@@ -66242,13 +66242,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -69237,13 +69237,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -70821,7 +70821,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 40,
+   "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 564,
    "test_files": 182
