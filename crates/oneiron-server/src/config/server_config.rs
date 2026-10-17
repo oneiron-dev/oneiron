@@ -61,6 +61,9 @@ pub struct SyncServerConfig {
     pub oauth_resource_indicator: Option<String>,
     /// The `[native_mail]` server the native mail pack's check reaches.
     pub native_mail: Option<super::NativeMailConfig>,
+    /// The `[connectors.<name>]` transports the generic connector call
+    /// reaches, by normalized catalog name.
+    pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
     /// Explicit local/dev escape hatch for running without `auth_secret`.
     pub allow_unauthenticated: bool,
     /// Explicit CORS origins allowed to call the HTTP API. Empty is
@@ -127,6 +130,7 @@ impl Default for SyncServerConfig {
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
             native_mail: None,
+            connectors: std::collections::BTreeMap::new(),
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
             artifact_domains: Vec::new(),
@@ -316,6 +320,9 @@ pub struct ServeConfig {
     /// The `[native_mail]` section: the host's own mail server, absent until
     /// the config file names it.
     pub native_mail: Option<super::NativeMailConfig>,
+    /// The `[connectors.<name>]` sections: each catalog connector's installed
+    /// transport and endpoint, empty until the config file names one.
+    pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
     /// The `[embedding]` section: spaces and kind slots seeded at start,
     /// absent until the config file names it.
     pub embedding: Option<super::EmbeddingConfig>,
@@ -387,6 +394,7 @@ impl Default for ServeConfig {
             desktop: None,
             gpu: None,
             native_mail: None,
+            connectors: std::collections::BTreeMap::new(),
             embedding: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -461,6 +469,7 @@ impl fmt::Debug for ServeConfig {
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
+            .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -484,6 +493,13 @@ impl ServeConfig {
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             native_mail: self.native_mail.clone(),
+            connectors: self
+                .connectors
+                .iter()
+                .map(|(name, connector)| {
+                    (super::connectors::normalize_name(name), connector.clone())
+                })
+                .collect(),
             allow_unauthenticated: self.allow_unauthenticated,
             allowed_origins: self.allowed_origins.clone(),
             artifact_domains: self.artifact_domains.clone(),

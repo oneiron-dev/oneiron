@@ -115,13 +115,22 @@ reading and trusting its body stays the caller's decision. `request`,
 `Promise<Response>`. Any route the convenience methods do not cover is one
 `client.request(path, init)` away.
 
+Each facade call goes out under a fresh `x-oneiron-invocation` (32 lowercase hex
+from `crypto.getRandomValues`), and a call a verb hook stopped on an ask, `202
+PENDING_ASK`, resolves to a `FacadePending` carrying that id, the ask and the
+envelope instead of a `Response`. `client.retry(pending, init?)` resends the same
+verb and input under the same id: the same pending while the ask is open, the
+saved call run once after it is answered.
+
 ## What this client will not do
 
 * It does not parse a response body, clone a response, or throw on an HTTP
   status. `4xx` and `5xx` resolve like any other response; only a network
-  failure rejects, exactly as `fetch` rejects.
+  failure rejects, exactly as `fetch` rejects. The one exception is a facade
+  `202`: it is cloned and, when it carries a `PENDING_ASK` envelope, read into
+  a `FacadePending`.
 * It does not re-send a mutation, cache a result, or iterate pages behind your
-  back, so wire metadata is never hidden.
+  back, so wire metadata is never hidden. `retry` re-sends only when you call it.
 * It does not add an endpoint, a second authority model, or a second request
   envelope. Caller headers merge additively, and swapping the configured
   `Authorization` header for a different credential is refused loudly.
@@ -137,8 +146,8 @@ reading and trusting its body stays the caller's decision. `request`,
 One artifact serves three consumers. `facadeTree` takes the one thing that
 differs between them, an injected invocation transport
 (`FacadeTransport<K, O>`: a verb, its typed input, the transport's own
-options), and every consumer gets the same typed tree and the same
-`FACADE_CATALOG`. `K` says what a call answers: `"response"` (the original
+options and the call's invocation id), and every consumer gets the same
+typed tree and the same `FACADE_CATALOG`. `K` says what a call answers: `"response"` (the original
 `Response`), `"result"` (a promise of the typed result) or `"sync"` (the typed
 result itself).
 

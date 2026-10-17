@@ -37,11 +37,11 @@ pub(crate) fn withdrawn_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(
-        super::TombstoneStoreRead::port_deletion_state(store, txn, id)?.deleted
-            || super::stale_in_txn(store, txn, id)?
-            || crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some(),
-    )
+    // The deletion state already walks the staleness sources once.
+    let state = super::TombstoneStoreRead::port_deletion_state(store, txn, id)?;
+    Ok(state.deleted
+        || state.stale
+        || crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some())
 }
 
 /// What a door makes of a stored body's own `stale: true`.
