@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use futures_util::{Sink, Stream};
 use oneiron::llm::media::{AiOperation, MediaBackend, MediaFuture, MediaRequest, MediaResponse};
-use oneiron::voice_cascade::media::{LeasedAsrStream, MediaVoiceRoute};
+use oneiron::voice_cascade::media::{LeasedAsrStream, MediaVoiceRoute, VoiceStreamDoor};
 use oneiron::voice_cascade::soniox::{SonioxAsrClient, SonioxTransport, SonioxUpdate};
 use oneiron::voice_cascade::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
 use oneiron::{BudgetLease, FatalLlmError};
@@ -382,7 +382,7 @@ impl Segment {
     /// the first frame queued.
     async fn open(
         rung: Arc<SonioxRung>,
-        door: Arc<ModelRuntime>,
+        door: Arc<dyn VoiceStreamDoor>,
         route: MediaVoiceRoute,
         sample_rate: u32,
         channels: u16,
@@ -534,7 +534,8 @@ enum Held {
 /// dropping it closes the socket and cancels the lease.
 pub(crate) struct SonioxLive {
     rung: Arc<SonioxRung>,
-    door: Arc<ModelRuntime>,
+    /// The vault-bound media door each segment's lease opens through.
+    door: Arc<dyn VoiceStreamDoor>,
     route: MediaVoiceRoute,
     sample_rate: u32,
     channels: u16,
@@ -558,10 +559,11 @@ pub(crate) struct SonioxLive {
 impl ModelRuntime {
     /// The live hearing for `route`, when its rung hears live (a soniox
     /// rung); `None` when it transcribes buffered cuts. Nothing is admitted
-    /// or connected here: the first segment opens, on its own lease, as the
-    /// hearing is first polled.
+    /// or connected here: the first segment opens, on its own lease opened
+    /// through `door`, as the hearing is first polled.
     pub(crate) fn open_voice_asr(
-        self: &Arc<Self>,
+        &self,
+        door: Arc<dyn VoiceStreamDoor>,
         route: &MediaVoiceRoute,
         sample_rate: u32,
         channels: u16,
@@ -572,7 +574,7 @@ impl ModelRuntime {
         route.stream_request(sample_rate, channels)?;
         let mut live = SonioxLive {
             rung,
-            door: Arc::clone(self),
+            door,
             route: route.clone(),
             sample_rate,
             channels,

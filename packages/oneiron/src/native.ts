@@ -31,6 +31,8 @@ export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
+selfFocusScratchpadAppend(input: unknown): unknown
+selfFocusScratchpadSeal(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
@@ -66,6 +68,8 @@ vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
+vaultExplainMemory(input: unknown): unknown
+vaultExplainGate(input: unknown): unknown
 vaultKvGet(requestJson: string): string
 vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
@@ -88,6 +92,7 @@ vaultPacksSetupGet(input: unknown): unknown
 vaultPacksSetupAnswer(input: unknown): unknown
 vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
+vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
@@ -171,6 +176,8 @@ vaultArtifactsProposals(requestJson: string): string
 vaultArtifactsWaits(requestJson: string): string
 vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
+vaultArtifactsAsk(input: unknown): unknown
+vaultCriticReview(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string
@@ -238,6 +245,7 @@ vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
+vaultQuestionsRefresh(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
 vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown

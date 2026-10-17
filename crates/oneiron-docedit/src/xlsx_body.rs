@@ -6,18 +6,25 @@
 //! formula without a cached value; the engine then recalculates the package,
 //! or [`mark_full_calc`] has the opening application do it. A sheet layout
 //! change renames, moves, adds and deletes worksheets first, retargeting
-//! every formula that names a renamed or deleted sheet. The body itself
+//! every formula that names a renamed or deleted sheet; row and column inserts
+//! and deletes come next, moving cells, ranges and every reference into the
+//! sheet, and a deleted reference reads `#REF!`. The cell formats a body
+//! composed go into the stylesheet before any cell names them. The body itself
 //! (its Loro document, actors and forks) lives in the engine; this module
 //! knows only SpreadsheetML.
 
-use crate::edit::xml::{next_part, set_attribute, splice};
+use crate::edit::xml::{escape_attribute, next_part, set_attribute, splice};
 use crate::ooxml::{
-    DOCUMENT_RELATIONSHIPS as REL, SPREADSHEET_MAIN as SML, XmlError, XmlTree, escape_text,
+    DOCUMENT_RELATIONSHIPS as REL, Node, SPREADSHEET_MAIN as SML, XmlError, XmlTree, escape_text,
 };
 use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
 use crate::xlsx_shift::shift_formula;
-pub use crate::xlsx_shift::{SheetFate, retarget_sheets};
+pub use crate::xlsx_shift::{SheetFate, XlsxAxis, XlsxAxisEdit, retarget_sheets, shift_axis};
+use crate::xlsx_styles::write_formats;
+pub use crate::xlsx_styles::{
+    XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat, check_format,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -223,6 +230,19 @@ pub enum XlsxChange {
     Sheets {
         sheets: Vec<XlsxSheetPlan>,
     },
+    /// Insert or delete rows or columns in a worksheet, named as the sheet
+    /// layout leaves it. Written in order after the layout and before every
+    /// cell and name, which are addressed as the edits leave the sheet.
+    Shift {
+        sheet: String,
+        edit: XlsxAxisEdit,
+    },
+    /// Cell formats the body composed, written into the stylesheet before
+    /// the cells: a cell's `style` of the workbook's format count plus `k`
+    /// names the `k`-th. An equal record the stylesheet holds is reused.
+    Formats {
+        formats: Vec<XlsxFormat>,
+    },
 }
 
 /// One worksheet of a sheet layout.
@@ -271,14 +291,50 @@ pub fn read_xlsx_cells(bytes: &[u8], limits: Limits) -> Result<XlsxBook> {
 
 /// Write `changes` into the imported package. Only the rows and names they
 /// touch are rebuilt; every other byte of the package is kept. A change to a
-/// read-only cell or name refuses. When a formula is removed the workbook's
-/// calculation chain is dropped, since it would name a cell with no formula;
-/// the opening application rebuilds it.
+/// read-only cell or name refuses. When a formula is removed, sheets are laid
+/// out again or rows and columns move, the workbook's calculation chain is
+/// dropped, since it would name the wrong cells; the opening application
+/// rebuilds it.
 pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Result<Vec<u8>> {
     if changes.is_empty() {
         return Ok(source.to_vec());
     }
     let mut book = Book::open(source, limits)?;
+    let mut defined = changes.iter().filter_map(|change| match change {
+        XlsxChange::Formats { formats } => Some(formats),
+        _ => None,
+    });
+    let formats = defined.next();
+    if defined.next().is_some() {
+        return Err(refused("two lists of cell formats"));
+    }
+    // A cell names a composed format past the workbook's own; it takes the
+    // index the stylesheet gave it.
+    let remapped: Vec<XlsxChange>;
+    let changes = match formats {
+        Some(formats) => {
+            let imported = book.styles.len();
+            let indices = book.resolve_formats(formats)?;
+            remapped = changes
+                .iter()
+                .map(|change| {
+                    let mut change = change.clone();
+                    if let XlsxChange::Cell {
+                        style: Some(style), ..
+                    } = &mut change
+                        && *style as usize >= imported
+                    {
+                        *style = *indices
+                            .get(*style as usize - imported)
+                            .ok_or(refused("a cell names a format the body did not compose"))?;
+                    }
+                    Ok(change)
+                })
+                .collect::<Result<_>>()?;
+            &remapped[..]
+        }
+        None => changes,
+    };
     let mut relaid = false;
     for change in changes {
         if let XlsxChange::Sheets { sheets } = change {
@@ -288,6 +344,20 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             book.relayout(sheets)?;
             relaid = true;
         }
+    }
+    let shifts: Vec<(&str, &XlsxAxisEdit)> = changes
+        .iter()
+        .filter_map(|change| match change {
+            XlsxChange::Shift { sheet, edit } => Some((sheet.as_str(), edit)),
+            _ => None,
+        })
+        .collect();
+    if !shifts.is_empty() {
+        book.unshare_all()?;
+        for (sheet, edit) in shifts {
+            book.shift(sheet, edit)?;
+        }
+        relaid = true;
     }
     let unshared = unshare_written_anchors(&book, changes)?;
     let mut by_sheet: BTreeMap<&str, BTreeMap<u32, BTreeMap<u32, &XlsxChange>>> = BTreeMap::new();
@@ -302,7 +372,10 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             style,
         } = change
         else {
-            if !matches!(change, XlsxChange::Sheets { .. }) {
+            if !matches!(
+                change,
+                XlsxChange::Sheets { .. } | XlsxChange::Shift { .. } | XlsxChange::Formats { .. }
+            ) {
                 names.push(change);
             }
             continue;
@@ -362,7 +435,8 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
     if !names.is_empty() {
         book.rewrite_names(&names)?;
     }
-    // A layout change moves the sheets the chain indexes.
+    // A layout change or a row or column edit moves the cells the chain
+    // indexes.
     if (dropped_formula || relaid)
         && let Some(chain) = book
             .package
@@ -578,6 +652,8 @@ struct Book {
     shared: Vec<String>,
     date1904: bool,
     names: Vec<XlsxName>,
+    /// The stylesheet part, when the workbook has one.
+    styles_part: Option<String>,
     styles: Vec<XlsxStyle>,
 }
 
@@ -626,11 +702,12 @@ impl Book {
                 shared.push(string_item(&sst, item));
             }
         }
-        let styles = match links
+        let styles_part = links
             .iter()
             .find(|rel| !rel.external && rel.kind.ends_with("/styles"))
-        {
-            Some(rel) => styles(&parse(&package, &rel.target)?)?,
+            .map(|rel| rel.target.clone());
+        let styles = match &styles_part {
+            Some(part) => styles(&parse(&package, part)?)?,
             None => Vec::new(),
         };
         let names = names(&tree, &order)?;
@@ -642,8 +719,32 @@ impl Book {
             shared,
             date1904,
             names,
+            styles_part,
             styles,
         })
+    }
+
+    /// Write the body's cell formats into the stylesheet: each one's index in
+    /// `cellXfs`, in order. The workbook's formats are read again after.
+    fn resolve_formats(&mut self, formats: &[XlsxFormat]) -> Result<Vec<u32>> {
+        let part = self.styles_part.clone().ok_or(refused(
+            "the workbook has no stylesheet to add a cell format to",
+        ))?;
+        let bytes = self
+            .package
+            .part(&part)?
+            .ok_or(refused("a workbook part is missing"))?;
+        let (indices, value) = write_formats(
+            &bytes,
+            self.package.limits().xml,
+            formats,
+            self.styles.len(),
+        )?;
+        if let Some(value) = value {
+            self.package.replace_xml_part(&part, value)?;
+            self.styles = styles(&parse(&self.package, &part)?)?;
+        }
+        Ok(indices)
     }
 
     /// A worksheet's stored cells, its read-only ranges and its shared
@@ -1124,7 +1225,7 @@ impl Book {
                 .map(str::to_owned)
                 .collect();
             for part in parts {
-                self.retarget_part(&part, &fate)?;
+                self.rewrite_formulas(&part, &|text: &str| retarget_sheets(text, &fate))?;
             }
         }
         self.order = layout.into_iter().map(|(_, name)| name).collect();
@@ -1132,9 +1233,14 @@ impl Book {
         Ok(())
     }
 
-    /// Retarget one part's formulas and hyperlink locations that name a
-    /// renamed or deleted sheet.
-    fn retarget_part(&mut self, part: &str, fate: &dyn Fn(&str) -> SheetFate) -> Result<()> {
+    /// Rewrite one part's formulas (its defined names, for the workbook) and
+    /// hyperlink locations through `rewrite`, which answers `None` for text
+    /// it leaves alone.
+    fn rewrite_formulas(
+        &mut self,
+        part: &str,
+        rewrite: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<()> {
         let bytes = self
             .package
             .part(part)?
@@ -1142,17 +1248,15 @@ impl Book {
         let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
         let mut edits = Vec::new();
         for node in &tree.nodes {
-            if FORMULA_ELEMENTS.contains(&node.name.as_str())
+            if (FORMULA_ELEMENTS.contains(&node.name.as_str()) || node.is(SML, "definedName"))
                 && node.children.is_empty()
                 && !node.empty
             {
-                if let Some(text) = retarget_sheets(&node.text, fate) {
+                if let Some(text) = rewrite(&node.text) {
                     edits.push((node.content.clone(), escape_text(&text).into_bytes()));
                 }
             } else if node.is(SML, "hyperlink")
-                && let Some(text) = node
-                    .attr("location")
-                    .and_then(|location| retarget_sheets(location, fate))
+                && let Some(text) = node.attr("location").and_then(rewrite)
             {
                 edits.push(set_attribute(&bytes, node, "location", &text));
             }
@@ -1163,6 +1267,520 @@ impl Book {
         let value = splice(&bytes, edits).map_err(|_| refused("a part could not be rewritten"))?;
         self.package.replace_xml_part(part, value)?;
         Ok(())
+    }
+
+    /// Write every shared formula out cell by cell, each member with its own
+    /// text, so a row or column edit moves each cell's references alone. A
+    /// group whose members cannot all be read refuses.
+    fn unshare_all(&mut self) -> Result<()> {
+        let parts: Vec<String> = self.worksheets.values().cloned().collect();
+        for part in parts {
+            let (cells, _, groups) = self.sheet(&part)?;
+            if cells
+                .iter()
+                .any(|cell| cell.locked == Some(XlsxLock::SharedFormula))
+                || groups.values().any(|group| !group.complete)
+            {
+                return Err(refused(
+                    "a shared formula whose members cannot all be written out",
+                ));
+            }
+            if groups.is_empty() {
+                continue;
+            }
+            let own: HashMap<(u32, u32), &str> = cells
+                .iter()
+                .filter_map(|cell| Some(((cell.col, cell.row), cell.formula.as_deref()?)))
+                .collect();
+            let bytes = self
+                .package
+                .part(&part)?
+                .ok_or(refused("a worksheet part is missing"))?;
+            let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+            let mut edits = Vec::new();
+            for node in &tree.nodes {
+                if !node.is(SML, "f") || node.attr("t") != Some("shared") {
+                    continue;
+                }
+                let at = node
+                    .parent
+                    .and_then(|cell| tree.nodes[cell].attr("r"))
+                    .and_then(cell_ref)
+                    .ok_or(refused("a worksheet cell has no reference"))?;
+                let text = own
+                    .get(&at)
+                    .ok_or(refused("a shared formula member is missing"))?;
+                edits.push((
+                    node.span.clone(),
+                    format!(
+                        "<{0}>{1}</{0}>",
+                        node.qualified,
+                        escape_text(&storage_form(text))
+                    )
+                    .into_bytes(),
+                ));
+            }
+            let value =
+                splice(&bytes, edits).map_err(|_| refused("a worksheet could not be rewritten"))?;
+            self.package.replace_xml_part(&part, value)?;
+        }
+        Ok(())
+    }
+
+    /// Insert or delete rows or columns in one worksheet, as Excel does. Its
+    /// rows and cells, merged ranges, conditional formats, validations,
+    /// hyperlinks, filters, column widths, tables and comments move; what the
+    /// edit deletes goes, and a range that loses part of itself shrinks. A
+    /// table gains or loses the columns inserted or deleted inside it. Then
+    /// every formula, chart range, hyperlink location and defined name that
+    /// reaches the sheet follows, a reference to a deleted cell reading
+    /// `#REF!`. Shared formulas must be written out first.
+    fn shift(&mut self, sheet: &str, edit: &XlsxAxisEdit) -> Result<()> {
+        if !edit.fits() {
+            return Err(refused("rows or columns off the sheet"));
+        }
+        let part = self
+            .worksheets
+            .get(sheet)
+            .ok_or(refused("no such worksheet"))?
+            .clone();
+        let mut parts = vec![part.clone()];
+        let mut tables = Vec::new();
+        for rel in self.package.relationships(&part)? {
+            if rel.external {
+                continue;
+            }
+            if rel.kind.ends_with("/table") {
+                tables.push(rel.target.clone());
+            }
+            if ["/table", "/comments", "/threadedComment"]
+                .iter()
+                .any(|kind| rel.kind.ends_with(kind))
+            {
+                parts.push(rel.target);
+            }
+        }
+        let mut headers = Vec::new();
+        for table in &tables {
+            headers.extend(self.move_table_columns(sheet, table, edit)?);
+        }
+        for target in &parts {
+            self.move_coordinates(target, edit)?;
+        }
+        // An inserted table column's header cell holds its name.
+        if !headers.is_empty() {
+            let mut rows: BTreeMap<u32, BTreeMap<u32, &XlsxChange>> = BTreeMap::new();
+            for header in &headers {
+                if let XlsxChange::Cell { col, row, .. } = header {
+                    rows.entry(*row).or_default().insert(*col, header);
+                }
+            }
+            let bytes = rewrite_rows(&self.package, &part, &rows)?;
+            self.package.replace_xml_part(&part, bytes)?;
+        }
+        // Each part with formulas, and the sheet its unprefixed references
+        // are into: a worksheet's own, a table's worksheet, none for a chart
+        // or the defined names.
+        let mut homes: Vec<(String, Option<String>)> = Vec::new();
+        for (name, part) in &self.worksheets {
+            homes.push((part.clone(), Some(name.clone())));
+            for rel in self.package.relationships(part)? {
+                if !rel.external && rel.kind.ends_with("/table") {
+                    homes.push((rel.target, Some(name.clone())));
+                }
+            }
+        }
+        homes.extend(
+            self.package
+                .names()
+                .filter(|name| {
+                    let lower = name.to_ascii_lowercase();
+                    lower.contains("/charts/") && lower.ends_with(".xml")
+                })
+                .map(|name| (name.to_owned(), None)),
+        );
+        homes.push((self.part.clone(), None));
+        for (part, home) in homes {
+            self.rewrite_formulas(&part, &|text: &str| {
+                shift_axis(text, home.as_deref(), sheet, edit)
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Move one part's cell coordinates by a row or column edit: a
+    /// worksheet's rows, cells and ranges, a table's range, a comment's cell.
+    /// What the edit deletes goes, and a list it empties goes with it.
+    fn move_coordinates(&mut self, part: &str, edit: &XlsxAxisEdit) -> Result<()> {
+        /// Lists that go when the edit removes every entry.
+        const LISTS: &[&str] = &[
+            "mergeCells",
+            "dataValidations",
+            "hyperlinks",
+            "cols",
+            "conditionalFormattings",
+            "protectedRanges",
+            "ignoredErrors",
+            "ext",
+            "extLst",
+        ];
+        let bytes = self
+            .package
+            .part(part)?
+            .ok_or(refused("a workbook part is missing"))?;
+        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let mut removed: HashSet<usize> = HashSet::new();
+        let mut sets: Vec<(usize, &'static str, String)> = Vec::new();
+        let mut unsets: Vec<(usize, &'static str)> = Vec::new();
+        let mut texts: Vec<(usize, String)> = Vec::new();
+        for (index, node) in tree.nodes.iter().enumerate() {
+            let parent = node.parent.map(|parent| &tree.nodes[parent]);
+            let sml = node.namespace == SML;
+            match node.name.as_str() {
+                "row" if sml && parent.is_some_and(|data| data.is(SML, "sheetData")) => {
+                    if edit.axis == XlsxAxis::Column {
+                        if node.attr("spans").is_some() {
+                            unsets.push((index, "spans"));
+                        }
+                        continue;
+                    }
+                    let number = node
+                        .attr("r")
+                        .and_then(|r| r.trim().parse::<u32>().ok())
+                        .ok_or(refused("a worksheet row has no number"))?;
+                    match edit.moved(number) {
+                        None => {
+                            removed.insert(index);
+                        }
+                        Some(to) if to != number => sets.push((index, "r", to.to_string())),
+                        Some(_) => {}
+                    }
+                }
+                "c" if sml && parent.is_some_and(|row| row.is(SML, "row")) => {
+                    let at = node
+                        .attr("r")
+                        .and_then(cell_ref)
+                        .ok_or(refused("a worksheet cell has no reference"))?;
+                    match edit.cell(at) {
+                        None => {
+                            removed.insert(index);
+                        }
+                        Some(to) if to != at => sets.push((index, "r", a1(to.0, to.1))),
+                        Some(_) => {}
+                    }
+                }
+                "f" | "dimension" | "mergeCell" | "hyperlink" | "autoFilter" | "sortState"
+                | "sortCondition" | "table"
+                    if sml =>
+                {
+                    let Some(reference) = node.attr("ref") else {
+                        continue;
+                    };
+                    match moved_area(reference, edit) {
+                        // Unreadable, so it stays as written.
+                        None => {}
+                        Some(Some(to)) if node.name == "mergeCell" && !to.contains(':') => {
+                            removed.insert(index);
+                        }
+                        Some(Some(to)) => {
+                            if to != reference {
+                                sets.push((index, "ref", to));
+                            }
+                        }
+                        Some(None) => match node.name.as_str() {
+                            "dimension" => sets.push((index, "ref", "A1".to_owned())),
+                            "table" => return Err(refused("a row or column edit deletes a table")),
+                            // A formula's range goes with its cell.
+                            "f" => {}
+                            _ => {
+                                removed.insert(index);
+                            }
+                        },
+                    }
+                }
+                "conditionalFormatting" | "dataValidation" | "protectedRange" | "ignoredError"
+                    if sml =>
+                {
+                    let Some(list) = node.attr("sqref") else {
+                        continue;
+                    };
+                    let moved = moved_list(list, edit);
+                    if moved.is_empty() {
+                        removed.insert(index);
+                    } else if moved != list {
+                        sets.push((index, "sqref", moved));
+                    }
+                }
+                // An x14 rule's or validation's ranges, as element text.
+                "sqref" if !sml && node.children.is_empty() && !node.empty => {
+                    let moved = moved_list(&node.text, edit);
+                    if moved.is_empty() {
+                        removed.extend(node.parent);
+                    } else if moved != node.text {
+                        texts.push((index, moved));
+                    }
+                }
+                "col" if sml && edit.axis == XlsxAxis::Column => {
+                    let bound =
+                        |name: &str| node.attr(name).and_then(|v| v.trim().parse::<u32>().ok());
+                    let (Some(min), Some(max)) = (bound("min"), bound("max")) else {
+                        continue;
+                    };
+                    match edit.range(min, max) {
+                        None => {
+                            removed.insert(index);
+                        }
+                        Some((low, high)) => {
+                            if low != min {
+                                sets.push((index, "min", low.to_string()));
+                            }
+                            if high != max {
+                                sets.push((index, "max", high.to_string()));
+                            }
+                        }
+                    }
+                }
+                // A filter column is numbered from its filter's first column.
+                "filterColumn" if sml && edit.axis == XlsxAxis::Column => {
+                    let (Some(filter), Some(id)) = (
+                        parent
+                            .filter(|filter| filter.is(SML, "autoFilter"))
+                            .and_then(|filter| filter.attr("ref"))
+                            .and_then(|reference| {
+                                XlsxArea::parse(reference, XlsxLock::Unsupported)
+                            }),
+                        node.attr("colId")
+                            .and_then(|id| id.trim().parse::<u32>().ok()),
+                    ) else {
+                        continue;
+                    };
+                    match (
+                        edit.moved(filter.first.0 + id),
+                        edit.range(filter.first.0, filter.last.0),
+                    ) {
+                        (Some(to), Some((left, _))) => {
+                            if to - left != id {
+                                sets.push((index, "colId", (to - left).to_string()));
+                            }
+                        }
+                        _ => {
+                            removed.insert(index);
+                        }
+                    }
+                }
+                "comment" | "threadedComment" => {
+                    let Some(at) = node.attr("ref").and_then(cell_ref) else {
+                        continue;
+                    };
+                    match edit.cell(at) {
+                        None => {
+                            removed.insert(index);
+                        }
+                        Some(to) if to != at => sets.push((index, "ref", a1(to.0, to.1))),
+                        Some(_) => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Children come after their parents, so a list emptied by its
+        // entries' removal is seen after them.
+        for index in (0..tree.nodes.len()).rev() {
+            let node = &tree.nodes[index];
+            if LISTS.contains(&node.name.as_str())
+                && !node.children.is_empty()
+                && node.children.iter().all(|child| removed.contains(child))
+            {
+                removed.insert(index);
+            }
+        }
+        for (index, node) in tree.nodes.iter().enumerate() {
+            if removed.contains(&index) || node.attr("count").is_none() {
+                continue;
+            }
+            let kept = node
+                .children
+                .iter()
+                .filter(|child| !removed.contains(child))
+                .count();
+            if kept != node.children.len() {
+                sets.push((index, "count", kept.to_string()));
+            }
+        }
+        let gone = |index: usize| {
+            let mut at = Some(index);
+            while let Some(node) = at {
+                if removed.contains(&node) {
+                    return true;
+                }
+                at = tree.nodes[node].parent;
+            }
+            false
+        };
+        let mut edits = Vec::new();
+        for &index in &removed {
+            if !tree.nodes[index].parent.is_some_and(gone) {
+                edits.push((tree.nodes[index].span.clone(), Vec::new()));
+            }
+        }
+        for (index, name, value) in sets {
+            if !gone(index) {
+                edits.push(set_attribute(&bytes, &tree.nodes[index], name, &value));
+            }
+        }
+        for (index, name) in unsets {
+            if !gone(index)
+                && let Some(span) = tree.nodes[index].attr_spans.get(name)
+            {
+                let start = if span.start > 0 && bytes[span.start - 1].is_ascii_whitespace() {
+                    span.start - 1
+                } else {
+                    span.start
+                };
+                edits.push((start..span.end, Vec::new()));
+            }
+        }
+        for (index, text) in texts {
+            if !gone(index) {
+                edits.push((
+                    tree.nodes[index].content.clone(),
+                    escape_text(&text).into_bytes(),
+                ));
+            }
+        }
+        if edits.is_empty() {
+            return Ok(());
+        }
+        let value = splice(&bytes, edits).map_err(|_| refused("a part could not be rewritten"))?;
+        self.package.replace_xml_part(part, value)?;
+        Ok(())
+    }
+
+    /// Add or remove a table's columns for a column edit inside it, as Excel
+    /// does, before its range moves: an inserted column takes a new id and
+    /// the first free `ColumnN` name, and a deleted one goes with its
+    /// calculated and totals formulas. An edit at or past either edge only
+    /// moves the table, and one that deletes all of it refuses when the range
+    /// moves. The header cells the inserted columns' names go in, as cell
+    /// changes to sheet `sheet`.
+    fn move_table_columns(
+        &mut self,
+        sheet: &str,
+        part: &str,
+        edit: &XlsxAxisEdit,
+    ) -> Result<Vec<XlsxChange>> {
+        if edit.axis != XlsxAxis::Column {
+            return Ok(Vec::new());
+        }
+        let bytes = self
+            .package
+            .part(part)?
+            .ok_or(refused("a workbook part is missing"))?;
+        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let root = &tree.nodes[0];
+        let Some(range) = root
+            .attr("ref")
+            .filter(|_| root.is(SML, "table"))
+            .and_then(|reference| XlsxArea::parse(reference, XlsxLock::TableRow))
+        else {
+            return Ok(Vec::new());
+        };
+        let (left, right) = (range.first.0, range.last.0);
+        let end = edit.at + edit.count - 1;
+        // The place in the table the columns go in at or are deleted from.
+        let at = if edit.delete {
+            let (low, high) = (edit.at.max(left), end.min(right));
+            if low > high || (low == left && high == right) {
+                return Ok(Vec::new());
+            }
+            (low - left) as usize..(high - left + 1) as usize
+        } else {
+            if edit.at <= left || edit.at > right {
+                return Ok(Vec::new());
+            }
+            let at = (edit.at - left) as usize;
+            at..at
+        };
+        if root
+            .attr("tableType")
+            .is_some_and(|kind| kind != "worksheet")
+        {
+            return Err(refused("a column edit inside a query or XML table"));
+        }
+        let (list, list_node) = tree
+            .child(0, SML, "tableColumns")?
+            .ok_or(refused("a table has no columns"))?;
+        let columns: Vec<&Node> = tree
+            .children(list)
+            .filter(|(_, node)| node.is(SML, "tableColumn"))
+            .map(|(_, node)| node)
+            .collect();
+        if columns.len() != (right - left + 1) as usize {
+            return Err(refused("a table's columns do not match its range"));
+        }
+        let mut edits = Vec::new();
+        let mut headers = Vec::new();
+        let count = if edit.delete {
+            for column in &columns[at.clone()] {
+                edits.push((column.span.clone(), Vec::new()));
+            }
+            columns.len() - at.len()
+        } else {
+            let mut names: HashSet<String> = columns
+                .iter()
+                .filter_map(|column| column.attr("name"))
+                .map(str::to_lowercase)
+                .collect();
+            let mut id = columns
+                .iter()
+                .filter_map(|column| column.attr("id")?.trim().parse::<u32>().ok())
+                .max()
+                .unwrap_or(0);
+            let element = list_node.child_name("tableColumn");
+            let header = root
+                .attr("headerRowCount")
+                .and_then(|count| count.trim().parse::<u32>().ok())
+                .unwrap_or(1)
+                > 0;
+            let mut added = String::new();
+            let mut n = 0;
+            for col in edit.at..=end {
+                let name = loop {
+                    n += 1;
+                    let name = format!("Column{n}");
+                    if names.insert(name.to_lowercase()) {
+                        break name;
+                    }
+                };
+                id += 1;
+                added.push_str(&format!(
+                    "<{element} id=\"{id}\" name=\"{}\"/>",
+                    escape_attribute(&name)
+                ));
+                if header {
+                    headers.push(XlsxChange::Cell {
+                        sheet: sheet.to_owned(),
+                        col,
+                        row: range.first.1,
+                        value: XlsxValue::Text(name),
+                        formula: None,
+                        style: None,
+                    });
+                }
+            }
+            let point = columns[at.start].span.start;
+            edits.push((point..point, added.into_bytes()));
+            columns.len() + edit.count as usize
+        };
+        edits.push(set_attribute(
+            &bytes,
+            list_node,
+            "count",
+            &count.to_string(),
+        ));
+        let value = splice(&bytes, edits).map_err(|_| refused("a table could not be rewritten"))?;
+        self.package.replace_xml_part(part, value)?;
+        Ok(headers)
     }
 
     /// Rebuild `definedNames` with the changed names replaced, added or
@@ -1197,7 +1815,12 @@ impl Book {
                     (name, sheet, Some(xml))
                 }
                 XlsxChange::DeleteName { name, sheet } => (name, sheet, None),
-                XlsxChange::Cell { .. } | XlsxChange::Sheets { .. } => continue,
+                XlsxChange::Cell { .. }
+                | XlsxChange::Sheets { .. }
+                | XlsxChange::Shift { .. }
+                | XlsxChange::Formats { .. } => {
+                    continue;
+                }
             };
             let key = (
                 name.to_lowercase(),
@@ -1517,6 +2140,31 @@ fn cell_ref(text: &str) -> Option<(u32, u32)> {
         .fold(0u32, |sum, byte| sum * 26 + u32::from(byte - b'A' + 1));
     let row = digits.parse::<u32>().ok()?;
     (col <= MAX_COLUMN && (1..=MAX_ROW).contains(&row)).then_some((col, row))
+}
+
+/// A range attribute (`B2:D9`, `B2`) after a row or column edit: `Some(None)`
+/// when the edit deletes it, `None` when it does not read as a range.
+fn moved_area(reference: &str, edit: &XlsxAxisEdit) -> Option<Option<String>> {
+    let area = XlsxArea::parse(reference, XlsxLock::Unsupported)?;
+    Some(edit.area(area.first, area.last).map(|(first, last)| {
+        XlsxArea {
+            first,
+            last,
+            ..area
+        }
+        .reference()
+    }))
+}
+
+/// A space-separated range list after a row or column edit, without what it
+/// deletes; a range that does not read as one stays.
+fn moved_list(list: &str, edit: &XlsxAxisEdit) -> String {
+    list.split_whitespace()
+        .filter_map(|reference| {
+            moved_area(reference, edit).unwrap_or_else(|| Some(reference.to_owned()))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The text of a shared or inline string item, phonetic runs excluded, with

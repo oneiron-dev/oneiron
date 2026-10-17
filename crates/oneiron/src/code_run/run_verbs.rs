@@ -427,6 +427,9 @@ pub enum AgentSpawnOutput {
         kind: AgentSpawnKind,
         /// The attempt's id, hex.
         attempt: String,
+        /// What the launch starts and may spend, stated before it runs: its
+        /// agent count, expected spend and cap (OF-532).
+        launch: Option<crate::agent_dispatch::LaunchStatement>,
     },
     ProposedWiden {
         kind: AgentSpawnKind,

@@ -229,7 +229,7 @@ impl Listing {
     }
 }
 
-/// The door each embedding request of a paid remote goes through, admitted
+/// The door each embedding request of an endpoint goes through, admitted
 /// before it is sent and settled after ([`HttpEmbedder::pay_through`]).
 pub(crate) trait PaidRequests: Send + Sync {
     /// Sends `texts` by `post`, which makes exactly one request.
@@ -258,8 +258,9 @@ pub(crate) struct HttpEmbedder {
     admitted: Mutex<Admitted>,
     client: reqwest::blocking::Client,
     truncations: AtomicU64,
-    /// A remote's paid door: every embedding request goes through it once it
-    /// is set. An on-device endpoint has none.
+    /// The endpoint's paid door: every embedding request goes through it
+    /// once it is set. The primary endpoint's is set before its probe
+    /// ([`super::build_slot`]), a remote rung's when it is built.
     paid: OnceLock<Arc<dyn PaidRequests>>,
     /// The serve host's GPU pool, once set: document batches lease a pod
     /// from it ([`Self::route_batches_through`]).
@@ -997,6 +998,12 @@ fn no_listing_route(status: reqwest::StatusCode) -> bool {
 /// came from. An error when it does not answer or does not pass.
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
     let embedder = HttpEmbedder::from_config(config)?;
+    // The probe is a paid call like serve's; its rows go to the log.
+    super::admitted::pay_primary(
+        &embedder,
+        config,
+        Arc::new(crate::models::ServerReceipts::default()),
+    )?;
     let served = embedder.served()?;
     let transform = served.transform.clone();
     embedder.admit(served);
