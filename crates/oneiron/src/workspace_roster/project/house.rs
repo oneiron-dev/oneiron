@@ -77,7 +77,7 @@ impl Vault {
             row.preset.clone()
         };
         let signer = self.owner_project_signer(issuer)?;
-        self.lead_root(&preset, owner, &signer, Some(&seeded))
+        self.lead_root(&preset, owner, &signer, Some(seeded.as_str()))
     }
 
     /// Makes `preset`'s house mind the root project's leader.
