@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 208 facade rows, 706 declarations.
-Inputs: 181 of 208 fully typed, 26 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 168 of 208 fully typed, 32 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 46; unread shapes: 1.
+Census: 212 facade rows, 722 declarations.
+Inputs: 184 of 212 fully typed, 27 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 172 of 212 fully typed, 32 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 47; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -519,6 +519,12 @@ class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
+MediaQueryKind = Literal["text", "image", "audio"]
+class ContextPackMediaQuery(TypedDict):
+    space: str
+    mime: str
+    bytes_b64: str
+    kinds: NotRequired[list[MediaQueryKind]]
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -527,6 +533,7 @@ class RecallRequest(TypedDict):
     format: NotRequired[str | None]
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
+    media: NotRequired[ContextPackMediaQuery | None]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -2004,6 +2011,59 @@ class ArtifactView(TypedDict):
     media_type: str
     head: NotRequired[int | None]
     versions: list[ArtifactVersionView]
+class CodeStateRequest(TypedDict):
+    repo: str
+    path: str
+    revision_ref: NotRequired[str | None]
+class CodeDiffRequest(TypedDict):
+    before: CodeStateRequest
+    after: CodeStateRequest
+class CodeStateView(TypedDict):
+    document_ref: str
+    repo: str
+    path: str
+    revision_ref: NotRequired[str | None]
+    text_hash: str
+class CodeUnitVersionView(TypedDict):
+    content_hash: str
+    text: str
+    start_line: int
+    end_line: int
+class CodeOperationView(TypedDict):
+    operation_ref: str
+    sequence: int
+    session_ref: str
+    actor_ref: str
+    actor_class: str
+    turn_ref: NotRequired[str | None]
+    activity_ref: NotRequired[str | None]
+    intent_ref: NotRequired[str | None]
+    model_ref: NotRequired[str | None]
+    reasoning_effort: NotRequired[str | None]
+class CodeChangeView(TypedDict):
+    path: str
+    symbol: str
+    before: NotRequired[CodeUnitVersionView | None]
+    after: NotRequired[CodeUnitVersionView | None]
+    inserted_by: list[CodeOperationView]
+    deleted_by: list[CodeOperationView]
+class CodeDiffView(TypedDict):
+    before: CodeStateView
+    after: CodeStateView
+    changes: list[CodeChangeView]
+    rendered: str
+class CodeSpanView(TypedDict):
+    start: int
+    end: int
+    op: NotRequired[CodeOperationView | None]
+class CodeUnitBlameView(TypedDict):
+    path: str
+    symbol: str
+    version: CodeUnitVersionView
+    spans: list[CodeSpanView]
+class CodeBlameView(TypedDict):
+    at: CodeStateView
+    units: list[CodeUnitBlameView]
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
@@ -2852,6 +2912,20 @@ class TurnActionReceipt(TypedDict):
     turn_id: str
     message_id: str
     attempt_id: str
+class MessageReactionExternal(TypedDict):
+    connector: str
+    id: str
+    origin: NotRequired[str | None]
+class MessageReactionRequest(TypedDict):
+    message: str
+    by: str
+    glyph: str
+    occurred_at: NotRequired[int | None]
+    remove: NotRequired[bool]
+    external: NotRequired[MessageReactionExternal | None]
+class MessageReactionReceipt(TypedDict):
+    id: str
+    event: str
 class RoomHostRequest(TypedDict):
     room_ref: str
     session_ref: NotRequired[str | None]
@@ -3452,6 +3526,12 @@ class AdmitImportedClaimInput(TypedDict):
     value: Any
     occurred_at: int
     learned_at: NotRequired[int | None]
+class ArtifactCreateRequest(TypedDict):
+    name: str
+    media_type: str
+    content_base64: str
+    run_ref: NotRequired[str | None]
+    made_by: NotRequired[Any | None]
 class BlobArtifactInput(TypedDict):
     id: NotRequired[str | None]
     name: str

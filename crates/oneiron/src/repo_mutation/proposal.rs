@@ -6,7 +6,9 @@ use super::git::{
 };
 use super::oplog::{SNAPSHOT, repo_mutation_repo_key_hash, repo_mutation_snapshot_key};
 use super::queue::validate_operation;
-use super::snapshot::capture_repo_snapshot;
+use super::snapshot::{
+    SnapshotCustody, StoredRepoSnapshot, StoredRepoSnapshotEntryKind, capture_repo_snapshot,
+};
 use super::support::now_millis;
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOutcome, RepoMutationRequest,
@@ -23,6 +25,7 @@ use crate::critic::{
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::lock_repository;
+use crate::secret_snapshot::SnapshotWithhold;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -193,7 +196,8 @@ impl RepoProposal {
         )
         .with_actor_id(self.actor)
         .with_session_id(self.session)
-        .with_provenance_claim_id(self.provenance_claim))
+        .with_provenance_claim_id(self.provenance_claim)
+        .with_op_provenance(self.op_provenance.clone()))
     }
     /// Scores are derived from the retained immutable evidence, not accepted from a caller.
     pub fn triage(&self) -> Result<CritiqueTriage> {
@@ -285,10 +289,15 @@ impl Vault {
         let repo = admitted_repo_ref(&request.repo_ref, &repo_root)?;
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
         self.recover_prepared_repo_mutations_locked(&repo, &repo_root)?;
-        let (fork, snapshot) = capture_repo_snapshot(&repo_root)?;
-        require_pinned_head(
-            &repo,
-            super::snapshot::decode_snapshot(&snapshot)?.head.as_deref(),
+        let (fork, snapshot) = capture_repo_snapshot(self, &repo_root)?;
+        let pre_action = super::snapshot::decode_snapshot(&snapshot)?;
+        require_pinned_head(&repo, pre_action.head.as_deref())?;
+        admit_custody(
+            &SnapshotCustody::of(self, &repo_root)?,
+            &pre_action,
+            &path,
+            &content,
+            &message,
         )?;
         let row = RepoProposal {
             id: EntityId::now(),
@@ -500,6 +509,34 @@ impl Vault {
     }
 }
 
+/// Snapshot custody at proposal admission (ARCH-0069 S4/S5; OF-067): a
+/// review holds the bytes it approves and reads the file they replace from
+/// its snapshot, so a write the policy would withhold, a write to a file the
+/// snapshot withholds, and a message that holds a secret are refused before
+/// the proposal or its snapshot is stored.
+fn admit_custody(
+    custody: &SnapshotCustody,
+    pre_action: &StoredRepoSnapshot,
+    path: &str,
+    content: &[u8],
+    message: &str,
+) -> Result<()> {
+    if let Some(withheld) = custody.withholds(path, content) {
+        return Err(withheld.refusal());
+    }
+    if pre_action
+        .entries
+        .iter()
+        .any(|entry| entry.path == path && entry.kind == StoredRepoSnapshotEntryKind::Withheld)
+    {
+        return Err(SnapshotWithhold::Excluded.refusal());
+    }
+    match crate::batch::secret_scan::scan_file_content("", message.as_bytes()) {
+        Some(reason) => Err(SnapshotWithhold::Quarantined(reason).refusal()),
+        None => Ok(()),
+    }
+}
+
 pub(super) fn authorize(
     vault: &Vault,
     request: &RepoMutationRequest,
@@ -530,7 +567,7 @@ pub(super) fn authorize(
             "proposal capability does not authorize this operation",
         ));
     }
-    let actual = capture_repo_snapshot(repo_root)?.0;
+    let actual = capture_repo_snapshot(vault, repo_root)?.0;
     match stack {
         Some(step) => step.authorize(&row, actual)?,
         None => {
