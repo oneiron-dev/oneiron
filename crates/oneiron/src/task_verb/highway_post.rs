@@ -5,7 +5,8 @@
 //! A post the gate does not answer Auto parks as the ordinary `tasks.create`
 //! Proposed CLAIM, its typed brief inside: content approval and creation
 //! approval are one proposal, so `settle(proposal)` runs once (ARCH-0035).
-//! Only the existing approval doors approve; after either one sets
+//! Only the existing approval doors approve, and the addressed agent's take
+//! of a guest's proposal when L02's rule admits it; after any of them sets
 //! approval it calls [`settle_task_proposal_in_txn`] in the same
 //! transaction, and the TASK lands under an id derived from the claim, so a
 //! second settlement finds it already there.
@@ -15,13 +16,15 @@ use serde::{Deserialize, Serialize};
 use rmpv::Value;
 
 use crate::Vault;
+use crate::authority::TaskActorVerb;
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::federation::record_scope::BirthPosition;
 use crate::gate::PolicyApprovalCeiling;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::ports::EntityStoreRead;
 use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
@@ -56,6 +59,12 @@ use super::wire_encode::canonical_bytes;
 const POST_REQUEST_DOMAIN: &[u8] = b"oneiron.tasks.post.request.v1";
 /// Reason code of a proposal the addressed agent declined.
 const TAKE_DECLINED_REASON: &str = "tasks.take.declined";
+/// Reason code of a proposal the addressed agent took.
+const TAKE_ACCEPTED_REASON: &str = "tasks.take.accepted";
+/// Reason code of a post whose addressed agent said yes but whose take was
+/// refused: the proposal stays in the owner's tray, and the post still
+/// answers `Proposed`.
+const TAKE_REFUSED_REASON: &str = "tasks.take.refused";
 
 /// The typed stamp a highway post's proposal value carries: everything
 /// settlement needs that the create value does not hold.
@@ -89,6 +98,18 @@ enum PostDirect {
     Created(TaskRouteOutcome),
     Replay(Option<TaskAssignee>),
     Gated,
+}
+
+/// What an agent's yes to a guest's proposal came to.
+enum AgentTake {
+    /// The agent approved the proposal and its TASK landed.
+    Landed(EntityId),
+    /// The take was refused and rolled back, in the highway's shapes; the
+    /// proposal stays in the owner's tray.
+    Refused(MemoryError),
+    /// Nothing was taken: the proposal left the tray, changed since it was
+    /// parked, or waits on the owner's own critical confirm.
+    Untaken,
 }
 
 /// One earlier proposal under the same actor and key.
@@ -176,6 +197,56 @@ fn create_spec_of(
     }
     spec.brief = Some(post.brief.clone());
     spec
+}
+
+/// An agent's take of one proposal, inside the take's transaction: the
+/// agent approves it as the owner's inbox door does, settlement lands its
+/// TASK, and L02's rule proves the agent may accept work addressed to it.
+/// That rule reads the landed TASK's facts, so it runs last. Answers the
+/// landed TASK.
+fn take_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    proposal_ref: EntityId,
+    raw: crate::ports::EntityRecord,
+    mut approved: ClaimBody,
+    agent: WriteActor,
+    now: u64,
+) -> Result<EntityId> {
+    approved.approval = ClaimApprovalStatus::Approved;
+    crate::batch::ClaimMaterialization::apply_approval(
+        vault,
+        wtxn,
+        crate::batch::BatchOp::Put {
+            id: proposal_ref,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred: raw.occurred,
+            learned_at: raw.learned_at,
+            data: crate::claim::encode_claim_body(&approved)?,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        },
+        true,
+        Some(agent),
+    )?;
+    vault.complete_deferred_claim_in_txn(wtxn, &proposal_ref, false, now)?;
+    settle_task_proposal_in_txn(vault, wtxn, proposal_ref, Some(agent), now)?;
+    let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[proposal_ref.as_bytes()])?;
+    vault.prove_task_actor_in_txn(wtxn, task_ref, &agent, TaskActorVerb::Accept)?;
+    Ok(task_ref)
+}
+
+/// A refused take in the highway's shapes: a TASK the agent is no party to
+/// is not found; a party L02's rule does not admit is told why.
+fn take_refusal(error: Error) -> MemoryError {
+    match error {
+        Error::EntityNotFound => not_found(),
+        Error::Claim(ClaimError::ActorLacksClaimAuthority { reason }) => {
+            forbidden(reason, "The owner answers this proposal from the tray.")
+        }
+        other => MemoryError::from(other),
+    }
 }
 
 fn changed_arguments() -> MemoryError {
@@ -598,13 +669,14 @@ impl Memory<'_> {
 
         // A guest proposing work for one of the owner's agents: the agent
         // decides whether to take it, and escalates to the owner when that is
-        // relevant (ARCH-0028). Its "take" still needs the authority rule
-        // that this agent may accept work addressed to it; until that rule
-        // answers, a take stays in the owner's tray, which is the escalation.
+        // relevant (ARCH-0028). Its yes is a take only when L02's rule admits
+        // the agent to work addressed to it; a refused take, like an ask up,
+        // stays in the owner's tray, which is the escalation.
         let mut outcome = TaskOutcome::Proposed {
             decision_ref: decision_ref.clone(),
             reason_codes: Vec::new(),
         };
+        let mut related = Vec::new();
         if let (Some(decisions), TaskAssignee::AgentDef { agent_def_ref }) =
             (decisions, post.assignee)
             && self.verify_owner().is_err()
@@ -639,17 +711,119 @@ impl Memory<'_> {
                 outcome = TaskOutcome::Rejected {
                     decision_ref: decision_ref.clone(),
                 };
+            } else if answer == PortAnswer::Yes {
+                match self.take_for_agent(proposal_ref, agent_def_ref, now)? {
+                    AgentTake::Landed(task_ref) => {
+                        lifecycle.outcome = "created".to_owned();
+                        lifecycle.trigger_ref = Some(task_ref.to_hex());
+                        related.push(TaskHandle::Task { task_ref });
+                        outcome = TaskOutcome::Created { route: None };
+                        self.vault().store.notify_attempt_observers();
+                    }
+                    AgentTake::Refused(refusal) => {
+                        lifecycle
+                            .fields
+                            .insert("take_refused".to_owned(), refusal.code);
+                        outcome = TaskOutcome::Proposed {
+                            decision_ref: decision_ref.clone(),
+                            reason_codes: vec![TAKE_REFUSED_REASON.to_owned()],
+                        };
+                    }
+                    AgentTake::Untaken => {}
+                }
             }
         }
 
         Ok(TaskCallReceipt {
             handle: TaskHandle::Proposed { proposal_ref },
-            related: Vec::new(),
+            related,
             outcome,
             receipt_ref: None,
             lifecycle: Some(lifecycle),
             idempotent_replay: false,
         })
+    }
+
+    /// An agent's yes to a guest's proposal, run as its take along the
+    /// owner's approval path: in one transaction the agent approves the
+    /// proposal, settlement lands its TASK, L02's rule proves the agent, and
+    /// the tray row closes approved. A refusal of any of the take's steps
+    /// rolls the whole take back.
+    fn take_for_agent(
+        &self,
+        proposal_ref: EntityId,
+        agent_def_ref: EntityId,
+        now: u64,
+    ) -> MemoryResult<AgentTake> {
+        // The dispatched agent's own write actor (`agent_dispatch_actor`):
+        // its AGENT_DEF row, class Agent.
+        let agent = WriteActor::new(agent_def_ref, EdgeActorClass::Agent);
+        let vault = self.vault();
+        let store = &vault.store;
+        let mut refused = false;
+        let taken: MemoryResult<Option<EntityId>> = vault.try_with_write_txn_grouped(|wtxn| {
+            let Some(pending) = store.pending_gate_consent_in_txn(wtxn, &proposal_ref)? else {
+                return Ok(None);
+            };
+            if crate::gate::pending_row_holds_critical_confirm(&pending) {
+                return Ok(None);
+            }
+            let original = store
+                .gate_decision_in_txn(wtxn, pending.decision_id)?
+                .ok_or(Error::CorruptedIndex("pending gate consent"))?;
+            let Some(raw) = store.port_entity_record(wtxn, &proposal_ref)? else {
+                return Ok(None);
+            };
+            let reviewed = crate::claim::decode_claim_body(&raw.body, true)?;
+            // The agent was asked about the proposal as parked, under the
+            // policy floor it was parked under.
+            let (diff_handle, read_frontier_hash) =
+                crate::gate::claim_consent_binding_parts(store, wtxn, &reviewed)?;
+            if reviewed.approval != ClaimApprovalStatus::Proposed
+                || diff_handle != pending.diff_handle
+                || read_frontier_hash != pending.read_frontier_hash
+            {
+                return Ok(None);
+            }
+            let task_ref = match take_in_txn(vault, wtxn, proposal_ref, raw, reviewed, agent, now) {
+                Ok(task_ref) => task_ref,
+                Err(error) => {
+                    refused = true;
+                    return Err(take_refusal(error));
+                }
+            };
+            // The approval may already have redeemed the row; the delete is
+            // idempotent either way, and the decision is recorded here.
+            store.delete_pending_gate_consent_in_txn(wtxn, &proposal_ref)?;
+            store.append_gate_decision_in_txn(
+                wtxn,
+                &crate::store::GateDecisionRecord {
+                    version: crate::store::GATE_DECISION_LEDGER_VERSION,
+                    decision_id: crate::store::GateDecisionId::from_bytes(store.clock.ulid()?),
+                    created_at: now,
+                    outcome: "approved".to_owned(),
+                    reason_codes: vec![TAKE_ACCEPTED_REASON.to_owned()],
+                    receipt_reasons: Vec::new(),
+                    system_notices: Vec::new(),
+                    actor_class: original.actor_class,
+                    actor_ref: original.actor_ref,
+                    content_kind: original.content_kind,
+                    policy_manifest_version: original.policy_manifest_version,
+                    claim_id: Some(pending.claim_id),
+                    grant_ref: None,
+                    diff_handle: pending.diff_handle,
+                    read_frontier_hash: pending.read_frontier_hash,
+                    redacted_at: None,
+                },
+            )?;
+            Ok(Some(task_ref))
+        });
+        match taken {
+            Ok(Some(task_ref)) => Ok(AgentTake::Landed(task_ref)),
+            Ok(None) => Ok(AgentTake::Untaken),
+            Err(refusal) if refused => Ok(AgentTake::Refused(refusal)),
+            Err(error) => Err(error),
+        }
     }
 
     /// This actor's earlier proposal of `predicate` under `key`, by the
