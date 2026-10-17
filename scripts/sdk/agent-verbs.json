@@ -440,7 +440,7 @@
       "description": "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting.",
       "input": "RecallRequest",
       "output": "crate::memory::MemoryPack",
-      "call": "crate::task_verb::sdk::recall_with_vector(memory, input, |_| None)?",
+      "call": "crate::task_verb::sdk::recall_unembedded(memory, input)?",
       "server_door": "recall_off_runtime",
       "scope": "Read",
       "admission": {
@@ -481,12 +481,16 @@
           {
             "name": "deadline_ms",
             "kind": "deadline_ms"
+          },
+          {
+            "name": "media",
+            "kind": "media"
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``.\n        "
         }
       },
       "uniffi": {
@@ -497,7 +501,8 @@
           "limit": "u32",
           "format": "Option<String>",
           "as_of": "Option<u64>",
-          "deadline_ms": "Option<u64>"
+          "deadline_ms": "Option<u64>",
+          "media": "Option<RecallMedia>"
         },
         "output": "MemoryPack"
       }
@@ -1395,6 +1400,39 @@
       "input": "crate::learning_setting_doors::LearningSettingClear",
       "output": "crate::learning_setting_doors::LearningSettingsView",
       "call": "crate::learning_setting_doors::clear_learning_setting_as_owner(memory.vault(), &memory.embedded_owner(\"vault.settings.learning.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.widen_proposals",
+      "description": "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined.",
+      "input": "crate::agent_dispatch::widen_doors::WidenProposalsRequest",
+      "output": "crate::agent_dispatch::widen_doors::WidenProposalsView",
+      "call": "crate::agent_dispatch::widen_doors::widen_proposals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.widen_proposals.approve",
+      "description": "The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued.",
+      "input": "crate::agent_dispatch::widen_doors::WidenProposalAnswer",
+      "output": "crate::agent_dispatch::widen_doors::WidenProposalView",
+      "call": "crate::agent_dispatch::widen_doors::approve_widen_proposal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals.approve\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.widen_proposals.decline",
+      "description": "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record.",
+      "input": "crate::agent_dispatch::widen_doors::WidenProposalAnswer",
+      "output": "crate::agent_dispatch::widen_doors::WidenProposalView",
+      "call": "crate::agent_dispatch::widen_doors::decline_widen_proposal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.widen_proposals.decline\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -2329,6 +2367,19 @@
       "mcp_fields": {
         "spec": "$"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.messages.react",
+      "description": "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress.",
+      "input": "crate::reaction::MessageReactionRequest",
+      "output": "crate::reaction::MessageReactionReceipt",
+      "call": "memory.messages_react(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3497,6 +3548,18 @@
         "request": true
       },
       "proposes": true
+    },
+    {
+      "name": "vault.artifacts.create",
+      "description": "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run.",
+      "input": "crate::blob_artifact::ArtifactCreateRequest",
+      "output": "Option<crate::blob_artifact::ArtifactView>",
+      "call": "memory.artifacts_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "vault.artifacts.put",
