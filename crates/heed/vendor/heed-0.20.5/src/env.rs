@@ -849,6 +849,9 @@ impl Env {
         let mut cursor = RoCursor::new(&rtxn, dbi)?;
 
         while let Some((key, _value)) = cursor.move_on_next(MoveOperation::NoDup)? {
+            // ONEIRON FORK (OF-570): mdb.master3 keys a database by its name
+            // and the terminating NUL.
+            let key = key.strip_suffix(&[0]).unwrap_or(key);
             if key.contains(&0) {
                 continue;
             }
