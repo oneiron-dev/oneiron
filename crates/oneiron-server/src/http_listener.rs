@@ -319,6 +319,13 @@ impl IdleBody {
     }
 }
 
+/// `body` under this listener's body-idle limit ([`IdleBody`]), for the mesh
+/// listener's requests (OF-535).
+#[cfg(feature = "mesh")]
+pub(crate) fn idle_body(body: Incoming, idle: Duration) -> Body {
+    Body::new(IdleBody::new(body, idle))
+}
+
 impl hyper::body::Body for IdleBody {
     type Data = Bytes;
     type Error = BoxError;

@@ -916,7 +916,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::clone(&sync_server),
         &crate::handler::mesh::MeshConfig::from_env()?,
         &app,
-        config.limits.connections().header_read_timeout,
+        config.limits.connections(),
     )
     .await?;
     let artifact_task = artifacts.map(|listener| {

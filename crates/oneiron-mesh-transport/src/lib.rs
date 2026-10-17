@@ -5,6 +5,9 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use oneiron::authority::PeerMachine;
 pub use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
+pub use oneiron::sync::mesh_path::{
+    MeshPathDirection, MeshPathKind, MeshPathOutcome, MeshPathReceipt,
+};
 use oneiron::{ErrorKind, Vault, entity_id::EntityId};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -117,6 +120,28 @@ impl MachineGrants for PairedMachineGrants {
             } => Ok(proven == machine),
             PeerMachine::Unknown => Ok(false),
         }
+    }
+}
+
+/// Where a transport leaves its path receipts (OF-535, CROSS-ARCH-0019): one
+/// per connection, direct or relayed, and one per refused or failed attempt.
+/// Blocking: the transport calls it off its async workers.
+pub trait PathReceipts: Send + Sync + std::fmt::Debug {
+    /// Writes `receipt` and returns its id, or `None` when it did not land.
+    fn record(&self, receipt: &MeshPathReceipt) -> Option<String>;
+}
+
+/// Path receipts in the vault itself (`Vault::record_mesh_path_receipt`).
+#[derive(Clone)]
+pub struct VaultPathReceipts(pub Arc<Vault>);
+impl std::fmt::Debug for VaultPathReceipts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VaultPathReceipts")
+    }
+}
+impl PathReceipts for VaultPathReceipts {
+    fn record(&self, receipt: &MeshPathReceipt) -> Option<String> {
+        self.0.leave_mesh_path_receipt(receipt)
     }
 }
 

@@ -45,6 +45,7 @@ pub mod lease;
 mod local_claims;
 pub(crate) mod loro_support;
 pub mod manager;
+pub mod mesh_path;
 pub(crate) mod note;
 pub(crate) mod pack_sync;
 pub mod quarantine;

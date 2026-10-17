@@ -7,13 +7,18 @@
 //! Sync (`oneiron/sync/1`) serves the very router the TCP listener serves, one
 //! HTTP/1.1 connection per stream, so every slip, machine proof and grant check
 //! runs unchanged. A mesh caller is always off this device: its requests carry
-//! a peer address made from its endpoint key, never a loopback one.
+//! a peer address made from its endpoint key, never a loopback one. The
+//! listener's own connection floor, header timeout and body-idle limit are the
+//! TCP listener's numbers; every mesh peer is a paired machine the handshake
+//! admitted, so there is no stranger to give a share. Every connection and
+//! refused attempt leaves a path receipt in the vault (`VaultPathReceipts`).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
+
+use crate::http_listener::ConnectionLimits;
 
 /// Where the mesh listener binds; unset leaves it off.
 const BIND_ENV: &str = "ONEIRON_MESH_BIND";
@@ -56,17 +61,17 @@ pub(crate) async fn start(
     server: Arc<crate::server::SyncServer>,
     config: &MeshConfig,
     app: &Router,
-    header_read_timeout: Duration,
+    limits: ConnectionLimits,
 ) -> anyhow::Result<Option<MeshHost>> {
     let Some(bind) = config.bind else {
         return Ok(None);
     };
-    host::start(server, bind, &config.relays, app, header_read_timeout).await
+    host::start(server, bind, &config.relays, app, limits).await
 }
 
 #[cfg(not(feature = "mesh"))]
 mod host {
-    use super::{Arc, Duration, Router, SocketAddr};
+    use super::{Arc, ConnectionLimits, Router, SocketAddr};
 
     /// The listener a build without the `mesh` feature never runs.
     pub(crate) struct MeshHost;
@@ -80,7 +85,7 @@ mod host {
         _bind: SocketAddr,
         _relays: &[String],
         _app: &Router,
-        _header_read_timeout: Duration,
+        _limits: ConnectionLimits,
     ) -> anyhow::Result<Option<MeshHost>> {
         anyhow::bail!(
             "{} is set, but this server was built without the `mesh` feature",
@@ -98,7 +103,6 @@ mod host {
     use std::time::Duration;
 
     use axum::Router;
-    use axum::body::Body;
     use axum::extract::ConnectInfo;
     use hyper::body::Incoming;
     use hyper_util::rt::{TokioIo, TokioTimer};
@@ -108,12 +112,15 @@ mod host {
     use oneiron_mesh_transport::transport_key::TransportKey;
     use oneiron_mesh_transport::{
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
-        PairedMachineGrants, SYNC_ALPN, VaultMachineRoster,
+        PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
     };
     use oneiron_organ_host::{
         AskHandlers, HostConfig, ORGAN_ALPN, OrganHost, OrganRouter, OrganService,
     };
+    use tokio::sync::Semaphore;
     use tokio::task::JoinHandle;
+
+    use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
     const TICK_EVERY: Duration = Duration::from_secs(30);
@@ -152,7 +159,7 @@ mod host {
     /// Every protocol the mesh listener serves. Add a protocol's row here.
     pub(crate) fn mesh_routes(
         app: &Router,
-        header_read_timeout: Duration,
+        limits: ConnectionLimits,
         server: &Arc<crate::server::SyncServer>,
     ) -> MeshRoutes {
         let vault = &server.vault;
@@ -165,7 +172,8 @@ mod host {
                 SYNC_ALPN,
                 Arc::new(SyncRoute {
                     app: app.clone(),
-                    header_read_timeout,
+                    limits,
+                    floor: Arc::new(Semaphore::new(limits.max_connections)),
                 }),
             )
             .route(
@@ -222,7 +230,7 @@ mod host {
         bind: SocketAddr,
         relays: &[String],
         app: &Router,
-        header_read_timeout: Duration,
+        limits: ConnectionLimits,
     ) -> anyhow::Result<Option<MeshHost>> {
         let vault = Arc::clone(&server.vault);
         let (machine, key) = TransportKey::for_install(&vault)
@@ -230,18 +238,25 @@ mod host {
             .ok_or_else(|| {
                 anyhow::anyhow!("the mesh listener needs this install enrolled as a machine")
             })?;
-        let routes = Arc::new(mesh_routes(app, header_read_timeout, &server));
+        let routes = Arc::new(mesh_routes(app, limits, &server));
         let policy = AcceptPolicy {
             roster: Arc::new(VaultMachineRoster(Arc::clone(&vault))),
-            grants: Arc::new(PairedMachineGrants(vault)),
+            grants: Arc::new(PairedMachineGrants(Arc::clone(&vault))),
         };
         let relays =
             private_relay_map(relays).map_err(|_| anyhow::anyhow!("mesh relay URL refused"))?;
         let alpns = routes.routes.iter().map(|(alpn, _)| alpn.clone()).collect();
         let transport = Arc::new(
-            IrohTransport::bind_paired(key, policy, alpns, bind, relays)
-                .await
-                .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?,
+            IrohTransport::bind_paired(
+                key,
+                policy,
+                alpns,
+                bind,
+                relays,
+                Arc::new(VaultPathReceipts(vault)),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?,
         );
         tracing::info!(%bind, machine = %machine.to_hex(), "mesh listening");
         let mut tasks = vec![tokio::spawn(accept_loop(
@@ -298,10 +313,13 @@ mod host {
     }
 
     /// Sync over the mesh: each stream the peer opens is one HTTP/1.1
-    /// connection to the server's router, upgrades included.
+    /// connection to the server's router, upgrades included. The streams held
+    /// open at once stay under the TCP listener's connection floor, as a count
+    /// of their own; past it, a new stream waits for a place.
     struct SyncRoute {
         app: Router,
-        header_read_timeout: Duration,
+        limits: ConnectionLimits,
+        floor: Arc<Semaphore>,
     }
 
     impl MeshService for SyncRoute {
@@ -310,15 +328,24 @@ mod host {
                 let peer = mesh_peer_address(connection.endpoint_key());
                 loop {
                     let stream = connection.accept_duplex().await?;
+                    let place = Arc::clone(&self.floor)
+                        .acquire_owned()
+                        .await
+                        .map_err(|_| MeshError::Unavailable)?;
                     let routes = TowerToHyperService::new(self.app.clone());
+                    let body_idle = self.limits.body_idle_timeout;
                     let service =
                         hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
-                            let mut request = request.map(Body::new);
+                            let mut request = request
+                                .map(|body| crate::http_listener::idle_body(body, body_idle));
                             request.extensions_mut().insert(ConnectInfo(peer));
                             hyper::service::Service::call(&routes, request)
                         });
-                    let header_read_timeout = self.header_read_timeout;
+                    let header_read_timeout = self.limits.header_read_timeout;
                     tokio::spawn(async move {
+                        // The place is the stream's until it closes, upgrades
+                        // included.
+                        let _place = place;
                         let mut builder = hyper::server::conn::http1::Builder::new();
                         builder
                             .timer(TokioTimer::new())
