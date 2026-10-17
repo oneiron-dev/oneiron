@@ -62,6 +62,7 @@ pub enum AgentVerb {
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultGuestsRevoke,
+    VaultGuestsMintSlip,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -69,6 +70,22 @@ pub enum AgentVerb {
     VaultLegalHoldsList,
     VaultLegalHoldsLog,
     VaultLegalHoldsLiftAndErase,
+    VaultEmbeddingSpacesList,
+    VaultEmbeddingSpacesDeclare,
+    VaultEmbeddingSpacesBind,
+    VaultEmbeddingSpacesOneSpace,
+    VaultEmbeddingSpacesRetire,
+    VaultEmbeddingSpacesMove,
+    VaultEmbeddingSpacesMoveCheck,
+    VaultEmbeddingSpacesMoveApprove,
+    VaultEmbeddingSpacesMoveUndo,
+    VaultEmbeddingSpacesMoveAbandon,
+    VaultEmbeddingSpacesProbesList,
+    VaultEmbeddingSpacesProbesPut,
+    VaultEmbeddingSpacesProbesDelete,
+    VaultSettingsLearning,
+    VaultSettingsLearningPut,
+    VaultSettingsLearningClear,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -277,6 +294,7 @@ impl AgentVerb {
         Self::VaultMembersDecline,
         Self::VaultMembersWithdrawInvitation,
         Self::VaultGuestsRevoke,
+        Self::VaultGuestsMintSlip,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -284,6 +302,22 @@ impl AgentVerb {
         Self::VaultLegalHoldsList,
         Self::VaultLegalHoldsLog,
         Self::VaultLegalHoldsLiftAndErase,
+        Self::VaultEmbeddingSpacesList,
+        Self::VaultEmbeddingSpacesDeclare,
+        Self::VaultEmbeddingSpacesBind,
+        Self::VaultEmbeddingSpacesOneSpace,
+        Self::VaultEmbeddingSpacesRetire,
+        Self::VaultEmbeddingSpacesMove,
+        Self::VaultEmbeddingSpacesMoveCheck,
+        Self::VaultEmbeddingSpacesMoveApprove,
+        Self::VaultEmbeddingSpacesMoveUndo,
+        Self::VaultEmbeddingSpacesMoveAbandon,
+        Self::VaultEmbeddingSpacesProbesList,
+        Self::VaultEmbeddingSpacesProbesPut,
+        Self::VaultEmbeddingSpacesProbesDelete,
+        Self::VaultSettingsLearning,
+        Self::VaultSettingsLearningPut,
+        Self::VaultSettingsLearningClear,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -495,6 +529,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => "vault.members.decline",
             Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
+            Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -504,6 +539,22 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
             Self::VaultLegalHoldsLog => "vault.legal_holds.log",
             Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
+            Self::VaultEmbeddingSpacesList => "vault.embedding_spaces.list",
+            Self::VaultEmbeddingSpacesDeclare => "vault.embedding_spaces.declare",
+            Self::VaultEmbeddingSpacesBind => "vault.embedding_spaces.bind",
+            Self::VaultEmbeddingSpacesOneSpace => "vault.embedding_spaces.one_space",
+            Self::VaultEmbeddingSpacesRetire => "vault.embedding_spaces.retire",
+            Self::VaultEmbeddingSpacesMove => "vault.embedding_spaces.move",
+            Self::VaultEmbeddingSpacesMoveCheck => "vault.embedding_spaces.move_check",
+            Self::VaultEmbeddingSpacesMoveApprove => "vault.embedding_spaces.move_approve",
+            Self::VaultEmbeddingSpacesMoveUndo => "vault.embedding_spaces.move_undo",
+            Self::VaultEmbeddingSpacesMoveAbandon => "vault.embedding_spaces.move_abandon",
+            Self::VaultEmbeddingSpacesProbesList => "vault.embedding_spaces.probes.list",
+            Self::VaultEmbeddingSpacesProbesPut => "vault.embedding_spaces.probes.put",
+            Self::VaultEmbeddingSpacesProbesDelete => "vault.embedding_spaces.probes.delete",
+            Self::VaultSettingsLearning => "vault.settings.learning",
+            Self::VaultSettingsLearningPut => "vault.settings.learning.put",
+            Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -711,6 +762,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -718,6 +770,22 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultEmbeddingSpacesList
+                | Self::VaultEmbeddingSpacesDeclare
+                | Self::VaultEmbeddingSpacesBind
+                | Self::VaultEmbeddingSpacesOneSpace
+                | Self::VaultEmbeddingSpacesRetire
+                | Self::VaultEmbeddingSpacesMove
+                | Self::VaultEmbeddingSpacesMoveCheck
+                | Self::VaultEmbeddingSpacesMoveApprove
+                | Self::VaultEmbeddingSpacesMoveUndo
+                | Self::VaultEmbeddingSpacesMoveAbandon
+                | Self::VaultEmbeddingSpacesProbesList
+                | Self::VaultEmbeddingSpacesProbesPut
+                | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultSettingsLearning
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -933,6 +1001,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -940,6 +1009,22 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultEmbeddingSpacesList
+                | Self::VaultEmbeddingSpacesDeclare
+                | Self::VaultEmbeddingSpacesBind
+                | Self::VaultEmbeddingSpacesOneSpace
+                | Self::VaultEmbeddingSpacesRetire
+                | Self::VaultEmbeddingSpacesMove
+                | Self::VaultEmbeddingSpacesMoveCheck
+                | Self::VaultEmbeddingSpacesMoveApprove
+                | Self::VaultEmbeddingSpacesMoveUndo
+                | Self::VaultEmbeddingSpacesMoveAbandon
+                | Self::VaultEmbeddingSpacesProbesList
+                | Self::VaultEmbeddingSpacesProbesPut
+                | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultSettingsLearning
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1175,6 +1260,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1182,6 +1268,22 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultEmbeddingSpacesList
+                | Self::VaultEmbeddingSpacesDeclare
+                | Self::VaultEmbeddingSpacesBind
+                | Self::VaultEmbeddingSpacesOneSpace
+                | Self::VaultEmbeddingSpacesRetire
+                | Self::VaultEmbeddingSpacesMove
+                | Self::VaultEmbeddingSpacesMoveCheck
+                | Self::VaultEmbeddingSpacesMoveApprove
+                | Self::VaultEmbeddingSpacesMoveUndo
+                | Self::VaultEmbeddingSpacesMoveAbandon
+                | Self::VaultEmbeddingSpacesProbesList
+                | Self::VaultEmbeddingSpacesProbesPut
+                | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultSettingsLearning
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1359,10 +1461,24 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultEmbeddingSpacesDeclare
+                | Self::VaultEmbeddingSpacesBind
+                | Self::VaultEmbeddingSpacesOneSpace
+                | Self::VaultEmbeddingSpacesRetire
+                | Self::VaultEmbeddingSpacesMove
+                | Self::VaultEmbeddingSpacesMoveCheck
+                | Self::VaultEmbeddingSpacesMoveApprove
+                | Self::VaultEmbeddingSpacesMoveUndo
+                | Self::VaultEmbeddingSpacesMoveAbandon
+                | Self::VaultEmbeddingSpacesProbesPut
+                | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1519,6 +1635,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1526,6 +1643,22 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultEmbeddingSpacesList => &[],
+            Self::VaultEmbeddingSpacesDeclare => &["spec"],
+            Self::VaultEmbeddingSpacesBind => &["spec"],
+            Self::VaultEmbeddingSpacesOneSpace => &["spec"],
+            Self::VaultEmbeddingSpacesRetire => &["spec"],
+            Self::VaultEmbeddingSpacesMove => &["spec"],
+            Self::VaultEmbeddingSpacesMoveCheck => &["spec"],
+            Self::VaultEmbeddingSpacesMoveApprove => &["spec"],
+            Self::VaultEmbeddingSpacesMoveUndo => &["spec"],
+            Self::VaultEmbeddingSpacesMoveAbandon => &["spec"],
+            Self::VaultEmbeddingSpacesProbesList => &[],
+            Self::VaultEmbeddingSpacesProbesPut => &["spec"],
+            Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultSettingsLearning => &["spec"],
+            Self::VaultSettingsLearningPut => &["spec"],
+            Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1735,6 +1868,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1742,6 +1876,22 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultEmbeddingSpacesList => &[],
+            Self::VaultEmbeddingSpacesDeclare => &["spec"],
+            Self::VaultEmbeddingSpacesBind => &["spec"],
+            Self::VaultEmbeddingSpacesOneSpace => &["spec"],
+            Self::VaultEmbeddingSpacesRetire => &["spec"],
+            Self::VaultEmbeddingSpacesMove => &["spec"],
+            Self::VaultEmbeddingSpacesMoveCheck => &["spec"],
+            Self::VaultEmbeddingSpacesMoveApprove => &["spec"],
+            Self::VaultEmbeddingSpacesMoveUndo => &["spec"],
+            Self::VaultEmbeddingSpacesMoveAbandon => &["spec"],
+            Self::VaultEmbeddingSpacesProbesList => &[],
+            Self::VaultEmbeddingSpacesProbesPut => &["spec"],
+            Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultSettingsLearning => &["spec"],
+            Self::VaultSettingsLearningPut => &["spec"],
+            Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -2050,6 +2200,9 @@ impl AgentVerb {
                 "An Admin with the add_member power takes back a pending invitation."
             }
             Self::VaultGuestsRevoke => "",
+            Self::VaultGuestsMintSlip => {
+                "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
             }
@@ -2066,6 +2219,52 @@ impl AgentVerb {
             Self::VaultLegalHoldsLog => "The owner-visible legal hold log, oldest first.",
             Self::VaultLegalHoldsLiftAndErase => {
                 "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."
+            }
+            Self::VaultEmbeddingSpacesList => {
+                "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."
+            }
+            Self::VaultEmbeddingSpacesDeclare => {
+                "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."
+            }
+            Self::VaultEmbeddingSpacesBind => {
+                "Binds one kind slot to a declared space, or returns it to its default when no space is named."
+            }
+            Self::VaultEmbeddingSpacesOneSpace => {
+                "Binds every kind slot the space accepts, text included, to that one space."
+            }
+            Self::VaultEmbeddingSpacesRetire => {
+                "Drops a declared space that no slot binds and no open move names, with its vector rows."
+            }
+            Self::VaultEmbeddingSpacesMove => {
+                "Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space."
+            }
+            Self::VaultEmbeddingSpacesMoveCheck => {
+                "Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes."
+            }
+            Self::VaultEmbeddingSpacesMoveApprove => {
+                "The owner says yes to a full candidate over a check that did not read not worse; it swaps in."
+            }
+            Self::VaultEmbeddingSpacesMoveUndo => "Binds a swapped-in move incumbent again.",
+            Self::VaultEmbeddingSpacesMoveAbandon => {
+                "Ends an open embedding space move with no swap."
+            }
+            Self::VaultEmbeddingSpacesProbesList => {
+                "Every stored embedding space probe with its id."
+            }
+            Self::VaultEmbeddingSpacesProbesPut => {
+                "Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."
+            }
+            Self::VaultEmbeddingSpacesProbesDelete => {
+                "Removes one stored embedding space probe by its id."
+            }
+            Self::VaultSettingsLearning => {
+                "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."
+            }
+            Self::VaultSettingsLearningPut => {
+                "The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."
+            }
+            Self::VaultSettingsLearningClear => {
+                "The owner clears one learned-setting row of a key, mode and scope."
             }
             Self::VaultLensesPropose => {
                 "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."
