@@ -46441,7 +46441,7 @@
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
       "const": 1,
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -49977,16 +49977,12 @@
       "AdmissionBasis",
       "AdmissionConsent",
       "ConsentDenial",
-      "ConsentNeed",
-      "ConsentPart",
       "ConsentSet",
       "ConsentState",
       "JoinDecision",
       "JoinRefusal",
       "JoinRequest",
-      "JoinSubject",
       "MembershipConsent",
-      "RequiredParty",
       "RoomWork",
       "SpendConsent"
      ],
@@ -49994,9 +49990,10 @@
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
       "crate-vis": 5,
-      "enum": 9,
-      "fn": 6,
-      "struct": 6
+      "enum": 6,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 5
      }
     },
     {
@@ -51039,7 +51036,6 @@
      "path": "src/workspace_roster/work_companion.rs",
      "purpose": "The org's `work_companion` policy (ONEIRON-ARCH-0063)",
      "surface": {
-      "const": 1,
       "enum": 1,
       "fn": 9
      }
@@ -56657,7 +56653,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 46,
+      "const": 48,
       "crate-vis": 1
      }
     },
@@ -56910,7 +56906,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 22,
+      "mod": 23,
       "re-export": 2
      }
     },
@@ -57142,6 +57138,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConsentNeed",
+      "ConsentPart",
+      "JoinSubject",
+      "RequiredParty",
+      "RoomJoinHold"
+     ],
+     "path": "src/room_join.rs",
+     "purpose": "The consent vocabulary of a room join (OF-531): who asks, which consents a join collects, and the party each…",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CustodyClass",
       "CustodyTier"
      ],
@@ -57354,6 +57368,13 @@
      "layout": "file",
      "purpose": "The retrieval signal and blend-weight vocabulary: what retrieval's fusion scores with, what the retrieval…"
     },
+    "room_join": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The consent vocabulary of a room join (OF-531): who asks, which consents a join collects, and the party each…"
+    },
     "secret_custody": {
      "files": 1,
      "impl_vault": false,
@@ -57392,7 +57413,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 55,
+   "source_files": 56,
    "test_files": 1
   },
   "oneiron-crypto": {
