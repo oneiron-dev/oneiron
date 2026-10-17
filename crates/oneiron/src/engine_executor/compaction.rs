@@ -678,7 +678,10 @@ pub(super) fn compacted_frame(
     text: Option<&str>,
     handles: &[String],
 ) -> String {
-    let mut frame = format!("<compacted epoch=\"{epoch}\" steps=\"{first}-{last}\">\n");
+    // The verb catalog's revision is restated after compaction (EIRI-ARCH-0002).
+    let catalog = crate::task_verb::sdk::code_mode_catalog_fragment().revision;
+    let mut frame =
+        format!("<compacted epoch=\"{epoch}\" steps=\"{first}-{last}\" catalog=\"{catalog}\">\n");
     if let Some(text) = text {
         frame.push_str(&escape_compacted_text(text));
         frame.push('\n');

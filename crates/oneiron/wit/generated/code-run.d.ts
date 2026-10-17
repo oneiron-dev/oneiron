@@ -16,6 +16,10 @@ declare namespace OneironCodeRun {
   interface StepResult { resultJson: string; proposals: Array<OneironCodeRun.ProposalDelta>; }
   type ProposalDelta = { tag: "file-write"; val: OneironCodeRun.FileProposal } | { tag: "claim-candidate"; val: OneironCodeRun.ClaimInput } | { tag: "file-delete"; val: OneironCodeRun.FileDeleteProposal } | { tag: "file-rename"; val: OneironCodeRun.FileRenameProposal };
 }
+declare namespace Sdk {
+  /** Host verbs on the global `vault`. */
+  interface VaultHost { agents: { put(input: OneironCodeRun.AgentPutInput): Promise<OneironCodeRun.AgentPutOutput>; }; }
+}
 declare namespace sandbox {
   namespace fs {
     function read_file(path: string): Promise<Uint8Array>;
@@ -30,11 +34,6 @@ declare namespace oneiron {
   }
   namespace random {
     function bytes(length: number): Uint8Array;
-  }
-}
-declare namespace vault {
-  namespace agents {
-    function put(input: OneironCodeRun.AgentPutInput): Promise<OneironCodeRun.AgentPutOutput>;
   }
 }
 declare namespace self {
