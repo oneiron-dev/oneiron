@@ -440,6 +440,35 @@ impl McpConnectorActorRegistry {
         let Some(fingerprint) = self.fingerprint_lookup_credential(credential) else {
             return Err(McpConnectorActorResolutionError::UnknownCredential);
         };
+        self.resolve_fingerprint(fingerprint, now, actor_ceiling_exists)
+    }
+
+    /// [`Self::resolve`] for the registration whose STREAM connection is
+    /// `connection`, found by its fingerprint, never by its secret: the
+    /// current record, revoke, expiry and actor ceiling judged now, for a
+    /// connector's call settlement runs again (ARCH-0080 §3 Ask). A
+    /// registration this process does not hold is unknown.
+    pub fn resolve_connection(
+        &self,
+        connection: &str,
+        now: u64,
+        actor_ceiling_exists: impl FnOnce(&str, &str) -> bool,
+    ) -> Result<McpResolvedActor, McpConnectorActorResolutionError> {
+        let fingerprint = self
+            .records
+            .keys()
+            .find(|fingerprint| fingerprint.stream_connection().0 == connection)
+            .copied()
+            .ok_or(McpConnectorActorResolutionError::UnknownCredential)?;
+        self.resolve_fingerprint(fingerprint, now, actor_ceiling_exists)
+    }
+
+    fn resolve_fingerprint(
+        &self,
+        fingerprint: McpCredentialFingerprint,
+        now: u64,
+        actor_ceiling_exists: impl FnOnce(&str, &str) -> bool,
+    ) -> Result<McpResolvedActor, McpConnectorActorResolutionError> {
         let record = self
             .records
             .get(&fingerprint)

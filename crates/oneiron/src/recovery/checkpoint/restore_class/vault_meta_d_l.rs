@@ -212,6 +212,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::HOOKS_SETTLED, CONTENT),
     (&t::HOOKS_SETTLED_NEXT, CONTENT),
     (&t::HOOKS_VERB_ASK, LIVE),
+    (&t::HOOKS_VERB_ASK_WITNESS, LIVE),
     (&t::HOOKS_VERB_RUN, CONTENT),
     (&t::HOUSEKEEPING_SCHEDULE, LIVE),
     (&t::HOUSEKEEPING_WAKE, LIVE),

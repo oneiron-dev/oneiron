@@ -9,8 +9,9 @@ use std::io::Read as _;
 use serde_json::Value;
 
 use super::{
-    ArchiveRecordKind, ArchiveSecretCustody, VAULT_ARCHIVE_FILES_DIR, VAULT_ARCHIVE_MANIFEST_PATH,
-    VAULT_ARCHIVE_RECORDS_DIR, WholeVaultDocument, WholeVaultDocumentManifest, blake3_hex,
+    ArchiveRecordKind, ArchiveSecretCustody, PortableSlotBindings, VAULT_ARCHIVE_FILES_DIR,
+    VAULT_ARCHIVE_MANIFEST_PATH, VAULT_ARCHIVE_RECORDS_DIR, WholeVaultDocument,
+    WholeVaultDocumentManifest, blake3_hex,
 };
 use crate::error::{Error, Result};
 
@@ -107,6 +108,13 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
             serde_json::from_value(row).map_err(|_| invalid("invalid archive custody record"))
         })
         .collect::<Result<Vec<ArchiveSecretCustody>>>()?;
+    // OF-370: the kind slots come back from their rows, each kind once; an
+    // archive without slot rows carries no embedding setup.
+    let slot_bindings = match sections.remove(&ArchiveRecordKind::SlotBinding) {
+        Some(rows) => serde_json::to_value(PortableSlotBindings::from_archive_rows(rows)?)
+            .map_err(|_| invalid("invalid archive slot bindings"))?,
+        None => Value::Null,
+    };
     let mut entities = sections
         .remove(&ArchiveRecordKind::Entity)
         .unwrap_or_default();
@@ -132,6 +140,8 @@ pub(crate) fn read_vault_archive(bytes: &[u8]) -> Result<VaultArchive> {
             "runs": take(ArchiveRecordKind::Run),
             "bodies": take(ArchiveRecordKind::ResultBody),
         },
+        "embedding_spaces": take(ArchiveRecordKind::EmbeddingSpace),
+        "slot_bindings": slot_bindings,
     });
     let mut cited = BTreeSet::new();
     let result_files = result_body_files(&document, &files, &mut cited)?;

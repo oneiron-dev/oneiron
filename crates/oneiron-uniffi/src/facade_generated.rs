@@ -965,6 +965,11 @@ export_facade! {
     let output = client.vault_questions_pause(&input)?;
     crate::codec::lift_record("vault.questions.pause", &output)
 };
+"vault.questions.backfill" => fn vault_questions_backfill(&self, input: QuestionBackfillRequest) -> ScheduledBackfill = |client| {
+    let input: oneiron::receipt::QuestionBackfillRequest = crate::codec::lower_record("vault.questions.backfill", input)?;
+    let output = client.vault_questions_backfill(&input)?;
+    crate::codec::lift_record("vault.questions.backfill", &output)
+};
 "vault.questions.read" => fn vault_questions_read(&self, input: QuestionReadRequest) -> Option<QuestionRecord> = |client| {
     let input: oneiron::receipt::QuestionReadRequest = crate::codec::lower_record("vault.questions.read", input)?;
     let output = client.vault_questions_read(&input)?;
@@ -1184,6 +1189,31 @@ export_facade! {
     let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
     let output = client.vault_artifacts_body_preview(&input)?;
     crate::codec::lift_record("vault.artifacts.body.preview", &output)
+};
+"vault.artifacts.body.deck.review" => fn vault_artifacts_body_deck_review(&self, input: OfficeBodyForkRequest) -> DeckReviewView = |client| {
+    let input: oneiron::office_body::OfficeBodyForkRequest = crate::codec::lower_record("vault.artifacts.body.deck.review", input)?;
+    let output = client.vault_artifacts_body_deck_review(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.review", &output)
+};
+"vault.artifacts.body.deck.merge" => fn vault_artifacts_body_deck_merge(&self, input: DeckForkMergeRequest) -> LandingReceipt = |client| {
+    let input: oneiron::office_body::DeckForkMergeRequest = crate::codec::lower_record("vault.artifacts.body.deck.merge", input)?;
+    let output = client.vault_artifacts_body_deck_merge(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.merge", &output)
+};
+"vault.artifacts.body.deck.export" => fn vault_artifacts_body_deck_export(&self, input: DeckExportRequest) -> DeckExportView = |client| {
+    let input: oneiron::office_body::DeckExportRequest = crate::codec::lower_record("vault.artifacts.body.deck.export", input)?;
+    let output = client.vault_artifacts_body_deck_export(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.export", &output)
+};
+"vault.artifacts.body.deck.gate" => fn vault_artifacts_body_deck_gate(&self, input: DeckGateRequest) -> DeckGateView = |client| {
+    let input: oneiron::office_body::DeckGateRequest = crate::codec::lower_record("vault.artifacts.body.deck.gate", input)?;
+    let output = client.vault_artifacts_body_deck_gate(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.gate", &output)
+};
+"vault.artifacts.body.deck.oracle" => fn vault_artifacts_body_deck_oracle(&self, input: DeckOracleRequest) -> DeckGateView = |client| {
+    let input: oneiron::office_body::DeckOracleRequest = crate::codec::lower_record("vault.artifacts.body.deck.oracle", input)?;
+    let output = client.vault_artifacts_body_deck_oracle(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.oracle", &output)
 };
 "vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView = |client| {
     let input: oneiron::task_verb::sdk::AppendBlobVersionRequest = (artifact_ref, content, run_ref, occurred_at, learned_at).lower()?;
