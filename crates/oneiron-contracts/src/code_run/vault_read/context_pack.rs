@@ -15,9 +15,10 @@ pub struct CoreContextPackRequest {
     /// Executor model@revision for pair-specific skill reliability ranking.
     #[serde(default)]
     pub executor_model: Option<String>,
-    /// The task type this pack's work is placed in, a node of the vault's
-    /// type tree at that tree's version: skills rank on their measured
-    /// reliability for that placement and `axis` (OF-184).
+    /// The task type this pack's work is placed in, a node of the type tree
+    /// (the vault's, or its `project`'s) at the version it was placed at:
+    /// skills rank on their measured reliability for that placement and
+    /// `axis` (OF-184).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_ref: Option<ContextPackTypeRef>,
     /// The scored axis for `type_ref`; omitted, the skill-outcome axis.
@@ -58,6 +59,10 @@ pub struct CoreContextPackRequest {
 pub struct ContextPackTypeRef {
     pub node_id: String,
     pub tree_version: u32,
+    /// The project whose tree it is placed in, as an entity id; omitted, the
+    /// vault's tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 impl CoreContextPackRequest {
