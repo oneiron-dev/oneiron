@@ -6362,6 +6362,7 @@ pub(crate) async fn call_verb(
         | "self.skills.call"
         | "self.team.start"
         | "self.team.record"
+        | "self.team.submit"
         | "self.spawn"
         | "tasks.wait"
         | "summarize" => Err(context_required(verb, VerbContext::Run)),
