@@ -18918,6 +18918,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CoachAttributionAudits"
+     ],
+     "path": "src/dreamer_runner/maintenance/attribution_audits.rs",
+     "purpose": "The attribution judge's held-out audits, run (ARCH-0053 \"The attribution judge gets a defect-injection…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/calibration_asks.rs",
      "purpose": "Calibration asks (OF-420; ARCH-0053 #the-judge, ARCH-0042's judge re-pin protocol): \"On uncertainty…",
@@ -18935,7 +18948,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 23,
+      "const": 24,
       "crate-vis": 8,
       "fn": 10,
       "trait": 1
@@ -19145,7 +19158,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 14,
+      "mod": 15,
       "re-export": 7
      }
     },
@@ -53171,7 +53184,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54181,7 +54194,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3289,
+   "source_files": 3290,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64746,6 +64759,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_host/attribution_audits.rs",
+     "purpose": "The attribution judge's held-out audits on the host's ladder (ARCH-0053, OF-542)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_host/seal_checks.rs",
      "purpose": "The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession…",
      "surface": {
@@ -64955,7 +64978,7 @@
      "path": "src/ai_host/skill_discovery.rs",
      "purpose": "The Coach's skill discovery (ARCH-0056 §5, ARCH-0066 #coach, OF-420): the standing attribution classifier…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -73285,7 +73308,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73693,7 +73716,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 620,
+   "source_files": 621,
    "test_files": 182
   },
   "oneiron-spawn": {
