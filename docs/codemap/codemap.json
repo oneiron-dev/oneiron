@@ -70928,7 +70928,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VoiceMediaBindings",
@@ -71028,7 +71028,7 @@
      "path": "src/voice_host/wire.rs",
      "purpose": "The voice wire's media ops (OF-410)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "struct": 1
      }
     },
@@ -71800,7 +71800,7 @@
     "voice_host": {
      "files": 14,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     },
@@ -71833,7 +71833,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 44,
+   "over_bar": 45,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 584,
    "test_files": 182
