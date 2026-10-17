@@ -35,8 +35,6 @@ pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWri
 pub use self::actors_memory::ActorBound;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
-#[cfg(feature = "sync")]
-pub(crate) use self::transactions::MAX_SYNC_STATE_KEYS;
 pub use self::doctor_manifest::{
     TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
     VaultDoctorHnswReport, VaultDoctorReport,
@@ -64,6 +62,8 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
+#[cfg(feature = "sync")]
+pub(crate) use self::transactions::MAX_SYNC_STATE_KEYS;
 pub(crate) use self::vector_evidence::NoMatchFloors;
 
 /// Main vault API wrapping LMDB storage and configuration.
