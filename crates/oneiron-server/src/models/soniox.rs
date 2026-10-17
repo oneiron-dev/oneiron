@@ -13,6 +13,14 @@
 //! `finished`, and the next opens on a fresh lease. The words the old one
 //! made final carry over to the utterance still open, never as an owner's
 //! Final; only the owner's cut, answered by `<fin>`, finalizes one.
+//!
+//! A socket that drops (it fails or closes before its `finished`, or Soniox
+//! reports a request timeout or a failure of its own) is reconnected once:
+//! the next segment opens on a fresh lease, the dropped one's final words
+//! carried, and what it had not sent yet goes to the next. A cut it sent
+//! whose `<fin>` never came is answered with the words carried. Audio it
+//! sent that Soniox had not made final is lost. A second drop before the
+//! next socket says anything fails the hearing.
 use std::collections::{BTreeMap, VecDeque};
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
@@ -43,6 +51,11 @@ const QUEUE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 /// A segment that has sent nothing for this long sends a keepalive, so a
 /// silence gap does not end it.
 const KEEPALIVE_AFTER: Duration = Duration::from_secs(5);
+/// Soniox error codes a fresh socket may clear: a request timeout and the
+/// server's own failures. Any other error fails the hearing.
+const RETRIABLE_ERROR_CODES: [u64; 5] = [408, 500, 502, 503, 504];
+/// The control frame that asks Soniox to finalize every word so far.
+const FINALIZE: &str = r#"{"type":"finalize"}"#;
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type Opening = Pin<Box<dyn Future<Output = oneiron::Result<Segment>> + Send>>;
@@ -192,7 +205,7 @@ impl SonioxTransport for Outbox {
     }
 
     fn submit_finalize(&mut self) -> oneiron::Result<()> {
-        self.push(Message::text(r#"{"type":"finalize"}"#))
+        self.push(Message::text(FINALIZE))
     }
 
     fn submit_end(&mut self) -> oneiron::Result<()> {
@@ -276,6 +289,75 @@ impl Segment {
         }
         Ok(sent)
     }
+
+    /// The socket's next frame, once what is queued went out as far as the
+    /// socket takes it, with a keepalive after [`KEEPALIVE_AFTER`] quiet. A
+    /// frame that does not parse is an error, not a drop.
+    fn poll_heard(
+        &mut self,
+        quiet: &mut Pin<Box<tokio::time::Sleep>>,
+        cx: &mut Context<'_>,
+    ) -> Poll<oneiron::Result<Heard>> {
+        loop {
+            match self.send(cx) {
+                Ok(true) => quiet
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER),
+                Ok(false) => {}
+                Err(error) => return Poll::Ready(Ok(Heard::Dropped(error))),
+            }
+            if !self.ending && quiet.as_mut().poll(cx).is_ready() {
+                self.stream
+                    .inner_mut()
+                    .transport_mut()
+                    .push(Message::text(r#"{"type":"keepalive"}"#))?;
+                quiet
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER);
+                continue;
+            }
+            let text = match Pin::new(&mut self.socket).poll_next(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Some(Ok(Message::Text(text)))) => text,
+                // The pong a ping asks for goes out with the next send.
+                Poll::Ready(Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)))) => {
+                    continue;
+                }
+                Poll::Ready(None | Some(Ok(Message::Binary(_) | Message::Close(_)))) => {
+                    return Poll::Ready(Ok(Heard::Dropped(invalid("the socket closed early"))));
+                }
+                Poll::Ready(Some(Err(error))) => {
+                    return Poll::Ready(Ok(Heard::Dropped(socket_error(&error))));
+                }
+            };
+            let frame: serde_json::Value =
+                serde_json::from_str(text.as_str()).map_err(|_| invalid("a frame is not JSON"))?;
+            return Poll::Ready(Ok(match retriable_error(&frame) {
+                Some(error) => Heard::Dropped(error),
+                None => Heard::Frame(frame),
+            }));
+        }
+    }
+}
+
+/// What a segment's socket said next.
+enum Heard {
+    Frame(serde_json::Value),
+    /// The socket failed or closed before its `finished`, or Soniox sent an
+    /// error a fresh socket may clear.
+    Dropped(oneiron::Error),
+}
+
+/// A Soniox error a fresh socket may clear, as the hearing's failure.
+fn retriable_error(frame: &serde_json::Value) -> Option<oneiron::Error> {
+    let code = frame.get("error_code")?.as_u64()?;
+    RETRIABLE_ERROR_CODES.contains(&code).then(|| {
+        let message = frame
+            .get("error_message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unnamed");
+        invalid(&format!("provider error: {code}: {message}"))
+    })
 }
 
 fn socket_error(error: &tokio_tungstenite::tungstenite::Error) -> oneiron::Error {
@@ -308,6 +390,9 @@ pub(crate) struct SonioxLive {
     ending: bool,
     /// The hearing's `Closed` went out.
     closed: bool,
+    /// A dropped socket was reconnected after, and the next has said
+    /// nothing yet: another drop fails the hearing.
+    reconnected: bool,
     /// Fires once a segment has sent nothing for [`KEEPALIVE_AFTER`].
     quiet: Pin<Box<tokio::time::Sleep>>,
 }
@@ -340,6 +425,7 @@ impl ModelRuntime {
             carried: Vec::new(),
             ending: false,
             closed: false,
+            reconnected: false,
             quiet: Box::pin(tokio::time::sleep(KEEPALIVE_AFTER)),
         };
         live.opening = Some(live.open());
@@ -468,44 +554,79 @@ impl SonioxLive {
                 self.opening = Some(self.open());
                 continue;
             };
-            if segment.send(cx)? {
-                self.quiet
-                    .as_mut()
-                    .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER);
-            }
-            if !segment.ending && self.quiet.as_mut().poll(cx).is_ready() {
-                segment
-                    .stream
-                    .inner_mut()
-                    .transport_mut()
-                    .push(Message::text(r#"{"type":"keepalive"}"#))?;
-                self.quiet
-                    .as_mut()
-                    .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER);
-                continue;
-            }
-            let frame: serde_json::Value = match Pin::new(&mut segment.socket).poll_next(cx) {
+            let frame = match segment.poll_heard(&mut self.quiet, cx) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(None) => return Poll::Ready(Err(invalid("the socket closed early"))),
-                Poll::Ready(Some(Err(error))) => return Poll::Ready(Err(socket_error(&error))),
-                Poll::Ready(Some(Ok(Message::Text(text)))) => {
-                    serde_json::from_str(text.as_str())
-                        .map_err(|_| invalid("a frame is not JSON"))?
+                Poll::Ready(Ok(Heard::Frame(frame))) => frame,
+                Poll::Ready(Ok(Heard::Dropped(error))) => {
+                    let updates = self.reconnect(error)?;
+                    if updates.is_empty() {
+                        continue;
+                    }
+                    return Poll::Ready(Ok(updates));
                 }
-                // The pong a ping asks for goes out with the next send.
-                Poll::Ready(Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_)))) => {
-                    continue;
-                }
-                Poll::Ready(Some(Ok(Message::Binary(_) | Message::Close(_)))) => {
-                    return Poll::Ready(Err(invalid("the socket closed early")));
-                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
             };
+            self.reconnected = false;
             let updates = segment.stream.inner_mut().receive(&frame)?;
             let updates = self.carry(updates)?;
             if !updates.is_empty() {
                 return Poll::Ready(Ok(updates));
             }
         }
+    }
+
+    /// A dropped socket, once in a row and while the owner still speaks.
+    /// Its lease settles the audio it admitted. Its final words are carried,
+    /// and what it had not sent waits for the next segment, ahead of what
+    /// already waited. Each cut it sent whose `<fin>` never came is answered
+    /// here, with the words carried so far. The next segment opens on the
+    /// next poll.
+    fn reconnect(&mut self, error: oneiron::Error) -> oneiron::Result<Vec<SonioxUpdate>> {
+        if self.ending || self.reconnected {
+            return Err(error);
+        }
+        let mut segment = self.segment.take().ok_or_else(|| invalid("no segment"))?;
+        tracing::warn!(%error, "live transcribe socket dropped; reconnecting once");
+        self.reconnected = true;
+        segment.stream.cancel()?;
+        let client = segment.stream.inner_mut();
+        let (words, finalizing) = client.dropped();
+        let mut unsent = VecDeque::new();
+        let mut unsent_bytes = 0_usize;
+        let mut unsent_cuts = 0_usize;
+        while let Some(frame) = client.transport_mut().pop() {
+            match frame {
+                Message::Binary(pcm) if !pcm.is_empty() => {
+                    unsent_bytes = unsent_bytes.saturating_add(pcm.len());
+                    unsent.push_back(Held::Audio(pcm.to_vec()));
+                }
+                Message::Text(text) if text.as_str() == FINALIZE => {
+                    unsent_cuts += 1;
+                    unsent.push_back(Held::Cut);
+                }
+                // Its config, a keepalive, its end.
+                _ => {}
+            }
+        }
+        self.held_bytes = self.held_bytes.saturating_add(unsent_bytes);
+        if self.held_bytes > QUEUE_LIMIT_BYTES {
+            return Err(invalid("the socket is not keeping up"));
+        }
+        unsent.append(&mut self.held);
+        self.held = unsent;
+        self.carried.extend(words);
+        let unanswered = finalizing.saturating_sub(unsent_cuts);
+        if unanswered > 0 {
+            return self.carry(vec![SonioxUpdate::Finalized; unanswered]);
+        }
+        Ok(if self.carried.is_empty() {
+            Vec::new()
+        } else {
+            vec![SonioxUpdate::Asr(asr_event(
+                AsrEventKind::Partial,
+                self.carried.clone(),
+            ))]
+        })
     }
 
     /// What waited for this segment goes to it, in order.

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 208 facade rows, 577 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 168.
+// UniFFI census: 210 facade rows, 581 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 170.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -7478,6 +7478,49 @@ pub struct TurnActionReceipt {
     pub attempt_id: String,
 }
 
+/// `oneiron::reaction::verbs::MessageReactionExternal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageReactionExternal {
+    #[serde(rename = "connector")]
+    pub connector: String,
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "origin", default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+/// `oneiron::reaction::verbs::MessageReactionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageReactionRequest {
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "by")]
+    pub by: String,
+    #[serde(rename = "glyph")]
+    pub glyph: String,
+    #[serde(
+        rename = "occurred_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_at: Option<u64>,
+    #[serde(rename = "remove", default, skip_serializing_if = "Option::is_none")]
+    pub remove: Option<bool>,
+    #[serde(rename = "external", default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<MessageReactionExternal>,
+}
+
+/// `oneiron::reaction::verbs::MessageReactionReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MessageReactionReceipt {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "event")]
+    pub event: String,
+}
+
 /// `oneiron::task_verb::sdk::RoomHostRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -8612,8 +8655,10 @@ pub enum HostingPrivacyPosture {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionMedia {
-    #[serde(rename = "images")]
-    pub images: bool,
+    #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<bool>,
+    #[serde(rename = "audio", default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<bool>,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionDefinition`.
@@ -9064,6 +9109,22 @@ pub struct RecordLinks {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+}
+
+/// `oneiron::blob_artifact::create::ArtifactCreateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactCreateRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "media_type")]
+    pub media_type: String,
+    #[serde(rename = "content_base64")]
+    pub content_base64: String,
+    #[serde(rename = "run_ref", default, skip_serializing_if = "Option::is_none")]
+    pub run_ref: Option<String>,
+    #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<crate::WireJson>,
 }
 
 /// `oneiron::task_verb::sdk_memory::CreateNoteRequest`.

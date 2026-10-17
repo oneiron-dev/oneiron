@@ -45,6 +45,9 @@ pub(super) fn patch_with_mints(
     let mut allowed = BTreeSet::new();
     let mut minted = Vec::new();
     let mut anchors = Vec::new();
+    // Each new thread's part, id, target and resolved anchor, read back
+    // after the write.
+    let mut written = Vec::new();
     if patches.is_empty() {
         if mints.is_some_and(|m| !m.is_empty()) {
             return Err(PptxError::InvalidPatch);
@@ -142,6 +145,7 @@ pub(super) fn patch_with_mints(
                 let root = xml.root(P188, "cmLst")?;
                 let output = xml.append(root, &fragment);
                 put(&mut parts, &mut allowed, &part, output);
+                written.push((part, comment, target, outcome.clone()));
                 anchors.push((patch.thread_id, outcome));
             }
             PptxCommentAction::Reply { text: body } => {
@@ -224,6 +228,24 @@ pub(super) fn patch_with_mints(
     let actual = Archive::read(&new_bytes)?;
     if actual.parts != parts {
         return Err(PptxError::PartDiffOutsideTransaction);
+    }
+    // Each anchor written reads back from the new bytes as the resolver
+    // chose it, and its target, resolved again over them, chooses it again.
+    if !written.is_empty() {
+        let mut after = inspect_parts(&actual.parts, limits)?;
+        resolve_positions(&new_bytes, &actual.parts, &mut after, limits);
+        for (part, comment, target, outcome) in &written {
+            let xml = Xml::parse_with_limits(actual.text(part)?, limits)?;
+            let node = find_thread(&xml, comment)?;
+            let slide = match target.slide_creation_id {
+                Some(id) => after.slides.iter().find(|s| s.creation_id == Some(id)),
+                None => after.slides.iter().find(|s| s.slide == target.slide),
+            }
+            .ok_or(PptxError::SlideNotFound)?;
+            if !reads_back(&xml, node, outcome)? || resolve_anchor(slide, target)? != *outcome {
+                return Err(PptxError::AnchorReadBack);
+            }
+        }
     }
     Ok(PptxCommentEffects {
         new_bytes,
@@ -339,6 +361,49 @@ fn text_body(text: &str) -> PatchResult<String> {
         escape(text)?
     ))
 }
+/// Whether a written root comment's anchor reads back as `outcome`: its
+/// slide marker and point, or its unknown anchor.
+fn reads_back(xml: &Xml<'_>, node: usize, outcome: &PptxAnchorOutcome) -> PatchResult<bool> {
+    let unknown = xml.child(node, P188, "unknownAnchor")?.is_some();
+    let (sld_id, creation_id, point) = match outcome {
+        PptxAnchorOutcome::UnknownAnchor { .. } => return Ok(unknown),
+        PptxAnchorOutcome::Slide {
+            sld_id,
+            creation_id,
+            ..
+        } => (*sld_id, *creation_id, None),
+        PptxAnchorOutcome::Shape {
+            sld_id,
+            creation_id,
+            x,
+            y,
+            ..
+        } => (*sld_id, *creation_id, Some((*x, *y))),
+    };
+    let Some(list) = xml.child(node, PC, "sldMkLst")? else {
+        return Ok(false);
+    };
+    let Some(mark) = xml.child(list, PC, "sldMk")? else {
+        return Ok(false);
+    };
+    let mark = &xml.nodes[mark];
+    let number = |value: Option<&str>| value.and_then(|value| value.parse::<i64>().ok());
+    if unknown
+        || number(mark.attr("cId")) != Some(i64::from(creation_id))
+        || number(mark.attr("sldId")) != Some(i64::from(sld_id))
+    {
+        return Ok(false);
+    }
+    Ok(match (point, xml.child(node, P188, "pos")?) {
+        (None, None) => true,
+        (Some((x, y)), Some(pos)) => {
+            let pos = &xml.nodes[pos];
+            number(pos.attr("x")) == Some(x) && number(pos.attr("y")) == Some(y)
+        }
+        _ => false,
+    })
+}
+
 fn anchor_xml(anchor: &PptxAnchorOutcome) -> String {
     let (sld_id, id, pos) = match anchor {
         PptxAnchorOutcome::UnknownAnchor { .. } => return "<p188:unknownAnchor/>".into(),
