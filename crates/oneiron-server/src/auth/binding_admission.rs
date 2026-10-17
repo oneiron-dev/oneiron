@@ -9,14 +9,16 @@ use oneiron::authority::PeerMachine;
 use std::sync::Arc;
 
 /// What a deleted shared vault still answers: its holders read the deletion
-/// marker, their own outcome notices and receipts; the operator keeps its
-/// disaster-recovery door; the host's health probe stays up.
+/// marker, their own outcome notices and receipts, and a device removed
+/// earlier reads its leave notices on its revoked slip; the operator keeps
+/// its disaster-recovery door; the host's health probe stays up.
 fn served_after_deletion(path: &str) -> bool {
     matches!(
         path,
         "/v1/core/facade/vault.shared.deletion"
             | "/v1/core/facade/vault.shared.outcomes"
             | "/v1/core/facade/vault.shared.receipt"
+            | "/v1/shared/left-notices"
             | "/api/health"
     ) || path.starts_with("/v1/operator/")
 }
