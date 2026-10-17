@@ -63,7 +63,8 @@ pub fn team_run_observations(
             }
         }
     }
-    let all_sealed = usize::try_from(sealed).is_ok_and(|n| n == members.len());
+    let all_sealed =
+        !members.is_empty() && usize::try_from(sealed).is_ok_and(|n| n == members.len());
     let mut calls = Some(0_u64);
     for member in members {
         let run = EntityId::from_bytes(*member.as_bytes())?;
