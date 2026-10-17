@@ -197,11 +197,11 @@ pub(crate) use self::labels::{
     judge_ask_room, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
-    ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck,
-    OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
-    SeatWorkload, TrainingOffer, TrainingOfferDraft, pending_training_offers, record_offer_check,
-    record_training_offer, settle_training_offer, training_offer, training_offer_checks,
-    training_offers,
+    ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
+    OfferCheck, OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
+    SeatWorkload, TrainingOffer, TrainingOfferDraft, offer_skill_cell, pending_training_offers,
+    record_offer_check, record_training_offer, settle_training_offer, training_offer,
+    training_offer_checks, training_offer_skill_id, training_offers,
 };
 pub use self::response_pair::{ResponsePairPick, pick_response_pair, response_pair_picks};
 pub use self::selection::{

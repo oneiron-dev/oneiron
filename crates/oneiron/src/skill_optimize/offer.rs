@@ -23,10 +23,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{EvalSeat, SufficiencyCard};
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
 use crate::entity_id::bytes_to_hex_lower;
+use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -40,6 +41,11 @@ const ANSWER: SideTable<EntityId, OfferAnswerRecord, Named> =
 /// id then check id.
 const CHECK: SideTable<(EntityId, EntityId), OfferCheck, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_OFFER_CHECK);
+
+/// The shipped skill the Coach drafts its offers with, by name.
+const TRAINING_OFFER_SKILL: &str = "training-offer";
+/// The offer skill's outcome axis: whether a checked offer's promise held.
+pub const OFFER_SKILL_AXIS: &str = "training_offer";
 
 const MAX_REF_BYTES: usize = 256;
 const MAX_TEXT_BYTES: usize = 4096;
@@ -164,6 +170,9 @@ pub struct TrainingOffer {
     pub id: EntityId,
     pub seat: EvalSeat,
     pub offer_skill: Option<(EntityId, String)>,
+    /// The model the offer skill ran on, as its load stamped the attempt.
+    /// The skill's record is kept per model.
+    pub drafted_on: Option<String>,
     /// The Coach attempt that drafted it.
     pub attempt: AttemptId,
     pub incumbent: OfferModelPin,
@@ -459,10 +468,17 @@ pub fn record_training_offer(
     if draft.check_at <= at {
         return Err(invalid("an offer's check date is after it is made"));
     }
+    let drafted_on = match &draft.offer_skill {
+        Some(_) => AttemptQueue::new(vault)
+            .get(attempt)?
+            .and_then(|record| record.executor_model),
+        None => None,
+    };
     let mut offer = TrainingOffer {
         id: vault.store.clock.entity_id()?,
         seat: draft.seat,
         offer_skill: draft.offer_skill,
+        drafted_on,
         attempt,
         incumbent: draft.incumbent,
         candidate: draft.candidate,
@@ -612,7 +628,9 @@ pub fn settle_training_offer(
 }
 
 /// Check an offer's promise against later receipts, on or after its check
-/// date. Checks append; the offer skill's record reads them.
+/// date. Checks append. A check that read whether the promise held is a world
+/// outcome for the offer skill that drafted it, on the model it ran on, in
+/// the same transaction; an unknown one is none.
 /// # Errors
 /// An unknown offer, a check before the check date, unbounded refs or note,
 /// a negative or non-finite observation, or storage errors.
@@ -628,6 +646,7 @@ pub fn record_offer_check(
     if let Some(note) = &input.note {
         bounded(note, MAX_TEXT_BYTES, "an offer check note is bounded")?;
     }
+    let root = crate::task_type::type_tree(vault, None)?.root();
     vault.with_write_txn_grouped(|txn| {
         let row = OFFER
             .get(&vault.store, txn, offer)?
@@ -646,8 +665,50 @@ pub fn record_offer_check(
             at,
         };
         CHECK.put(&vault.store, txn, &(*offer, check.id), &check)?;
+        if let (Some(held), Some((skill, _)), Some(executor)) =
+            (check.held, row.offer_skill, row.drafted_on)
+        {
+            let cell = LearningCell::new(LearningPredicate::Reliability, skill)
+                .executor(executor)
+                .type_ref(root)
+                .axis(OFFER_SKILL_AXIS);
+            crate::learning::record_evidence_in_txn(
+                vault,
+                txn,
+                &cell,
+                &LearningEvidence::anchored(
+                    format!("offer_check:{}", check.id.to_hex()),
+                    check.at,
+                    Anchor::WorldOutcome,
+                    Observation::Success(held),
+                ),
+                at,
+            )?;
+        }
         Ok(check)
     })
+}
+
+/// The shipped offer skill (ARCH-0053 #training-offers): the Coach loads it
+/// on its offer attempt, and each offer names the revision that drafted it.
+/// # Errors
+/// Never in practice: the id derives from a fixed name.
+pub fn training_offer_skill_id() -> Result<EntityId> {
+    EntityId::derive(
+        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
+        &[TRAINING_OFFER_SKILL.as_bytes()],
+    )
+}
+
+/// The offer skill's record on one drafting model: its `learning.reliability`
+/// cell at the vault tree's root, since an offer has no task type.
+/// # Errors
+/// Storage errors reading the vault's type tree.
+pub fn offer_skill_cell(vault: &Vault, skill: EntityId, executor: &str) -> Result<LearningCell> {
+    Ok(LearningCell::new(LearningPredicate::Reliability, skill)
+        .executor(executor)
+        .type_ref(crate::task_type::type_tree(vault, None)?.root())
+        .axis(OFFER_SKILL_AXIS))
 }
 
 /// Every check of one offer, in id order.

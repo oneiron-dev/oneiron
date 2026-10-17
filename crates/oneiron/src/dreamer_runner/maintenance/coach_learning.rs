@@ -1,22 +1,19 @@
-//! The Coach's own record (ARCH-0066 #coach: "calibration, meta-learning";
-//! ARCH-0053 #training-offers): each anchored outcome of the Coach's own work
-//! is evidence for a `learning.reliability` cell of the Coach, one per kind of
-//! work (the cell's axis). A checked offer is a world outcome: the meter
-//! showed whether its promise held, and a wrong one lowers the record. A
-//! skill edit is a held-out outcome: the gate scored the edited instructions
-//! against the current ones on reserved evidence. An unknown outcome is no
-//! evidence. The Coach reads its record back when it drafts the next one.
+//! The Coach's own record (ARCH-0066 #coach: "calibration, meta-learning"):
+//! each anchored outcome of the Coach's own work is evidence for a
+//! `learning.reliability` cell of the Coach, one per kind of work (the cell's
+//! axis). A skill edit is a held-out outcome: the gate scored the edited
+//! instructions against the current ones on reserved evidence. An unknown
+//! outcome is no evidence. A checked training offer is an outcome for the
+//! offer skill that drafted it instead (`skill_optimize::record_offer_check`).
 //!
-//! The Coach's actor is the cell's subject and executor until its offer and
-//! improver recipes are skills of their own; the cell sits at the vault
-//! tree's root, since this work has no task type.
+//! The Coach's actor is the cell's subject and executor until its improver
+//! recipe is a skill of its own; the cell sits at the vault tree's root,
+//! since this work has no task type.
 use crate::learning::{
     Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation, record_evidence,
 };
 use crate::{Result, Vault};
 
-/// The Coach's training offers, scored by their checks.
-pub const COACH_OFFER_AXIS: &str = "training_offer";
 /// The Coach's skill edits, scored by the held-out gate.
 pub const COACH_SKILL_EDIT_AXIS: &str = "skill_edit";
 
