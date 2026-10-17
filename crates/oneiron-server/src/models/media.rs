@@ -15,7 +15,7 @@ use oneiron::llm::media::{
     Modality,
 };
 use oneiron::llm::run_admission::{
-    HostAccount, MediaGate, RunAdmission, RunPermit, RunReceiptSink,
+    HostAccount, MediaGate, OfferBinding, RunAdmission, RunPermit, RunReceiptSink,
 };
 use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
 use oneiron::voice_cascade::media::BankVoiceBinding;
@@ -750,6 +750,23 @@ impl MediaRuntime {
         self.run_in(request, Some(voices)).await
     }
 
+    /// When `request` may be sent again if no offer answers it (FIX 3194):
+    /// the offers that could serve it, in its voice, read again once the
+    /// call failed. Taken before the call, which consumes the request.
+    pub(crate) fn retry_hint(
+        &self,
+        request: &MediaRequest,
+        voices: Option<&RungVoices>,
+    ) -> RetryHint {
+        self.ladder(request).map_or_else(
+            |_| RetryHint {
+                offers: Vec::new(),
+                rests: None,
+            },
+            |ladder| ladder.media_retry(request, voices),
+        )
+    }
+
     async fn run_in(
         &self,
         request: MediaRequest,
@@ -1301,5 +1318,40 @@ impl super::ModelRuntime {
     /// job will owe.
     pub fn take_up_kept_media_jobs(&self) {
         self.media.take_up_kept();
+    }
+}
+
+/// The seconds a direct media call no offer answered waits before it calls
+/// again when none of its offers rests for a known time (FIX 3194).
+const PROVIDER_UNAVAILABLE_RETRY_SECS: u64 = 5;
+
+/// When a direct media call no offer answered may call again (FIX 3194).
+/// Nothing keeps the call: this is its caller's hint, from the rests of the
+/// offers that could have served it.
+pub(crate) struct RetryHint {
+    /// Each offer that could serve the call, with the model it sends.
+    pub(super) offers: Vec<(OfferBinding, String)>,
+    pub(super) rests: Option<Arc<OfferCooldowns>>,
+}
+
+impl RetryHint {
+    /// Seconds until the first of the call's offers is back from its rest,
+    /// at least one; [`PROVIDER_UNAVAILABLE_RETRY_SECS`] when none rests for
+    /// a known time.
+    pub(crate) fn seconds(&self) -> u64 {
+        let Some(rests) = &self.rests else {
+            return PROVIDER_UNAVAILABLE_RETRY_SECS;
+        };
+        self.offers
+            .iter()
+            .filter_map(|(offer, wire_model)| rests.resting(offer, wire_model))
+            .map(|rest| rest.until)
+            // A parked offer is back when the owner answers, not at a time.
+            .filter(|until| *until != u64::MAX)
+            .min()
+            .zip(rests.now())
+            .map_or(PROVIDER_UNAVAILABLE_RETRY_SECS, |(back, now)| {
+                back.saturating_sub(now).max(1)
+            })
     }
 }

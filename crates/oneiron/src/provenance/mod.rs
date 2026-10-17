@@ -211,9 +211,11 @@ pub(crate) fn erase_row_provenance_in_txn(
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
 ) -> Result<()> {
-    // A held row keeps its bodies whichever door erases it (OF-470); the
-    // refusal is queued for the hold log like every other door's.
+    // A held row keeps its bodies whichever door erases it, as does a pad
+    // whose world or sealed claim is held (OF-470); the refusal is queued for
+    // the hold log like every other door's.
     store.reject_legal_hold_in_txn(txn, row.as_bytes())?;
+    crate::world_keys::reject_held_pad_world_in_txn(store, txn, &[*row])?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
     body::release_owner_bodies_in_txn(store, txn, row)?;
     Ok(())
