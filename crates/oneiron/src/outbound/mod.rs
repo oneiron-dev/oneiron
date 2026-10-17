@@ -50,8 +50,8 @@ pub use self::dispatch_types::{
 pub use self::executor::ConnectorTaskExecutorError;
 pub use self::served_sink::ServedChannelSink;
 pub use self::intent::{
-    OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft, OutboundIntentSource,
-    OutboundIntentTrigger,
+    MentionProvenance, OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft,
+    OutboundIntentSource, OutboundIntentTrigger,
 };
 
 pub(crate) use self::connector_task::{
