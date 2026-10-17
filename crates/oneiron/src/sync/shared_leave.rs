@@ -1,11 +1,14 @@
 //! Leaving a shared vault, the device side (OF-158). A member device keeps a
 //! shared vault in an env of its own. Once a notice confirms that this member
-//! left or was removed, or lost the Owner role and kept no other, the device
-//! drops what it queued to send there and records how much unsynced work that
-//! discarded. Only a notice confirms it: a removed member's slips are revoked,
-//! so a refused reconnect (a 401) is never read as a leave. The notices are
-//! the ones the home's left-notices door answers
-//! (`Vault::removed_member_notices`).
+//! left or was removed, or lost the Owner role and kept no other, or that the
+//! vault was deleted, the device drops what it queued to send there and
+//! records how much unsynced work that discarded. Only a notice confirms it:
+//! a removed member's slips are revoked, so a refused reconnect (a 401) is
+//! never read as a leave. The notices are the ones the home's left-notices
+//! door answers (`Vault::removed_member_notices_signed`), each signed by the
+//! home root. A deletion counts only from a notice this device verified
+//! against the home root it already trusts ([`VerifiedLeaveNotice`],
+//! FIX 2053).
 //!
 //! What goes is only what is provably that vault's: the queued window
 //! updates (`q:`, with their `d:` sidecars), the unacknowledged text frames
@@ -16,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::federation::{SharedActOutcome, SharedVaultChange};
+use crate::federation::{SharedActOutcome, SharedVaultChange, SignedSharedActOutcome};
 use crate::side_table::{self, Named, Raw, SideTable};
 
 /// This device's leave records, keyed by the notice's receipt id.
@@ -46,6 +49,73 @@ pub enum SharedLeaveKind {
     Transferred,
     /// Another person recovered ownership from this Owner.
     Recovered,
+    /// The shared vault was deleted. Only a verified home-signed notice says
+    /// so ([`VerifiedLeaveNotice`]).
+    Deleted,
+}
+
+/// A home-signed outcome notice (FIX 2053) this device verified against the
+/// home root it already trusts: its signer is a live root in the authority
+/// log this env folded, never just the key the notice carries, and it names
+/// this env's authority vault, its local vault id and this member. Only such
+/// a notice confirms a deleted vault.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedLeaveNotice {
+    outcome: SharedActOutcome,
+}
+
+impl VerifiedLeaveNotice {
+    /// Verifies `signed` in `vault`, the env that holds shared vault
+    /// `vault_id`, as `member`'s own notice. `None` when it does not verify:
+    /// such a notice changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn verify(
+        vault: &Vault,
+        vault_id: u64,
+        member: &str,
+        signed: &SignedSharedActOutcome,
+    ) -> Result<Option<Self>> {
+        let outcome = &signed.outcome;
+        if outcome.vault_id != vault_id || outcome.recipient != member {
+            return Ok(None);
+        }
+        let txn = vault.store.env.read_txn()?;
+        let fold = vault.authority_view_readonly_in_txn(&txn)?;
+        if fold.vault_id != Some(signed.authority_vault_id)
+            || fold.vault_root_is_conflicted()
+            || !crate::authority::roster_has_live_owner(&fold.roster, &signed.signature.public_key)
+        {
+            return Ok(None);
+        }
+        let transcript =
+            crate::federation::shared_act_outcome_transcript(&signed.authority_vault_id, outcome)?;
+        if !crate::authority::verify_authority_signature(&signed.signature, &transcript) {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            outcome: outcome.clone(),
+        }))
+    }
+
+    /// The notice the home signed.
+    #[must_use]
+    pub const fn outcome(&self) -> &SharedActOutcome {
+        &self.outcome
+    }
+
+    /// How the notice ends this member's membership: as [`left_change`]
+    /// reads it, or [`SharedLeaveKind::Deleted`] for the vault's deletion.
+    #[must_use]
+    pub fn kind(&self) -> Option<SharedLeaveKind> {
+        let notice = &self.outcome;
+        if matches!(notice.change, SharedVaultChange::VaultDeleted { .. }) {
+            return Some(SharedLeaveKind::Deleted);
+        }
+        left_change(notice, notice.vault_id, &notice.recipient)
+    }
 }
 
 /// The local record that this device left a shared vault: the notice it
@@ -83,7 +153,8 @@ pub struct SharedLeaveReceipt {
 /// it is that member's own MemberLeft or MemberRemoved notice for it, or a
 /// notice that took the Owner role from them and left them no other:
 /// OwnerRemoved and OwnershipTransferred with nothing kept, and
-/// OwnerRecovered.
+/// OwnerRecovered. A deletion is never read here: only a verified notice
+/// confirms one ([`VerifiedLeaveNotice::kind`]).
 #[must_use]
 pub fn left_change(
     notice: &SharedActOutcome,
@@ -150,10 +221,40 @@ pub fn confirm_shared_leave(
     notice: &SharedActOutcome,
 ) -> Result<SharedLeaveReceipt> {
     let Some(kind) = left_change(notice, vault_id, member) else {
-        return Err(Error::InvalidConfig(
-            "the notice is not this member's leave of this shared vault".into(),
-        ));
+        return Err(not_a_leave());
     };
+    confirm_leave(vault, (vault_id, member), notice, kind)
+}
+
+/// [`confirm_shared_leave`] for a home-signed notice this device verified
+/// (FIX 2053), which may also confirm the vault's deletion.
+///
+/// # Errors
+///
+/// A notice that ends no membership; storage errors.
+pub fn confirm_verified_shared_leave(
+    vault: &Vault,
+    notice: &VerifiedLeaveNotice,
+) -> Result<SharedLeaveReceipt> {
+    let Some(kind) = notice.kind() else {
+        return Err(not_a_leave());
+    };
+    let outcome = notice.outcome();
+    confirm_leave(vault, (outcome.vault_id, &outcome.recipient), outcome, kind)
+}
+
+fn not_a_leave() -> Error {
+    Error::InvalidConfig("the notice is not this member's leave of this shared vault".into())
+}
+
+/// The discard, record and purge [`confirm_shared_leave`] runs for `notice`,
+/// which ends `member`'s membership in `vault_id` as `kind`.
+fn confirm_leave(
+    vault: &Vault,
+    (vault_id, member): (u64, &str),
+    notice: &SharedActOutcome,
+    kind: SharedLeaveKind,
+) -> Result<SharedLeaveReceipt> {
     let purge = |wtxn: &mut heed::RwTxn<'_>, receipt: &mut SharedLeaveReceipt| -> Result<bool> {
         let pass = crate::store::local_replica::purge_left_shared_env_in_txn(
             &vault.store,
