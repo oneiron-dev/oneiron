@@ -379,6 +379,7 @@ impl Vault {
             channels: Default::default(),
             actor_class: pending.principal.actor_class,
             org_ref: pending.principal.org_ref,
+            grant_ref: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         if let Some(facet) = write_facet {

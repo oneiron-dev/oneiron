@@ -216,6 +216,7 @@ impl Vault {
                 channels: BTreeSet::new(),
                 actor_class: Some("system".to_owned()),
                 org_ref: None,
+                grant_ref: None,
             },
         )?;
         txn.commit()?;

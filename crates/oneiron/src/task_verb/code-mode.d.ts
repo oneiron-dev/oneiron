@@ -181,6 +181,7 @@ declare const vault: {
     ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
   };
   guests: {
+    mint_slip(input: { expires_at: number; grant_ref: string; holder_key: string }): Promise<unknown>;
     revoke(input: { grant_ref: string }): Promise<unknown>;
   };
   habits: {

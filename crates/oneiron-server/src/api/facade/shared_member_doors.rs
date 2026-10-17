@@ -3,13 +3,15 @@
 //! invitation, and an `add_member` holder withdraws one. `host_doors`
 //! re-exports them. Each takes the person's own proof
 //! (`shared_act_doors::person`); the engine's invitee, expiry and power
-//! checks decide.
+//! checks decide. Beside them, the owner's guest slip mint (OF-232), under
+//! the owner's proof and the host's slip issuer.
 use std::sync::Arc;
 
 use oneiron::federation::{SharedActExecutionReceipt, SharedInvitation};
-use oneiron::memory::MemoryResult;
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, SharedInvitationRequest, SharedInvitationWithdrawRequest, SharedVaultRequest,
+    self, GuestSlipMintRequest, GuestSlipMinted, SharedInvitationRequest,
+    SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
 use super::host_doors::internal;
@@ -82,6 +84,35 @@ pub(crate) async fn vault_members_withdraw_invitation(
     let admin = person(server, auth, VERB)?;
     off_runtime(server, VERB, move |server| {
         sdk::withdraw_shared_invitation_as(server.vault(), &admin, input)
+    })
+    .await
+}
+
+/// `vault.guests.mint_slip`: the owner mints an ask guest's slip, bound to
+/// its grant, for the key the guest generated on their own device.
+pub(crate) async fn vault_guests_mint_slip(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GuestSlipMintRequest,
+) -> MemoryResult<GuestSlipMinted> {
+    const VERB: &str = "vault.guests.mint_slip";
+    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{VERB} is the vault owner's"),
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })?;
+    off_runtime(server, VERB, move |server| {
+        crate::api::pairing::with_issuer(server, |issuer| {
+            Ok(sdk::mint_guest_slip_as(
+                server.vault(),
+                &owner,
+                issuer,
+                input,
+            ))
+        })
+        .map_err(|_| internal(VERB))?
     })
     .await
 }

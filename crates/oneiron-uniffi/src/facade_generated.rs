@@ -289,6 +289,11 @@ export_facade! {
     let output = client.vault_guests_revoke(&input)?;
     crate::codec::encode("vault.guests.revoke", &output)
 };
+"vault.guests.mint_slip" => fn vault_guests_mint_slip(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::GuestSlipMintRequest = crate::codec::decode("vault.guests.mint_slip", &input)?;
+    let output = client.vault_guests_mint_slip(&input)?;
+    crate::codec::encode("vault.guests.mint_slip", &output)
+};
 "vault.authority.handoff_alarms" => fn vault_authority_handoff_alarms(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::decode("vault.authority.handoff_alarms", &input)?;
     let output = client.vault_authority_handoff_alarms(&input)?;

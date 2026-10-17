@@ -34,6 +34,9 @@ pub struct SlipClaims {
     pub channels: BTreeSet<String>,
     pub actor_class: Option<String>,
     pub org_ref: Option<String>,
+    /// The FEDERATION_GRANT (entity id hex) a guest slip was minted under
+    /// (OF-232); revoking that grant tombstones the slip. Delegation keeps it.
+    pub grant_ref: Option<String>,
 }
 
 /// The signed SlipMint payload. The credential signature is not log material.
@@ -68,10 +71,10 @@ impl SlipClaims {
                 .actor_class
                 .as_deref()
                 .is_some_and(|v| !super::ACTOR_BINDING_CLASSES.contains(&v))
-            || self
-                .org_ref
-                .as_deref()
-                .is_some_and(|v| oneiron_contracts::EntityId::from_hex(v).is_err())
+            || [&self.org_ref, &self.grant_ref].into_iter().any(|id| {
+                id.as_deref()
+                    .is_some_and(|v| oneiron_contracts::EntityId::from_hex(v).is_err())
+            })
             || self
                 .records
                 .iter()
@@ -96,6 +99,7 @@ impl SlipClaims {
             && self.holder_ref == parent.holder_ref
             && self.actor_class == parent.actor_class
             && self.org_ref == parent.org_ref
+            && self.grant_ref == parent.grant_ref
             && (self.records == parent.records
                 || (!self.records.is_empty()
                     && ((parent.records.is_empty() && parent.channels.is_empty())

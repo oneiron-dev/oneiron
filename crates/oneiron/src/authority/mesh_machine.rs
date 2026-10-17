@@ -541,6 +541,7 @@ impl Vault {
                 channels: Default::default(),
                 actor_class: None,
                 org_ref: None,
+                grant_ref: None,
             };
             let slip = self.mint_slip_in_txn(&mut txn, issuer, grant)?;
             claims.alpns.insert(alpn.to_vec(), slip.claims.slip_id);
