@@ -297,11 +297,19 @@ fn admit_window_update(
     )?;
 
     crate::sync::note::copy_judged(vault, &remote, &admitted)?;
-    // The sender is another vault, as far as its rows' births go.
+    // The sender is another vault, as far as its rows' births go: a ref to a
+    // row admission dropped is masked, under that lane's key.
+    let withheld = match &lane {
+        Some(lane) => crate::provenance::birth::WithheldKey::for_destination(
+            vault,
+            format!("admit:{lane}").as_bytes(),
+        )?,
+        None => crate::provenance::birth::WithheldKey::fresh(),
+    };
     crate::sync::row_birth::copy_births_within(
         &remote,
         &admitted,
-        crate::sync::row_birth::BirthReach::OtherVault,
+        crate::sync::row_birth::BirthReach::OtherVault(&withheld),
     )?;
     let births = match &lane {
         Some(lane) => pending_births(
