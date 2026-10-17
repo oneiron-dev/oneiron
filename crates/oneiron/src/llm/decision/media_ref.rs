@@ -80,7 +80,7 @@ impl ImageRef {
 }
 
 /// The pixel size a PNG or JPEG header states.
-fn dimensions(image: &ImageBytes) -> LlmResult<(u32, u32)> {
+pub(super) fn dimensions(image: &ImageBytes) -> LlmResult<(u32, u32)> {
     let format = match image.media_type.to_ascii_lowercase().as_str() {
         "image/png" => image::ImageFormat::Png,
         "image/jpeg" | "image/jpg" => image::ImageFormat::Jpeg,
@@ -249,6 +249,7 @@ impl DecisionLadder<'_> {
                         name: name.clone(),
                         evidence: reference.evidence.clone(),
                         image,
+                        frame: reference.frame,
                     });
                     entries.push(DecisionMedia {
                         name,

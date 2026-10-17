@@ -630,6 +630,7 @@ fn predicted(
             paired,
             person: Vec::new(),
             time: None,
+            images: Vec::new(),
         },
         human_ask: None,
     }
@@ -695,6 +696,7 @@ pub(super) fn unit_images(
                 body_hash: *blake3::hash(&pixels.bytes).as_bytes(),
             },
             image: pixels,
+            frame: None,
         };
         let bytes = image.image.bytes.len();
         if image.format().is_none()

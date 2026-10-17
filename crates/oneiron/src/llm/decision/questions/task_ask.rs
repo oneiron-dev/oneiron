@@ -102,6 +102,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 paired: Vec::new(),
                 person: Vec::new(),
                 time: None,
+                images: Vec::new(),
             },
             human_ask: None,
         },

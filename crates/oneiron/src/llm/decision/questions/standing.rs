@@ -599,6 +599,7 @@ fn backfill_answer(
                     paired: input.paired,
                     person: Vec::new(),
                     time: None,
+                    images: Vec::new(),
                 },
                 human_ask: None,
             },
