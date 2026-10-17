@@ -34,10 +34,11 @@ pub use decision_read::{
     DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal,
 };
 pub use decisions::{
-    BigReply, BigSettings, DecisionsSettings, SeatPickSettings, SystemOneSettings,
+    BigReply, BigSettings, DecisionsSettings, ImagePickSettings, SeatPickSettings,
+    SystemOneSettings,
 };
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
-pub use media::{MediaSeatConfig, MediaSettings};
+pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind, ResponseFormatWire};
 pub use voice::VoiceSettings;
 

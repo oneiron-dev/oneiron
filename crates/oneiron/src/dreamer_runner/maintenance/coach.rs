@@ -296,8 +296,12 @@ impl Vault {
             }
             None => None,
         };
-        let envelope = self
-            .dreamer_proposal_envelope(COACH_PERSON_THRESHOLD_FACET, attempt.status.attempt.id)?;
+        // The run tray's keys, so the owner's run review can accept it.
+        let envelope = proposals::run_tray_envelope(
+            self,
+            COACH_PERSON_THRESHOLD_FACET,
+            attempt.status.attempt.id,
+        )?;
         let subject = envelope.actor().entity_ref();
         self.with_write_txn_grouped(|txn| {
             // A second run that read the same records first has already

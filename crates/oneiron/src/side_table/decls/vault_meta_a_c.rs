@@ -296,6 +296,10 @@ side_tables! {
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
+    /// One `self.report_blocked` receipt a durable run filed, and when, kept after the Coach
+    /// settles it, so a failing attempt's ladder case carries its own reports (OF-418). Key: id16
+    /// of the run, then id16 of the receipt.
+    COACH_BLOCKED_RUN: VaultMeta b"coach:blocked_run:v1:" Raw;
     /// The proposed heal the Coach filed for a blocked report or a failure-ladder case, so a
     /// replay files none twice. Key: id16 of the receipt or the case.
     COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
