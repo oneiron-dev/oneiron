@@ -63194,7 +63194,7 @@
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 26
      }
     },
     {
