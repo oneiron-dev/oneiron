@@ -121,6 +121,8 @@ fn run_one(
     match admitted.status.payload.attempt_type.as_str() {
         COACH_SKILL_DISTILL_FACET => distill(server, admitted),
         COACH_PERSON_THRESHOLD_FACET => {
+            // Tune from the row an accept may have just changed.
+            server.decision_host().refresh_person_threshold(vault)?;
             let current = server.decision_host().bands().person_threshold();
             let proposal = vault.run_coach_person_threshold(
                 admitted,

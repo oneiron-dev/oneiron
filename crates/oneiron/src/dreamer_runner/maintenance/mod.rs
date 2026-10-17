@@ -14,6 +14,7 @@ pub mod honesty;
 pub mod identity;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
+mod person_threshold;
 mod proposals;
 pub mod representation;
 mod retrieval_policy;

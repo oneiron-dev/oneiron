@@ -242,6 +242,8 @@ pub(super) async fn serve_with_config(
     ));
     // The nightly Coach jobs that need the host's model or rules (OF-420).
     workers.push(crate::ai_host::coach_host::spawn(&sync_server));
+    // An accepted Coach person-threshold row goes live on the ladder (Q3).
+    workers.extend(crate::decision_host::spawn_person_threshold(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).
     workers.extend(crate::ai_host::failure_signals::spawn(
         &sync_server,
