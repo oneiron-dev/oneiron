@@ -352,7 +352,13 @@ pub(super) fn recovery_governance(
     {
         return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
     }
-    if let Some(charter) = key.charter.as_ref() {
+    // A per-grant key's call meets its catalog connector's charter too, as
+    // the gate read it at admission.
+    let catalog_charter = {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        connector_key::catalog_charter_in_txn(&vault.store, &txn, &key)?
+    };
+    for charter in key.charter.iter().chain(catalog_charter.iter()) {
         if connector_key::charter_block_drifted(charter)? {
             return Ok(RecoveryGovernance::Block("charter_drift"));
         }
