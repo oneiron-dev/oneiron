@@ -4,6 +4,7 @@
 //! refuses a credential narrowed to some records: its records cannot bound
 //! the ids that come back.
 
+mod summary;
 mod types;
 use super::{
     CoreEntityWriteResponse, core_body_for_write, core_engine_error, core_entity_timestamps,
@@ -26,6 +27,7 @@ use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 use oneiron::{EdgeKind, EntityId};
 use std::sync::Arc;
+pub(crate) use summary::*;
 use types::parse_optional;
 pub(crate) use types::*;
 
@@ -332,28 +334,19 @@ pub(crate) async fn list_core_sub_sessions(
 fn declare_summary(
     server: &SyncServer,
     request: &ScopeSummaryRequest,
+    purpose: Option<&str>,
 ) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
     server
         .ai
         .summary_writer()
         .map_err(ApiError::summary_writer_unavailable)?;
-    let queued = server
-        .vault
-        .request_scope_summary(request)
-        .map_err(|e| core_engine_error("summary declaration failed", e))?;
+    let queued = match purpose {
+        Some(purpose) => server.vault.request_scope_summary_for(request, purpose),
+        None => server.vault.request_scope_summary(request),
+    }
+    .map_err(|e| core_engine_error("summary declaration failed", e))?;
     server.ai.attempt_queued();
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(DagSummaryQueuedResponse {
-            attempt: queued
-                .attempt
-                .as_bytes()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect(),
-            coalesced: queued.coalesced,
-        }),
-    ))
+    Ok((StatusCode::ACCEPTED, Json(summary::queued_response(queued))))
 }
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/summaries",
@@ -376,7 +369,7 @@ pub(crate) async fn mint_core_scope_summary(
         },
         requester: req.actor.parse(&auth)?,
     };
-    declare_summary(&server, &request)
+    declare_summary(&server, &request, req.purpose.as_deref())
 }
 
 #[utoipa::path(get, path = "/v1/core/summaries/{summary_id}/covers",
@@ -507,7 +500,7 @@ pub(crate) async fn summarize_thread(
         target: ScopeSummaryTarget::Thread { trunk: record },
         requester: req.actor.parse(&auth)?,
     };
-    declare_summary(&server, &request)
+    declare_summary(&server, &request, req.purpose.as_deref())
 }
 
 #[utoipa::path(get, path = "/v1/core/conversations/{conversation_id}/canonical",
