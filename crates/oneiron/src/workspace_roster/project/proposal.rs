@@ -399,12 +399,16 @@ impl Vault {
     /// in the birth's own write, and an exact retry returns the recorded
     /// receipt. After a fresh birth the card's leader is dispatched to run
     /// the goal-intake interview in the new home room, seeded by the card.
+    /// A conversion picks its room host among the leaders present in
+    /// `tap_session`, the sitting the tap came from; with none, among the
+    /// source message's sitting.
     pub fn confirm_project_card(
         &self,
         card_id: &str,
         tap: &ConsentActionRequest,
         owner: &AuthenticatedOwner,
         signer: &OwnerProjectSigner<'_>,
+        tap_session: Option<EntityId>,
     ) -> Result<ProjectMintReceipt> {
         let key = card_key(card_id);
         let record = {
@@ -424,6 +428,7 @@ impl Vault {
                 owner,
                 signer,
                 EntityId::now(),
+                tap_session,
                 tap.occurred_at,
                 |txn, receipt| {
                     fresh = true;
