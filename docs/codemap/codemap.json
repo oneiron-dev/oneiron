@@ -43426,7 +43426,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 16,
       "struct": 1
      }
@@ -44034,7 +44034,7 @@
      "path": "src/sync/manager/replacement.rs",
      "purpose": "Installing a peer's window replacement in place of the live window",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
