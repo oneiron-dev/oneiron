@@ -143,11 +143,23 @@ impl Memory<'_> {
             now,
             super::TaskCreateRateLimit::default(),
         )?;
-        // Stated after the census and before any grant or member TASK.
-        // An ask holds no spend context, so it states no cap.
+        // Stated after the census and before any grant or member TASK. An
+        // ask from an agent's run the host bound states its count, expected
+        // spend and cap under that agent's spend tree (OF-393), the lease
+        // re-proved here; over the cap is stated, never refused. Any other
+        // ask states no cap.
+        let caller = FanoutCaller {
+            parent_attempt: super::create_origin::task_create_origin_in_txn(
+                self,
+                txn,
+                self.task_host(),
+            )?
+            .and_then(|origin| origin.parent_attempt()),
+            ..FanoutCaller::default()
+        };
         let mut statement = AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
             txn,
-            &FanoutCaller::default(),
+            &caller,
             &census.work,
             now,
         )?;

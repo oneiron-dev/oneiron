@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 337 code-mode rows (318 host rows, 19 run rows), 1169 declarations.
+// Census: 337 code-mode rows (318 host rows, 19 run rows), 1170 declarations.
 // Replies: 275 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
@@ -1160,7 +1160,8 @@ declare namespace Sdk {
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null };
   type AgentSpawnKind = "agent_spawn";
-  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
+  type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
+  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };

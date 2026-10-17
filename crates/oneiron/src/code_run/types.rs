@@ -914,6 +914,9 @@ pub enum SelfLeaderCall {
 pub enum SelfAgentSpawnResult {
     Queued {
         attempt_ref: crate::attempt_queue::AttemptId,
+        /// The statement frozen at launch (OF-532): its agent count,
+        /// expected spend and cap. `None` only for a launch that stated none.
+        launch: Option<crate::agent_dispatch::LaunchStatement>,
     },
     ProposedWiden {
         proposal_ref: String,

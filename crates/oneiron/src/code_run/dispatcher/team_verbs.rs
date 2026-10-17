@@ -82,7 +82,10 @@ impl HostSelfDispatcher<'_> {
                 ask: None,
             })?;
             let (attempt_ref, proposal_ref) = match spawned {
-                SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref }) => {
+                SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
+                    attempt_ref,
+                    ..
+                }) => {
                     observed.members.push(attempt_ref);
                     (Some(bytes_to_hex_lower(attempt_ref.as_bytes())), None)
                 }
