@@ -20,9 +20,10 @@
 //!    this route has neither, so sharing the code would mean widening a
 //!    private surface to serve a different shape.
 //! 3. THE CITATION GATE. Whatever produced the answer, every returned source
-//!    must be a short id that IS in the retrieved evidence. A composer that
-//!    cites something the read never retrieved has shown its sourcing cannot
-//!    be trusted, and its answer text does not escape this module.
+//!    must be a short id that IS in the retrieved evidence. A deep
+//!    composition crosses `memory.chat`'s answer boundary over this read's
+//!    evidence (OF-063): one citing something the read never retrieved keeps
+//!    its text in this module, and its typed refusal rides beside the answer.
 //!
 //! What does NOT live here: any provider SDK, model id, prompt, persona, or
 //! composition logic. [`MemoryReasonBackend`] is the whole seam, and it is
@@ -38,6 +39,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use oneiron::claim::ScopedRead;
 use oneiron::llm::BudgetLease;
+use oneiron::memory::AnswerAdmission;
 use oneiron::retrieval_depth::{
     BackendSpend, DeepSearchBackend, DepthSearchRequest, DepthSearchResult, RetrievalResult,
     SearchProbe, SessionScope,
@@ -54,8 +56,10 @@ use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::projection::View;
 use crate::server::{QueryDoor, SyncServer, query_caller};
 
+mod answer_admission;
 mod deep_admission;
 mod render;
+pub(crate) use answer_admission::MemoryReasonCompositionRefusal;
 pub(crate) use deep_admission::{DeepAdmission, DeepRetrievalHost, admit_deep_retrieval};
 use render::render_evidence;
 
@@ -232,6 +236,11 @@ pub(crate) struct MemoryReasonResponse {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
     pub(crate) evidence_omitted: Vec<Value>,
+    /// The answer boundary's refusal of a deep composition that cited a
+    /// source outside the evidence (OF-063): `answer` is then the read's own
+    /// answer from the evidence. Absent when no composition was refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) composition_refusal: Option<MemoryReasonCompositionRefusal>,
 }
 
 /// One retrieved, actor-admitted evidence row.
@@ -420,7 +429,15 @@ pub(crate) async fn companion_memory_reason(
         );
         let (evidence, evidence_omitted) =
             collect_evidence(&server.vault, &scoped_read, &mut retrieved, &mut bodies)?;
-        let answered = answer_from(&request, &query, remaining, &evidence, admission.as_ref())?;
+        let answered = answer_from(
+            &request,
+            &query,
+            remaining,
+            &evidence,
+            admission.as_ref(),
+            &server.vault,
+            &auth,
+        )?;
         let tokens_used = retrieved.tokens_used.saturating_add(answered.tokens_used);
         let mut response = reason_response(request.depth, &retrieved, answered, tokens_used);
         response.limit_clamped = limit_clamped;
@@ -457,6 +474,7 @@ fn reason_response(
         confidence_adjustment: retrieved.retrieval_quality.confidence_adjustment,
         limit_clamped: false,
         evidence_omitted: Vec::new(),
+        composition_refusal: answered.refusal,
     }
 }
 
@@ -631,6 +649,8 @@ struct AnsweredRead {
     confidence: f32,
     gaps: Vec<String>,
     tokens_used: u64,
+    /// The answer boundary's refusal of the composition this answer replaced.
+    refusal: Option<MemoryReasonCompositionRefusal>,
 }
 
 fn answer_from(
@@ -639,6 +659,8 @@ fn answer_from(
     token_budget: u64,
     evidence: &[MemoryReasonEvidence],
     admission: Option<&DeepAdmission>,
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
 ) -> Result<AnsweredRead, ApiError> {
     if evidence.is_empty() {
         return Ok(AnsweredRead {
@@ -647,12 +669,21 @@ fn answer_from(
             confidence: 0.0,
             gaps: vec![format!("no actor-readable memory matched {query:?}")],
             tokens_used: 0,
+            refusal: None,
         });
     }
     let Some(admission) = admission else {
         return Ok(extractive_read(request.format, evidence));
     };
-    compose_read(request, query, token_budget, evidence, admission)
+    compose_read(
+        request,
+        query,
+        token_budget,
+        evidence,
+        admission,
+        vault,
+        auth,
+    )
 }
 
 /// The model-free answer: the evidence, rendered, citing everything it shows.
@@ -676,21 +707,25 @@ fn extractive_read(format: MemoryReasonFormat, evidence: &[MemoryReasonEvidence]
         confidence: mean_confidence(evidence),
         gaps: Vec::new(),
         tokens_used: 0,
+        refusal: None,
     }
 }
 
-/// The deep answer, and the citation gate on it.
+/// The deep answer, and the answer boundary on it.
 ///
 /// A composer that declines, answers blank, or cites something the retrieval
 /// never returned does not get to speak: the read falls back to the extractive
-/// answer over the same evidence and says so in `gaps`. The spend still counts
-/// — the tokens were spent whether or not the answer was usable.
+/// answer over the same evidence and says so in `gaps`, beside the boundary's
+/// typed refusal of a citation outside it. The spend still counts — the
+/// tokens were spent whether or not the answer was usable.
 fn compose_read(
     request: &MemoryReasonRequest,
     query: &str,
     token_budget: u64,
     evidence: &[MemoryReasonEvidence],
     admission: &DeepAdmission,
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
 ) -> Result<AnsweredRead, ApiError> {
     if token_budget == 0 {
         return Err(ApiError::bad_request(
@@ -721,48 +756,42 @@ fn compose_read(
     let tokens_used = composed.tokens_used;
     let composed = composed.value;
 
-    let sources = validated_sources(evidence, &composed.source_short_ids);
-    let usable = !composed.declined && !composed.answer.trim().is_empty() && sources.is_some();
-    let Some(sources) = sources.filter(|_| usable) else {
-        let mut fallback = extractive_read(request.format, evidence);
-        fallback.gaps.extend(composed.gaps);
-        fallback
-            .gaps
-            .push("deep composition was not usable; answered from the evidence itself".to_owned());
-        fallback.tokens_used = tokens_used;
-        return Ok(fallback);
+    // A declined or blank composition has nothing to cross the boundary.
+    let admitted = if composed.declined || composed.answer.trim().is_empty() {
+        None
+    } else {
+        Some(answer_admission::admit_composition(
+            vault, auth, &composed, evidence,
+        )?)
     };
-
-    Ok(AnsweredRead {
-        answer: composed.answer,
-        sources,
-        confidence: composed.confidence.clamp(0.0, 1.0),
-        gaps: composed.gaps,
-        tokens_used,
-    })
-}
-
-/// All-or-nothing, deliberately.
-///
-/// An unknown citation is not quietly dropped to salvage the rest: a composer
-/// citing something the evidence never contained has already shown that its
-/// sourcing cannot be trusted for the citations that happen to match.
-fn validated_sources(
-    evidence: &[MemoryReasonEvidence],
-    proposed: &[String],
-) -> Option<Vec<String>> {
-    let mut sources: Vec<String> = Vec::new();
-    for candidate in proposed {
-        let candidate = candidate.trim();
-        if candidate.is_empty() || !evidence.iter().any(|row| row.short_id == candidate) {
-            return None;
+    let refusal = match admitted {
+        Some(AnswerAdmission::Admitted(sources)) => {
+            return Ok(AnsweredRead {
+                answer: composed.answer,
+                sources,
+                confidence: composed.confidence.clamp(0.0, 1.0),
+                gaps: composed.gaps,
+                tokens_used,
+                refusal: None,
+            });
         }
-        let candidate = candidate.to_owned();
-        if !sources.contains(&candidate) {
-            sources.push(candidate);
-        }
-    }
-    (!sources.is_empty()).then_some(sources)
+        Some(AnswerAdmission::Refused {
+            refusal,
+            receipt_ref,
+        }) => refusal.map(|refusal| MemoryReasonCompositionRefusal {
+            refusal,
+            receipt_ref,
+        }),
+        None => None,
+    };
+    let mut fallback = extractive_read(request.format, evidence);
+    fallback.gaps.extend(composed.gaps);
+    fallback
+        .gaps
+        .push("deep composition was not usable; answered from the evidence itself".to_owned());
+    fallback.tokens_used = tokens_used;
+    fallback.refusal = refusal;
+    Ok(fallback)
 }
 
 fn mean_confidence(evidence: &[MemoryReasonEvidence]) -> f32 {

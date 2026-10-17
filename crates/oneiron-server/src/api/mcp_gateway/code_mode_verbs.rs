@@ -762,7 +762,7 @@ impl McpCodeModeVerbs {
         {
             return refused(error);
         }
-        let memory = crate::api::credential_memory(
+        let memory = crate::api::mcp_credential_memory(
             &self.server.vault,
             self.actor.auth.as_ref(),
             self.actor.actor_ref,

@@ -67,8 +67,8 @@ use super::{
     DagSummaryQueuedResponse, DagSummaryRequest, DagSummaryResultResponse,
     DagSummaryStatusResponse, DagThreadMetaResponse, DagThreadResponse, DagThreadSummaryRequest,
     DagTurnQuery, DiscoverResponse, DiscoveredEntity, EdgeResult, FeatureFlags, HealthResponse,
-    LeaseRevokeRequest, LeaseRevokeResponse, MemoryReasonFormat, MemoryReasonRequest,
-    MemoryReasonResponse, MemoryReasonSessionContext, MemoryReasonTrace,
+    LeaseRevokeRequest, LeaseRevokeResponse, MemoryReasonCompositionRefusal, MemoryReasonFormat,
+    MemoryReasonRequest, MemoryReasonResponse, MemoryReasonSessionContext, MemoryReasonTrace,
     OutboundCapabilityDiscovery, OutboundConnectorManifestSummary, ProfileListQuery,
     ProfileListRow, ProfilesListResponse, RateLimitStatus, ReactionExternalPayload,
     ReactionRequest, ReactionResponse, SearchResult, SemanticSearchRequest, SkillPackDiscovery,
@@ -402,6 +402,7 @@ use utoipa::OpenApi;
         MemoryReasonFormat,
         MemoryReasonSessionContext,
         MemoryReasonTrace,
+        MemoryReasonCompositionRefusal,
         LeaseRevokeRequest,
         LeaseRevokeResponse,
 
