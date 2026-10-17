@@ -1,13 +1,16 @@
 //! Action modes (OF-335): the owner's bands over the composite state index,
 //! each naming a mode in the owner's own words. Each night the Dreamer
 //! refreshes every owner's index from their own records and, when the fresh
-//! index falls in a band, files the band's mode as a proposal in the run
-//! tray, which the next digest carries. A mode is a proposal only: it grants
-//! nothing and changes no consent, and a missing input selects no mode.
+//! index falls in a band, files the band's mode as an advisory finding. It
+//! applies at once with a receipt the owner reverts (OF-023), and the inbox's
+//! finding notice tells the owner; one the Gate parks waits in the run tray.
+//! A mode is advice only: it grants nothing and changes no consent, and a
+//! missing input selects no mode.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
+use super::applied::MaintenanceInverse;
 use super::{MAINTENANCE_QUEUE_KIND, invalid, proposals, validate_owner_in_txn};
 use crate::affect::state_inputs::StateWindow;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
@@ -15,7 +18,7 @@ use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Result, Vault};
 
 pub const ACTION_MODE_FACET: &str = "dreamer.action_mode";
-/// Predicate of a proposed action mode.
+/// Predicate of an advisory action-mode finding.
 pub const ACTION_MODE_PROPOSAL_PREDICATE: &str = "dreamer.action_mode.proposal";
 const POLICY: SideTable<(), ActionModePolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_ACTION_MODE_POLICY);
@@ -141,43 +144,48 @@ impl DreamerRunnerStore<'_> {
 }
 
 /// Refreshes one owner's index and files the mode its band names. Returns
-/// the proposal, or `None` when no policy is set, an input is missing or the
-/// index falls in no band.
+/// the finding, or `None` when no policy is set, an input is missing or the
+/// index falls in no band. The finding applies at once; its revert retracts
+/// it, and the refreshed index stays, as a measurement.
 pub(super) fn run(
     vault: &Vault,
     attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<Option<EntityId>> {
     let subject = EntityId::from_hex(attempt.status.payload.input.as_str().ok_or_else(invalid)?)?;
-    let envelope =
-        proposals::run_tray_envelope(vault, ACTION_MODE_FACET, attempt.status.attempt.id)?;
-    vault.with_write_txn_grouped(|txn| {
-        let Some(policy) = POLICY.get(&vault.store, &*txn, &())? else {
-            return Ok(None);
-        };
-        let Some((claim, index)) =
-            vault.refresh_state_index_in_txn(txn, &subject, &policy.window, now)?
-        else {
-            return Ok(None);
-        };
-        let Some(rule) = policy.mode_for(index.value) else {
-            return Ok(None);
-        };
-        let value = serde_json::json!({
-            "mode": rule.mode,
-            "band": [rule.min_index, rule.max_index],
-            "state_index": index,
-        });
-        proposals::emit_in_txn(
-            vault,
-            txn,
-            subject,
-            ACTION_MODE_PROPOSAL_PREDICATE,
-            &value,
-            &[claim],
-            &envelope,
-            now,
-        )
-        .map(Some)
+    let attempt = attempt.status.attempt.id;
+    proposals::land(vault, ACTION_MODE_FACET, attempt, |landing| {
+        vault.with_write_txn_grouped(|txn| {
+            let Some(policy) = POLICY.get(&vault.store, &*txn, &())? else {
+                return Ok(None);
+            };
+            let Some((claim, index)) =
+                vault.refresh_state_index_in_txn(txn, &subject, &policy.window, now)?
+            else {
+                return Ok(None);
+            };
+            let Some(rule) = policy.mode_for(index.value) else {
+                return Ok(None);
+            };
+            let value = serde_json::json!({
+                "mode": rule.mode,
+                "band": [rule.min_index, rule.max_index],
+                "state_index": index,
+            });
+            landing
+                .land_in_txn(
+                    vault,
+                    txn,
+                    &proposals::Finding {
+                        subject,
+                        predicate: ACTION_MODE_PROPOSAL_PREDICATE,
+                        value: &value,
+                        evidence: &[claim],
+                    },
+                    now,
+                    |_| Ok(MaintenanceInverse::Finding),
+                )
+                .map(Some)
+        })
     })
 }
