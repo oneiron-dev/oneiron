@@ -1,14 +1,13 @@
 //! Batch-write DTOs, route handler, and entity-put staging.
 
+use super::super::DagWriteError;
 use super::super::core_engine_error;
 use super::super::json_payload;
-use super::super::parse_optional_entity_id;
+use super::super::parse_entity_id_param;
 use super::write_shape::CORE_MAX_BATCH_ENTITIES;
-use super::write_shape::CoreEntityWriteResponse;
-use super::write_shape::commit_core_batch;
 use super::write_shape::core_entity_timestamps;
-use super::write_shape::normalize_platform_announcement_body;
-use super::write_shape::stage_core_entity_put;
+use super::write_shape::core_write_refusal;
+use super::write_shape::core_write_text;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -19,8 +18,10 @@ use crate::projection::View;
 use crate::server::SyncServer;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::core_write::{CoreBatchWriteInput, CoreBatchWriteReceipt};
+use oneiron::task_verb::sdk::AgentVerb;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -133,8 +134,10 @@ pub(crate) struct CoreBatchResponse {
 pub(crate) async fn core_batch(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<CoreBatchRequest>, JsonRejection>,
-) -> Result<Json<CoreBatchResponse>, EnvelopedApiError> {
+) -> Result<Json<CoreBatchResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
     if req.entities.len() > CORE_MAX_BATCH_ENTITIES {
@@ -144,83 +147,69 @@ pub(crate) async fn core_batch(
         )
         .into());
     }
-
-    let mut batch = server.vault.batch();
-    let mut entities = Vec::with_capacity(req.entities.len());
-    for entity in req.entities {
-        let id = parse_optional_entity_id(entity.id.as_deref(), "id")?;
-        let timestamps = core_entity_timestamps(
+    // The route's own refusals first; the row mints what the body omits.
+    for entity in &req.entities {
+        if let Some(id) = &entity.id {
+            parse_entity_id_param(id, "id")?;
+        }
+        core_entity_timestamps(
             entity.occurred_start,
             entity.occurred_end,
             entity.learned_at,
         )?;
-        batch = stage_core_entity_put(
-            batch,
-            &id,
-            entity.entity_type,
-            timestamps,
-            &entity.body,
-            entity.text.as_deref(),
-        )?;
-        entities.push(CoreBatchEntityResult {
-            id: id.to_hex(),
-            entity_type: entity.entity_type,
-        });
     }
-
-    commit_core_batch(&auth, batch).map_err(|error| {
-        tracing::error!(kind = ?error.kind(), "core batch commit failed");
-        core_engine_error("core batch commit failed", error)
-    })?;
+    let input = CoreBatchWriteInput {
+        entities: req
+            .entities
+            .into_iter()
+            .map(CoreBatchEntityInput::into_row)
+            .collect(),
+    };
+    // OF-181: `vault.batch`, as an action when the credential binds one,
+    // else through the row's own door; both commit at the credential's grade.
+    let receipt = match super::super::facade::action_routes::rest_action_bound(
+        &server, &auth, &headers, &input,
+    )? {
+        Some(bound) => {
+            let row = AgentVerb::VaultBatch;
+            let key = super::super::facade::action_routes::rest_action_key(
+                &server, &auth, &headers, row,
+            )?;
+            let output = super::super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            serde_json::from_value::<CoreBatchWriteReceipt>(output)
+                .map_err(|_| ApiError::internal_server_error("batch result encoding failed"))?
+        }
+        None => super::super::facade::host_doors::write_core_batch(&server, &auth, input).await?,
+    };
 
     Ok(Json(CoreBatchResponse {
-        count: entities.len(),
-        entities,
+        count: receipt.count,
+        entities: receipt
+            .entities
+            .into_iter()
+            .map(|entity| CoreBatchEntityResult {
+                id: entity.id,
+                entity_type: entity.entity_type,
+            })
+            .collect(),
     }))
 }
 
-pub(crate) struct CoreEntityWriteInput<'a> {
-    pub(crate) id: Option<&'a str>,
-    pub(crate) entity_type: u8,
-    pub(crate) occurred_start: Option<u64>,
-    pub(crate) occurred_end: Option<u64>,
-    pub(crate) learned_at: Option<u64>,
-    pub(crate) body: &'a Value,
-    pub(crate) text: Option<&'a [CoreTextField]>,
-}
-
-pub(crate) fn write_core_entity(
-    vault: &oneiron::Vault,
-    input: CoreEntityWriteInput<'_>,
-) -> Result<Json<CoreEntityWriteResponse>, EnvelopedApiError> {
-    let id = parse_optional_entity_id(input.id, "id")?;
-    let timestamps =
-        core_entity_timestamps(input.occurred_start, input.occurred_end, input.learned_at)?;
-    let batch = stage_core_entity_put(
-        vault.batch(),
-        &id,
-        input.entity_type,
-        timestamps,
-        input.body,
-        input.text,
-    )?;
-    batch.commit().map_err(|error| {
-        tracing::error!(kind = ?error.kind(), entity_type = input.entity_type, "core entity create failed");
-        core_engine_error("core entity create failed", error)
-    })?;
-    let body = core_body_for_write(input.entity_type, input.body);
-    let item = projection::project_entity_parts(
-        &id,
-        input.entity_type,
-        timestamps.learned_at,
-        &encode_core_body(&body)?,
-        View::Full,
-    );
-    Ok(Json(CoreEntityWriteResponse {
-        id: id.to_hex(),
-        entity_type: input.entity_type,
-        item,
-    }))
+impl CoreBatchEntityInput {
+    fn into_row(self) -> oneiron::core_write::CoreBatchEntityInput {
+        oneiron::core_write::CoreBatchEntityInput {
+            id: self.id,
+            entity_type: self.entity_type,
+            occurred_start: self.occurred_start,
+            occurred_end: self.occurred_end,
+            learned_at: self.learned_at,
+            body: self.body,
+            text: core_write_text(self.text),
+        }
+    }
 }
 
 pub(crate) fn project_core_entity(
@@ -239,13 +228,9 @@ pub(crate) fn project_core_entity(
 }
 
 pub(crate) fn encode_core_body(body: &Value) -> Result<Vec<u8>, ApiError> {
-    rmp_serde::to_vec_named(body)
-        .map_err(|_| ApiError::bad_request("body must be msgpack-encodable JSON", Some("body")))
+    oneiron::core_write::shape::encode_core_body(body).map_err(core_write_refusal)
 }
 
-pub(crate) fn core_body_for_write<'a>(entity_type: u8, body: &'a Value) -> Cow<'a, Value> {
-    if entity_type != ENTITY_TYPE_TURN {
-        return Cow::Borrowed(body);
-    }
-    normalize_platform_announcement_body(body)
+pub(crate) fn core_body_for_write(entity_type: u8, body: &Value) -> Cow<'_, Value> {
+    oneiron::core_write::shape::core_body_for_write(entity_type, body)
 }
