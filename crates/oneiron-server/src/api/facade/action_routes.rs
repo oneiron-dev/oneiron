@@ -330,11 +330,13 @@ where
     let door: Arc<dyn AgentVerbDoor> =
         Arc::new(FacadeRowDoor::new(server, headers, extensions, key));
     let executor = app()?;
-    // OF-181: the live run's guard, taken before the action and held through
-    // it, with the run's lease read again under it.
+    // OF-181: the live run's guard, waited for briefly while an entry or
+    // another action holds it, taken before the action and held through it,
+    // with the run's lease read again under it.
     let held = match &live_run {
         Some(run) => Some(
             run.hold(&server.live_runs, &server.vault)
+                .await
                 .map_err(engine)?
                 .map_err(refused)?,
         ),
@@ -387,9 +389,16 @@ async fn attach_live_run(
     })?;
     let run = EntityId::from_hex(&run).map_err(|_| refused(LiveRunRefusal::Invalid))?;
     let caller = live_run_caller(&bound, &auth);
+    // OF-181: the run's guard, waited for briefly while an entry or an
+    // action holds it, then held through the attach.
+    let attaching = server
+        .live_runs
+        .attaching(run, caller)
+        .await
+        .map_err(refused)?;
     let runs = Arc::clone(&server.live_runs);
     let vault = Arc::clone(&server.vault);
-    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, run, caller))
+    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, attaching))
         .await
         .map_err(|_| internal())?
         .map_err(engine)?

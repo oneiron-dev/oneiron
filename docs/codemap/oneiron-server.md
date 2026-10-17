@@ -143,7 +143,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/hold_worker.rs` | src | s | 1 crate-vis | — | The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks each new… |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | s | 1 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | L | 31 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | L | 30 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 9 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/agent_verbs.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/facade/call_context.rs` | src | s | 20 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
@@ -235,7 +235,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/budget_hold_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/runs/hold`: the owner reads a run its budget held (OF-541, ARCH-0079 #budget) and resumes it |
 | `src/api/owner_routes/commitment_routes.rs` | src | s | 1 crate-vis | — | Owner doors for where commitment reminders go (OF-187) |
 | `src/api/owner_routes/concern_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health cards (OF-568) with its run-tree… |
-| `src/api/owner_routes/conflict_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
+| `src/api/owner_routes/conflict_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
 | `src/api/owner_routes/connector_admission_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a… |
 | `src/api/owner_routes/connector_consent_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/connectors/consent`: the owner's one act that lets an actor call a catalog connector's tools… |
 | `src/api/owner_routes/connector_subscription_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/connectors/subscriptions`: the owner's door that lets an agent answer a built-in channel (OF-519) |
@@ -696,7 +696,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
 | `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
-| `src/server/live_runs.rs` | src | m | 25 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
+| `src/server/live_runs.rs` | src | m | 28 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
 | `src/server/media_embedding.rs` | src | m | 6 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
 | `src/server/mod.rs` | src | s | 3 re-export · 14 crate-vis | — | Sync server state and maintenance jobs, split by concern |
