@@ -23,9 +23,6 @@ use crate::agent_inbox_lens::{
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::{
-    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-};
 use crate::learning::{TeamEvent, project_run_coordination, team_events_from_attempts};
 use crate::learning_setting::{SettingSpec, setting_value_in_txn};
 use crate::receipt::{CallOutcome, CallReceipt};
@@ -37,6 +34,8 @@ use crate::self_heal::{
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
+/// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
+/// deduped per wake.
 pub const COACH_AGENT_HEALTH_FACET: &str = "coach.agent_health";
 
 /// The review runs at all (1) or not (0).
@@ -321,35 +320,6 @@ struct Dials {
     wait_secs: u64,
     silent_secs: u64,
     ttl_secs: u64,
-}
-
-impl DreamerRunnerStore<'_> {
-    pub(crate) fn enqueue_agent_health_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        parent_attempt: Option<AttemptId>,
-        wake_key: Option<&str>,
-        run_id: Option<String>,
-        now: u64,
-    ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.enqueue_kind_in_txn(
-            txn,
-            super::MAINTENANCE_QUEUE_KIND,
-            DreamerAttemptPayload {
-                attempt_type: COACH_AGENT_HEALTH_FACET.into(),
-                input: Value::Nil,
-                parent_attempt,
-            },
-            wake_key.map(|key| {
-                format!(
-                    "{COACH_AGENT_HEALTH_FACET}:{}",
-                    blake3::hash(key.as_bytes()).to_hex()
-                )
-            }),
-            run_id,
-            now,
-        )
-    }
 }
 
 /// One review: detect, emit, merge, escalate. Returns the cards it touched.
