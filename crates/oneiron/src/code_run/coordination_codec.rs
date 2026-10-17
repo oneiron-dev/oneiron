@@ -151,6 +151,16 @@ pub(super) fn ask_value(result: &TaskAskReceipt) -> Result<Value> {
         }
         None => Value::Nil,
     };
+    // So does the launch approval a held ask waits on (OF-393).
+    let launch = match &result.launch {
+        Some(launch) => {
+            let bytes = rmp_serde::to_vec_named(launch)
+                .map_err(|_| invalid_code_run_replay("ask launch encode"))?;
+            rmpv::decode::read_value(&mut bytes.as_slice())
+                .map_err(|_| invalid_code_run_replay("ask launch encode"))?
+        }
+        None => Value::Nil,
+    };
     Ok(request_map(vec![
         ("kind", Value::from("task_ask")),
         ("group", entity_id_value(result.handle.group_ref)),
@@ -168,11 +178,12 @@ pub(super) fn ask_value(result: &TaskAskReceipt) -> Result<Value> {
         ("hold", hold_value(result.hold)),
         ("replay", Value::Boolean(result.idempotent_replay)),
         ("statement", statement),
+        ("launch", launch),
     ]))
 }
 pub(super) fn decode_ask(value: &Value) -> Result<TaskAskReceipt> {
     let m = expect_map(value, "ask outcome map")?;
-    Ok(TaskAskReceipt::new(
+    let receipt = TaskAskReceipt::new(
         TaskAskHandle {
             group_ref: entity_value(map_get(m, "group")?)?,
         },
@@ -190,7 +201,18 @@ pub(super) fn decode_ask(value: &Value) -> Result<TaskAskReceipt> {
                 )
             }
         },
-    ))
+    );
+    Ok(match map_get(m, "launch")? {
+        Value::Nil => receipt,
+        launch => {
+            let bytes = rmp_serde::to_vec_named(launch)
+                .map_err(|_| invalid_code_run_replay("ask launch decode"))?;
+            receipt.with_launch(
+                rmp_serde::from_slice(&bytes)
+                    .map_err(|_| invalid_code_run_replay("ask launch decode"))?,
+            )
+        }
+    })
 }
 pub(super) fn status_value(result: &TaskAskStatus) -> Result<Value> {
     let bytes = rmp_serde::to_vec_named(result)
