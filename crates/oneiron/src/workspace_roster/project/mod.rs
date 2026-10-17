@@ -81,6 +81,7 @@ pub(crate) use revision::{
     PROJECT_REVISION_SHORT_ID_PREFIX, is_project_revision_type, project_revision_type,
 };
 pub use revision::{ProjectRevision, ProjectRevisionHash, ProjectRevisionProof};
+pub use roster::{ProjectRosterWriteOutcome, ProjectRosterWriteRequest};
 #[cfg(test)]
 mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;

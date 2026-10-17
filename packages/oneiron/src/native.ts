@@ -182,6 +182,7 @@ vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown
 vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsRosterWrite(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown

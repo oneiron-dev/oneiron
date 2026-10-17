@@ -867,6 +867,7 @@ fn mcp_agent_verb_input(
         "vault.projects.proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.dismiss_card" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.confirm" => a.spec.clone().ok_or_else(invalid),
+        "vault.projects.roster.write" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.goal.intake" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.join" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
@@ -1524,6 +1525,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.projects.confirm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.projects.roster.write" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.projects.goal.intake" => {
@@ -3735,6 +3739,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::workspace_roster::ProjectCardConfirmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_projects_confirm(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.projects.roster.write" => {
+            let input: oneiron::workspace_roster::ProjectRosterWriteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_projects_roster_write(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

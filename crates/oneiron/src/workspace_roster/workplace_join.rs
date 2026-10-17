@@ -1,13 +1,15 @@
-//! Workplace actors join rooms through the three consents (OF-417 slice 2).
+//! Workplace actors join rooms through the OF-531 consents (OF-417 slice 2).
 //!
 //! The house mind and each member's companion take part in rooms on the
 //! same OF-531 decision and receipt as anyone else. A filing here is a plain
 //! unpaid `rooms.join`, made only where an authenticated caller that OF-531's
 //! caller rule allows is in hand, and its outcome is read, never assumed: a
 //! Hold keeps its intent and the parties it waits on, a refusal is final for
-//! its intent, and neither is participation. Where no such caller is in hand,
-//! the subject joins on its own first write instead. Nothing here seats an
-//! agent, edits a roster or caps anyone.
+//! its intent, and neither is participation. A roster write that seats a
+//! person its caller cannot speak for files her an invitation instead, the
+//! same join waiting on her own yes. Where no caller is in hand, the subject
+//! joins on its own first write. Nothing here seats an agent, edits a roster
+//! or caps anyone.
 
 use std::collections::BTreeSet;
 
@@ -15,7 +17,7 @@ use super::join_consent::{
     JoinDecision, JoinRequest, JoinSubject, person_of_actor_in_txn, principal_stands_in_txn,
     require_join_for_branch_in_txn,
 };
-use super::join_door::rooms_join_in_txn;
+use super::join_door::{JoinOutcome, rooms_invite_in_txn, rooms_join_in_txn};
 use super::join_receipt::JoinReceiptRef;
 use crate::error::{ClaimError, Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
@@ -153,14 +155,18 @@ pub(super) fn file_house_joins_in_txn(
 }
 
 /// Files the joins a roster update newly seats, for the project home room
-/// `room`, with the authenticated `caller` as filer. Each id in `added` is
-/// filed only where OF-531's caller rule lets `caller` file for it: its own
-/// subject, its principal, or a live owner for the vault's own agent. A
-/// subject the caller does not stand for (an unrelated person) is left to
-/// its own first write or explicit join, since a board write is no one's
-/// join consent. A seated house mind files as the house; a person whose
-/// filing stands brings her companions along. A seat that is neither a
-/// PERSON nor an AGENT_DEF takes part in no room.
+/// `room`, with the authenticated `caller` as filer, and returns the
+/// invitations it filed. Each id in `added` is filed as a join where
+/// OF-531's caller rule lets `caller` file for it: its own subject, its
+/// principal, or a live owner for the vault's own agent. An unrelated person
+/// with no live join of the room gets an invitation (OF-417), under a fresh
+/// intent per seat-add, since a board write is no one's join consent: it
+/// takes effect once she accepts through `rooms.consent`. Any other subject
+/// the caller does not stand for (an agent, the house mind under a
+/// non-owner) is left to its own filing or its owner's join. A seated house
+/// mind files as the house; a person whose filing stands brings her
+/// companions along. A seat that is neither a PERSON nor an AGENT_DEF takes
+/// part in no room.
 pub(super) fn file_roster_joins_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -168,7 +174,7 @@ pub(super) fn file_roster_joins_in_txn(
     added: &BTreeSet<String>,
     caller: WriteActor,
     now: u64,
-) -> Result<()> {
+) -> Result<Vec<JoinOutcome>> {
     let houses: BTreeSet<EntityId> = super::records::PRESET
         .scan(&vault.store, txn)?
         .into_iter()
@@ -189,8 +195,22 @@ pub(super) fn file_roster_joins_in_txn(
             subjects.push(subject);
         }
     }
+    let mut invitations = Vec::new();
     for subject in subjects {
         if !roster_caller_files_for_in_txn(vault, txn, caller, &subject, now)? {
+            if matches!(subject, JoinSubject::Person(_))
+                && standing_in_txn(vault, txn, room, &subject)?.is_none()
+            {
+                let request = JoinRequest {
+                    room,
+                    branch: None,
+                    subject,
+                    paid: false,
+                    spend_scope: None,
+                    intent_key: format!("invite:{}", vault.store.clock.entity_id()?.to_hex()),
+                };
+                invitations.push(rooms_invite_in_txn(vault, txn, &request, caller, now)?);
+            }
             continue;
         }
         let purpose = match subject {
@@ -202,14 +222,13 @@ pub(super) fn file_roster_joins_in_txn(
             file_companion_joins_in_txn(vault, txn, room, person, caller, now)?;
         }
     }
-    Ok(())
+    Ok(invitations)
 }
 
 /// Whether `caller` files `subject`'s join on a roster update: OF-531's
 /// caller rule, read live. A caller that does not stand for the subject
-/// files nothing for it, so a board write is never an unrelated person's
-/// join consent, and the subject joins on its own first write or explicit
-/// join. The one place a roster filing passes a subject by.
+/// files no join for it, so a board write is never an unrelated person's
+/// join consent: a person gets an invitation she answers herself.
 fn roster_caller_files_for_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

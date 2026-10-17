@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 305 code-mode rows (287 host rows, 18 run rows), 954 declarations.
-// Replies: 248 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
-// Opaque serde_json::Value leaves: 69; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 306 code-mode rows (288 host rows, 18 run rows), 968 declarations.
+// Replies: 249 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Opaque serde_json::Value leaves: 70; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
@@ -610,13 +610,21 @@ declare namespace Sdk {
   type ProjectCardConfirmRequest = { card_id: string; action_id: string; occurred_at: number };
   type GateDecisionId = { bytes: number[] };
   type ProjectMintReceipt = { project_id: string; card_id: string; grant_decision_id: GateDecisionId; grant_ref: string };
-  type ProjectRefRequest = { project_ref: string };
-  type GoalPreference = { prefer: string; over: string; reason: string };
-  type ProjectGoalRevisionProposal = { project: EntityId; goal_claim: EntityId; preference: GoalPreference; question_digest: string; picked_by: EntityId; at: number };
-  type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
-  type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
-  type ConsentPart = "spend" | "membership" | "admission";
-  type RequiredParty = { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } };
+  type ProjectRole = "project" | "corpus";
+  type ProjectRevisionHash = unknown;
+  type ProjectParentWitness = { project: EntityId; head: ProjectRevisionHash; leader: EntityId };
+  type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string };
+  type ScopeScope = { world?: string | null; facet?: string | null; relationship?: string | null; project?: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
+  type ProjectAuthority = { parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice: ScopeScope; depth_limit: number; depth_remaining: number; leader: string; board: string[]; roster?: string[] | null };
+  type ProjectAnchor = { authority: ProjectAuthority; proof?: ProjectWriteProof | null };
+  type ProjectProofVersion = "v2" | "v3";
+  type ProjectWriteProof = { slip_wire: string; holder_signature: number[]; signed_at: number; anchor?: ProjectAnchor | null; version?: ProjectProofVersion };
+  type ProjectGoalRecord = { project_id: string; goal: string; why: string; axes: string[] };
+  type ProjectBudgetShare = { project_id: string; parent_id: string; share_bps: number };
+  type ProjectRecord = { role: ProjectRole; schema_version: number; depth?: number; parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice?: ScopeScope; depth_limit?: number; depth_remaining?: number; write_proof?: ProjectWriteProof | null; leader: string; board: string[]; roster: string[]; sessions: string[]; tasks: string[]; branches: string[]; skill_forks: string[]; goal?: string | null; goal_record?: ProjectGoalRecord | null; why?: string | null; born_from?: string | null; budget?: string | null; budget_share?: ProjectBudgetShare | null; asks: string[]; home_room: string; origin_room?: string | null; origin_thread?: string | null; origin_at?: number | null; wrapper_task?: string | null };
+  type ProjectRosterWriteRequest = { project: EntityId; record: unknown };
+  type ConsentPart = "subject" | "spend" | "membership" | "admission";
+  type RequiredParty = { subject: JoinSubject } | { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } };
   type ConsentNeed = { part: ConsentPart; party: RequiredParty };
   type JoinRefusal = { denied: { part: ConsentPart; party: EntityId; answer_ref: string } } | "unknown_subject" | { foreign_house_agent: { org: EntityId } } | "unknown_room" | { unknown_spend_scope: { scope: SpendScopeId } } | { forged_payer: { scope: SpendScopeId } };
   type JoinDecision = "ready" | { hold: { needs: ConsentNeed[] } } | { refuse: JoinRefusal };
@@ -626,10 +634,16 @@ declare namespace Sdk {
   type MembershipConsent = { vault_owner: { person: EntityId } } | { member: { person: EntityId; grant: EntityId } } | { companion_of_member: { companion: EntityId; principal: EntityId; grant?: EntityId | null } } | { scoped_guest: { person: EntityId; guest_grant: EntityId } } | { house_agent: { org: EntityId } };
   type AdmissionBasis = "room_owner" | "delegated_host" | "standing_home_roster" | { host_answer: { answer_ref: string } } | { through_principal: { principal: EntityId } };
   type AdmissionConsent = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; granted_by: EntityId; basis: AdmissionBasis };
-  type ConsentSet = { spend: ConsentState<SpendConsent>; membership: ConsentState<MembershipConsent>; admission: ConsentState<AdmissionConsent> };
+  type ConsentSet = { subject: ConsentState<EntityId>; spend: ConsentState<SpendConsent>; membership: ConsentState<MembershipConsent>; admission: ConsentState<AdmissionConsent> };
   type JoinParticipation = "ledger_seat" | "already_seated" | "home_room_receipt" | "branch_receipt" | "agent_receipt" | "principal_receipt";
   type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null };
   type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null };
+  type ProjectRosterWriteOutcome = { installed: boolean; invitations: JoinOutcome[] };
+  type ProjectRefRequest = { project_ref: string };
+  type GoalPreference = { prefer: string; over: string; reason: string };
+  type ProjectGoalRevisionProposal = { project: EntityId; goal_claim: EntityId; preference: GoalPreference; question_digest: string; picked_by: EntityId; at: number };
+  type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
+  type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
   type ConsentAnswer = { join_ref: string; part: ConsentPart; grant: boolean; spend_scope?: SpendScopeId | null };
   type OfferDraft = { room: EntityId; branch?: EntityId | null; agent: EntityId; what: string; artifact_ref?: string | null; spend_scope?: SpendScopeId | null; until?: number | null; intent_key: string };
   type DeclaredMaximum = { units: number; unit: LeaseUnit };
@@ -1515,6 +1529,10 @@ declare const vault: Sdk.VaultHost & {
     proposals(input: Sdk.ProjectConversationRequest): Promise<Sdk.Reply<Sdk.ProjectCardRecord[]>>;
     /** The drafting agent proposes a project card on a source message; the card writes no project and confers no authority. */
     propose(input: Sdk.ProjectProposalRequest): Promise<Sdk.Reply<Sdk.ProjectProposalCard>>;
+    roster: {
+      /** Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent. */
+      write(input: Sdk.ProjectRosterWriteRequest): Promise<Sdk.Reply<Sdk.ProjectRosterWriteOutcome>>;
+    };
     /** Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room. */
     route_tradeoff(input: Sdk.ProjectTradeoffRouteRequest): Promise<Sdk.Reply<Sdk.TaskAskReceipt>>;
   };

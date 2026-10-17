@@ -1,8 +1,11 @@
 //! The room join and consent doors (OF-531).
 //!
 //! `rooms.join` files a join and decides it in the writer: the caller is the
-//! subject's own actor or its principal. `rooms.consent` records one party's
-//! answer, from that party only, and decides again. A Ready decision commits
+//! subject's own actor or its principal, and its filing is the subject's own
+//! yes. A board writer's roster write files an invitation instead (OF-417):
+//! the same join for a person it seats and cannot speak for, waiting on her
+//! yes. `rooms.consent` records one party's answer, from that party only, and
+//! decides again; the invitee accepts or declines there, as the subject. A Ready decision commits
 //! the participation and its receipt in one transaction; a Hold persists the
 //! intent and the parties it waits on, with no seat, launch or spend hold; a
 //! refusal is typed and final. Membership is never answered here: it is read
@@ -95,7 +98,11 @@ impl Memory<'_> {
         let caller = WriteActor::new(self.actor(), self.actor_class());
         vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            Ok(file_join_in_txn(vault, txn, request, history, caller, now)?)
+            vault.verify_write_actor_in_txn(txn, &caller)?;
+            let principal = caller_stands_for_in_txn(vault, txn, caller, &request.subject, now)?;
+            Ok(file_join_in_txn(
+                vault, txn, request, history, caller, now, principal, true,
+            )?)
         })
     }
 
@@ -138,10 +145,11 @@ impl Memory<'_> {
 ///
 /// `caller` must be a live, bound actor that is the subject's own actor or
 /// its principal: a companion's person, an agent's person, or a live owner
-/// for the vault's own agent. A payer filing under a scope it funds gives
-/// that payer's yes. The same intent replays: Ready and refused joins return
-/// as stored, a held one decides again against live facts. The same intent
-/// key with another request refuses.
+/// for the vault's own agent. Its filing is the subject's own yes. A payer
+/// filing under a scope it funds gives that payer's yes. The same intent
+/// replays: Ready and refused joins return as stored, a held one decides
+/// again against live facts. The same intent key with another request
+/// refuses.
 pub fn rooms_join_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -149,10 +157,59 @@ pub fn rooms_join_in_txn(
     caller: WriteActor,
     now: u64,
 ) -> Result<JoinOutcome> {
-    file_join_in_txn(vault, txn, request, HistoryChoice::Inherit, caller, now)
+    vault.verify_write_actor_in_txn(txn, &caller)?;
+    let principal = caller_stands_for_in_txn(vault, txn, caller, &request.subject, now)?;
+    file_join_in_txn(
+        vault,
+        txn,
+        request,
+        HistoryChoice::Inherit,
+        caller,
+        now,
+        principal,
+        true,
+    )
 }
 
-/// [`rooms_join_in_txn`] with the history a first entry asked for.
+/// Files a board writer's invitation (OF-417): an unpaid room join for a
+/// person its roster write newly seats and `caller` cannot speak for. It
+/// carries no subject's yes, so it holds until the person, or her principal,
+/// answers the subject part through `rooms.consent`; a no refuses it for its
+/// intent. Only the installed roster adapter files one, never the SDK.
+pub(super) fn rooms_invite_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: &JoinRequest,
+    caller: WriteActor,
+    now: u64,
+) -> Result<JoinOutcome> {
+    vault.verify_write_actor_in_txn(txn, &caller)?;
+    if !matches!(request.subject, JoinSubject::Person(_))
+        || request.branch.is_some()
+        || request.paid
+        || request.spend_scope.is_some()
+    {
+        return Err(Error::InvalidConfig(
+            "a roster invitation is an unpaid person's room join".into(),
+        ));
+    }
+    file_join_in_txn(
+        vault,
+        txn,
+        request,
+        HistoryChoice::Inherit,
+        caller,
+        now,
+        None,
+        false,
+    )
+}
+
+/// Files and decides `request` for a `caller` its door already verified.
+/// `principal` is the owner a vault's own agent stands through; `accepts`
+/// when `caller` stands for the subject, so its filing is the subject's yes,
+/// and false for an invitation, which waits on that yes.
+#[allow(clippy::too_many_arguments)]
 fn file_join_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -160,6 +217,8 @@ fn file_join_in_txn(
     history: HistoryChoice,
     caller: WriteActor,
     now: u64,
+    principal: Option<EntityId>,
+    accepts: bool,
 ) -> Result<JoinOutcome> {
     if request.intent_key.is_empty()
         || request.intent_key.len() > 128
@@ -172,8 +231,6 @@ fn file_join_in_txn(
             "a join's intent_key is 1..=128 printable bytes".into(),
         ));
     }
-    vault.verify_write_actor_in_txn(txn, &caller)?;
-    let principal = caller_stands_for_in_txn(vault, txn, caller, &request.subject, now)?;
     if history != HistoryChoice::Inherit && !first_entry_in_txn(vault, txn, request)? {
         return Err(Error::InvalidConfig(
             "only a person's first entry into an ordinary room chooses its history; this join keeps the room's own rule".into(),
@@ -200,6 +257,23 @@ fn file_join_in_txn(
             filed_at: now,
         },
     };
+    // A filer that stands for the subject is the subject's own yes.
+    if accepts
+        && !filing
+            .answers
+            .iter()
+            .any(|answer| answer.part == ConsentPart::Subject)
+    {
+        filing.answers.push(RecordedAnswer {
+            part: ConsentPart::Subject,
+            by: request.subject.id(),
+            actor: caller.entity_ref(),
+            grant: true,
+            spend_scope: None,
+            answer_ref: answer_ref(vault)?,
+            at: now,
+        });
+    }
     // A filer naming a scope it funds is that payer's own yes.
     if request.paid
         && let Some(scope) = &request.spend_scope
@@ -243,6 +317,12 @@ pub fn rooms_consent_in_txn(
         return Ok(JoinOutcome::of(&receipt));
     }
     let (by, spend_scope) = match answer.part {
+        // The invitee accepts or declines as the subject, or through her
+        // principal, proved again here.
+        ConsentPart::Subject => {
+            caller_stands_for_in_txn(vault, txn, caller, &receipt.request.subject, now)?;
+            (receipt.request.subject.id(), None)
+        }
         ConsentPart::Membership => {
             return Err(refused(
                 "membership is read live from the vault's roster; a room join never grants it",

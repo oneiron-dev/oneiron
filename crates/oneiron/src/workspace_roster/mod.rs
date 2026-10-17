@@ -133,8 +133,9 @@ pub use project::{
     ProjectAsk, ProjectCycleQuestion, ProjectDisposition, ProjectEffective, ProjectForkConflict,
     ProjectForkEvidence, ProjectForkOutcome, ProjectFrontier, ProjectHistoryOverBudget,
     ProjectHistoryPolicy, ProjectHistoryQuestion, ProjectParentWitness, ProjectRank,
-    ProjectResolution, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, ProjectSeal,
-    ProjectWitness, ProjectWriteOutcome,
+    ProjectResolution, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof,
+    ProjectRosterWriteOutcome, ProjectRosterWriteRequest, ProjectSeal, ProjectWitness,
+    ProjectWriteOutcome,
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,

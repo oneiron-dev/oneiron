@@ -1,21 +1,25 @@
-//! Three consents, three parties (OF-531): one typed decision that joins a
-//! payer's spend, a vault's membership and a room's admission before anyone
-//! takes part in a room.
+//! One consent per party (OF-531): one typed decision that joins the
+//! subject's own yes, a payer's spend, a vault's membership and a room's
+//! admission before anyone takes part in a room.
 //!
 //! # Each consent comes from its own party
 //!
-//! Spend is the payer's: the PERSON whose funds paid participation spends,
+//! The subject's yes is its own: a join its own actor or its principal files
+//! carries it, and an invitation a board writer files for an unrelated
+//! person (OF-417) waits on it until that person, or her principal, accepts
+//! through the consent door. Spend is the payer's: the PERSON whose funds paid participation spends,
 //! who accepted a cap for a scope ([`crate::agent_dispatch::SpendPayer`] on
 //! the scope's root). Membership is the vault's: a live grant its Owner or
 //! Admin wrote through the membership doors, read live here and never granted
 //! here. Admission is the room's: its owner or a delegated host, or the
 //! standing rule that a project home room seats its project's roster. None
 //! stands in for another: a host's yes pays for nothing, a payer's yes admits
-//! no one, and nothing here enrolls anyone in a vault.
+//! no one, an inviter's filing is no one's yes, and nothing here enrolls
+//! anyone in a vault.
 //!
 //! # One snapshot, every missing party
 //!
-//! [`decide_join_in_txn`] loads the three facts independently in one read
+//! [`decide_join_in_txn`] loads each fact independently in one read
 //! snapshot and names every party still missing, never only the first.
 //! Forged or out-of-scope evidence refuses, and so does an explicit denial. A
 //! Ready receipt is evidence, never a standing grant: [`require_join_in_txn`]
@@ -82,10 +86,11 @@ pub struct JoinRequest {
     pub intent_key: String,
 }
 
-/// The three consents a join collects, one from each party.
+/// The consents a join collects, one from each party.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentPart {
+    Subject,
     Spend,
     Membership,
     Admission,
@@ -95,6 +100,9 @@ pub enum ConsentPart {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequiredParty {
+    /// The subject itself, or its principal: an invitation waits on its own
+    /// yes, given through the consent door.
+    Subject(JoinSubject),
     /// The PERSON who funds the named scope; only they say yes for it.
     Payer(EntityId),
     /// No scope with a payer's consent is named yet: whoever will pay opens
@@ -211,6 +219,9 @@ pub struct AdmissionConsent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentSet {
+    /// The subject's own yes: the actor that gave it, the subject or its
+    /// principal.
+    pub subject: ConsentState<EntityId>,
     pub spend: ConsentState<SpendConsent>,
     pub membership: ConsentState<MembershipConsent>,
     pub admission: ConsentState<AdmissionConsent>,
@@ -221,6 +232,7 @@ impl ConsentSet {
     #[must_use]
     pub fn needs(&self) -> Vec<ConsentNeed> {
         [
+            missing(&self.subject),
             missing(&self.spend),
             missing(&self.membership),
             missing(&self.admission),
@@ -269,8 +281,9 @@ pub enum JoinDecision {
     Refuse(JoinRefusal),
 }
 
-/// Decides `request` in one snapshot: the three facts loaded independently,
-/// with the answers parties recorded for this exact request.
+/// Decides `request` in one snapshot: each fact loaded independently, with
+/// the answers parties recorded for this exact request. A request no one
+/// filed carries no subject's yes.
 pub fn decide_join_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -295,11 +308,17 @@ pub(super) fn decide_with_in_txn(
     answers: &[RecordedAnswer],
     now: u64,
 ) -> Result<(JoinDecision, ConsentSet)> {
+    let subject = subject_consent(request, answers);
     let spend = spend_in_txn(vault, txn, request, answers)?;
     let membership = membership_in_txn(vault, txn, &request.subject, principal, now)?;
     let admission = admission_in_txn(vault, txn, request, answers, &membership.state, now)?;
-    let refusal = spend.refusal.or(membership.refusal).or(admission.refusal);
+    let refusal = subject
+        .refusal
+        .or(spend.refusal)
+        .or(membership.refusal)
+        .or(admission.refusal);
     let consents = ConsentSet {
+        subject: subject.state,
         spend: spend.state,
         membership: membership.state,
         admission: admission.state,
@@ -489,6 +508,20 @@ impl<T> Loaded<T> {
                 answer_ref: answer.answer_ref.clone(),
             }),
         }
+    }
+}
+
+/// The subject's own consent: the latest answer the subject, or its
+/// principal for it, recorded. A direct join carries it from its filing; an
+/// invitation waits on it, and a no refuses the invitation for its intent.
+fn subject_consent(request: &JoinRequest, answers: &[RecordedAnswer]) -> Loaded<EntityId> {
+    match latest(answers, ConsentPart::Subject).filter(|answer| answer.by == request.subject.id()) {
+        Some(answer) if !answer.grant => Loaded::denied(answer),
+        Some(answer) => Loaded::granted(answer.actor),
+        None => Loaded::missing(ConsentNeed {
+            part: ConsentPart::Subject,
+            party: RequiredParty::Subject(request.subject),
+        }),
     }
 }
 
