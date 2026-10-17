@@ -46,6 +46,8 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
+  /** A new project room thread root's audience (32-hex ids); fixed once set. */
+  threadAudience?: string[]
 }
 
 /** Receipt for one witnessed turn. */

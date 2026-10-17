@@ -77,6 +77,30 @@
       "section": false
     },
     {
+      "name": "self.focus.scratchpad.append",
+      "description": "Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused.",
+      "input": "crate::task_verb::sdk::ScratchpadAppendRequest",
+      "output": "crate::task_verb::sdk::ScratchpadWriteReply",
+      "call": "crate::task_verb::sdk::scratchpad_append_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.focus.scratchpad.seal",
+      "description": "Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad.",
+      "input": "crate::task_verb::sdk::ScratchpadSealRequest",
+      "output": "crate::task_verb::sdk::ScratchpadWriteReply",
+      "call": "crate::task_verb::sdk::scratchpad_seal_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "self.memory.diary",
       "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
       "prose_links": ["/content"],
@@ -725,6 +749,28 @@
       "section": false
     },
     {
+      "name": "vault.explain.memory",
+      "description": "Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it.",
+      "input": "crate::task_verb::sdk::ExplainMemoryRequest",
+      "output": "Option<crate::task_verb::sdk::ExplainMemoryReply>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.memory\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.explain.gate",
+      "description": "Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it.",
+      "input": "crate::task_verb::sdk::ExplainGateRequest",
+      "output": "Option<crate::task_verb::sdk::ExplainGateReply>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.gate\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.kv.get",
       "description": "Exact key lookup in the bound actor's worldless key-value namespace; never recall.",
       "input": "crate::memory::KeyValueAddress",
@@ -1002,6 +1048,58 @@
       "section": false
     },
     {
+      "name": "vault.packs.remove",
+      "description": "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.",
+      "input": "PackRemoveRequest",
+      "output": "crate::skill_hub::pack_catalog::PackInstallReceipt",
+      "call": "crate::task_verb::sdk::remove_pack_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.put",
+      "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
+      "input": "ChannelSubscriptionRequest",
+      "output": "crate::connector_key::ChannelMessageSubscription",
+      "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.list",
+      "description": "An agent's connector event subscriptions, standing and revoked, for the owner.",
+      "input": "ChannelSubscriptionsRequest",
+      "output": "crate::task_verb::sdk::ChannelSubscriptions",
+      "call": "crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.revoke",
+      "description": "The owner stops one connector event subscription; the agent's key for the channel stays.",
+      "input": "ChannelSubscriptionRevokeRequest",
+      "output": "crate::task_verb::sdk::ChannelSubscriptionRevoked",
+      "call": "crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.packs.setup.prepare",
       "description": "The owner opens, or resumes, a pack's guided setup; opening grants nothing.",
       "input": "PackSetupRequest",
@@ -1059,6 +1157,17 @@
       "input": "crate::receipt::AuthorityAuditQuery",
       "output": "crate::receipt::AuthorityAuditPage",
       "call": "crate::receipt::authority_audit_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.mesh.path_receipts",
+      "description": "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner.",
+      "input": "crate::task_verb::sdk::MeshPathReceiptsRequest",
+      "output": "Vec<crate::sync::mesh_path::MeshPathReceipt>",
+      "call": "crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)?",
       "host_door": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
@@ -1446,6 +1555,52 @@
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.courtesy_delete.send",
+      "description": "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery.",
+      "input": "crate::task_verb::sdk::CourtesyDeleteSendRequest",
+      "output": "crate::task_verb::sdk::CourtesyDeleteSent",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.send\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.courtesy_delete.sent",
+      "description": "Every courtesy delete ask this vault sent, with its delivery status, for the owner.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::CourtesyDeleteSent>",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.sent\", &EmptyRequest {})?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.courtesy_delete.incoming",
+      "description": "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.incoming\", &EmptyRequest {})?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.courtesy_delete.answer",
+      "description": "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where.",
+      "input": "crate::task_verb::sdk::CourtesyDeleteAnswerRequest",
+      "output": "crate::task_verb::sdk::CourtesyDeleteIncoming",
+      "call": "crate::task_verb::sdk::courtesy_delete_host_only(memory, \"vault.courtesy_delete.answer\", &input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -2168,6 +2323,28 @@
       }
     },
     {
+      "name": "vault.artifacts.ask",
+      "description": "Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard.",
+      "input": "crate::blob_artifact::ArtifactAskSubmit",
+      "output": "crate::blob_artifact::ArtifactAskOutcome",
+      "call": "memory.artifacts_ask(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false
+    },
+    {
+      "name": "vault.critic.review",
+      "description": "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target.",
+      "input": "crate::critic::review::CriticReviewSubmit",
+      "output": "crate::critic::review::CriticReviewOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.critic.review\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false
+    },
+    {
       "name": "vault.artifacts.propose_deck",
       "description": "Runs one native deck transaction over an artifact's head and holds the proposal for Keep.",
       "refs": ["/context/thread", "/made_by/inputs/*/row", "/made_by/trigger/task", "/made_by/trigger/ask", "/made_by/trigger/skill"],
@@ -2629,7 +2806,7 @@
     },
     {
       "name": "vault.rooms.speak",
-      "description": "Speaks one turn into the current room turn's room, through the normal witness gate.",
+      "description": "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later.",
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
@@ -3225,6 +3402,17 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
       "host_door": true,
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.refresh",
+      "description": "Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it.",
+      "input": "crate::receipt::QuestionRefreshRequest",
+      "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.refresh\", &input)?",
+      "host_door": true,
+      "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
     },

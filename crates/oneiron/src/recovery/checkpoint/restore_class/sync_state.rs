@@ -88,6 +88,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_QD_E, CONTENT),
     (&t::SYNC_QN_E, CONTENT),
     (&t::SYNC_REASSERT_MARKER, CONTENT),
+    (&t::SYNC_ROOM_FACT_DIRTY, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_BLOB, CONTENT),
     (&t::SYNC_RESIDENCE_ITEM_DOCUMENT, CONTENT),
     (&t::SYNC_RESIDENCE_INDEX, CONTENT),

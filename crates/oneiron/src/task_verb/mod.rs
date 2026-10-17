@@ -68,6 +68,7 @@ mod rate_limit;
 mod reconciliation;
 mod refusal;
 mod report_journal;
+pub(crate) use report_journal::erase_in_txn as erase_report_journal_in_txn;
 mod room_thread;
 mod route_receipts;
 mod runner_done;
@@ -99,7 +100,7 @@ pub use consult_ladder_facade::{
 pub use consult_payload::{ConsultPayload, ConsultPayloadRef, ConsultRecovery};
 pub use consult_result::{
     ConsultDigestRoute, ConsultExpiryReport, ConsultFanOutReceipt, ConsultFanOutSpec,
-    ConsultResultInput, ConsultResultKind, TaskResultReceipt,
+    ConsultMeasuredSpend, ConsultResultInput, ConsultResultKind, TaskResultReceipt,
 };
 pub use create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 pub use create_validation::check_task_label;
@@ -230,13 +231,16 @@ pub mod sdk;
 mod sdk_catalog_fragment;
 mod sdk_connector;
 mod sdk_connector_call;
+mod sdk_courtesy_delete;
 mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_embedding_space;
+mod sdk_explain;
 mod sdk_fanout_launch;
 mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
+mod sdk_mesh;
 mod sdk_record_erase;
 mod sdk_scratchpad;
 mod sdk_secret;

@@ -1,19 +1,23 @@
 //! The block structure [`super::parse_record_links`] reads a text's lines
-//! through (CommonMark, as far as finding links needs it): fenced and
-//! indented code, raw HTML blocks, list items and paragraphs. Every
-//! indentation is measured from the content column of the list item a line
-//! sits in, so a line indented under a list item is that item's text, and
-//! only a line four columns past the item's content is code. No link syntax
+//! through (CommonMark, as far as finding links needs it): block quotes,
+//! list items, fenced and indented code, raw HTML blocks and paragraphs. A
+//! line first passes the containers open around it, outermost first: a
+//! block quote by its `>` marker, a list item by indenting to its content
+//! column. Every indentation is then measured from the content column of the
+//! innermost container the line sits in, so a line indented under a list
+//! item is that item's text, `>     code` is code inside a quote, and only a
+//! line four columns past its container's content is code. No link syntax
 //! lives here.
 
-use super::{HtmlBlockEnd, fence_line, html_block_start, indent_columns, line_end_at};
+use super::{HtmlBlockEnd, fence_line, html_block_start, line_end_at};
 
 /// What one line is to the inline scan.
 pub(super) enum Line {
     /// Code, raw HTML, a blank line or an empty list item: no link is read
     /// in it.
     Skip,
-    /// Text, read for links from byte `from` of the line.
+    /// Text, read for links from byte `from` of the line, past its quote
+    /// markers and indentation.
     Inline {
         from: usize,
         /// The line opens a paragraph (or a heading): no code span reaches
@@ -21,10 +25,26 @@ pub(super) enum Line {
         starts_paragraph: bool,
         /// An ATX heading: a code span in it ends with the line.
         heading: bool,
-        /// The line opens with a block quote marker, whose following lines
-        /// continue its paragraph rather than open a quote.
-        quoted: bool,
     },
+}
+
+/// One open container: a block quote, which a line stays in only through
+/// its `>` marker, or a list item, which a line stays in by indenting to its
+/// content.
+#[derive(Clone, Copy)]
+struct Container {
+    /// The column the container's content starts at.
+    content: usize,
+    quote: bool,
+}
+
+/// How far a line's container prefix reached: the byte and column after it,
+/// and the content column of the innermost container it entered.
+#[derive(Clone, Copy)]
+struct Cursor {
+    at: usize,
+    col: usize,
+    base: usize,
 }
 
 /// The open blocks, line by line.
@@ -34,8 +54,8 @@ pub(super) struct Blocks {
     fence: Option<(u8, usize)>,
     /// The open raw HTML block, by what ends it.
     html: Option<HtmlBlockEnd>,
-    /// The content columns of the open list items, outermost first.
-    items: Vec<usize>,
+    /// The open block quotes and list items, outermost first.
+    containers: Vec<Container>,
     /// The last line opened or continued a paragraph: a lazy line may
     /// continue it, and indented code may not interrupt it.
     in_paragraph: bool,
@@ -44,37 +64,37 @@ pub(super) struct Blocks {
 impl Blocks {
     /// Reads the next line (without its `\n`) and says what it is.
     pub(super) fn line(&mut self, line: &[u8]) -> Line {
-        let blank = line.iter().all(u8::is_ascii_whitespace);
-        let lead = lead(line);
-        let mut col = indent_columns(line);
-        // A line indented less than an open item's content leaves that item,
-        // and any code or HTML open in it, unless it lazily continues the
-        // item's paragraph.
-        if !blank && self.items.last().is_some_and(|&content| col < content) {
-            let lazy =
-                self.in_paragraph && !opens_block(&line[lead..], col - self.base_for(col), true);
+        let (cursor, entered) = self.enter(line);
+        let (mut from, mut col) = skip_blanks(line, cursor.at, cursor.col);
+        let blank = line[from..].iter().all(u8::is_ascii_whitespace);
+        // A line that leaves an open container leaves any code or HTML open
+        // in it too, unless it lazily continues the container's paragraph.
+        if entered < self.containers.len() {
+            let lazy = !blank
+                && self.in_paragraph
+                && !opens_block(&line[from..], col.saturating_sub(cursor.base), true);
             if lazy {
                 return Line::Inline {
-                    from: lead,
+                    from,
                     starts_paragraph: false,
                     heading: false,
-                    quoted: false,
                 };
             }
-            self.items.retain(|&content| content <= col);
+            self.containers.truncate(entered);
             self.fence = None;
             self.html = None;
             self.in_paragraph = false;
         }
-        let mut base = self.items.last().copied().unwrap_or(0);
+        let mut base = cursor.base;
         if let Some(open) = self.fence {
-            if let Some(next) = fence_line(Some(open), col.saturating_sub(base), &line[lead..]) {
+            if let Some(next) = fence_line(Some(open), col.saturating_sub(base), &line[from..]) {
                 self.fence = next;
             }
             return Line::Skip;
         }
         if let Some(end) = self.html {
-            if end.ends_at(line) {
+            // Past the quote markers, so a quote's own `>` never ends it.
+            if end.ends_at(&line[from..]) {
                 self.html = None;
             }
             return Line::Skip;
@@ -86,9 +106,8 @@ impl Blocks {
         if col.saturating_sub(base) >= 4 && !self.in_paragraph {
             return Line::Skip;
         }
-        let mut from = lead;
-        // The blocks this line opens, each inside the item the one before it
-        // opened (`- - text`, `1. ``` `).
+        // The blocks this line opens, each inside the container the one
+        // before it opened (`- - text`, `1. ``` `, `> - text`, `- > text`).
         loop {
             let rest = &line[from..];
             let relative = col.saturating_sub(base);
@@ -106,6 +125,25 @@ impl Blocks {
                 self.in_paragraph = false;
                 return Line::Skip;
             }
+            let here = Cursor {
+                at: from,
+                col,
+                base,
+            };
+            if let Some(quote) = quote_marker(line, here) {
+                self.containers.push(Container {
+                    content: quote.base,
+                    quote: true,
+                });
+                self.in_paragraph = false;
+                base = quote.base;
+                (from, col) = skip_blanks(line, quote.at, quote.col);
+                if line[from..].iter().all(u8::is_ascii_whitespace) || col.saturating_sub(base) >= 4
+                {
+                    return Line::Skip;
+                }
+                continue;
+            }
             let marker = if relative <= 3 && !thematic_break(rest) {
                 list_marker(rest, col)
             } else {
@@ -116,7 +154,10 @@ impl Blocks {
                 break;
             };
             base = col + marker.columns;
-            self.items.push(base);
+            self.containers.push(Container {
+                content: base,
+                quote: false,
+            });
             self.in_paragraph = false;
             if marker.empty || marker.code {
                 return Line::Skip;
@@ -135,31 +176,30 @@ impl Blocks {
             from,
             starts_paragraph,
             heading,
-            quoted: opening && rest.first() == Some(&b'>'),
         }
     }
 
     /// Where the paragraph a line ending at `line_end` sits in ends, in
     /// `bytes`: the start of the first later line that is blank or opens a
-    /// block, read under the list items open now. A code span never crosses
-    /// it. A paragraph in a block quote (`quoted`) continues on the quote's
-    /// later lines.
-    pub(super) fn paragraph_end(&self, bytes: &[u8], line_end: usize, quoted: bool) -> usize {
+    /// block, read through the containers open now. A code span never
+    /// crosses it. A later line that leaves a container continues the
+    /// paragraph lazily unless it opens a block.
+    pub(super) fn paragraph_end(&self, bytes: &[u8], line_end: usize) -> usize {
         let mut at = line_end;
         while at < bytes.len() {
             let start = at + 1;
             let end = line_end_at(bytes, start, bytes.len());
             let line = &bytes[start..end];
-            if line.iter().all(u8::is_ascii_whitespace) {
+            let (cursor, entered) = self.enter(line);
+            let (from, col) = skip_blanks(line, cursor.at, cursor.col);
+            let rest = &line[from..];
+            if rest.iter().all(u8::is_ascii_whitespace) {
                 return start;
             }
-            let col = indent_columns(line);
-            let rest = &line[lead(line)..];
-            let relative = col - self.base_for(col);
-            let outside = self.items.last().is_some_and(|&content| col < content);
-            let quote_line = quoted && rest.first() == Some(&b'>');
-            if (opens_block(rest, relative, outside) && !quote_line)
-                || (relative <= 3 && setext_underline(rest))
+            let relative = col.saturating_sub(cursor.base);
+            let outside = entered < self.containers.len();
+            if opens_block(rest, relative, outside)
+                || (!outside && relative <= 3 && setext_underline(rest))
             {
                 return start;
             }
@@ -168,23 +208,74 @@ impl Blocks {
         bytes.len()
     }
 
-    /// The content column of the innermost open item a line at `col` sits
-    /// in: none is 0.
-    fn base_for(&self, col: usize) -> usize {
-        self.items
-            .iter()
-            .rev()
-            .find(|&&content| content <= col)
-            .copied()
-            .unwrap_or(0)
+    /// Walks `line` through the open containers, outermost first: how far
+    /// their prefix reached, and how many of them the line stays in. A line
+    /// blank from there on stays in a list item, never in a block quote
+    /// without its marker.
+    fn enter(&self, line: &[u8]) -> (Cursor, usize) {
+        let mut cursor = Cursor {
+            at: 0,
+            col: 0,
+            base: 0,
+        };
+        for (entered, container) in self.containers.iter().enumerate() {
+            if container.quote {
+                match quote_marker(line, cursor) {
+                    Some(next) => cursor = next,
+                    None => return (cursor, entered),
+                }
+            } else {
+                let (at, col) = skip_blanks(line, cursor.at, cursor.col);
+                let blank = line[at..].iter().all(u8::is_ascii_whitespace);
+                if !blank && col < container.content {
+                    return (cursor, entered);
+                }
+                cursor.base = container.content;
+            }
+        }
+        (cursor, self.containers.len())
     }
 }
 
-/// The leading spaces and tabs of `line`, in bytes.
-fn lead(line: &[u8]) -> usize {
-    line.iter()
-        .take_while(|&&byte| byte == b' ' || byte == b'\t')
-        .count()
+/// The spaces and tabs from byte `at` of `line`, which sits at column `col`:
+/// the byte and column of what follows them. A tab runs to the next multiple
+/// of four.
+fn skip_blanks(line: &[u8], mut at: usize, mut col: usize) -> (usize, usize) {
+    while let Some(&byte) = line.get(at) {
+        match byte {
+            b' ' => col += 1,
+            b'\t' => col += 4 - col % 4,
+            _ => break,
+        }
+        at += 1;
+    }
+    (at, col)
+}
+
+/// The block quote marker past `cursor`'s blanks, when it sits at most three
+/// columns into `cursor`'s container: a `>`, and one blank after it that
+/// belongs to the marker. The cursor past it has the quote's content column
+/// as its `base`; a tab after the `>` is left for the line's indentation,
+/// less the one column the marker takes from it.
+fn quote_marker(line: &[u8], cursor: Cursor) -> Option<Cursor> {
+    let (at, col) = skip_blanks(line, cursor.at, cursor.col);
+    if col.saturating_sub(cursor.base) > 3 || line.get(at) != Some(&b'>') {
+        return None;
+    }
+    let (at, col) = (at + 1, col + 1);
+    Some(match line.get(at) {
+        Some(b' ') => Cursor {
+            at: at + 1,
+            col: col + 1,
+            base: col + 1,
+        },
+        Some(b'\t') => Cursor {
+            at,
+            col,
+            base: col + 1,
+        },
+        _ => Cursor { at, col, base: col },
+    })
 }
 
 /// Whether `rest` (a line from its first non-blank byte, `relative` columns

@@ -11,10 +11,11 @@ use crate::error::{Error, Result};
 use crate::learning_setting::{self, SettingSpec};
 use crate::side_table::{self, Named, SideTable};
 
-use super::cell::{LearningCell, LearningPredicate};
-use super::estimate::{EstimateValue, Prior, PriorOrigin};
+use super::cell::{LearningCell, LearningPredicate, TypeRef};
+use super::estimate::{EstimateForm, EstimateValue, Prior, PriorOrigin};
 use super::evidence::{CellRow, ensure_cell_in_txn};
 use super::project::project_cell_in_txn;
+use super::read::read_learning_in_txn;
 
 /// A cell's stored prior. Key: the cell digest.
 pub(crate) const PRIOR: SideTable<[u8; 32], Prior, Named> =
@@ -46,9 +47,39 @@ pub fn put_cell_prior(vault: &Vault, cell: &LearningCell, prior: &Prior, now: u6
     })
 }
 
+/// Keeps the prior a cell borrows (its parent type's, or the same question
+/// at another executor) as the cell's stored prior before its first own
+/// evidence, so that evidence adds runs against the borrowed weight instead
+/// of replacing it ("Receipts then outweigh it, like any prior"). A cell with
+/// a stored prior or an own head keeps what it has; a cell that borrows
+/// nothing, or borrows in another form than `form`, stores nothing.
+///
+/// # Errors
+///
+/// A malformed cell or type ref; storage errors.
+pub(crate) fn capture_borrowed_prior_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    cell: &LearningCell,
+    type_parents: &[TypeRef],
+    form: EstimateForm,
+) -> Result<()> {
+    let digest = cell.digest();
+    if PRIOR.contains(&vault.store, wtxn, &digest)? {
+        return Ok(());
+    }
+    let read = read_learning_in_txn(vault, wtxn, cell, type_parents)?;
+    if read.own || read.borrowed_from.is_none() || read.estimate.form() != form {
+        return Ok(());
+    }
+    ensure_cell_in_txn(vault, wtxn, cell, form)?;
+    PRIOR.put(&vault.store, wtxn, &digest, &read.estimate.prior)
+}
+
 /// The prior in force for a registered cell.
 ///
-/// A `learning.setting` cell starts from the owner's seed when one is set,
+/// A `learning.setting` cell starts from the owner's seed for its scope when
+/// one is set (its project's, its type's, else the vault's),
 /// then from a stored prior, then from the catalog seed at the shipped
 /// weight. Every other cell starts from its stored prior, else the shipped
 /// default of its form.
@@ -64,8 +95,13 @@ pub(crate) fn cell_prior_in_txn(
             .setting_key
             .as_deref()
             .and_then(learning_setting::setting_spec)
-        && let Some((value, weight_runs)) =
-            learning_setting::owner_seed_in_txn(&vault.store, txn, spec)?
+        && let Some((value, weight_runs)) = learning_setting::owner_seed_in_txn(
+            &vault.store,
+            txn,
+            spec,
+            row.cell.subject,
+            row.cell.type_ref.as_ref(),
+        )?
     {
         return Ok(Prior {
             origin: PriorOrigin::Seed,
@@ -114,14 +150,14 @@ fn shipped_setting_prior(
 /// the cell's `of` category.
 fn point_value(row: &CellRow, value: f64) -> EstimateValue {
     match row.form {
-        super::estimate::EstimateForm::Counts => EstimateValue::Counts {
+        EstimateForm::Counts => EstimateValue::Counts {
             counts: std::iter::once((row.of.clone(), 1.0)).collect(),
         },
-        super::estimate::EstimateForm::Beta => EstimateValue::Beta {
+        EstimateForm::Beta => EstimateValue::Beta {
             alpha: value.clamp(1e-6, 1.0 - 1e-6),
             beta: (1.0 - value).clamp(1e-6, 1.0 - 1e-6),
         },
-        super::estimate::EstimateForm::Mean => EstimateValue::Mean {
+        EstimateForm::Mean => EstimateValue::Mean {
             mean: value,
             spread: 0.0,
         },

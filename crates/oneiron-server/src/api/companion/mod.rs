@@ -28,7 +28,7 @@ pub(crate) use self::profiles::{
 };
 
 pub(crate) use self::lists::{
-    __path_list_access_requests, __path_list_personas, AccessRequestListRow,
-    AccessRequestsListResponse, PersonaListQuery, PersonaListRow, PersonasListResponse,
-    list_access_requests, list_personas,
+    __path_list_access_requests, __path_list_profiles, AccessRequestListRow,
+    AccessRequestsListResponse, ProfileListQuery, ProfileListRow, ProfilesListResponse,
+    list_access_requests, list_profiles,
 };

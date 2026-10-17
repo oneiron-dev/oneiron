@@ -174,6 +174,11 @@ pub(crate) use project::{
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
+pub(crate) use rooms::{
+    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, record_thread_admits_in,
+    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
+    thread_binding, thread_members_in, thread_root_readable_in, validate_private_audience_in,
+};
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomPage, RoomSpeakingRole, RoomStanding,
     RoomThread, RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads,
@@ -192,13 +197,15 @@ pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use rooms::erase_room_side_rows;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
-pub(crate) use rooms::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
+pub(crate) use rooms::{
+    RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
+    merge_replicated_responses_in_txn, merge_replicated_side_row_in_txn,
+    merge_replicated_turn_in_txn, replicated_side_carriers_in, replicated_side_rows_in,
+    replicated_turn_in,
+};
 pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
 
-pub(crate) use rooms::{
-    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
-    record_participation_in_txn, require_join_covering_in_txn,
-};
+pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
 
 pub use crate::gate::RoomThreadFill;
