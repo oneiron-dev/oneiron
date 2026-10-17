@@ -8,7 +8,8 @@
 //! change renames, moves, adds and deletes worksheets first, retargeting
 //! every formula that names a renamed or deleted sheet; row and column inserts
 //! and deletes come next, moving cells, ranges and every reference into the
-//! sheet, and a deleted reference reads `#REF!`. The body itself
+//! sheet, and a deleted reference reads `#REF!`. The cell formats a body
+//! composed go into the stylesheet before any cell names them. The body itself
 //! (its Loro document, actors and forks) lives in the engine; this module
 //! knows only SpreadsheetML.
 
@@ -20,6 +21,10 @@ use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
 use crate::xlsx_shift::shift_formula;
 pub use crate::xlsx_shift::{SheetFate, XlsxAxis, XlsxAxisEdit, retarget_sheets, shift_axis};
+use crate::xlsx_styles::write_formats;
+pub use crate::xlsx_styles::{
+    XlsxBorder, XlsxColor, XlsxEdge, XlsxFill, XlsxFont, XlsxFormat, XlsxNumberFormat, check_format,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -232,6 +237,12 @@ pub enum XlsxChange {
         sheet: String,
         edit: XlsxAxisEdit,
     },
+    /// Cell formats the body composed, written into the stylesheet before
+    /// the cells: a cell's `style` of the workbook's format count plus `k`
+    /// names the `k`-th. An equal record the stylesheet holds is reused.
+    Formats {
+        formats: Vec<XlsxFormat>,
+    },
 }
 
 /// One worksheet of a sheet layout.
@@ -289,6 +300,41 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
         return Ok(source.to_vec());
     }
     let mut book = Book::open(source, limits)?;
+    let mut defined = changes.iter().filter_map(|change| match change {
+        XlsxChange::Formats { formats } => Some(formats),
+        _ => None,
+    });
+    let formats = defined.next();
+    if defined.next().is_some() {
+        return Err(refused("two lists of cell formats"));
+    }
+    // A cell names a composed format past the workbook's own; it takes the
+    // index the stylesheet gave it.
+    let remapped: Vec<XlsxChange>;
+    let changes = match formats {
+        Some(formats) => {
+            let imported = book.styles.len();
+            let indices = book.resolve_formats(formats)?;
+            remapped = changes
+                .iter()
+                .map(|change| {
+                    let mut change = change.clone();
+                    if let XlsxChange::Cell {
+                        style: Some(style), ..
+                    } = &mut change
+                        && *style as usize >= imported
+                    {
+                        *style = *indices
+                            .get(*style as usize - imported)
+                            .ok_or(refused("a cell names a format the body did not compose"))?;
+                    }
+                    Ok(change)
+                })
+                .collect::<Result<_>>()?;
+            &remapped[..]
+        }
+        None => changes,
+    };
     let mut relaid = false;
     for change in changes {
         if let XlsxChange::Sheets { sheets } = change {
@@ -326,7 +372,10 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             style,
         } = change
         else {
-            if !matches!(change, XlsxChange::Sheets { .. } | XlsxChange::Shift { .. }) {
+            if !matches!(
+                change,
+                XlsxChange::Sheets { .. } | XlsxChange::Shift { .. } | XlsxChange::Formats { .. }
+            ) {
                 names.push(change);
             }
             continue;
@@ -603,6 +652,8 @@ struct Book {
     shared: Vec<String>,
     date1904: bool,
     names: Vec<XlsxName>,
+    /// The stylesheet part, when the workbook has one.
+    styles_part: Option<String>,
     styles: Vec<XlsxStyle>,
 }
 
@@ -651,11 +702,12 @@ impl Book {
                 shared.push(string_item(&sst, item));
             }
         }
-        let styles = match links
+        let styles_part = links
             .iter()
             .find(|rel| !rel.external && rel.kind.ends_with("/styles"))
-        {
-            Some(rel) => styles(&parse(&package, &rel.target)?)?,
+            .map(|rel| rel.target.clone());
+        let styles = match &styles_part {
+            Some(part) => styles(&parse(&package, part)?)?,
             None => Vec::new(),
         };
         let names = names(&tree, &order)?;
@@ -667,8 +719,32 @@ impl Book {
             shared,
             date1904,
             names,
+            styles_part,
             styles,
         })
+    }
+
+    /// Write the body's cell formats into the stylesheet: each one's index in
+    /// `cellXfs`, in order. The workbook's formats are read again after.
+    fn resolve_formats(&mut self, formats: &[XlsxFormat]) -> Result<Vec<u32>> {
+        let part = self.styles_part.clone().ok_or(refused(
+            "the workbook has no stylesheet to add a cell format to",
+        ))?;
+        let bytes = self
+            .package
+            .part(&part)?
+            .ok_or(refused("a workbook part is missing"))?;
+        let (indices, value) = write_formats(
+            &bytes,
+            self.package.limits().xml,
+            formats,
+            self.styles.len(),
+        )?;
+        if let Some(value) = value {
+            self.package.replace_xml_part(&part, value)?;
+            self.styles = styles(&parse(&self.package, &part)?)?;
+        }
+        Ok(indices)
     }
 
     /// A worksheet's stored cells, its read-only ranges and its shared
@@ -1739,7 +1815,10 @@ impl Book {
                     (name, sheet, Some(xml))
                 }
                 XlsxChange::DeleteName { name, sheet } => (name, sheet, None),
-                XlsxChange::Cell { .. } | XlsxChange::Sheets { .. } | XlsxChange::Shift { .. } => {
+                XlsxChange::Cell { .. }
+                | XlsxChange::Sheets { .. }
+                | XlsxChange::Shift { .. }
+                | XlsxChange::Formats { .. } => {
                     continue;
                 }
             };

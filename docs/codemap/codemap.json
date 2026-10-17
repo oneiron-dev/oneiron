@@ -9894,7 +9894,7 @@
      "path": "src/claim/lifecycle.rs",
      "purpose": "Claim lifecycle transitions: the supersession-chain walk, the write-verb validity guard, `supersede_claim` /…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 4
      }
     },
@@ -9925,7 +9925,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "re-export": 11
      }
     },
@@ -10471,7 +10471,7 @@
      "path": "src/claim/supersession_provenance.rs",
      "purpose": "Runner-owned companion claims; structural taint mirrors also run on replay",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -13777,7 +13777,18 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/lifecycle/proxy.rs",
+     "purpose": "The OpenAI proxy's own connector (ARCH-0028): the proxy registers as a connector with its own key and takes…",
+     "surface": {
+      "const": 1,
+      "fn": 1
      }
     },
     {
@@ -13800,7 +13811,7 @@
      "path": "src/connector_key/lifecycle/registration.rs",
      "purpose": "Key minting: both register doors, shared in-txn core, unbudgeted mint, entity-body writer",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -13926,8 +13937,8 @@
      "path": "src/connector_key/qualification/receipt.rs",
      "purpose": "Durable evidence for the suite that actually ran, retained on activation",
      "surface": {
-      "const": 2,
-      "crate-vis": 9,
+      "const": 3,
+      "crate-vis": 11,
       "struct": 1
      }
     },
@@ -18469,7 +18480,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DreamerRunContext",
@@ -26655,7 +26666,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 15,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 11,
       "struct": 3
@@ -28590,7 +28601,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "re-export": 2,
       "struct": 5
      }
@@ -50867,7 +50878,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world delete that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -52266,7 +52277,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52429,7 +52440,7 @@
     "dreamer_promotion": {
      "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
@@ -53435,9 +53446,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 172,
+   "over_bar": 173,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3244,
+   "source_files": 3245,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58224,15 +58235,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "DoceditError"
+      "DoceditError",
+      "DocxAnchorBlock"
      ],
      "path": "src/lib.rs",
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "mod": 14,
-      "re-export": 5
+      "re-export": 5,
+      "struct": 1
      }
     },
     {
@@ -70351,8 +70364,8 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 8,
-      "fn": 18,
-      "re-export": 13,
+      "fn": 19,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -70545,6 +70558,20 @@
      "purpose": "Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TokenRatios"
+     ],
+     "path": "src/models/token_ratio.rs",
+     "purpose": "Each catalog model's tokens per o200k token (OF-577): its tokenizer's count of one fixed passage over…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -71269,6 +71296,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MediaDoor"
+     ],
+     "path": "src/server/media_door.rs",
+     "purpose": "The vault-bound media door (FIX-LIST 467): the one door engine code makes a media call through",
+     "surface": {
+      "crate-vis": 5,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71295,8 +71335,8 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 14,
-      "re-export": 3
+      "crate-vis": 15,
+      "re-export": 4
      }
     },
     {
@@ -72428,7 +72468,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72491,7 +72531,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72563,7 +72603,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 594,
+   "source_files": 596,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -619,7 +619,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder.rs` | src | XL | 1 struct · 10 fn · 16 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/media.rs` | src | L | 3 struct · 16 fn · 10 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/jobs.rs` | src | s | 7 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
-| `src/models/mod.rs` | src | m | 2 struct · 18 fn · 13 re-export · 8 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
+| `src/models/mod.rs` | src | m | 2 struct · 19 fn · 14 re-export · 8 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/offer.rs` | src | s | 1 struct · 2 crate-vis | ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
 | `src/models/openai.rs` | src | s | 3 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
 | `src/models/outbound_wait.rs` | src | s | 1 crate-vis | — | Server policy for shedding during a long journaled model wait |
@@ -636,6 +636,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/sse.rs` | src | s | 6 crate-vis | — | An incremental server-sent-events decoder (WHATWG event-stream parsing): LF, CRLF or lone CR line ends, a… |
 | `src/models/status.rs` | src | s | 6 struct · 2 enum · 7 crate-vis | HealthState, LimitHold, ModelsStatus, ProviderStatus, RungHealth, RungStatus, SeatState, SeatStatus | What the model runtime built, for the owner-facing status route |
 | `src/models/tests.rs` | test | L | 4 crate-vis | — | Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit… |
+| `src/models/token_ratio.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | TokenRatios | Each catalog model's tokens per o200k token (OF-577): its tokenizer's count of one fixed passage over… |
 | `src/models/voice.rs` | src | s | 1 fn | — | The voice cascade's routes on the media seats (OF-410) |
 | `src/models/voxcpm2_speech.rs` | src | s | 1 crate-vis | — | The own-server speech rung on a VoxCPM2 worker (`deploy/voxcpm2`, OF-410): a `[models.media.speech]` rung on… |
 | `src/models/walk.rs` | src | m | 16 crate-vis | — | What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the… |
@@ -701,9 +702,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
 | `src/server/live_rows_tests.rs` | test | s | 2 crate-vis | — | Rule five at the vault's live rows as this server sets them from `[limits]` (census rows 45 and 57): past a… |
 | `src/server/live_runs.rs` | src | m | 28 crate-vis | — | The live agent runs a harness may act for over HTTP (OF-181) |
+| `src/server/media_door.rs` | src | s | 1 struct · 5 crate-vis | MediaDoor | The vault-bound media door (FIX-LIST 467): the one door engine code makes a media call through |
 | `src/server/media_embedding.rs` | src | m | 6 crate-vis | — | The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same… |
 | `src/server/message_stream.rs` | src | s | 1 crate-vis | — | Host-owned stream timer and local presence relay |
-| `src/server/mod.rs` | src | s | 3 re-export · 14 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 4 re-export · 15 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/organs.rs` | src | s | 2 crate-vis | — | The organs on the server's one host ([`SyncServer::organs`]): at boot it takes every organ an Active pack… |
 | `src/server/oversight.rs` | src | s | 1 enum · 5 crate-vis | OversightStartError | The healer oversight receipts (ARCH-0066 §8): each vault signs three counts about review work, coverage… |
 | `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
