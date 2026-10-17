@@ -1790,7 +1790,7 @@
      "purpose": "Write-once executor identity for a skill-bearing attempt's terminal receipt",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -10162,7 +10162,7 @@
      "purpose": "The weave lens's generate step (OF-499, ARCH-0063 §6): \"Its render is a generate step, a skill with its own…",
      "surface": {
       "const": 5,
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 4,
       "struct": 6
      }
@@ -10199,6 +10199,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "WeaveDigestFramed",
       "WeaveDigestRequest",
       "WeaveDigestView",
       "WeaveItemView",
@@ -10217,8 +10218,8 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 8,
-      "struct": 10
+      "fn": 11,
+      "struct": 11
      }
     },
     {
@@ -26282,7 +26283,7 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 12,
+      "const": 15,
       "crate-vis": 4,
       "enum": 2,
       "fn": 10,
@@ -31140,7 +31141,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 11,
       "struct": 2
      }
@@ -36050,7 +36051,7 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 1,
       "fn": 19,
       "struct": 1
@@ -46552,7 +46553,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 308
+      "fn": 309
      }
     },
     {
@@ -55117,7 +55118,7 @@
      "surface": {
       "const": 11,
       "enum": 7,
-      "fn": 9,
+      "fn": 10,
       "re-export": 5,
       "struct": 35,
       "trait": 2
@@ -57367,6 +57368,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/structure/slides/app_props.rs",
+     "purpose": "The app properties (`docProps/app.xml`) a slide's removal would leave stale (FIX 2377): the slide…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -57393,7 +57404,7 @@
      "path": "src/edit/structure/slides/mod.rs",
      "purpose": "Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -57900,7 +57911,7 @@
      "purpose": "The add-part and remove-part doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 11,
+      "fn": 12,
       "struct": 1
      }
     },
@@ -58071,7 +58082,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58150,7 +58161,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 65,
+   "source_files": 66,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -60884,7 +60895,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 262
+      "fn": 263
      }
     },
     {
@@ -61901,7 +61912,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 263
+      "fn": 264
      }
     },
     {
@@ -64568,7 +64579,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -64816,7 +64827,7 @@
      "path": "src/api/facade/weave_doors.rs",
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -67614,16 +67625,18 @@
       "OutputLimitField",
       "ProviderConfig",
       "ProviderKind",
+      "RequestCodec",
+      "RequestCompression",
       "ResponseFormatWire",
       "ResponsesSocket"
      ],
      "path": "src/config/models/provider.rs",
      "purpose": "One provider entry: how to reach a model server, as data",
      "surface": {
-      "crate-vis": 4,
-      "enum": 3,
+      "crate-vis": 5,
+      "enum": 4,
       "fn": 7,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -69190,7 +69203,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -70918,7 +70931,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "VoiceMediaBindings",
@@ -71018,7 +71031,7 @@
      "path": "src/voice_host/wire.rs",
      "purpose": "The voice wire's media ops (OF-410)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "struct": 1
      }
     },
@@ -71790,7 +71803,7 @@
     "voice_host": {
      "files": 14,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Private voice request adapter, not an audio/provider scheduler"
     },
@@ -71823,7 +71836,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 44,
+   "over_bar": 45,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 584,
    "test_files": 182
@@ -72792,9 +72805,7 @@
       "UnsupportedCapability",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
-      "WeaveDigestView",
       "WeaveItemView",
-      "WeaveLensRefusal",
       "WeaveLinkCorrectionView",
       "WeaveReportRequest",
       "WeaveReportView",
@@ -72835,7 +72846,7 @@
      "purpose": "—",
      "surface": {
       "enum": 241,
-      "struct": 594
+      "struct": 592
      }
     },
     {

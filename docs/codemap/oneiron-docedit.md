@@ -40,9 +40,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit/structure/born.rs` | src | s | 2 crate-vis | — | The live-deck projector's creation verbs for what a preset shape cannot carry: a picture over a new media… |
 | `src/edit/structure/check.rs` | src | m | 5 crate-vis | — | The independent check for structural edits |
 | `src/edit/structure/mod.rs` | src | m | 5 struct · 3 enum · 5 fn · 2 crate-vis | ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
+| `src/edit/structure/slides/app_props.rs` | src | s | 2 crate-vis | — | The app properties (`docProps/app.xml`) a slide's removal would leave stale (FIX 2377): the slide… |
 | `src/edit/structure/slides/check.rs` | src | m | 2 crate-vis | — | The independent check for slide-level edits |
 | `src/edit/structure/slides/lifecycle.rs` | src | s | 2 crate-vis | — | A blank slide over a layout, and a slide's removal from the list: the live-deck projector's slide verbs |
-| `src/edit/structure/slides/mod.rs` | src | m | 6 crate-vis | — | Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and… |
+| `src/edit/structure/slides/mod.rs` | src | m | 7 crate-vis | — | Slide-level structural edits: `duplicate_slide`, with relationship-aware cloning under a tested policy, and… |
 | `src/edit/structure/slides/tests.rs` | test | m | — | — | Slide-level acceptance: a copy repairs its notes backlink, leaves the comments behind, keeps every… |
 | `src/edit/structure/tests.rs` | test | m | 1 crate-vis | — | ONE-2529 acceptance, first half (add, delete, reparent): high-water id allocation, the supported delete… |
 | `src/edit/structure/timing.rs` | src | s | 6 crate-vis | — | The delete cascade over a small, tested timing subset (ARCH-0077, "Animation dependencies") |
@@ -76,7 +77,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ooxml.rs` | src | m | 3 struct · 9 fn · 4 const | Node, XmlError, XmlTree | Namespace-aware OOXML reader with byte offsets, for narrow retained edits and package checks |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 2 re-export | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | L | 2 struct · 1 enum · 8 fn · 1 re-export | Editability, Limits, Package | ZIP central-directory reader and copy-through writer |
-| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 11 fn · 5 crate-vis | Relationship | The add-part and remove-part doors |
+| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 12 fn · 5 crate-vis | Relationship | The add-part and remove-part doors |
 | `src/retained_opc/xml/ffi.rs` | src | s | 17 crate-vis | — | Minimal Expat C ABI |
 | `src/retained_opc/xml/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
