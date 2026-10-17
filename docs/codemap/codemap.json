@@ -65804,7 +65804,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "OfferLadder"
@@ -65812,7 +65812,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "fn": 7,
       "struct": 1
      }
@@ -65828,7 +65828,7 @@
      "path": "src/models/media.rs",
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 14,
       "struct": 3
      }
@@ -67685,7 +67685,7 @@
     "models": {
      "files": 33,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out"
     },
