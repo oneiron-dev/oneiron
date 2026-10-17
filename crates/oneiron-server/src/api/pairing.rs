@@ -144,6 +144,7 @@ pub(super) async fn oauth_exchange(
     })?;
     Ok(Json(Paired {
         token: slip.to_token().map_err(|_| ApiError::unauthorized())?,
+        pin: None,
     }))
 }
 
@@ -194,6 +195,10 @@ impl MachineEnrolment {
 #[derive(Serialize)]
 pub(super) struct Paired {
     token: String,
+    /// The checkpoint pin the redeemed link kept (OF-469); the joining client
+    /// checks it against the challenge and digest its link carries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pin: Option<oneiron::authority::AuthorityCheckpointPin>,
 }
 pub(super) async fn redeem(
     State(server): State<Arc<SyncServer>>,
@@ -218,26 +223,17 @@ pub(super) async fn redeem(
         .as_ref()
         .map(MachineEnrolment::request)
         .transpose()?;
-    let slip = with_issuer(&server, |issuer| match &machine {
-        None => server.vault().redeem_pairing_link(
+    let redeemed = with_issuer(&server, |issuer| {
+        server.vault().redeem_pairing_link_pinned(
             issuer,
             &request.code,
             &request.holder_ref,
             binding_key,
             &signature,
-        ),
-        Some(machine) => server
-            .vault()
-            .redeem_machine_pairing_link(
-                issuer,
-                &request.code,
-                &request.holder_ref,
-                binding_key,
-                &signature,
-                machine,
-            )
-            .map(|(slip, _)| slip),
+            machine.as_ref(),
+        )
     })?;
+    let slip = redeemed.slip;
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration
     // only records its immutable adapter ceiling; it creates no authority.
@@ -249,7 +245,10 @@ pub(super) async fn redeem(
             .register(&token, record)
             .map_err(|_| ApiError::unauthorized())?;
     }
-    Ok(Json(Paired { token }))
+    Ok(Json(Paired {
+        token,
+        pin: redeemed.pin,
+    }))
 }
 
 /// The MCP adapter record a paired slip's claims map to, or `None` for a slip

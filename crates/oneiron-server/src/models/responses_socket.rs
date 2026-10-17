@@ -4,8 +4,13 @@
 //! completed when the call's conversation extends it. A call whose socket
 //! will not open goes over the chat HTTP path, whole, as before.
 //!
+//! With `store` on (OF-602), the provider keeps every response, so a
+//! conversation's chain outlives its socket: a replaced or reconnected socket
+//! takes it up and still sends only the new items.
+//!
 //! Each call is still one gated call: a socket open is no admission, and a
 //! dropped call drops its socket, which ends the response on it.
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -43,6 +48,19 @@ const RETIRE_BEFORE_LIMIT: Duration = Duration::from_secs(300);
 const IDLE_KEEP: Duration = Duration::from_secs(600);
 /// The most idle sockets one provider keeps.
 const IDLE_SOCKETS: usize = 8;
+/// The most conversations whose stored chain one provider keeps, with
+/// `store` on.
+const STORED_CHAINS: usize = 32;
+
+/// The owner's Responses `store` switch (OF-602), off by default: read from
+/// the vault at start-up and set again when the owner changes it.
+static STORE: AtomicBool = AtomicBool::new(false);
+
+/// Sets whether each Responses turn from here on asks its provider to keep
+/// the response.
+pub(crate) fn set_responses_store(on: bool) {
+    STORE.store(on, Ordering::Relaxed);
+}
 
 /// One socket and the chain of responses it holds.
 struct Session {
@@ -77,6 +95,9 @@ pub(super) struct ResponsesSockets {
     /// Set when the origin refused the upgrade for good: every later call
     /// takes HTTP for this process's life.
     refused: AtomicBool,
+    /// The last completed chain of each recent conversation sent with
+    /// `store` on, newest last.
+    stored: Mutex<VecDeque<OpenAiResponsesChain>>,
 }
 
 impl ResponsesSockets {
@@ -120,6 +141,7 @@ impl ResponsesSockets {
             max_age: Duration::from_secs(max_age_secs).saturating_sub(RETIRE_BEFORE_LIMIT),
             idle: Mutex::new(Vec::new()),
             refused: AtomicBool::new(false),
+            stored: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -127,14 +149,15 @@ impl ResponsesSockets {
         !self.refused.load(Ordering::Relaxed)
     }
 
-    /// A socket for a turn of `items`: the idle one whose chain the turn
-    /// extends, else the one idle longest, else a new one. `None` when no
-    /// socket opens, so the call takes HTTP.
-    async fn checkout(&self, items: &[JsonValue]) -> Option<Session> {
+    /// A socket for `turn`: the idle one whose chain the turn extends, else
+    /// the one idle longest, else a new one. `None` when no socket opens, so
+    /// the call takes HTTP.
+    async fn checkout(&self, turn: &OpenAiResponsesTurn) -> Option<Session> {
         if !self.usable() {
             return None;
         }
-        loop {
+        let items = turn.items.as_slice();
+        let session = loop {
             let picked = {
                 let mut idle = self
                     .idle
@@ -159,12 +182,55 @@ impl ResponsesSockets {
             match picked {
                 Some(mut session) => {
                     if session.drain() {
-                        return Some(session);
+                        break session;
                     }
                 }
-                None => return self.open().await,
+                None => break self.open().await?,
+            }
+        };
+        Some(self.resume(session, turn))
+    }
+
+    /// A stored turn on a socket whose chain it does not extend takes up its
+    /// conversation's stored chain, as far as that chain reaches.
+    fn resume(&self, mut session: Session, turn: &OpenAiResponsesTurn) -> Session {
+        if turn.stored() && !session.chain.extended_by(&turn.items) {
+            let stored = self
+                .stored
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(chain) = stored
+                .iter()
+                .filter(|chain| chain.extended_by(&turn.items))
+                .max_by_key(|chain| chain.covered())
+            {
+                session.chain = chain.clone();
             }
         }
+        session
+    }
+
+    /// Keeps `chain` as its conversation's stored chain, in place of the one
+    /// it continues.
+    fn keep(&self, chain: &OpenAiResponsesChain) {
+        let mut stored = self
+            .stored
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        stored.retain(|kept| !kept.continued_by(chain));
+        if stored.len() >= STORED_CHAINS {
+            stored.pop_front();
+        }
+        stored.push_back(chain.clone());
+    }
+
+    /// Drops the stored chain that ends at `response_id`: the provider no
+    /// longer has it.
+    fn forget(&self, response_id: &str) {
+        self.stored
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|kept| kept.response_id() != Some(response_id));
     }
 
     async fn open(&self) -> Option<Session> {
@@ -271,6 +337,9 @@ impl ResponsesSockets {
                 // The socket no longer holds the chained response, and said so
                 // before generating anything: the turn goes again, whole.
                 Some(RESPONSES_PREVIOUS_NOT_FOUND) if chained => {
+                    if let Some(id) = session.chain.response_id() {
+                        self.forget(id);
+                    }
                     session.chain.clear();
                     chained = false;
                     let frame = turn.create_frame(None, &turn.items);
@@ -305,6 +374,9 @@ impl ResponsesSockets {
             match event.get("response") {
                 Some(response) if responses_event_type(&event) == "response.completed" => {
                     session.chain.record(&turn.items, response);
+                    if turn.stored() && session.chain.response_id().is_some() {
+                        self.keep(&session.chain);
+                    }
                 }
                 _ => session.chain.clear(),
             }
@@ -348,6 +420,9 @@ impl OpenAiSessions {
         if self.response_format == ResponseFormatWire::Omitted {
             turn.head.remove("text");
         }
+        if STORE.load(Ordering::Relaxed) {
+            turn.head.insert("store".into(), JsonValue::Bool(true));
+        }
         Ok(turn)
     }
 }
@@ -367,7 +442,7 @@ impl LlmBackend for OpenAiSessions {
                 return self.chat.generate(request, lease).await;
             }
             let turn = self.turn(&request, false)?;
-            match self.sockets.checkout(&turn.items).await {
+            match self.sockets.checkout(&turn).await {
                 Some(session) => {
                     OpenAiResponsesLlmStream::new(self.sockets.run(session, turn))
                         .into_response()
@@ -384,7 +459,7 @@ impl LlmBackend for OpenAiSessions {
         }
         let turn = self.turn(&request, true)?;
         let opened = async move {
-            match self.sockets.checkout(&turn.items).await {
+            match self.sockets.checkout(&turn).await {
                 Some(session) => Ok(LlmStream::new(OpenAiResponsesLlmStream::new(
                     self.sockets.run(session, turn),
                 ))),

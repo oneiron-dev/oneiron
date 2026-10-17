@@ -17,11 +17,11 @@ use loro::VersionVector;
 use crate::EntityId;
 use crate::Vault;
 use crate::error::Result;
+use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::store::Store;
 use crate::store::legal_hold::HoldActor;
 use crate::store::local_replica::{KeepControls, remove_local_replica_window_in_txn};
 use crate::sync::WindowKey;
-use crate::sync::window_rows::{WINDOW_SNAPSHOT, WINDOW_UPDATE};
 
 /// Recorded-clock seconds of an opened item's last touch. Key: hex32.
 const TOUCH_PREFIX: &str = "rt:e:";
@@ -212,12 +212,14 @@ fn persisted_window_vv(
     txn: &heed::RoTxn<'_>,
     window: &WindowKey,
 ) -> Result<VersionVector> {
-    let doc = match WINDOW_SNAPSHOT.get(store, txn, &window.as_str().to_owned())? {
-        Some(bytes) => crate::sync::loro_support::doc_from_snapshot(&bytes)?,
-        None => crate::sync::schema::create_window_doc("local", window),
-    };
-    let prefix = format!("{window}:");
-    for (_, bytes) in WINDOW_UPDATE.scan_from(store, txn, prefix.as_bytes())? {
+    let address = WindowAddress::new(window.as_str());
+    let doc = store
+        .port_window_doc_with_raw(txn, address, crate::sync::loro_support::doc_from_snapshot)?
+        .unwrap_or_else(|| crate::sync::schema::create_window_doc("local", window));
+    let updates = store
+        .port_window_updates(txn, address, |_, bytes| bytes.to_vec())?
+        .collect::<Result<Vec<_>>>()?;
+    for bytes in updates {
         crate::sync::loro_support::import_doc(&doc, &bytes)?;
     }
     Ok(doc.oplog_vv())

@@ -38,6 +38,17 @@ pub struct AgentInboxConcern {
     pub tone: AgentHealthTone,
 }
 
+/// Who waits on a pending diary-read review, and why (OF-490): the row's
+/// agent answers it through `self.memory.diary.review`. The reason is the
+/// reader's words, data and never an instruction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentInboxDiaryReview {
+    pub request: EntityId,
+    pub reader: EntityId,
+    pub reader_class: String,
+    pub reason: String,
+}
+
 /// One receiving identity on a row and the actor it is bound to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AgentInboxParticipant {
@@ -64,6 +75,8 @@ pub struct AgentInboxLensItem {
     pub payload_ref: Option<String>,
     /// Present exactly on a Concern row.
     pub concern: Option<AgentInboxConcern>,
+    /// Present exactly on a pending diary-read review's row.
+    pub diary_review: Option<AgentInboxDiaryReview>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,6 +333,7 @@ fn project_receipts(
                 .or_else(|| receipt.fields.get("content_ref"))
                 .cloned(),
             concern: None,
+            diary_review: None,
         });
     }
     sort_page(&mut items, &query);
