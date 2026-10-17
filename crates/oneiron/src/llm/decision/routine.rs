@@ -102,6 +102,12 @@ impl RoutineOutcome {
         Self::read(&decision.answer, decision.human_ask)
     }
 
+    /// The routine reading of a located step: act at its point, NONE for its found
+    /// absence, or ask up.
+    pub fn of_located(located: &LocatedDecision) -> Result<Self> {
+        Self::read(&located.answer, located.human_ask())
+    }
+
     /// The routine reading of an answer, and the reason the ladder gave none.
     fn read(answer: &DecisionAnswer, human_ask: Option<HumanAskReason>) -> Result<Self> {
         Ok(match answer {
@@ -208,7 +214,7 @@ impl DecisionLadder<'_> {
                 reversibility,
                 deadline,
             )?;
-            let outcome = RoutineOutcome::read(&located.answer, located.human_ask())?;
+            let outcome = RoutineOutcome::of_located(&located)?;
             let (decision, presence) = located.split();
             return Ok(RoutineDecision {
                 outcome,

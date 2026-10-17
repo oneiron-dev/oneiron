@@ -1649,7 +1649,7 @@ class Oneiron:
         def video(self) -> "Oneiron._AiVideoVerbs":
             return Oneiron._AiVideoVerbs(self._client)
         def verdict(self, spec):
-            """The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt."""
+            """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
             return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
