@@ -204,6 +204,8 @@ export type CommitReceipt = {
   approval: string
   superseded_short_id?: string | null
   receipt_ref: string
+  claim?: unknown | null
+  superseded?: unknown | null
 }
 export type DeleteReceipt = {
   existed: boolean
@@ -227,6 +229,7 @@ export type MemoryReceipt = {
   actor_ref?: string | null
   content_kind: string
   claim_ref?: string | null
+  claim?: unknown | null
   fields?: unknown
 }
 export type EntityView = {
@@ -260,6 +263,7 @@ export type EntityRefReceipt = {
   entity_ref: string
   id_hex: string
   receipt_ref: string
+  record?: unknown | null
 }
 export type HabitCheckinInput = {
   habit_ref: string
@@ -291,6 +295,8 @@ export type BlobVersionView = {
   content_hash_hex: string
   claim_ref: string
   created_at: number
+  artifact?: unknown | null
+  claim?: unknown | null
 }
 export type ClaimView = {
   claim_ref: string
@@ -308,6 +314,7 @@ export type ClaimView = {
   valid_to?: number | null
   salience?: number | null
   stale: boolean
+  claim?: unknown | null
 }
 export type ClaimListFilter = {
   subject_ref?: string | null
@@ -320,6 +327,7 @@ export type LexicalHit = {
   kind: string
   score: number
   snippet?: string | null
+  record?: unknown | null
 }
 export type NeighborOpts = {
   edge_kind?: string | null
@@ -332,6 +340,7 @@ export type NeighborHit = {
   edge_kind: string
   weight: number
   direction: string
+  record?: unknown | null
 }
 export type ExportOptions = {
   format?: string | null
@@ -369,6 +378,8 @@ export type WitnessReceipt = {
   turn_short_id: string
   message_short_ids: (string)[]
   receipt_ref: string
+  turn?: unknown | null
+  messages?: (unknown)[]
 }
 export type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
 export type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete"

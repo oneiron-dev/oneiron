@@ -104,4 +104,13 @@ pub struct WitnessReceipt {
     /// gate decision at base, so this is a write marker, not a
     /// `receipts()`-resolvable gate ref.
     pub receipt_ref: String,
+    /// The TURN as a typed record ref (OF-063), from the id the write landed,
+    /// with no read. `None` for an off-record witness, whose rows are no
+    /// vault records until promoted.
+    #[serde(default)]
+    pub turn: Option<crate::lens::RecordRef>,
+    /// The written MESSAGEs as typed record refs, input order; empty for an
+    /// off-record witness.
+    #[serde(default)]
+    pub messages: Vec<crate::lens::RecordRef>,
 }

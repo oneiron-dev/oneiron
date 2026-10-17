@@ -75,7 +75,7 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub(crate) use self::reference_refusal::{
-    ReferenceOutcome, ReferenceRefusalFacts, record_reference_refusal, record_reference_refusals,
+    ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals,
 };
 pub use self::served_form::{PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};

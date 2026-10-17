@@ -353,6 +353,14 @@ impl Memory<'_> {
             }
         };
 
+        // OF-063 prose links (Engine ruling 10-17): every AI-written message
+        // this program lands in base, whatever door it came through, is read
+        // for links its writer cannot resolve, receipt-only and before the
+        // writer opens. An imported turn is a source's words, not this
+        // writer's; an overlay landing keeps its talk out of base.
+        if let Landing::Base { imported: None, .. } = &landing {
+            crate::gate::record_references::admit_witness_prose(self, turn);
+        }
         let plan = self.plan_witness(turn, &landing, door, admit)?;
         let held = match &landing {
             Landing::Base { held, .. } => *held,
@@ -814,5 +822,9 @@ fn overlay_receipt(
         turn_short_id,
         message_short_ids,
         receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
+        // Off-record rows are no vault records until promoted: no ref names
+        // them.
+        turn: None,
+        messages: Vec::new(),
     })
 }

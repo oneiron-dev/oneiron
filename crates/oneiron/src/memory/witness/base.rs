@@ -575,25 +575,35 @@ impl Memory<'_> {
     }
 
     /// The base receipt, read in the transaction `txn` that wrote the turn:
-    /// canonical short ids, hex when none exists.
+    /// canonical short ids, hex when none exists, and the typed refs of the
+    /// TURN and MESSAGEs built from the ids the plan holds, with no read.
     pub(super) fn base_receipt_in_txn(
         &self,
         plan: &WitnessPlan<'_>,
         txn: &heed::RoTxn<'_>,
     ) -> MemoryResult<WitnessReceipt> {
-        let short_ref = |id: &EntityId| -> MemoryResult<String> {
-            Ok(self
-                .short_ref_of_in_txn(txn, id)?
-                .unwrap_or_else(|| id.to_hex()))
-        };
         let mut message_short_ids = Vec::with_capacity(plan.messages.len());
+        let mut messages = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
-            message_short_ids.push(short_ref(&planned.id)?);
+            let short = self.short_ref_of_in_txn(txn, &planned.id)?;
+            messages.push(crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_MESSAGE,
+                &planned.id,
+                short.as_deref(),
+            ));
+            message_short_ids.push(short.unwrap_or_else(|| planned.id.to_hex()));
         }
+        let turn_short = self.short_ref_of_in_txn(txn, &plan.turn_id)?;
         Ok(WitnessReceipt {
-            turn_short_id: short_ref(&plan.turn_id)?,
+            turn: Some(crate::lens::RecordRef::from_id(
+                crate::registry::ENTITY_TYPE_TURN,
+                &plan.turn_id,
+                turn_short.as_deref(),
+            )),
+            turn_short_id: turn_short.unwrap_or_else(|| plan.turn_id.to_hex()),
             message_short_ids,
             receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
+            messages,
         })
     }
 

@@ -128,6 +128,8 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         request_id: request_id.to_owned(),
         landing,
         invocation: None,
+        off_record_session: crate::api::call_receipt::request_session_ref(headers)
+            .map(str::to_owned),
     })
 }
 

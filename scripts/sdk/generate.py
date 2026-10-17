@@ -635,6 +635,9 @@ async fn execute_agent_verb_listing(
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
     let memory = crate::api::credential_memory(&server.vault, actor.auth.as_ref(), actor.actor_ref, actor.actor_class).at(actor.locality()).with_birth_position(position).listing_producers(producers).with_invocation(invocation);
     let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
+    // OF-063: the off-record session the request named; inside an anonymous
+    // one a reference refusal writes no receipt (Engine ruling 10-17).
+    let memory = match actor.off_record_session.as_deref() { Some(session) => memory.in_off_record_session(session), None => memory };
     let hooks = crate::api::facade::row_hooks_pre(server, actor.actor_ref, actor.actor_class, Some(invocation), tool, input).await.map_err(mcp_facade_error)?;
     let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;

@@ -15,18 +15,24 @@
 //! one refusal, so the writer learns nothing it could not read. The refusal
 //! names the field pointer, never the ref, and it is receipted on its own
 //! write ([`crate::receipt::ReceiptKind::ReferenceRefusal`]) before the
-//! caller hears it. The refused write never runs.
+//! caller hears it. The refused write never runs. Inside an anonymous
+//! off-record session the refusal stands but no receipt is written (Engine
+//! ruling 10-17, matching OF-538).
 //!
 //! Only typed slots carry authority. Prose links (OF-063 prose links:
 //! Engine ruling 10-17) are the one exception this file reads in text, and
 //! only for display: [`parse_record_links`] finds Markdown links
-//! `[label](oneiron://<ref>)` outside code spans and fences, bounded in count
-//! and length. A reader's link resolves under the reader's own read
-//! (`vault.refs.links`, through the `vault.refs.resolve` door); an AI-written
-//! link that does not resolve for its writer never refuses or rewrites the
-//! text, it leaves the same reference-refusal receipt with the outcome
-//! `unlinked` ([`admit_prose_links`]). No grant, scope or authority path
-//! reads a prose link.
+//! `[label](oneiron://<ref>)` outside code spans, fences, indented code and
+//! raw HTML, bounded in count and length. A reader's link resolves under the
+//! reader's own read (`vault.refs.links`, through the `vault.refs.resolve`
+//! door); an AI-written link that does not resolve for its writer never
+//! refuses or rewrites the text, it leaves the same reference-refusal receipt
+//! with the outcome `unlinked` ([`admit_prose_links`]), written before the
+//! engine call, so it records the attempt even when that call then fails.
+//! The witness program reads every AI-written message it lands this way,
+//! whatever door it came through ([`admit_witness_prose`]), and a streamed
+//! continuation its appended text ([`admit_prose_text`]). No grant, scope or
+//! authority path reads a prose link.
 
 use std::collections::BTreeSet;
 
@@ -36,9 +42,7 @@ use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_NOT_FOUND, Memory,
     MemoryError, MemoryResult,
 };
-use crate::receipt::{
-    ReferenceOutcome, ReferenceRefusalFacts, record_reference_refusal, record_reference_refusals,
-};
+use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
 
 /// One ref a write names, at the concrete pointer of its slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +134,8 @@ fn collect_at(value: &Value, segments: &[&str], at: String, refs: &mut Vec<Named
 /// the field pointer and the time, and only then returned as
 /// [`MEMORY_CODE_INVENTED_REFERENCE`]; if the receipt cannot be written the
 /// store's error is returned instead, never a refusal claiming it was logged.
+/// Inside an anonymous off-record session the refusal is returned with no
+/// receipt, and says so.
 pub(crate) fn admit_row_references<T: serde::Serialize>(
     memory: &Memory<'_>,
     row: &'static str,
@@ -144,28 +150,34 @@ pub(crate) fn admit_row_references<T: serde::Serialize>(
         Ok(()) => Ok(()),
         Err(ReferenceRefusal::Read(error)) => Err(error),
         Err(ReferenceRefusal::Unresolved { pointer }) => {
-            record_reference_refusal(
-                memory.vault(),
-                &ReferenceRefusalFacts {
+            let recorded = receipt_reference_refusals(
+                memory,
+                &[ReferenceRefusalFacts {
                     actor: memory.actor(),
                     actor_class: memory.actor_class(),
                     row,
                     field: pointer.clone(),
                     outcome: ReferenceOutcome::Refused,
-                },
+                }],
             )?;
-            Err(invented_reference(&pointer))
+            Err(invented_reference(&pointer, recorded))
         }
     }
 }
 
 /// The refusal a write naming an unresolved record ref gets: the field
-/// pointer, never the ref.
-pub(crate) fn invented_reference(pointer: &str) -> MemoryError {
+/// pointer, never the ref. `recorded` says whether the refusal was
+/// receipted; inside an anonymous off-record session it never is.
+pub(crate) fn invented_reference(pointer: &str, recorded: bool) -> MemoryError {
+    let kept = if recorded {
+        "the refusal receipted"
+    } else {
+        "no record kept, as this anonymous session keeps none"
+    };
     MemoryError::new(
         MEMORY_CODE_INVENTED_REFERENCE,
         format!(
-            "the record named at `{pointer}` does not resolve for this writer; the write was refused and the refusal receipted"
+            "the record named at `{pointer}` does not resolve for this writer; the write was refused and {kept}"
         ),
         &[
             "Name only records this writer can read, by the ref the engine issued (a short id or a 32-hex id).",
@@ -204,11 +216,15 @@ pub(crate) struct ProseLink {
 /// [`MAX_PROSE_LINKS`], read from its first [`MAX_PROSE_SCAN_BYTES`] bytes.
 ///
 /// Fenced code blocks (```` ``` ```` or `~~~`, indented at most three
-/// spaces) and inline code spans are skipped, as are an escaped `[` and an
-/// image (`![...](...)`). A label holds
-/// no bracket or line break; a ref is 1 to 256 printable ASCII bytes with no
-/// parenthesis, angle bracket, quote or backslash. The parse is display data
-/// only: nothing it finds is ever authority.
+/// spaces), indented code blocks (four columns in, after a blank line), raw
+/// HTML blocks and inline raw HTML (a tag, comment, processing instruction,
+/// declaration or CDATA section) and inline code spans are skipped, as are an
+/// escaped `[` and an image (`![...](...)`). An indented line inside a list
+/// item is read as code too: a link there stays plain text, never the
+/// reverse. Reference-style links and autolinks are not links here. A label
+/// holds no bracket or line break; a ref is 1 to 256 printable ASCII bytes
+/// with no parenthesis, angle bracket, quote or backslash. The parse is
+/// display data only: nothing it finds is ever authority.
 pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
     let bytes = text.as_bytes();
     let scan_end = bytes.len().min(MAX_PROSE_SCAN_BYTES);
@@ -216,23 +232,55 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
     // Backtick run lengths with no closing run after a point already tried.
     let mut unclosed = BTreeSet::new();
     let mut fence: Option<(u8, usize)> = None;
+    // The open raw HTML block, by what ends it.
+    let mut html: Option<HtmlBlockEnd> = None;
+    // The last line was indented code, or a blank line inside it.
+    let mut in_code = false;
+    // The last line was blank (the text's start counts as one).
+    let mut after_blank = true;
     let mut line_start = true;
     let mut at = 0;
     while at < scan_end && links.len() < MAX_PROSE_LINKS {
         if line_start {
             line_start = false;
-            let line_end = bytes[at..scan_end]
-                .iter()
-                .position(|&byte| byte == b'\n')
-                .map_or(scan_end, |offset| at + offset);
+            let line_end = line_end_at(bytes, at, scan_end);
             let line = &bytes[at..line_end];
             let indent = line.iter().take_while(|&&byte| byte == b' ').count();
+            let blank = line.iter().all(u8::is_ascii_whitespace);
+            let follows_blank = std::mem::replace(&mut after_blank, blank);
+            if fence.is_some() {
+                if let Some(next) = fence_line(fence, indent, &line[indent..]) {
+                    fence = next;
+                }
+                at = line_end;
+                continue;
+            }
+            if let Some(end) = html {
+                if end.ends_at(line) {
+                    html = None;
+                }
+                at = line_end;
+                continue;
+            }
+            if !blank && indent_columns(line) >= 4 && (follows_blank || in_code) {
+                in_code = true;
+                at = line_end;
+                continue;
+            }
+            if !blank {
+                in_code = false;
+            }
             if let Some(next) = fence_line(fence, indent, &line[indent..]) {
                 fence = next;
                 at = line_end;
                 continue;
             }
-            if fence.is_some() {
+            if indent <= 3
+                && let Some(end) = html_block_start(&line[indent..], follows_blank)
+            {
+                if !end.ends_at(&line[indent..]) {
+                    html = Some(end);
+                }
                 at = line_end;
                 continue;
             }
@@ -266,6 +314,9 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
                 };
             }
             b'!' if bytes.get(at + 1) == Some(&b'[') => at += 2,
+            b'<' => {
+                at += inline_html(&bytes[at..line_end_at(bytes, at, scan_end)]).unwrap_or(1);
+            }
             b'[' => match link_at(text, at, scan_end) {
                 Some(link) => {
                     at = link.end;
@@ -277,6 +328,180 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
         }
     }
     links
+}
+
+/// The end of the line `at` sits in: its `\n`, or `scan_end`.
+fn line_end_at(bytes: &[u8], at: usize, scan_end: usize) -> usize {
+    bytes[at..scan_end]
+        .iter()
+        .position(|&byte| byte == b'\n')
+        .map_or(scan_end, |offset| at + offset)
+}
+
+/// How far in a line's text starts, in columns: a tab runs to the next
+/// multiple of four.
+fn indent_columns(line: &[u8]) -> usize {
+    let mut columns = 0;
+    for &byte in line {
+        match byte {
+            b' ' => columns += 1,
+            b'\t' => columns += 4 - columns % 4,
+            _ => break,
+        }
+    }
+    columns
+}
+
+/// What ends an open raw HTML block (CommonMark's seven kinds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HtmlBlockEnd {
+    /// `<script`, `<pre`, `<style` or `<textarea`: the line holding the
+    /// closing tag of any of them.
+    RawTag,
+    /// A line holding this marker: `-->`, `?>`, `>` or `]]>`.
+    Marker(&'static [u8]),
+    /// A block-level tag, or a lone complete tag: a blank line.
+    BlankLine,
+}
+
+impl HtmlBlockEnd {
+    /// Whether `line` is the block's last.
+    fn ends_at(self, line: &[u8]) -> bool {
+        match self {
+            Self::RawTag => ["</script>", "</pre>", "</style>", "</textarea>"]
+                .iter()
+                .any(|tag| contains_ignore_case(line, tag.as_bytes())),
+            Self::Marker(marker) => line.windows(marker.len()).any(|window| window == marker),
+            Self::BlankLine => line.iter().all(u8::is_ascii_whitespace),
+        }
+    }
+}
+
+fn contains_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// The block-level tag names that open a raw HTML block (CommonMark kind 6),
+/// space-separated.
+const HTML_BLOCK_TAGS: &str = "address article aside base basefont blockquote body caption \
+    center col colgroup dd details dialog dir div dl dt fieldset figcaption figure footer form \
+    frame frameset h1 h2 h3 h4 h5 h6 head header hr html iframe legend li link main menu \
+    menuitem nav noframes ol optgroup option p param search section summary table tbody td \
+    tfoot th thead title tr track ul";
+
+/// What ends the raw HTML block `rest` (a line from its first non-space
+/// byte) opens, when it opens one. A lone complete tag opens one only after
+/// a blank line: it cannot interrupt a paragraph.
+fn html_block_start(rest: &[u8], follows_blank: bool) -> Option<HtmlBlockEnd> {
+    let after = rest.strip_prefix(b"<")?;
+    let name_len = after
+        .iter()
+        .take_while(|byte| byte.is_ascii_alphanumeric())
+        .count();
+    let name_ends = after
+        .get(name_len)
+        .is_none_or(|&byte| byte.is_ascii_whitespace() || byte == b'>');
+    if name_ends
+        && ["script", "pre", "style", "textarea"]
+            .iter()
+            .any(|tag| after[..name_len].eq_ignore_ascii_case(tag.as_bytes()))
+    {
+        return Some(HtmlBlockEnd::RawTag);
+    }
+    if after.starts_with(b"!--") {
+        return Some(HtmlBlockEnd::Marker(b"-->"));
+    }
+    if after.starts_with(b"?") {
+        return Some(HtmlBlockEnd::Marker(b"?>"));
+    }
+    if after.starts_with(b"![CDATA[") {
+        return Some(HtmlBlockEnd::Marker(b"]]>"));
+    }
+    if after.first() == Some(&b'!') && after.get(1).is_some_and(u8::is_ascii_alphabetic) {
+        return Some(HtmlBlockEnd::Marker(b">"));
+    }
+    let closing = after.first() == Some(&b'/');
+    let tag = if closing { &after[1..] } else { after };
+    let tag_len = tag
+        .iter()
+        .take_while(|byte| byte.is_ascii_alphanumeric())
+        .count();
+    let tag_ends = tag.get(tag_len).is_none_or(|&byte| {
+        byte.is_ascii_whitespace() || byte == b'>' || tag[tag_len..].starts_with(b"/>")
+    });
+    if tag_len > 0
+        && tag_ends
+        && HTML_BLOCK_TAGS
+            .split_ascii_whitespace()
+            .any(|name| tag[..tag_len].eq_ignore_ascii_case(name.as_bytes()))
+    {
+        return Some(HtmlBlockEnd::BlankLine);
+    }
+    let lone_tag = inline_html(rest)
+        .is_some_and(|length| rest[length..].iter().all(u8::is_ascii_whitespace))
+        && !rest.starts_with(b"<!")
+        && !rest.starts_with(b"<?");
+    (follows_blank && lone_tag).then_some(HtmlBlockEnd::BlankLine)
+}
+
+/// The length of the inline raw HTML `line` opens at its `<`: an open or
+/// closing tag, a comment, a processing instruction, a declaration or a
+/// CDATA section, ending on this line. `None` when it opens none (an
+/// autolink such as `<oneiron://...>` is none), so the `<` is plain text.
+fn inline_html(line: &[u8]) -> Option<usize> {
+    let after = line.strip_prefix(b"<")?;
+    let through = |marker: &[u8], from: usize| {
+        line.get(from..)?
+            .windows(marker.len())
+            .position(|window| window == marker)
+            .map(|offset| from + offset + marker.len())
+    };
+    if after.starts_with(b"!--") {
+        return through(b"-->".as_slice(), 4);
+    }
+    if after.starts_with(b"?") {
+        return through(b"?>".as_slice(), 2);
+    }
+    if after.starts_with(b"![CDATA[") {
+        return through(b"]]>".as_slice(), 9);
+    }
+    if after.first() == Some(&b'!') && after.get(1).is_some_and(u8::is_ascii_alphabetic) {
+        return through(b">".as_slice(), 2);
+    }
+    let closing = after.first() == Some(&b'/');
+    let name_at = 1 + usize::from(closing);
+    let name = line.get(name_at..)?;
+    if !name.first().is_some_and(u8::is_ascii_alphabetic) {
+        return None;
+    }
+    let mut at = name_at
+        + name
+            .iter()
+            .take_while(|&&byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            .count();
+    // After the name: whitespace, `/>` or `>`; then attributes up to the
+    // tag's `>`, a quoted value holding any `>` it likes.
+    if !line
+        .get(at)
+        .is_some_and(|&byte| byte.is_ascii_whitespace() || byte == b'>' || byte == b'/')
+    {
+        return None;
+    }
+    let mut quote = None;
+    while let Some(&byte) = line.get(at) {
+        match (quote, byte) {
+            (Some(open), _) if byte == open => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') if !closing => quote = Some(byte),
+            (None, b'>') => return Some(at + 1),
+            (None, b'<') => return None,
+            (None, _) => {}
+        }
+        at += 1;
+    }
+    None
 }
 
 /// What a line at a fence boundary does to the open fence: `Some(next)` when
@@ -469,8 +694,10 @@ fn texts_in<'v>(
 /// own grouped write, as a reference refusal with the outcome `unlinked`:
 /// the actor, `row`, the slot's pointer and the time, never the ref. The
 /// text is neither refused nor rewritten, and the write goes on; a reader
-/// sees such a link as its plain label. If the receipts cannot be written the
-/// store's error is returned.
+/// sees such a link as its plain label. The receipt is written before the
+/// engine call, so it records the attempt and stands even when that call
+/// then fails. Inside an anonymous off-record session nothing is written. If
+/// the receipts cannot be written the store's error is returned.
 pub(crate) fn admit_prose_links<T: serde::Serialize>(
     memory: &Memory<'_>,
     row: &'static str,
@@ -491,27 +718,87 @@ pub(crate) fn admit_prose_links<T: serde::Serialize>(
         {
             continue;
         }
-        let refs: Vec<NamedRecordRef> = parse_record_links(slot.text)
-            .into_iter()
-            .map(|link| NamedRecordRef {
-                pointer: slot.pointer.clone(),
-                reference: link.reference,
-            })
-            .collect();
-        match validate_record_references(memory, &refs) {
-            Ok(()) => {}
-            Err(ReferenceRefusal::Unresolved { pointer }) => unlinked.push(ReferenceRefusalFacts {
-                actor: memory.actor(),
-                actor_class: memory.actor_class(),
-                row,
-                field: pointer,
-                outcome: ReferenceOutcome::Unlinked,
-            }),
-            Err(ReferenceRefusal::Read(error)) => return Err(error),
+        if let Some(facts) = unlinked_text(memory, row, slot.pointer, slot.text, 0)? {
+            unlinked.push(facts);
         }
     }
-    if !unlinked.is_empty() {
-        record_reference_refusals(memory.vault(), &unlinked)?;
-    }
+    receipt_reference_refusals(memory, &unlinked)?;
     Ok(())
+}
+
+/// The `unlinked` facts one AI-written `text` at `pointer` earns for its
+/// links that end past byte `from`: `None` when each of them resolves for
+/// `memory`'s writer.
+fn unlinked_text(
+    memory: &Memory<'_>,
+    row: &'static str,
+    pointer: String,
+    text: &str,
+    from: usize,
+) -> MemoryResult<Option<ReferenceRefusalFacts>> {
+    let refs: Vec<NamedRecordRef> = parse_record_links(text)
+        .into_iter()
+        .filter(|link| link.end > from)
+        .map(|link| NamedRecordRef {
+            pointer: pointer.clone(),
+            reference: link.reference,
+        })
+        .collect();
+    match validate_record_references(memory, &refs) {
+        Ok(()) => Ok(None),
+        Err(ReferenceRefusal::Unresolved { pointer }) => Ok(Some(ReferenceRefusalFacts {
+            actor: memory.actor(),
+            actor_class: memory.actor_class(),
+            row,
+            field: pointer,
+            outcome: ReferenceOutcome::Unlinked,
+        })),
+        Err(ReferenceRefusal::Read(error)) => Err(error),
+    }
+}
+
+/// The row every witnessed message's prose links are receipted under.
+pub(crate) const WITNESS_PROSE_ROW: &str = "vault.witness";
+/// The AI-written text of a witnessed turn: each companion message's content.
+const WITNESS_PROSE_SLOT: &str = "/messages/*[author=companion]/content";
+
+/// The witness program's prose-link check (OF-063 prose links: Engine
+/// ruling 10-17), run once for every turn it lands in base, whatever door
+/// the turn came through: the verb table's `vault.witness` and
+/// `vault.rooms.speak`, first-party speech, a streamed message's final
+/// witness, the AI chat reply. Each companion message is read as
+/// [`admit_prose_links`] reads a declared slot. Receipt-only: it never
+/// refuses or rewrites the message, and a read or receipt that fails is
+/// logged and the witness goes on.
+pub(crate) fn admit_witness_prose(memory: &Memory<'_>, turn: &crate::memory::WitnessTurn) {
+    // Most turns name no link: they are not read at all.
+    if !turn.messages.iter().any(|message| {
+        message.author == crate::memory::WitnessAuthor::Companion
+            && message.content.contains(PROSE_LINK_SCHEME)
+    }) {
+        return;
+    }
+    if let Err(error) = admit_prose_links(memory, WITNESS_PROSE_ROW, turn, &[WITNESS_PROSE_SLOT]) {
+        tracing::warn!(%error, "witnessed AI text's unresolved links went unreceipted");
+    }
+}
+
+/// The prose-link check of text appended to an AI-written message (a
+/// streamed continuation's finalize): `text` is the message's whole text,
+/// whose first `from` bytes were read when they landed, so only links that
+/// end past them are read. Receipted under `row` at `field`, receipt-only:
+/// a read or receipt that fails is logged and the finalize goes on.
+pub(crate) fn admit_prose_text(
+    memory: &Memory<'_>,
+    row: &'static str,
+    field: &str,
+    text: &str,
+    from: usize,
+) {
+    let receipted = unlinked_text(memory, row, field.to_owned(), text, from).and_then(|facts| {
+        receipt_reference_refusals(memory, facts.as_slice()).map_err(MemoryError::from)
+    });
+    if let Err(error) = receipted {
+        tracing::warn!(%error, "appended AI text's unresolved links went unreceipted");
+    }
 }

@@ -164,6 +164,7 @@
     },
     {
       "name": "cancel",
+      "refs": ["/task_ref"],
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskCancelReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
@@ -199,6 +200,7 @@
     },
     {
       "name": "steer",
+      "refs": ["/task_ref"],
       "input": "SteerRequest",
       "output": "crate::task_verb::sdk::SteerReceipt",
       "call": "crate::task_verb::sdk::steer_child(memory, input)?",
@@ -273,6 +275,7 @@
     },
     {
       "name": "tasks.update",
+      "refs": ["/task_ref"],
       "input": "TaskRequest",
       "output": "crate::task_verb::TaskUpdateReceipt",
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
@@ -292,7 +295,6 @@
     },
     {
       "name": "vault.witness",
-      "prose_links": ["/messages/*[author=companion]/content"],
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
@@ -544,6 +546,7 @@
     },
     {
       "name": "vault.kv.put",
+      "prose_links": ["/value"],
       "input": "crate::memory::KeyValuePut",
       "output": "crate::memory::KeyValuePutReceipt",
       "call": "memory.key_value_put(&input)?",
@@ -1264,6 +1267,7 @@
     },
     {
       "name": "vault.artifacts.keep",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::KeptProposal",
       "call": "memory.artifacts_keep(&input)?",
@@ -1287,6 +1291,7 @@
     },
     {
       "name": "vault.artifacts.discard",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::DiscardedProposal",
       "call": "memory.artifacts_discard(&input)?",
@@ -1310,6 +1315,7 @@
     },
     {
       "name": "vault.artifacts.undo",
+      "refs": ["/artifact_ref"],
       "input": "crate::blob_artifact::ProposalSettleRequest",
       "output": "crate::blob_artifact::UndoneKeep",
       "call": "memory.artifacts_undo(&input)?",
@@ -1585,7 +1591,6 @@
     },
     {
       "name": "vault.rooms.speak",
-      "prose_links": ["/messages/*[author=companion]/content"],
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
@@ -2236,6 +2241,7 @@
     },
     {
       "name": "vault.claims.retract",
+      "refs": ["/claim_ref"],
       "uniffi": {
         "args": {
           "claim_ref": "String"
@@ -2255,6 +2261,7 @@
     },
     {
       "name": "vault.forget",
+      "refs": ["/claim_ref", "/subject_ref"],
       "uniffi": {
         "args": {
           "selector": "ForgetSelector"
@@ -2319,6 +2326,7 @@
     },
     {
       "name": "vault.delete",
+      "refs": ["/entity_ref"],
       "uniffi": {
         "args": {
           "entity_ref": "String",
@@ -2696,6 +2704,7 @@
     },
     {
       "name": "vault.notes.create",
+      "prose_links": ["/markdown"],
       "input": "CreateNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "memory.create_note(&input.kind, &input.markdown)?",
@@ -2730,6 +2739,8 @@
     },
     {
       "name": "vault.notes.edit",
+      "refs": ["/note_ref"],
+      "prose_links": ["/edit/text"],
       "input": "EditNoteRequest",
       "output": "crate::note::NoteProgramEditOutcome",
       "call": "memory.edit_note(&input.note_ref, &input.edit)?",

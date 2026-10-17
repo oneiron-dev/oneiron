@@ -423,6 +423,9 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    /// The off-record session the host's request named
+    /// (`in_off_record_session`): context, not authority.
+    pub(super) off_record_session: Option<String>,
 }
 
 /// A host-owned write origin: the source, lineage and provenance a [`Memory`]
@@ -475,6 +478,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            off_record_session: None,
         }
     }
 
@@ -508,6 +512,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             invocation: None,
+            off_record_session: None,
         }
     }
 }
@@ -550,6 +555,7 @@ impl<'v> Memory<'v> {
                 owner_authorship: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
+                off_record_session: self.off_record_session.clone(),
             },
         })
     }
@@ -601,6 +607,26 @@ impl Memory<'_> {
     pub fn with_invocation(mut self, invocation: crate::runtime_hooks::InvocationId) -> Self {
         self.invocation = Some(invocation);
         self
+    }
+
+    /// Binds the off-record session the host's request names (its
+    /// `x-oneiron-session`): context, not authority. Inside one the live
+    /// registry holds anonymous, a reference refusal or an unlinked prose
+    /// link is refused or unlinked as anywhere else but writes no receipt
+    /// (OF-063, Engine ruling 10-17, matching OF-538's call receipts).
+    #[must_use]
+    pub fn in_off_record_session(mut self, session_ref: &str) -> Self {
+        self.off_record_session = Some(session_ref.trim().to_owned());
+        self
+    }
+
+    /// Whether this surface's call sits in an anonymous off-record session,
+    /// which keeps no record: the one signal OF-538's call receipts read
+    /// ([`Vault::off_record_session_is_anonymous`]).
+    pub(crate) fn keeps_no_record(&self) -> bool {
+        self.off_record_session
+            .as_deref()
+            .is_some_and(|session| self.vault.off_record_session_is_anonymous(session))
     }
 
     /// The logical verb's id a host bound, if any.
