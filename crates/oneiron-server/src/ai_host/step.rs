@@ -271,14 +271,29 @@ impl StepRunner {
         // settled. An answer pays its tokens, or the reservation when it
         // reports none; a rung that went out and failed pays its reservation.
         let run = self.models.undeclared_run(run_id, guard);
-        let generated = runtime.block_on(call.ladder.generate(&run, request, None));
+        let generated = runtime.block_on(call.ladder.generate_served(&run, request, None));
         // What this try spent goes on the lease whatever the call answered;
         // the replayed tries recorded their own.
         if let Some(scope) = &lease {
             dispatcher.record_guard_spend(scope, run.read().used_units.saturating_sub(replayed))?;
         }
         let response = match generated {
-            Ok(response) => response,
+            // The rung that answered, fallback included, is the step's
+            // executor: its leaf is attributed to it (OF-540). A refused
+            // stamp leaves the leaf unattributed, not failed.
+            Ok((response, served)) => {
+                if let Some(owner) = attempt.lease_owner.as_deref()
+                    && let Err(error) = AttemptQueue::new(vault).set_executor_model(
+                        attempt.id,
+                        owner,
+                        attempt.attempt_count,
+                        served.as_str(),
+                    )
+                {
+                    tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
+                }
+                response
+            }
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
                 let retryable = matches!(error, oneiron::llm::LlmError::Retryable(_));
