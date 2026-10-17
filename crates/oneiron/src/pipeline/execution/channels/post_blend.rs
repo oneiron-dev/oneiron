@@ -68,11 +68,24 @@ impl PipelineBuilder<'_> {
             claim_gate,
         )?;
         if self.made_by != crate::provenance::made_by::MadeByPredicate::All {
-            scores.retain(|scored| match claim_gate.decisions.get(&scored.id) {
-                Some(Some(body)) => self.made_by.matches(body.made_by_class()),
-                Some(None) => false,
-                None => false,
-            });
+            // Rule A (OF-466): a row's stamped birth names its class; a row
+            // with none falls back to its claim's source. Unknown never matches.
+            let mut kept = Vec::with_capacity(scores.len());
+            for scored in std::mem::take(scores) {
+                let birth =
+                    crate::provenance::birth::row_birth_in_txn(&self.read, rtxn, &scored.id)?;
+                let class = match birth {
+                    Some(birth) => Some(birth.made_by.process.class),
+                    None => match claim_gate.decisions.get(&scored.id) {
+                        Some(Some(body)) => body.made_by_class(),
+                        Some(None) | None => None,
+                    },
+                };
+                if self.made_by.matches(class) {
+                    kept.push(scored);
+                }
+            }
+            *scores = kept;
         }
         if before_filters > 0 && scores.is_empty() {
             empty_reason = Some(EmptyReason::FilterMatchedNone);
