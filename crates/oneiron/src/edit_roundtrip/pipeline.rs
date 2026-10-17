@@ -235,6 +235,7 @@ fn run_pipeline<S: EditSession>(
         slide_judgments: Vec::new(),
         paragraph_judgments: Vec::new(),
         paragraph_question: None,
+        slide_question: None,
     };
 
     let report = validate(&before, &after, format);

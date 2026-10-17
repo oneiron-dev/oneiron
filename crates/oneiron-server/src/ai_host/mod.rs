@@ -39,6 +39,7 @@ mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;
 pub(crate) mod identity;
+mod judge_swap;
 mod local_vision;
 mod policy;
 pub(crate) mod self_heal_detectors;
