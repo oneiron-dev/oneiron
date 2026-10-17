@@ -2090,6 +2090,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/guest_revoke.rs",
+     "purpose": "OF-232: the owner withdraws one ask guest's access at this host",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -19860,7 +19870,7 @@
       "crate-vis": 8,
       "enum": 3,
       "fn": 8,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 4,
       "trait": 2
      }
@@ -19925,7 +19935,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -19943,10 +19953,53 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 13,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "KindProbeCheck",
+      "NotWorse",
+      "PairedInterval",
+      "SpaceMove",
+      "SpaceMoveCheck",
+      "SpaceMoveOutcome",
+      "SpaceMoveState",
+      "SpaceProbeEncoder",
+      "SpaceRef"
+     ],
+     "path": "src/embed/space_move.rs",
+     "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 6,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SpaceProbe",
+      "SpaceProbeAuthor",
+      "SpaceProbeReport"
+     ],
+     "path": "src/embed/space_probe.rs",
+     "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -33014,7 +33067,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -33034,7 +33087,7 @@
      "path": "src/ports/lmdb_claim.rs",
      "purpose": "Claim adapter preserves the history door; current-state queries exclude stale claims",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -33300,7 +33353,7 @@
      "path": "src/ports/safe_read.rs",
      "purpose": "Integrity reads compose ports without opening a transaction",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -35890,13 +35943,15 @@
      "kind": "src",
      "notable": [
       "HookBodyRun",
-      "HookBodyRuntime"
+      "HookBodyRuntime",
+      "HookVerdict"
      ],
      "path": "src/runtime_hooks/body.rs",
      "purpose": "The seam between the runner and the hook sandbox (ARCH-0080 §6)",
      "surface": {
       "struct": 1,
-      "trait": 1
+      "trait": 2,
+      "type": 1
      }
     },
     {
@@ -36059,7 +36114,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 5,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -36158,6 +36213,16 @@
      "notable": [],
      "path": "src/runtime_hooks/verb/redact.rs",
      "purpose": "A post-hook's Redact (ARCH-0080 §3): fields removed or masked in this caller's view of the result",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/served.rs",
+     "purpose": "Served rows (ARCH-0080 §11 p15, the automation link): the rows a call served its caller, read off the…",
      "surface": {
       "crate-vis": 3
      }
@@ -38817,6 +38882,7 @@
       "HookActorClass",
       "HookOutcomeKind",
       "HookPhase",
+      "HookRenderClass",
       "HookSelector",
       "PackHook",
       "PackHookBinding"
@@ -38825,7 +38891,7 @@
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
       "crate-vis": 8,
-      "enum": 3,
+      "enum": 4,
       "fn": 4,
       "struct": 3
      }
@@ -48545,7 +48611,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 125,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49028,7 +49094,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 13,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -49567,7 +49633,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49959,9 +50025,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 115,
+   "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3017,
+   "source_files": 3021,
    "test_files": 903
   },
   "oneiron-android": {
@@ -64298,6 +64364,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/hook_verdict.rs",
+     "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -66356,6 +66432,16 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/space_move.rs",
+     "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -67154,6 +67240,13 @@
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
     },
+    "hook_verdict": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…"
+    },
     "http_listener": {
      "files": 2,
      "impl_vault": false,
@@ -67267,7 +67360,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67332,7 +67425,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 479,
+   "source_files": 481,
    "test_files": 182
   },
   "oneiron-spawn": {

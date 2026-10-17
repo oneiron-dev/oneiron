@@ -88,20 +88,20 @@ pub(crate) use epoch::{
     EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
     epoch_sources_admitted_in,
 };
-pub use gate::{
-    CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
-    CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,
-    gate_compaction,
-};
-pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
-pub(crate) use gate::{
-    compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
-};
 pub(crate) use fold_words::{
     FOLD_LEDGERS, fence_withdrawn_folds_in, land_folds_in_base, land_folds_in_overlay,
     scrub_withdrawn_fold_summary_in_txn,
 };
 pub(crate) use folds::escape_compacted_text;
+pub use gate::{
+    CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
+    CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,
+    gate_compaction,
+};
+pub(crate) use gate::{
+    compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
+};
+pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, scrub_withdrawn_epoch_in_txn};
 #[cfg(feature = "sync")]

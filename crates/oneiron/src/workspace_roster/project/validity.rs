@@ -505,8 +505,8 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 }
             }
         }
-        let verdict = (judged.get(&hash).copied())
-            .unwrap_or(ProjectVerdict::Pending(reason::NOT_HELD));
+        let verdict =
+            (judged.get(&hash).copied()).unwrap_or(ProjectVerdict::Pending(reason::NOT_HELD));
         // One that met the depth guard depends on where the walk entered.
         if self.refusals.get() == refusals {
             self.envelopes.borrow_mut().extend(judged);
