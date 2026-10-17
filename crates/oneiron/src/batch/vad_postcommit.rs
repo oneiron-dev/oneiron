@@ -127,6 +127,25 @@ pub(super) fn ops_change_proactivity(ops: &[BatchOp]) -> bool {
     })
 }
 
+/// Whether the batch writes or deletes a unit some question watches for
+/// arrivals. Its arrival is queued in this transaction; the commit then wakes
+/// the question pump, as a claim write does.
+pub(super) fn ops_touch_watched_units(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    ops: &[BatchOp],
+) -> Result<bool> {
+    for op in ops {
+        let (BatchOp::Put { id, .. } | BatchOp::Delete { id }) = op else {
+            continue;
+        };
+        if crate::llm::decision::questions::unit_watched_in_txn(&vault.store, txn, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(super) fn pending_dreamer_vad_approvals(
     vault: &Vault,
     txn: &RoTxn<'_>,

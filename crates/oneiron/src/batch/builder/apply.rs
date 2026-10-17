@@ -79,7 +79,8 @@ impl BatchBuilder<'_> {
         } else {
             Vec::new()
         };
-        let changes_claims = super::vad_postcommit::ops_change_proactivity(&self.ops);
+        let changes_claims = super::vad_postcommit::ops_change_proactivity(&self.ops)
+            || super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &self.ops)?;
         let tasks = super::vad_postcommit::ops_put_tasks(&self.ops);
         let gate_mode = gate_mode
             .with_birth_mask(self.birth_mask)
