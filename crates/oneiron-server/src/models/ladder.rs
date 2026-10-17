@@ -105,9 +105,9 @@ pub(super) struct SeatScope {
 }
 
 /// What a call asks of a fallback (OF-305): the chat request as it is sent
-/// and whether it streams, or the whole media request, with each rung's
-/// live binding of its banked voice when it is a speech call in one
-/// (FIX 1746).
+/// and whether it streams, or the whole media request. A speech call in a
+/// banked voice asks each rung for its live binding of the voice instead
+/// (FIX 1746), and no fallback serves it.
 #[derive(Clone, Copy)]
 enum Needs<'a> {
     Chat {
@@ -115,7 +115,7 @@ enum Needs<'a> {
         stream: bool,
     },
     Media(&'a MediaRequest),
-    Voiced(&'a MediaRequest, &'a RungVoices),
+    Voiced(&'a RungVoices),
 }
 
 /// What a call met on the ladder it fell back from (OF-305): how many rungs
@@ -644,7 +644,7 @@ impl OfferLadder {
     /// the call: never to another provider, in another voice.
     fn voice_not_held(&self, call: Call<'_>, index: usize) -> bool {
         match call.needs {
-            Needs::Voiced(_, voices) => !voices.holds(&self.rungs[index].model),
+            Needs::Voiced(voices) => !voices.holds(&self.rungs[index].model),
             Needs::Media(request) if names_voice(request) => {
                 self.rungs
                     .iter()
@@ -1125,7 +1125,7 @@ impl OfferLadder {
                 request: &admission,
                 selector,
                 needs: match voices {
-                    Some(voices) => Needs::Voiced(&request, voices),
+                    Some(voices) => Needs::Voiced(voices),
                     None => Needs::Media(&request),
                 },
             };
@@ -1185,7 +1185,7 @@ impl OfferLadder {
         let mut bound = rung_request(rung, request);
         // A banked voice goes out in this rung's own binding of it, while
         // that is still current (FIX 1746).
-        if let Needs::Voiced(_, voices) = call.needs {
+        if let Needs::Voiced(voices) = call.needs {
             let Some(voice) = voices.send_on(&rung.model) else {
                 walk.note(index, Passed::VoiceNotHeld);
                 return Ok(None);
