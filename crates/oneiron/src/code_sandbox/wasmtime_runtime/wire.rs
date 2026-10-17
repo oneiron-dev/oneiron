@@ -703,6 +703,71 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         .to_string())
 }
 
+/// The failure codes a guest's failed reply names under `error`: each a
+/// stable word a host door refuses with, which the guest can act on. Any
+/// other failure (an internal error's text) answers `{failed: true}` alone,
+/// and the replay row keeps the whole error either way.
+const GUEST_FAILURE_CODES: &[&str] = &[
+    // summarize and reader children (OF-190)
+    "summarize_unbound",
+    "summarize_unresolved",
+    "summarize_invalid_group",
+    "summarize_past_cutoff",
+    "summarize_unmetered",
+    "reader_spawn_unbound",
+    "reader_spawn_unresolved",
+    "reader_spawn_invalid_intent_key",
+    "reader_spawn_past_cutoff",
+    "reader_spawn_unmetered",
+    "not_reader_task",
+    "finding_not_own",
+    "finding_tainted",
+    "finding_not_json",
+    "reader_task_settled",
+    "task_wait_unbound",
+    "task_wait_invalid",
+    "task_wait_changed",
+    // the planner, refusals, skills and teams
+    "planner_unbound",
+    "tasks_refuse_unbound",
+    "tasks_refuse_other_task",
+    "tasks_refuse_invalid_reason",
+    "skills_call_unleased",
+    "skills_call_unbound",
+    "skills_call_lease_lost",
+    "skills_call_no_runtime",
+    "skills_call_no_executor",
+    "team_unbound",
+    "team_off_record",
+    "team_start_invalid_agent",
+    "team_start_spawn_refused",
+    "team_start_unknown_pattern",
+    "team_start_solo",
+    "team_start_invalid_input",
+    "team_start_tournament_not_market",
+    "team_start_invalid_tournament",
+    "team_record_not_led",
+    "team_record_invalid_input",
+    "team_record_unknown_member",
+    "team_record_member_outside_team",
+    "team_record_no_models",
+    "team_record_roles",
+    "team_record_decider",
+    // the bridge
+    "host_bridge_halted",
+    "task_declined",
+    // the facade's error codes a coordination call fails with
+    "BAD_REQUEST",
+    "NOT_FOUND",
+    "FORBIDDEN",
+    "INVALID_STATE",
+    "LEASE_REQUIRED",
+    "IDENTITY_UNSETTLED",
+    "BUDGET_SPENT",
+    "MODEL_UNAVAILABLE",
+    "PENDING_ASK",
+];
+
 /// One dispatched call's reply body, before its budget envelope.
 fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
     Ok(match outcome {
@@ -745,7 +810,13 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }
-        SelfDispatchOutcome::Failed(_) => json!({"failed":true}),
+        SelfDispatchOutcome::Failed(value) => {
+            if GUEST_FAILURE_CODES.contains(&value.error.as_str()) {
+                json!({"failed": true, "error": value.error})
+            } else {
+                json!({"failed": true})
+            }
+        }
         SelfDispatchOutcome::AgentDefinitionPut(value) => {
             json!({"id":value.id.to_hex(),"disposition":value.disposition.as_str()})
         }
