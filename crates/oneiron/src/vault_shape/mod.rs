@@ -137,12 +137,12 @@ impl ShapeTarget {
 
     fn keys(&self) -> Vec<&str> {
         match self {
-            Self::World { name } | Self::Pack { name } => vec![name],
-            Self::Actor { agent_id } => vec![agent_id],
-            Self::Skill { skill_id } => vec![skill_id],
-            Self::Channel { channel, address } => vec![channel, address],
-            Self::Grant { grant_ref } => vec![grant_ref],
-            Self::Sync { entity_kind } => vec![entity_kind],
+            Self::World { name } | Self::Pack { name } => vec![name.as_str()],
+            Self::Actor { agent_id } => vec![agent_id.as_str()],
+            Self::Skill { skill_id } => vec![skill_id.as_str()],
+            Self::Channel { channel, address } => vec![channel.as_str(), address.as_str()],
+            Self::Grant { grant_ref } => vec![grant_ref.as_str()],
+            Self::Sync { entity_kind } => vec![entity_kind.as_str()],
         }
     }
 }

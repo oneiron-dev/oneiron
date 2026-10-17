@@ -362,7 +362,7 @@ impl Vault {
                 Ok(self.remove_pack(owner, name)?.content_hash)
             }
             (ShapeChange::Retire, ShapeTarget::Grant { grant_ref }, _) => {
-                self.revoke_consent_grant(owner, grant_ref)?;
+                let _receipt = self.revoke_consent_grant(owner, grant_ref)?;
                 Ok(grant_ref.clone())
             }
             _ => Err(invalid("the vault has no door for this item")),
