@@ -21,6 +21,14 @@
 //! anywhere, so no hook, receipt, record or reply holds it. Every use the
 //! handle resolves for writes one Gate record: the handle, the record's
 //! generation, the effector, the operation, the decision and the send status.
+//!
+//! Beside the table, a server sends [`SECRET_USE_CONNECTOR_CALL`]: one
+//! connector call with the handle's secret as its credential, in place of
+//! the route's own, for the effector `connector:<connector>` the route
+//! names. Its body is the same use (`Vault::use_secret_with`); the call's
+//! row keeps the record, so a held call that a resume sends presents the
+//! same one, and its reply is cleared of the value as this one is
+//! (`Vault::clear_secret_record_from`).
 
 mod bind;
 
@@ -61,6 +69,11 @@ const USE_DIFF_DOMAIN: &[u8] = b"oneiron.secret_use.v1";
 /// What the agent's own surface sees in place of the record's name: the
 /// operation table's `pack` for a provider check.
 const USE_PACK: &str = "self.use";
+
+/// The operation that hands a secret to one connector call as its
+/// credential. A server's operation, beside the table: only a server's
+/// host sends a connector call, so an embedded vault refuses it.
+pub const SECRET_USE_CONNECTOR_CALL: &str = "connector.call";
 
 /// The operations `self.use` hands a secret to, each a trusted door that
 /// already takes a credential at T0 through the credential door: the
@@ -121,12 +134,45 @@ impl fmt::Debug for SecretUseOperation {
 type SecretUseConsumer =
     fn(&Vault, &SecretUseTarget<'_>, &Value) -> std::result::Result<Value, String>;
 
-/// The secret an operation presents: the record's live name, and the
-/// operation's effector.
-struct SecretUseTarget<'a> {
+/// The secret an operation presents: the record's live name and id, and
+/// the operation's effector.
+pub(crate) struct SecretUseTarget<'a> {
     name: &'a str,
     effector: &'a str,
     operation: &'a str,
+    /// The custody record the handle names.
+    pub(crate) custody: EntityId,
+}
+
+/// What an operation's consumer came to: its answer, why it failed, and
+/// how its send went. Both are cleared of the value after it returns.
+pub(crate) struct SecretUseConsumed {
+    pub(crate) result: Option<Value>,
+    pub(crate) failure: Option<String>,
+    pub(crate) send: SecretUseSend,
+}
+
+impl SecretUseConsumed {
+    /// A failure, with no answer.
+    pub(crate) const fn failed(failure: String) -> Self {
+        Self {
+            result: None,
+            failure: Some(failure),
+            send: SecretUseSend::Failed,
+        }
+    }
+
+    /// A table consumer's answer: the provider answered, or it failed.
+    fn of_answer(answer: std::result::Result<Value, String>) -> Self {
+        match answer {
+            Ok(result) => Self {
+                result: Some(result),
+                failure: None,
+                send: SecretUseSend::Answered,
+            },
+            Err(failure) => Self::failed(failure),
+        }
+    }
 }
 
 /// Who uses a secret: a verified actor of a recorded session.
@@ -248,6 +294,33 @@ impl Vault {
                 "an operation's arguments are a JSON object",
             )));
         }
+        self.use_secret_with(user, handle, op.name, op.effector, &mut |target| {
+            // A consumer blocks on its provider. It runs on a thread of its
+            // own, outside whatever async runtime the caller's door is on.
+            let answer = std::thread::scope(|scope| {
+                scope.spawn(|| (op.consume)(self, target, arguments)).join()
+            })
+            .unwrap_or_else(|_| Err("the operation stopped before it answered".to_owned()));
+            SecretUseConsumed::of_answer(answer)
+        })
+    }
+
+    /// The use every operation shares: the handle resolved, the record's
+    /// binding for `effector` checked, `consume` run on the secret, what
+    /// came back cleared of the value, and one Gate record of `operation`.
+    /// `consume` presents the secret only through the credential door, for
+    /// `effector` only, and runs on the caller's thread.
+    ///
+    /// # Errors
+    /// As [`Self::use_secret_handle`], past its operation and arguments.
+    pub(crate) fn use_secret_with(
+        &self,
+        user: &SecretUser,
+        handle: &str,
+        operation: &str,
+        effector: &str,
+        consume: &mut dyn FnMut(&SecretUseTarget<'_>) -> SecretUseConsumed,
+    ) -> Result<SecretUseOutcome> {
         let txn = self.store.env.read_txn()?;
         let (short, id) = handle_record_in_txn(&self.store, &txn, handle)?;
         let rec = read_secret_custody_admission_in_txn(&self.store, &txn, &id)?
@@ -259,17 +332,18 @@ impl Vault {
             handle: short,
             secret: id,
             generation: rec.rotation_generation,
-            op,
+            operation,
+            effector,
         };
         let admitted = if !live || rec.status != SecretCustodyStatus::Active {
             Err(not_active(&used.handle))
         } else if !rec
-            .binding_for(op.effector)
+            .binding_for(effector)
             .is_some_and(SecretBinding::grants_read)
         {
-            Err(unbound(&used.handle, op.effector))
+            Err(unbound(&used.handle, effector))
         } else {
-            self.check_secret_at_door(&rec.name, op.effector)
+            self.check_secret_at_door(&rec.name, effector)
         };
         if let Err(refusal) = admitted {
             used.record(self, SecretUseDecision::Refused, SecretUseSend::NotSent)?;
@@ -277,30 +351,19 @@ impl Vault {
         }
         let target = SecretUseTarget {
             name: &rec.name,
-            effector: op.effector,
-            operation: op.name,
+            effector,
+            operation,
+            custody: id,
         };
-        // A consumer blocks on its provider. It runs on a thread of its own,
-        // outside whatever async runtime the caller's door is on.
-        let answer = std::thread::scope(|scope| {
-            scope
-                .spawn(|| (op.consume)(self, &target, arguments))
-                .join()
-        })
-        .unwrap_or_else(|_| Err("the operation stopped before it answered".to_owned()));
-        let (mut result, mut failure) = match answer {
-            Ok(result) => (Some(result), None),
-            Err(failure) => (None, Some(failure)),
-        };
-        let mut send = if result.is_some() {
-            SecretUseSend::Answered
-        } else {
-            SecretUseSend::Failed
-        };
+        let SecretUseConsumed {
+            mut result,
+            mut failure,
+            mut send,
+        } = consume(&target);
         // The value is read once more, through the same door, only to find
         // it in what came back. If it cannot be, nothing comes back.
-        let text = format!("[secret {}]", used.handle);
-        let cleared = self.inject_secret_record_at_door(&id, op.effector, &mut |value: &[u8]| {
+        let text = handle_text(&used.handle);
+        let cleared = self.inject_secret_record_at_door(&id, effector, &mut |value: &[u8]| {
             if let Some(result) = result.as_mut() {
                 clear_value(result, value, &text);
             }
@@ -321,18 +384,53 @@ impl Vault {
             failure,
         })
     }
+
+    /// Each copy of the value of the custody record `id` in `fields`, in a
+    /// string or a key at any depth, replaced by the record's handle text.
+    /// The value is read once more through its door for `effector`, only to
+    /// find it there.
+    ///
+    /// # Errors
+    /// The door's refusal, when the value cannot be read: then `fields` may
+    /// still hold it, and the caller withholds them.
+    pub(crate) fn clear_secret_record_from(
+        &self,
+        id: &EntityId,
+        effector: &str,
+        fields: &mut [&mut Value],
+    ) -> Result<()> {
+        let short = {
+            let txn = self.store.env.read_txn()?;
+            crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &txn, id)?
+                .map(|(short, _)| short)
+        };
+        let text = short.map_or_else(|| "[secret]".to_owned(), |short| handle_text(&short));
+        self.inject_secret_record_at_door(id, effector, &mut |value: &[u8]| {
+            for field in fields.iter_mut() {
+                clear_value(&mut **field, value, &text);
+            }
+            Ok(())
+        })
+        .map(drop)
+    }
+}
+
+/// A handle as a text stands it in for a value: `[secret sc12]`.
+fn handle_text(handle: &str) -> String {
+    format!("[secret {handle}]")
 }
 
 /// One use as its Gate record keeps it.
-struct Used {
+struct Used<'a> {
     user: SecretUser,
     handle: String,
     secret: EntityId,
     generation: u32,
-    op: &'static SecretUseOperation,
+    operation: &'a str,
+    effector: &'a str,
 }
 
-impl Used {
+impl Used<'_> {
     fn record(
         &self,
         vault: &Vault,
@@ -345,8 +443,8 @@ impl Used {
             USE_DIFF_DOMAIN,
             self.secret.as_bytes(),
             &generation,
-            self.op.name.as_bytes(),
-            self.op.effector.as_bytes(),
+            self.operation.as_bytes(),
+            self.effector.as_bytes(),
         ];
         let mut digest = blake3::Hasher::new();
         for part in parts {
@@ -366,10 +464,10 @@ impl Used {
                 .into(),
                 reason_codes: vec![SECRET_USE_REASON.into()],
                 receipt_reasons: vec![
-                    format!("use:{}", self.op.name),
+                    format!("use:{}", self.operation),
                     format!("handle:{}", self.handle),
                     format!("generation:{}", self.generation),
-                    format!("effector:{}", self.op.effector),
+                    format!("effector:{}", self.effector),
                     format!("decision:{}", decision.as_str()),
                     format!("send:{}", send.as_str()),
                 ],
@@ -390,8 +488,8 @@ impl Used {
         Ok(SecretUseReceipt {
             handle: self.handle.clone(),
             generation: self.generation,
-            effector: self.op.effector.to_owned(),
-            operation: self.op.name.to_owned(),
+            effector: self.effector.to_owned(),
+            operation: self.operation.to_owned(),
             decision,
             send,
             receipt: decision_id,
