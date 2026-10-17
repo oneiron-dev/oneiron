@@ -31247,7 +31247,7 @@
      "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door…",
      "surface": {
       "crate-vis": 5,
-      "fn": 9,
+      "fn": 10,
       "re-export": 1,
       "struct": 3
      }
@@ -57098,7 +57098,17 @@
      "path": "src/edit/check.rs",
      "purpose": "The independent passthrough check (ARCH-0077, \"Transactions and allowed part changes\")",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/geometry.rs",
+     "purpose": "`set_preset` and `set_glue`: a shape's or connector's preset geometry, and a connector's glue",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -57128,7 +57138,7 @@
      "path": "src/edit/mod.rs",
      "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 1,
       "mod": 1,
@@ -57184,7 +57194,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 3,
+      "fn": 5,
       "struct": 5
      }
     },
@@ -57508,7 +57518,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ExportKey",
@@ -57525,8 +57535,18 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/held.rs",
+     "purpose": "What a retained element is written as, in live-model terms: a shape's or connector's preset, a connector's…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -57544,7 +57564,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ApproveScope",
@@ -57581,9 +57601,9 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 8,
-      "fn": 25,
+      "fn": 28,
       "struct": 22
      }
     },
@@ -57883,7 +57903,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57911,9 +57931,9 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain"
     },
@@ -57962,7 +57982,7 @@
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 63,
+   "source_files": 65,
    "test_files": 14
   },
   "oneiron-driver": {
