@@ -7,6 +7,7 @@ import keyword
 import re
 import subprocess
 from facade_types import Inventory
+from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text())
@@ -1172,12 +1173,13 @@ def outputs():
     catalog += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r.get('description', '')) + ',\n' for r in ROWS)
     catalog += '} }\n'
     catalog += '}\n'
-    uniffi = uniffi_facade(facade_rows)
+    uniffi, uniffi_types = uniffi_facade(facade_rows)
     http = http_facade()
     files = {
         'packages/oneiron-client/src/facade.ts': http,
         'crates/oneiron/src/task_verb/run_verb_catalog.rs': run_catalog(),
         'crates/oneiron-uniffi/src/facade_generated.rs': uniffi,
+        'crates/oneiron-uniffi/src/facade_types_generated.rs': uniffi_types,
         'crates/oneiron/src/task_verb/sdk_generated.rs':core,
         'crates/oneiron/src/task_verb/verb_catalog.rs':catalog,
         'crates/oneiron-server/src/api/facade/agent_verbs.rs':server,
@@ -1216,11 +1218,14 @@ def outputs():
 # method for the row, so an embedded handle and a connected one answer it the
 # way napi and Python do. A row's `uniffi` block spells its typed foreign
 # signature over the crate's records. A row without one projects by type: an
-# engine type with a UniFFI record crosses as that record, a typed binding
-# argument as its foreign value, and any other input or output as the crate's
-# `WireJson` leaf, parsed into the row's engine input type and written from its
-# typed output on the Rust side. That is one typed call per verb with a JSON
-# body; there is no generic `call`. A definition row with a `uniffi` block
+# engine type with a hand-written UniFFI record (`dto.rs`) crosses as that
+# record, a typed binding argument as its foreign value, and any other input
+# or output as the generated record of its type from the facade type inventory
+# (`uniffi_types.py`, `facade_types_generated.rs`), converted through the
+# shared wire shape. An input record with no fields is no argument at all. Only
+# a type the inventory could not read crosses as the crate's `WireJson` leaf,
+# parsed into the row's engine input type and written from its typed output on
+# the Rust side; there is no generic `call`. A definition row with a `uniffi` block
 # exports its signature and fails closed until the table makes it callable.
 # Codecs are selected by type (`crates/oneiron-uniffi/src/codec.rs`), never by
 # verb name.
@@ -1268,7 +1273,18 @@ def uniffi_record(value, records):
             return inner and f'{container}<{inner}>'
     return records.get(value)
 
-def uniffi_export(row):
+# What a generated UniFFI type may not be named: the crate's hand-written
+# exports, and what the crate root already binds.
+UNIFFI_HAND_WRITTEN = ['crates/oneiron-uniffi/src/dto.rs', 'crates/oneiron-uniffi/src/lib.rs', 'crates/oneiron-uniffi/src/error.rs']
+UNIFFI_ROOT_NAMES = ['Arc', 'Lift', 'Lower', 'UniFfiTag']
+
+def uniffi_taken():
+    names = set(UNIFFI_ROOT_NAMES)
+    for path in UNIFFI_HAND_WRITTEN:
+        names.update(re.findall(r'(?m)^pub (?:struct|enum) (\w+)', (ROOT/path).read_text()))
+    return names
+
+def uniffi_export(row, types, census):
     'One `export_facade!` arm: lower the arguments, call the typed client method, lift.'
     name, method = json.dumps(row['name']), row['name'].replace('.', '_')
     signature = row.get('uniffi')
@@ -1296,32 +1312,69 @@ def uniffi_export(row):
             lowered = next(iter(params)) if len(params) == 1 else '(' + ', '.join(params) + ')'
             setup.append(f'let input: {engine_input} = {lowered}.lower()?;')
             values.append('&input')
+        census.setdefault(('typed', 'typed'), []).append(row['name'])
     else:
         if typed_args:
             unknown = [a['kind'] for a in typed_args if a['kind'] not in UNIFFI_ARGUMENTS]
             if unknown: raise ValueError(f'{row["name"]}: no UniFFI projection for binding argument kinds {unknown}')
             params = {a['name']: UNIFFI_ARGUMENTS[a['kind']][0] for a in typed_args}
             values = [UNIFFI_ARGUMENTS[a['kind']][1].format(name=a['name']) for a in typed_args]
+            sides = ['typed']
         elif uniffi_record(row['input'], UNIFFI_INPUTS):
             params = {'input': uniffi_record(row['input'], UNIFFI_INPUTS)}
             setup.append(f'let input: {engine_input} = input.lower()?;')
             values.append('&input')
+            sides = ['typed']
+        elif types.root_is_empty(row['input']):
+            params = {}
+            setup.append(f'let input: {engine_input} = crate::codec::lower_empty({name})?;')
+            values.append('&input')
+            sides = ['generated']
+        elif mirror := types.root(row['input']):
+            params = {'input': mirror}
+            setup.append(f'let input: {engine_input} = crate::codec::lower_record({name}, input)?;')
+            values.append('&input')
+            sides = ['generated']
         else:
             params = {'input': 'WireJson'}
             setup.append(f'let input: {engine_input} = crate::codec::decode({name}, &input)?;')
             values.append('&input')
+            sides = ['wire']
         record = uniffi_record(row['output'], UNIFFI_RESULTS)
-        output, result = (record, 'Lift::lift(output)') if record else ('WireJson', f'crate::codec::encode({name}, &output)')
+        if record:
+            output, result = record, 'Lift::lift(output)'
+            sides.append('typed')
+        elif mirror := types.root(row['output']):
+            output, result = mirror, f'crate::codec::lift_record({name}, &output)'
+            sides.append('generated')
+        else:
+            output, result = 'WireJson', f'crate::codec::encode({name}, &output)'
+            sides.append('wire')
+        census.setdefault(tuple(sides), []).append(row['name'])
     declaration = ', '.join(arg + ': ' + typ for arg, typ in params.items())
     body = ''.join(f'    {line}\n' for line in setup + [f'let output = client.{method}({", ".join(values)})?;', result])
-    return f'{name} => fn {method}(&self, {declaration}) -> {output} = |client| {{\n{body}}};\n'
+    receiver = f'&self, {declaration}' if declaration else '&self'
+    return f'{name} => fn {method}({receiver}) -> {output} = |client| {{\n{body}}};\n'
 
 def uniffi_facade(facade_rows):
-    'The UniFFI verb surface: every facade row, then the definition rows it still names.'
+    'The UniFFI verb surface (every facade row, then the definition rows it still names) and its generated types.'
     rows = facade_rows + [row for row in DEFINITIONS if 'uniffi' in row]
     if any('uniffi' in row for row in ROWS if row not in facade_rows):
         raise ValueError('only a facade row carries a uniffi signature')
-    return HEADER + 'export_facade! {\n' + ''.join(uniffi_export(row) for row in rows) + '}\n'
+    types, census = UniffiTypes(INVENTORY, uniffi_taken()), {}
+    arms = ''.join(uniffi_export(row, types, census) for row in rows)
+    count = lambda *sides: len(census.get(sides, []))
+    lines = [
+        f'UniFFI census: {len(facade_rows)} facade rows, {len(types.items)} generated types.',
+        f'Hand-written records in and out: {count("typed", "typed")}; typed arguments or a hand-written input with a '
+        f'generated result: {count("typed", "generated")}; a generated input with a hand-written result: {count("generated", "typed")}; '
+        f'generated in and out: {count("generated", "generated")}.',
+        'WireJson rows: ' + (', '.join(f'{name} ({"input" if sides[0] == "wire" else ""}{" and " if sides == ("wire", "wire") else ""}{"result" if sides[1] == "wire" else ""})'
+                                       for sides, names in sorted(census.items()) if 'wire' in sides for name in names) or 'none') + '.',
+        'WireJson leaves inside the generated types, past each serde_json::Value: '
+        + (', '.join(f'{where} ({why})' for where, why in sorted(types.leaves.items())) or 'none') + '.',
+    ]
+    return HEADER + 'export_facade! {\n' + arms + '}\n', types.render(HEADER, lines)
 
 # The code-mode declarations a model is taught and a shadow type check reads.
 # The engine renders each row's signature from its compiled input schema
