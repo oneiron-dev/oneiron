@@ -6649,25 +6649,25 @@ pub fn vault_residence_mode(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceModeRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ResidenceModeChanged> {
-    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.mode")
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.mode", &input)
 }
 pub fn vault_residence_open(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceOpenRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ResidenceOpened> {
-    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.open")
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.open", &input)
 }
 pub fn vault_residence_index(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidenceMachineRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ResidenceIndex> {
-    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.index")
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.index", &input)
 }
 pub fn vault_residence_prune(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResidencePruneRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ResidencePruned> {
-    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune")
+    crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
 }
 pub fn vault_records_erase_preview(
     memory: &Memory<'_>,

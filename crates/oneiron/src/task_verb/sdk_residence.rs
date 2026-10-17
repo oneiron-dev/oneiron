@@ -200,7 +200,7 @@ pub struct ResidencePruned {
 /// # Errors
 ///
 /// Always.
-pub fn residence_host_only<T>(_memory: &Memory<'_>, verb: &str) -> MemoryResult<T> {
+pub fn residence_host_only<I, T>(_memory: &Memory<'_>, verb: &str, _input: &I) -> MemoryResult<T> {
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         format!("{verb} acts on a machine's own sync connection; an embedded vault reaches none"),
