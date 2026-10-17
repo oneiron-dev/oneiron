@@ -4,6 +4,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::registry::ENTITY_TYPE_EMBEDDING_SETUP;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
     ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE, ENTITY_TYPE_RECEIPT_RECORD,
@@ -133,6 +134,7 @@ impl RefusalRetry {
                     | ErrorKind::RemoteMachineHistoryPending
                     | ErrorKind::AskDependencyPending
                     | ErrorKind::AuthorityLogSignerPending
+                    | ErrorKind::EmbeddingSetupDependencyPending
             )
         {
             Self::DependencyPending
@@ -159,6 +161,10 @@ pub(in crate::sync) fn waits_for_sibling_row(blob: &[u8]) -> bool {
     crate::task_verb::waits_for_ask_group(blob)
         || EntityMetadataHeader::parse(blob).is_some_and(|header| {
             header.entity_type == ENTITY_TYPE_ASSET
+                || (header.entity_type == ENTITY_TYPE_EMBEDDING_SETUP
+                    && crate::embed::embedding_setup_rests_on_sibling(
+                        &blob[ENTITY_METADATA_HEADER_LEN..],
+                    ))
                 || (header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
                     && crate::workspace_roster::project_room_dependency(
                         &blob[ENTITY_METADATA_HEADER_LEN..],
@@ -480,6 +486,37 @@ fn admit(
             )?;
             refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
             return Ok(EntityStep::Protected { id, wrote });
+        }
+        ENTITY_TYPE_EMBEDDING_SETUP => {
+            // OF-370: this vault's embedding setup reaches only its own devices. A row lives at
+            // its one fixed time, so in one window, and lands in the side tables it mirrors
+            // under the checks its local writer makes, in the transaction that writes it.
+            let setup_refused = |reason: &str| {
+                refuse(
+                    Some(id),
+                    Error::Artifact(crate::error::ArtifactError::InvalidEmbeddingSetupBody(
+                        reason.to_owned(),
+                    )),
+                )
+            };
+            if crate::sync::ingest::in_peer_import(vault) {
+                return Ok(setup_refused(
+                    "a peer vault's embedding setup stays in that vault",
+                ));
+            }
+            let fixed = crate::embed::EMBEDDING_SETUP_LEARNED_AT;
+            if (
+                header.learned_at,
+                header.occurred_start,
+                header.occurred_end,
+            ) != (fixed, fixed, fixed)
+            {
+                return Ok(setup_refused(
+                    "an embedding setup row is not at its fixed time",
+                ));
+            }
+            crate::embed::install_replicated_embedding_setup_in_txn(&vault.store, wtxn, &id, data)?;
+            None
         }
         _ => None,
     };
