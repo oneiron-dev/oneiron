@@ -638,10 +638,9 @@ fn write_join_in_txn(
                 needs: needs.clone(),
             },
         )))),
-        JoinDecision::Refuse(refusal) => Err(Error::InvalidConfig(format!(
-            "the write's room join is refused: {}",
-            json(refusal)?
-        ))),
+        JoinDecision::Refuse(refusal) => Err(Error::Record(RecordError::RoomJoinRefused {
+            refusal: json(refusal)?,
+        })),
     }
 }
 
