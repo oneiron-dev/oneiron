@@ -586,20 +586,25 @@ The Dreamer applies its own work at once and keeps what it replaced as history. 
 change back:
 
 - `GET /v1/owner/dreamer/changes` (optionally `?limit=<n>`): the Dreamer's standing changes,
-  newest first, each with its id, its kind (`claim`, `settlement`, `summary` or `note`), the
-  claim's predicate or the note's kind, and when it landed. The list reads the vault's newest
-  20,000 rows. `people_about` names each person whose newest `about` line the Dreamer wrote.
+  newest first, each with its id, its kind (`claim`, `settlement`, `evidence`, `summary` or
+  `note`), the claim's predicate or the note's kind, and when it landed. The list reads the
+  vault's newest 20,000 rows. `people_about` names each person whose newest `about` line the Dreamer wrote.
 - `POST /v1/owner/dreamer/revert` with `{"change": "<32 hex>"}` reverts it, with one receipt:
   - a claim (a promotion, a merged replacement, a nightly same-as, conflict or arc output) is
     retracted, and each claim it superseded stands again, as in a settlement's revert. The
     answers it gave the conflicts its correction closed, and its supersession record, are
     retracted with it, so those conflicts are open again for you.
   - a settlement's `conflict.resolved` answer reverts exactly as `/conflicts/revert` does.
+  - an evidence attachment (the `edge.provenance` record the Dreamer wrote on a support edge) is
+    retracted. The edge stays, re-stamped from the records still live on it, as a retracted edge
+    does.
   - a scope summary is archived; the summary it replaced is current again, and the header that
     announced it on the asking turn is retracted.
   - a note the Dreamer wrote to answer a task is archived. The task stays done.
   - a person's id puts back the `about` lines the Dreamer's newest pass replaced. A line shows
     only while the facts it was written from still hold; the Dreamer writes again once they move.
+    Erasing a fact about a person drops that person's `about` lines and the replaced ones too, so
+    no stored line keeps what the fact said.
 
   The reply lists what was retracted, reopened, restored, copied, left closed, archived and made
   current again. An archived summary or note comes back through `/v1/owner/cleanup/restore`.
@@ -1191,9 +1196,11 @@ oneiron handoff-alarms list                     # every saved alarm, open or ack
 oneiron handoff-alarms acknowledge SUITE:HEX    # you have seen this key's alarm
 ```
 
-Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
+Routes: `GET /v1/owner/authority/handoff-alarms` and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
-signer is 404, and acknowledging an acknowledged alarm changes nothing.
+signer is 404, and acknowledging an acknowledged alarm changes nothing. The list, the CLI and the
+SDK's `vault.authority.handoff_alarms` answer one shape in one order: `raised_at` and an
+acknowledgement's `at` in unix seconds, oldest raised first, then by signer.
 
 ## Learned settings
 
