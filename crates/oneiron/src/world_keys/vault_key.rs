@@ -934,10 +934,13 @@ impl Vault {
 
     /// Seals the held vault data key to `recipient` as escrow wrap `label`, in
     /// the caller's transaction, replacing a wrap of that label. `None` when
-    /// this handle does not hold the key.
+    /// this handle does not hold the key. A sealed vault's mirror is staged
+    /// first: the caller begins `transition` before its transaction and
+    /// finishes it after the commit ([`WrapTransition`]).
     pub(crate) fn put_vault_key_escrow_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        transition: &WrapTransition<'_>,
         label: &str,
         recipient: &HybridPublicKey,
     ) -> Result<Option<VaultKeyWrapInfo>> {
@@ -968,15 +971,12 @@ impl Vault {
             kind,
             created_at: self.instant_in_txn(txn)?.secs(),
         };
-        WRAPS.put(
-            &self.store,
-            txn,
-            &info.id,
-            &StoredWrap {
-                info: info.clone(),
-                envelope,
-            },
-        )?;
+        let stored = StoredWrap {
+            info: info.clone(),
+            envelope,
+        };
+        transition.stage(|| self.staged_wraps_in_txn(txn, Some(&stored)))?;
+        WRAPS.put(&self.store, txn, &info.id, &stored)?;
         Ok(Some(info))
     }
 

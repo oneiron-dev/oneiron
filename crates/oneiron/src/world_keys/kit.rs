@@ -280,6 +280,10 @@ impl Vault {
             pending_row(KITS.get(&self.store, &txn, &key)?, &root)?;
         }
         let prepared = self.prepare_owner_root_from_seed(owner, seed)?;
+        // The `world-kit` wrap is a wrap change: a sealed vault's page-seal
+        // mirror is staged in the activation's transaction and rewritten
+        // after it commits (OF-570).
+        let transition = self.begin_wrap_transition()?;
         let (activated, (replaced, escrow)) =
             self.activate_owner_root_with(owner, origin, prepared, carry, |txn| {
                 let mut row = pending_row(KITS.get(&self.store, txn, &key)?, &root)?;
@@ -293,10 +297,15 @@ impl Vault {
                 }
                 row.confirmed_at = Some(self.instant_in_txn(txn)?.secs());
                 KITS.put(&self.store, txn, &key, &row)?;
-                let escrow =
-                    self.put_vault_key_escrow_in_txn(txn, WORLD_KIT_ESCROW, &root.recovery_key)?;
+                let escrow = self.put_vault_key_escrow_in_txn(
+                    txn,
+                    &transition,
+                    WORLD_KIT_ESCROW,
+                    &root.recovery_key,
+                )?;
                 Ok((replaced, escrow))
             })?;
+        transition.finish()?;
         Ok(ConfirmedWorldKit {
             kit,
             activated,
