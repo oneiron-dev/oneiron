@@ -72,6 +72,9 @@ pub(super) async fn serve_with_config(
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
     config.keystore.install_on(&vault, &config.vault_path);
+    if let Some(embedding) = &config.embedding {
+        embedding.apply_to(&vault)?;
+    }
     #[cfg(unix)]
     if let Err(error) = vault.collect_result_bodies(4096) {
         tracing::warn!(%error, "result body collection at start failed");

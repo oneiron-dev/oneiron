@@ -887,6 +887,11 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
   `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
+- **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
+  `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
+  for the preset, apply at each `serve` start. A start declares only spaces the vault does not
+  hold and binds only slots the vault leaves unbound, so a door edit or a model move stays. A
+  listed space the vault holds at another width stops `serve`: a new width needs a new id.
 - **Moving to a new model version.** `POST .../move` with `{"candidate", "incumbent", "margin"}`
   starts moving every slot the incumbent serves to the candidate. Leave out `incumbent` for the
   text index. The media backfill fills the candidate while the incumbent keeps serving, and
