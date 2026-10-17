@@ -108,6 +108,8 @@ pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
     run_task_attribution_sweep, run_task_attribution_sweep_with_decisions,
 };
+mod trace;
+pub use trace::{LoadedSkillRevision, ReceiptTrace, receipt_attribution_trace};
 
 pub use self::judge_supersession::{
     DisplacedJudgeReceipt, displaced_judge_receipts, supersede_displaced_judge_receipts,
