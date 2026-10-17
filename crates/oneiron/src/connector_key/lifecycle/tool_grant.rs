@@ -35,7 +35,7 @@ use crate::{EntityId, Vault};
 use super::super::manifest_drift::{ConnectorToolSchema, ResolvedConnectorManifest};
 use super::super::qualification::ConnectorQualificationReceipt;
 use super::super::record::{
-    ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
+    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, ScopedCapabilityProvenance,
     canonical_scoped_server_segment, normalize_connector_key,
 };
 use super::super::slate::{
@@ -490,15 +490,16 @@ impl Vault {
     }
 }
 
-/// The catalog slate a per-grant key derives from: the catalog key whose
-/// name is the key's scoped server. `None` for any other key. This only
-/// says whose settings a call meets; the grant and the Gate stay the
-/// authority.
-pub(in crate::connector_key) fn derived_key_catalog_slate_in_txn(
+/// The catalog key a per-grant key derives from: the catalog key whose name
+/// is the key's scoped server, with the ordinary channel (`mcp:{server}`)
+/// the key's calls travel on. `None` for any other key. This only says
+/// whose settings, charter and shared budgets a call also meets; the grant
+/// and the Gate stay the authority.
+pub(in crate::connector_key) fn derived_key_catalog_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &ConnectorKeyRecord,
-) -> Result<Option<EntityId>> {
+) -> Result<Option<(EntityId, ConnectorKeyRecord, String)>> {
     if key.catalog.is_some() {
         return Ok(None);
     }
@@ -508,7 +509,63 @@ pub(in crate::connector_key) fn derived_key_catalog_slate_in_txn(
     };
     Ok(catalog_key_in_txn(store, txn, capability.server())?
         .filter(|(_, catalog)| catalog_server(catalog).as_deref() == Some(capability.server()))
-        .and_then(|(_, catalog)| catalog.slate_ref))
+        .map(|(id, catalog)| (id, catalog, capability.ordinary_channel())))
+}
+
+/// The catalog slate a per-grant key derives from.
+pub(in crate::connector_key) fn derived_key_catalog_slate_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+) -> Result<Option<EntityId>> {
+    Ok(derived_key_catalog_in_txn(store, txn, key)?.and_then(|(_, catalog, _)| catalog.slate_ref))
+}
+
+/// The charter of the catalog connector a per-grant key derives from. The
+/// Gate and recovery read it beside the key's own, with the same matchers,
+/// so a per-grant call meets the catalog's drift and never-list too.
+pub(crate) fn catalog_charter_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+) -> Result<Option<ConnectorCharterBlock>> {
+    Ok(derived_key_catalog_in_txn(store, txn, key)?.and_then(|(_, catalog, _)| catalog.charter))
+}
+
+/// Holds each Active per-grant key of a catalog key that is no longer
+/// Active, inside the caller's transaction. The common suspend core calls
+/// it, so a budget exhaust holds them as an owner suspend does; the
+/// catalog's resume lifts the holds through `sync_derived_keys_in_txn`.
+pub(in crate::connector_key) fn hold_derived_keys_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    catalog: &ConnectorKeyRecord,
+    at: u64,
+) -> Result<()> {
+    if catalog.status == ConnectorKeyStatus::Active {
+        return Ok(());
+    }
+    let Some(server) = catalog_server(catalog) else {
+        return Ok(());
+    };
+    for (key_id, record) in derived_keys_in_txn(store, wtxn, &server)? {
+        if record.status != ConnectorKeyStatus::Active
+            || ScopedCapabilityProvenance::parse_owner_capability_key(&record.connector).is_none()
+        {
+            continue;
+        }
+        let held = held(record, at);
+        rewrite_connector_key_in_txn(store, wtxn, &key_id, &held)?;
+        append_op(
+            store,
+            wtxn,
+            &key_id,
+            "gate.connector_key.suspend",
+            &held,
+            at,
+        )?;
+    }
+    Ok(())
 }
 
 /// The catalog key that a consent can derive from: Active, qualified at its

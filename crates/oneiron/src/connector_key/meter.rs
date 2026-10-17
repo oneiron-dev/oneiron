@@ -10,10 +10,12 @@ use crate::llm::{
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 
+use super::lifecycle::derived_key_catalog_in_txn;
 use super::record::{
     CalendarPeriod, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
     EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetWindow,
 };
+use super::txn::suspend_connector_key_in_txn;
 
 /// Compiled-charter cap usage rows live at `0x8000 | i` (GOV-10); key budget
 /// rows live at `0..=15`.
@@ -564,10 +566,45 @@ pub(super) fn budget_read_from_states(
     }
 }
 
+/// The shared pool a per-grant key's charges also meet: its catalog
+/// connector's own budget rows and compiled caps, matched on the ordinary
+/// `mcp:{server}` channel and kept under the catalog key's id. One cap on a
+/// catalog then holds across every grant derived from it, instead of
+/// multiplying with each new grant (ONE-1794). `None` for any other key.
+fn catalog_budget_pool_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &ConnectorKeyRecord,
+) -> Result<Option<(EntityId, ConnectorKeyRecord, String)>> {
+    derived_key_catalog_in_txn(store, txn, key)
+}
+
 /// Read-only preflight for a set of connector keys charged in ONE Gate
 /// transaction. Callers preflight every distinct key before writing usage to
 /// any of them, so a later exhausted key cannot partially debit an earlier.
+/// A per-grant key's preflight also reads its catalog's shared pool.
 pub(crate) fn preflight_effector_budgets(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_id: &EntityId,
+    record: &ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+) -> Result<Option<(u16, EffectorBudgetOnExhaust)>> {
+    if let Some(exhausted) =
+        preflight_key_budgets(store, txn, key_id, record, effect_channel, send_like, now)?
+    {
+        return Ok(Some(exhausted));
+    }
+    let Some((catalog_id, catalog, channel)) = catalog_budget_pool_in_txn(store, txn, record)?
+    else {
+        return Ok(None);
+    };
+    preflight_key_budgets(store, txn, &catalog_id, &catalog, &channel, send_like, now)
+}
+
+fn preflight_key_budgets(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key_id: &EntityId,
@@ -600,12 +637,100 @@ pub(crate) fn preflight_effector_budgets(
         .map(|state| (state.row_index, state.budget.on_exhaust)))
 }
 
+/// Charges one admitted external effect to a key's budget rows and, for a
+/// per-grant key, to its catalog's shared pool: both are evaluated before
+/// either debits. The charge and its read stay the key's own.
+///
+/// An exhausted catalog pool comes back as `Exhausted` with `Refuse`, after
+/// the catalog row's own on-exhaust has run: a `Suspend` row suspends the
+/// catalog key, which holds this key with it. The caller then must not
+/// suspend this key in its own name, or the catalog's resume would not
+/// lift it.
+pub(crate) fn charge_effector_budgets(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    key_id: &EntityId,
+    key: &mut ConnectorKeyRecord,
+    effect_channel: &str,
+    send_like: bool,
+    now: u64,
+) -> Result<EffectorBudgetChargeOutcome> {
+    let Some((catalog_id, mut catalog, channel)) = catalog_budget_pool_in_txn(store, wtxn, key)?
+    else {
+        return charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now);
+    };
+    if preflight_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)?.is_none()
+        && let Some((row_index, on_exhaust)) =
+            preflight_key_budgets(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
+    {
+        let held = on_exhaust == EffectorBudgetOnExhaust::Suspend
+            && catalog.status == ConnectorKeyStatus::Active;
+        if held {
+            suspend_connector_key_in_txn(
+                store,
+                wtxn,
+                &catalog_id,
+                &catalog,
+                budget_exhausted_reason(row_index),
+                now,
+            )?;
+        }
+        let states = load_budget_row_states(
+            store,
+            wtxn,
+            key_id,
+            key,
+            Some(effect_channel),
+            send_like,
+            now,
+        )?;
+        let mut read = budget_read_from_states(key_id, key, &states);
+        if held {
+            read.status = ConnectorKeyStatus::Suspended;
+        }
+        return Ok(EffectorBudgetChargeOutcome::Exhausted {
+            row_index,
+            on_exhaust: EffectorBudgetOnExhaust::Refuse,
+            charge: EffectorBudgetCharge {
+                key_ref: *key_id,
+                sends_debit: 0,
+                read,
+                matched_rows: states
+                    .iter()
+                    .filter(|state| state.matched)
+                    .map(|state| state.row_index)
+                    .collect(),
+                ladder_events: Vec::new(),
+            },
+        });
+    }
+    let outcome = charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)?;
+    if !matches!(outcome, EffectorBudgetChargeOutcome::Exhausted { .. })
+        && let EffectorBudgetChargeOutcome::Exhausted { .. } = charge_key_budgets(
+            store,
+            wtxn,
+            &catalog_id,
+            &mut catalog,
+            &channel,
+            send_like,
+            now,
+        )?
+    {
+        // Preflighted above under this writer: fail the transaction rather
+        // than persist the key's debit alone.
+        return Err(Error::InvariantViolation(
+            "catalog budget changed inside the charge",
+        ));
+    }
+    Ok(outcome)
+}
+
 /// Evaluates and (only when every matched row passes) debits a key's budget
 /// rows for one admitted external effect. Evaluate-all-then-apply-all across
 /// the key/compiled union: an exhausted outcome applies NO debits. The charge
 /// carries the full post-debit meter read, the matched row indices, and the
 /// ladder events fired by this charge (GOV-02, ONE-1418).
-pub(crate) fn charge_effector_budgets(
+fn charge_key_budgets(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     key_id: &EntityId,
