@@ -22,7 +22,7 @@
 //! the same action on the same inputs. A call whose inputs were not
 //! captured states none, and is never read as equal to another.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
