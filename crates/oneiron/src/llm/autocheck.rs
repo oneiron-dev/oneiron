@@ -15,6 +15,7 @@ use super::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, HeldLadder, Reversibility,
 };
 use super::manifest::{CalibratedVerdict, ConfidenceBand, VerdictBasis};
+use crate::claim::ClaimSource;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::SourceLineage;
 use crate::{EntityId, Result};

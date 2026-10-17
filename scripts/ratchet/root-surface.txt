@@ -606,7 +606,6 @@ accept_cleanup_proposal
 admit_compaction_packet
 approved_commitment_wake
 artifact_hex
-auto_check_llm_request
 blocked_by_edge_write
 build_campaign_held_out_decision
 build_campaign_split_report
