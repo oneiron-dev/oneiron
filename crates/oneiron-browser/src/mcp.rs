@@ -94,7 +94,12 @@ impl Mcp {
         Ok(mcp)
     }
 
-    fn request(&self, method: &str, params: Value, deadline: Instant) -> Result<Value, BrowserError> {
+    fn request(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Instant,
+    ) -> Result<Value, BrowserError> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         {
@@ -184,7 +189,8 @@ impl Mcp {
 }
 
 fn send(writer: &Writer, message: &Value) -> Result<(), BrowserError> {
-    let mut line = serde_json::to_vec(message).map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    let mut line =
+        serde_json::to_vec(message).map_err(|e| BrowserError::Protocol(e.to_string()))?;
     line.push(b'\n');
     let mut writer = writer.lock().map_err(|_| BrowserError::GuestLost)?;
     writer

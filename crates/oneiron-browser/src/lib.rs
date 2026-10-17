@@ -30,13 +30,13 @@ mod outline;
 #[cfg(feature = "driver")]
 mod session;
 
+#[cfg(feature = "driver")]
+pub use desktop::{DesktopGuest, DesktopSession};
 pub use library::{
     LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRunInput, LibraryRunOutput,
     ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
     WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, site_of,
 };
-#[cfg(feature = "driver")]
-pub use desktop::{DesktopGuest, DesktopSession};
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
 #[cfg(feature = "driver")]

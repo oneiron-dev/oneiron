@@ -325,7 +325,10 @@ impl Frame {
 impl DesktopSession {
     /// The engine selects and proves a backend before attaching the
     /// desktop, as it does for a browser.
-    pub fn attach(config: &DesktopGuest, transport: SessionTransport) -> Result<Self, BrowserError> {
+    pub fn attach(
+        config: &DesktopGuest,
+        transport: SessionTransport,
+    ) -> Result<Self, BrowserError> {
         if transport.manifest.fence_unproven || transport.manifest.fence_proof.is_none() {
             return Err(BrowserError::Unavailable(
                 "desktop session fence unproven".to_owned(),
@@ -835,8 +838,8 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
             .map(clip)
             .unwrap_or_default();
         let password = raw.contains("password");
-        let secret = password
-            || (role == "textbox" && SECRET_PHRASES.iter().any(|p| has_phrase(&label, p)));
+        let secret =
+            password || (role == "textbox" && SECRET_PHRASES.iter().any(|p| has_phrase(&label, p)));
         if secret {
             secrets.push(Secret {
                 screen: frame_of(element, "frame"),
@@ -909,7 +912,12 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
 
 /// Blacks out a window's secret fields in its screenshot, before the image
 /// is held. A secret field the screenshot cannot place refuses the image.
-fn mask(png: Vec<u8>, bounds: Rect, scale: f64, secrets: &[Secret]) -> Result<Vec<u8>, BrowserError> {
+fn mask(
+    png: Vec<u8>,
+    bounds: Rect,
+    scale: f64,
+    secrets: &[Secret],
+) -> Result<Vec<u8>, BrowserError> {
     if secrets.is_empty() {
         return Ok(png);
     }
@@ -933,7 +941,10 @@ fn mask(png: Vec<u8>, bounds: Rect, scale: f64, secrets: &[Secret]) -> Result<Ve
             })?;
         let span = |from: f64, to: f64, end: u32| {
             let end = f64::from(end);
-            (from.floor().clamp(0.0, end) as u32, to.ceil().clamp(0.0, end) as u32)
+            (
+                from.floor().clamp(0.0, end) as u32,
+                to.ceil().clamp(0.0, end) as u32,
+            )
         };
         let (x0, x1) = span(rect.x, rect.x + rect.w, width);
         let (y0, y1) = span(rect.y, rect.y + rect.h, height);
@@ -1052,8 +1063,10 @@ impl BrowserDriver for DesktopSession {
         // The driver's window pixels are its screenshot's, from the
         // window's corner.
         let bounds = frame.bounds;
-        let across = ((x - bounds.x) * frame.scale).clamp(0.0, (bounds.w * frame.scale - 1.0).max(0.0));
-        let down = ((y - bounds.y) * frame.scale).clamp(0.0, (bounds.h * frame.scale - 1.0).max(0.0));
+        let across =
+            ((x - bounds.x) * frame.scale).clamp(0.0, (bounds.w * frame.scale - 1.0).max(0.0));
+        let down =
+            ((y - bounds.y) * frame.scale).clamp(0.0, (bounds.h * frame.scale - 1.0).max(0.0));
         let key = snapshot.key;
         let mut observation = self.act(|session| {
             session
@@ -1318,7 +1331,11 @@ impl BrowserDriver for DesktopSession {
             ));
         }
         let key = self.snapshot(false)?.key;
-        let class = input.keys.iter().any(|k| is_return(k)).then_some(EFFECT_SEND);
+        let class = input
+            .keys
+            .iter()
+            .any(|k| is_return(k))
+            .then_some(EFFECT_SEND);
         let press = self.press(class, &key_row(&input.keys.join("+")))?;
         let mut observation = self.act(|session| {
             session
