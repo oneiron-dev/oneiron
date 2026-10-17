@@ -45,9 +45,9 @@ impl CompactionDriver {
     /// in it, `sources` is the whole `DerivedFrom` set, refused above
     /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut,
     /// `prior` is the host's last epoch and the last turn it covers, and
-    /// `calls` is how many of the host's calls `sources` were read from.
-    /// The host mints `request_id` from the store it reads: base, or its
-    /// room's view.
+    /// `calls` is how many of the host's calls `sources` were read from, and
+    /// `run` the run whose log it is. The host mints `request_id` from the
+    /// store it reads: base, or its room's view.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn request_for_log(
         &mut self,
@@ -59,6 +59,7 @@ impl CompactionDriver {
         prior: Option<crate::compaction::PriorEpoch>,
         calls: u64,
         note: Option<String>,
+        run: EntityId,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, .. } = &self.state else {
             return Err(Error::InvariantViolation(
@@ -107,7 +108,11 @@ impl CompactionDriver {
             sources,
             prior,
             note,
-            WindowLog::Host { prior, calls },
+            WindowLog::Host {
+                prior,
+                calls,
+                run: Some(run),
+            },
         )
     }
 
@@ -161,7 +166,11 @@ impl CompactionDriver {
                 sources.into_iter().filter(|id| seen.insert(*id)).collect()
             },
             note,
-            log: WindowLog::Host { prior: None, calls },
+            log: WindowLog::Host {
+                prior: None,
+                calls,
+                run: None,
+            },
         })
     }
 }
