@@ -28,9 +28,9 @@ pub(crate) use space::{
     search_media_space_in_txn,
 };
 pub use space_move::{
-    KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_NOTE_PRODUCER, SPACE_PROBE_DEPTH,
-    SPACE_PROBE_MIN_FAMILIES, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState,
-    SpaceProbeEncoder, SpaceRef,
+    KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_NOTE_PRODUCER,
+    SPACE_MOVE_UNDO_WINDOW_SECS, SPACE_PROBE_DEPTH, SPACE_PROBE_MIN_FAMILIES, SpaceMove,
+    SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState, SpaceProbeEncoder, SpaceRef,
 };
 pub use space_probe::{
     SPACE_PROBE_MAX_TARGETS, SPACE_PROBE_QUERY_MAX_LEN, SPACE_PROBES_PER_KIND, SpaceProbe,

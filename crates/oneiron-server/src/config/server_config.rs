@@ -306,6 +306,9 @@ pub struct ServeConfig {
     /// config file names it. Absent means every batch runs where its slot's
     /// provider runs.
     pub gpu: Option<crate::runtime::GpuPoolConfig>,
+    /// The `[embedding]` section: spaces and kind slots seeded at start,
+    /// absent until the config file names it.
+    pub embedding: Option<super::EmbeddingConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -372,6 +375,7 @@ impl Default for ServeConfig {
             browser: None,
             desktop: None,
             gpu: None,
+            embedding: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -443,6 +447,7 @@ impl fmt::Debug for ServeConfig {
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
+            .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",

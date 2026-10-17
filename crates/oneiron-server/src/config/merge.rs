@@ -303,6 +303,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     if let Some(gpu) = &config.gpu {
         gpu.validate()?;
     }
+    if let Some(embedding) = &config.embedding {
+        embedding.validate()?;
+    }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -514,6 +517,7 @@ struct FileServeConfig {
     browser: Option<super::BrowserConfig>,
     desktop: Option<super::DesktopConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -571,6 +575,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             browser: value.browser,
             desktop: value.desktop,
             gpu: value.gpu,
+            embedding: value.embedding,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -633,6 +638,8 @@ struct PartialServeConfig {
     desktop: Option<super::DesktopConfig>,
     /// `[gpu]` is file-only, as `[browser]` is.
     gpu: Option<crate::runtime::GpuPoolConfig>,
+    /// `[embedding]` is file-only, as `[models]` is.
+    embedding: Option<super::EmbeddingConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -702,6 +709,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("browser", &self.browser)
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
+            .field("embedding", &self.embedding)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -864,6 +872,9 @@ impl PartialServeConfig {
         if let Some(value) = self.browser {
             resolved.browser = Some(value);
         }
+        if let Some(value) = self.embedding {
+            resolved.embedding = Some(value);
+        }
         if let Some(value) = self.desktop {
             resolved.desktop = Some(value);
         }
@@ -949,6 +960,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             browser: None,
             desktop: None,
             gpu: None,
+            embedding: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

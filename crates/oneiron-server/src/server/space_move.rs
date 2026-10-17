@@ -16,6 +16,8 @@ use oneiron::embed::{
     SpaceMoveOutcome, SpaceMoveState, SpaceProbeAuthor, SpaceProbeEncoder, SpaceRef,
 };
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest};
+use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, ImageContent,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
@@ -87,15 +89,91 @@ impl SpaceProbeEncoder for ServerProbeEncoder<'_> {
 
 /// A probe author on one of the server's seats, a model other than the
 /// spaces' own: the chat seat for a text document, the captioner or the
-/// Local-vision seat for an image. Each call is one admitted role call the
-/// Dreamer pays for, as a stewardship draft is.
+/// Local-vision seat for an image, and for an audio document the chat seat
+/// again, from the transcript the media transcribe seat hears. Each call is
+/// one admitted role call the Dreamer pays for, as a stewardship draft is;
+/// a transcription runs on the media meter.
 struct ServerProbeAuthor<'a> {
     server: &'a SyncServer,
     role: ModelRole,
     model: ModelId,
     author: String,
     locality: ModelLocality,
+    /// The media transcribe seat an audio document goes to first, and where
+    /// it runs.
+    transcriber: Option<(ModelId, ModelLocality)>,
     runtime: &'a tokio::runtime::Handle,
+}
+
+/// A probe author's id for `model`.
+fn author_label(model: &ModelId) -> String {
+    format!("{}/{}@{}", model.provider(), model.name(), model.revision())
+}
+
+impl ServerProbeAuthor<'_> {
+    /// `document`'s transcript from the media transcribe seat, admitted by
+    /// the vault's inference policy as an `ai.transcribe` call is; `None`
+    /// when it hears no words.
+    fn transcribe(&self, document: &MediaEmbeddingInput<'_>) -> oneiron::Result<Option<String>> {
+        let Some((model, locality)) = &self.transcriber else {
+            return Ok(None);
+        };
+        let purpose = CallPurpose::Other {
+            name: PROBE_PURPOSE.to_owned(),
+        };
+        let mut request = MediaRequest {
+            model: model.clone(),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(PROBE_PURPOSE.to_owned())),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: *locality,
+            },
+            operation: AiOperation::Transcribe,
+            parts: vec![MediaPart::Audio {
+                media_type: document.media_type.to_owned(),
+                bytes: document.bytes.to_vec(),
+            }],
+            references: Vec::new(),
+            params: BTreeMap::new(),
+            voice: None,
+        };
+        let context = HostInferenceContext {
+            binding: HostInferenceBinding::Advertised {
+                model: model.clone(),
+                locality: *locality,
+            },
+            extraction_egress: self.server.extraction_egress.as_deref(),
+        };
+        request.envelope = self
+            .server
+            .vault
+            .authorize_raw_inference(request.admission_request(), &context)?
+            .into_request()
+            .envelope;
+        // A transcription vouches for no world.
+        request.envelope.scope.world = None;
+        let response = self
+            .runtime
+            .block_on(self.server.ai.model_runtime().media().run(request))
+            .map_err(|error| {
+                Error::InvalidConfig(format!("space probe transcription failed: {error}"))
+            })?;
+        let transcript = response
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                MediaPart::Text { text } => Some(text.trim()),
+                _ => None,
+            })
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(Some(transcript).filter(|transcript| !transcript.is_empty()))
+    }
 }
 
 impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
@@ -103,8 +181,15 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
         &self.author
     }
 
+    /// An audio document's bytes go to the transcriber alone: the chat seat
+    /// reads its transcript, a text its admitted call carries where the
+    /// vault's inference policy lets it, as it does a text document.
     fn locality(&self) -> EmbedderLocality {
-        match self.locality {
+        let locality = self
+            .transcriber
+            .as_ref()
+            .map_or(self.locality, |(_, locality)| *locality);
+        match locality {
             ModelLocality::OnDevice => EmbedderLocality::OnDevice,
             ModelLocality::OwnServer => EmbedderLocality::OwnerServer,
             ModelLocality::ThirdParty => EmbedderLocality::ThirdParty,
@@ -126,7 +211,12 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
                     data: base64::engine::general_purpose::STANDARD.encode(document.bytes),
                 },
             },
-            InputKind::Audio => return Ok(None),
+            InputKind::Audio => match self.transcribe(document)? {
+                Some(transcript) => ContentPart::Text {
+                    text: transcript.chars().take(PROBE_SOURCE_MAX_CHARS).collect(),
+                },
+                None => return Ok(None),
+            },
         };
         let purpose = CallPurpose::Other {
             name: PROBE_PURPOSE.to_owned(),
@@ -198,31 +288,43 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
 }
 
 impl SyncServer {
-    /// The seat that writes `kind`'s probes; none for audio, or when no such
-    /// seat is bound.
+    /// The seat that writes `kind`'s probes; none when no such seat is
+    /// bound, or, for audio, no media transcribe seat.
     fn probe_author<'a>(
         &'a self,
         kind: InputKind,
         runtime: &'a tokio::runtime::Handle,
     ) -> Option<ServerProbeAuthor<'a>> {
-        let roles: &[ModelRole] = match kind {
-            InputKind::Text => &[CHAT_ROLE],
-            InputKind::Image => &[ModelRole::Captioner, ModelRole::LocalVision],
-            InputKind::Audio => &[],
+        let (roles, transcriber): (&[ModelRole], _) = match kind {
+            InputKind::Text => (&[CHAT_ROLE], None),
+            InputKind::Image => (&[ModelRole::Captioner, ModelRole::LocalVision], None),
+            InputKind::Audio => (
+                &[CHAT_ROLE],
+                Some(
+                    self.ai
+                        .model_runtime()
+                        .media()
+                        .seat(AiOperation::Transcribe)?,
+                ),
+            ),
         };
         roles.iter().find_map(|role| {
             let seat = self.ai.seat(*role)?;
+            let author = match &transcriber {
+                Some((heard, _)) => format!(
+                    "{} from {}'s transcript",
+                    author_label(&seat.model),
+                    author_label(heard)
+                ),
+                None => author_label(&seat.model),
+            };
             Some(ServerProbeAuthor {
                 server: self,
                 role: *role,
-                author: format!(
-                    "{}/{}@{}",
-                    seat.model.provider(),
-                    seat.model.name(),
-                    seat.model.revision()
-                ),
+                author,
                 model: seat.model.clone(),
                 locality: seat.locality,
+                transcriber: transcriber.clone(),
                 runtime,
             })
         })

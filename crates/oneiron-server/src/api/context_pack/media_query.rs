@@ -36,6 +36,12 @@ pub(crate) struct ContextPackMediaQuery {
     #[serde(alias = "bytesB64")]
     #[schema(example = "iVBORw0KGgo=")]
     bytes_b64: String,
+    /// The kinds of item the space's list keeps (`text`, `image`, `audio`);
+    /// every kind the space holds when empty. `POST /v1/core/query` does not
+    /// filter by it yet.
+    #[serde(default)]
+    #[schema(value_type = Vec<String>, example = json!(["image"]))]
+    kinds: Vec<InputKind>,
 }
 
 /// A media query as a door embeds it: its space, the tower its MIME picks,
@@ -45,6 +51,7 @@ pub(crate) struct DecodedMediaQuery {
     kind: InputKind,
     mime: String,
     bytes: Vec<u8>,
+    kinds: Vec<InputKind>,
 }
 
 /// One more ranked list a door adds: a declared space, the tower that
@@ -53,6 +60,8 @@ pub(crate) struct MediaSeed {
     pub(crate) space: String,
     pub(crate) kind: InputKind,
     pub(crate) vector: Vec<f32>,
+    /// The kinds of item the list keeps; every kind when empty.
+    pub(crate) kinds: Vec<InputKind>,
 }
 
 impl ContextPackMediaQuery {
@@ -97,6 +106,7 @@ impl ContextPackMediaQuery {
             kind,
             mime,
             bytes,
+            kinds: self.kinds.clone(),
         })
     }
 }
@@ -147,17 +157,17 @@ pub(crate) async fn embed_media_seeds(
     };
     let mut seeds = Vec::new();
     if let Some(media) = media {
-        seeds.push(
-            embed_seed(
-                server,
-                media.space,
-                media.kind,
-                &media.mime,
-                media.bytes,
-                SeedSource::Media,
-            )
-            .await?,
-        );
+        let mut seed = embed_seed(
+            server,
+            media.space,
+            media.kind,
+            &media.mime,
+            media.bytes,
+            SeedSource::Media,
+        )
+        .await?;
+        seed.kinds = media.kinds;
+        seeds.push(seed);
     }
     if let (Some(space), Some(query)) = (text_space, text_query)
         && !seeds
@@ -200,6 +210,7 @@ async fn embed_seed(
         space,
         kind,
         vector,
+        kinds: Vec::new(),
     })
 }
 

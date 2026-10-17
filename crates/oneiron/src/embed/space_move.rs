@@ -40,6 +40,8 @@ pub const SPACE_PROBE_MIN_FAMILIES: usize = 10;
 
 /// Producer name of a space move's result note.
 pub const SPACE_MOVE_NOTE_PRODUCER: &str = "embedding.space_move";
+/// How long a swapped-in move can be undone, in vault seconds; then its incumbent retires.
+pub const SPACE_MOVE_UNDO_WINDOW_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// Open and concluded moves. Key: candidate space id string.
 const EMBEDDING_MOVE: SideTable<String, SpaceMove, Named> =
@@ -214,6 +216,19 @@ pub(crate) fn open_move_names_in_txn(
             row.state == SpaceMoveState::Open
                 && (row.candidate == space_id || row.incumbent.declared() == Some(space_id))
         }))
+}
+
+/// The candidate of the open move that carries `kind`'s slot, when one does.
+pub(crate) fn moving_kind_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    kind: InputKind,
+) -> Result<Option<String>> {
+    Ok(EMBEDDING_MOVE
+        .scan(store, txn)?
+        .into_iter()
+        .find(|(_, row)| row.state == SpaceMoveState::Open && row.kinds.contains(&kind))
+        .map(|(_, row)| row.candidate))
 }
 
 fn open_move_in_txn(
@@ -704,7 +719,8 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when the move to `candidate` has not swapped in, a slot it moved
-    /// no longer binds the candidate, or the incumbent space is retired.
+    /// no longer binds the candidate, or the incumbent space is retired
+    /// ([`Self::retire_swapped_incumbents`]).
     pub fn undo_space_move(&self, candidate: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(mut moving) = EMBEDDING_MOVE
@@ -742,6 +758,41 @@ impl Vault {
         EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// Retires the incumbent of each move that swapped in at least
+    /// [`SPACE_MOVE_UNDO_WINDOW_SECS`] ago (ARCH-0019 `#space-migration`: the old version
+    /// retires once the new one swaps in), when no slot binds it and no open move names it:
+    /// its rows and declaration go, and that move can no longer be undone. The vault's own text
+    /// index never retires. Returns the spaces retired.
+    pub fn retire_swapped_incumbents(&self) -> Result<Vec<String>> {
+        let now = self.store.clock.now_recorded_at();
+        let due: BTreeSet<String> = {
+            let rtxn = self.store.env.read_txn()?;
+            let mut due = BTreeSet::new();
+            for (_, row) in EMBEDDING_MOVE.scan(&self.store, &rtxn)? {
+                let SpaceMoveState::SwappedIn { at, .. } = row.state else {
+                    continue;
+                };
+                if let Some(id) = row.incumbent.declared()
+                    && now.saturating_sub(at) >= SPACE_MOVE_UNDO_WINDOW_SECS
+                    && embedding_space_in_txn(&self.store, &rtxn, id)?.is_some()
+                {
+                    due.insert(id.to_owned());
+                }
+            }
+            due
+        };
+        let mut retired = Vec::new();
+        for id in due {
+            match self.retire_embedding_space(&id) {
+                Ok(()) => retired.push(id),
+                // Bound again, or named by an open move: it still serves.
+                Err(Error::InvalidConfig(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(retired)
     }
 
     /// Records `check` on the open move to `candidate` and acts on it: a passing check, or the

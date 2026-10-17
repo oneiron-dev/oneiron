@@ -17,7 +17,7 @@ use crate::query_expansion::{
 use crate::retrieval_quality::{RetrievalDiagnostics, classify_retrieval_quality};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
 use crate::temporal::{TemporalHintReport, temporal_hints_from_query};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Instant;
 
 impl PipelineBuilder<'_> {
@@ -713,7 +713,7 @@ impl PipelineBuilder<'_> {
         &self,
         scores: &[ScoredEntity],
         signal_components: &HashMap<EntityId, Vec<crate::store::RetrievalScoreComponent>>,
-        media_evidence: &HashSet<EntityId>,
+        media_evidence: &super::super::budget::MediaEvidence,
         hyde_expanded: bool,
     ) -> Result<bool> {
         let floors = self.no_match_floors();

@@ -14,8 +14,9 @@ use rmpv::Value;
 
 use super::EmbedderLocality;
 use super::space::{
-    EmbeddingSpace, InputKind, embedding_space_in_txn, has_media_vector_in_txn,
-    media_text_hash_in_txn, put_media_vector_in_txn, text_hash,
+    EmbeddingSpace, InputKind, clear_media_refusal_in_txn, embedding_space_in_txn,
+    has_media_vector_in_txn, media_refused_in_txn, media_text_hash_in_txn,
+    put_media_refusal_in_txn, put_media_vector_in_txn, text_hash,
 };
 use super::space_move::space_fill_kinds_in_txn;
 use crate::Vault;
@@ -57,6 +58,16 @@ pub trait MediaEmbedder: Send + Sync {
     fn locality(&self) -> EmbedderLocality;
     /// One vector per input, in input order.
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> Result<Vec<Vec<f32>>>;
+    /// One outcome per input, in input order: its vector, or why the model refused that
+    /// document by its content (a format it cannot read, a content filter), so the backfill
+    /// skips it until its bytes change. An error refuses the whole call. The default refuses
+    /// no single document.
+    fn embed_each(
+        &self,
+        inputs: &[MediaEmbeddingInput<'_>],
+    ) -> Result<Vec<std::result::Result<Vec<f32>, String>>> {
+        Ok(self.embed_media(inputs)?.into_iter().map(Ok).collect())
+    }
 }
 
 /// What one media backfill pass did.
@@ -75,6 +86,9 @@ pub struct MediaEmbedReport {
     pub no_media: usize,
     /// Items deleted, or text documents whose text moved, before their vector landed.
     pub vanished: usize,
+    /// Documents the space's model refused by their content, this pass or before at the same
+    /// bytes; the backfill skips them until their bytes change.
+    pub refused: usize,
 }
 
 /// One stored document a scan read: an ASSET's media, or a record's text.
@@ -94,6 +108,11 @@ impl Vault {
     /// (the one-space preset, or a text move), for the records the text index embeds, at their
     /// current text. A text document whose text moved since its vector was stored is embedded
     /// again.
+    ///
+    /// A document the model refuses by its content ([`MediaEmbedder::embed_each`]) is recorded
+    /// and skipped until its bytes change, once the model has shown it serves the space: the
+    /// space holds a vector already, or another document this pass embedded. A model that
+    /// refuses every document it is sent, and has embedded none, is an error instead.
     ///
     /// # Errors
     ///
@@ -147,25 +166,36 @@ impl Vault {
                 bytes: &item.bytes,
             })
             .collect();
-        let vectors = embedder.embed_media(&inputs)?;
-        if vectors.len() != pending.len() {
+        let outcomes = embedder.embed_each(&inputs)?;
+        if outcomes.len() != pending.len() {
             return Err(Error::InvalidConfig(format!(
-                "media embedder returned {} vectors for {} inputs",
-                vectors.len(),
+                "media embedder returned {} outcomes for {} inputs",
+                outcomes.len(),
                 pending.len()
             )));
         }
-        for vector in &vectors {
+        for vector in outcomes.iter().flatten() {
             if let Some(error) = Error::invalid_vector_component(vector) {
                 return Err(error);
             }
+        }
+        // A model that has embedded nothing here may be refusing them all for a reason of its
+        // own; no document is blamed for that.
+        if report.already_embedded == 0
+            && outcomes.iter().all(std::result::Result::is_err)
+            && let Some(Err(reason)) = outcomes.first()
+        {
+            return Err(Error::InvalidConfig(format!(
+                "the media embedder for {space_id} refused every document it was sent: {reason}"
+            )));
         }
 
         let mut wtxn = self.store.env.write_txn()?;
         // The bindings and moves may have changed while the model ran; land only what this
         // space still fills.
         let fills = space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
-        for (item, vector) in pending.iter().zip(&vectors) {
+        let at = self.store.clock.now_recorded_at();
+        for (item, outcome) in pending.iter().zip(outcomes) {
             if !kinds.contains(&item.kind) || !fills.contains(&item.kind) {
                 report.unbound += 1;
                 continue;
@@ -183,6 +213,22 @@ impl Vault {
                 report.vanished += 1;
                 continue;
             }
+            let vector = match outcome {
+                Ok(vector) => vector,
+                Err(reason) => {
+                    put_media_refusal_in_txn(
+                        &self.store,
+                        &mut wtxn,
+                        &space,
+                        &item.id,
+                        &item.bytes,
+                        reason,
+                        at,
+                    )?;
+                    report.refused += 1;
+                    continue;
+                }
+            };
             put_media_vector_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -191,8 +237,9 @@ impl Vault {
                 &item.id,
                 item.kind,
                 item.text_hash,
-                vector,
+                &vector,
             )?;
+            clear_media_refusal_in_txn(&self.store, &mut wtxn, &space, &item.id)?;
             report.embedded += 1;
         }
         wtxn.commit()?;
@@ -211,6 +258,7 @@ impl Vault {
     ) -> Result<Vec<PendingMedia>> {
         let mut pending = Vec::new();
         let mut held = 0;
+        let mut refused = 0;
         self.scan_documents_in_txn(rtxn, kinds, report, |document| {
             if pending.len() >= max_items {
                 return Ok(false);
@@ -223,12 +271,16 @@ impl Vault {
             };
             if stored {
                 held += 1;
+            } else if media_refused_in_txn(&self.store, rtxn, space, &document.id, &document.bytes)?
+            {
+                refused += 1;
             } else {
                 pending.push(document);
             }
             Ok(pending.len() < max_items)
         })?;
         report.already_embedded += held;
+        report.refused += refused;
         Ok(pending)
     }
 

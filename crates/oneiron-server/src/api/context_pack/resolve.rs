@@ -234,7 +234,16 @@ pub(crate) async fn run_context_pack(
         builder = builder.search_vector(vector, candidate_limit);
     }
     for seed in &media {
-        builder = builder.search_media(&seed.space, seed.kind, &seed.vector, &[], candidate_limit);
+        builder = builder.search_media(
+            &seed.space,
+            seed.kind,
+            &seed.vector,
+            &seed.kinds,
+            candidate_limit,
+        );
+    }
+    if let Some(affect) = req.query_affect {
+        builder = builder.query_affect(affect.vad()?);
     }
     builder = apply_context_pack_policy(builder, req.policy.as_ref())?;
     builder = apply_context_pack_time(builder, req.time.as_ref())?;

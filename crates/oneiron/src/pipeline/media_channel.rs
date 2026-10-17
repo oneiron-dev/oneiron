@@ -5,17 +5,14 @@
 //! that space's rows alone and becomes its own ranked list, so fusion z-scores it on its own
 //! scale beside the text index, keyword, phonetic, graph and time lists: two spaces' raw
 //! cosines never meet. RET-01 judges each hit by its own space's floor
-//! ([`super::budget::media_space_floor`]).
-
-use std::collections::HashSet;
+//! ([`super::budget::media_space_floors`]).
 
 use heed::RoTxn;
 
 use crate::embed::InputKind;
-use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::budget::media_space_floor;
+use super::budget::{MediaEvidence, WeakMediaHit, media_space_floors};
 use super::builder::PipelineBuilder;
 use super::capabilities::CapabilityLane;
 use super::channels::fusion_fetch_limit;
@@ -37,7 +34,8 @@ impl PipelineBuilder<'_> {
     /// One media query's admitted results, best first: the space must be declared, the query
     /// must come through one of its towers at its width, and every row passes the run's own
     /// filters and gate before it can take a place. Each hit at or above its space's RET-01
-    /// floor lands in `evidence`, which keeps a context pack from abstaining.
+    /// floor lands in `evidence`'s kept hits, which keep a context pack from abstaining; each
+    /// one under it, in its weak hits.
     pub(super) fn media_space_results(
         &self,
         rtxn: &RoTxn<'_>,
@@ -45,7 +43,7 @@ impl PipelineBuilder<'_> {
         filters: PipelineFilterConfig<'_>,
         metadata_cache: &mut EntityMetadataCache,
         claim_gate: &mut ClaimStatusGateCache,
-        evidence: &mut HashSet<EntityId>,
+        evidence: &mut MediaEvidence,
     ) -> Result<Vec<ScoredEntity>> {
         let Some(space) = crate::embed::embedding_space_in_txn(&self.read, rtxn, &query.space_id)?
         else {
@@ -84,9 +82,16 @@ impl PipelineBuilder<'_> {
             } else {
                 None
             };
-            if scored.score.is_finite() && scored.score >= media_space_floor(&floors, &space, kind)
-            {
-                evidence.insert(scored.id);
+            let pair = media_space_floors(&floors, &space, kind);
+            if scored.score.is_finite() && scored.score >= pair.floor {
+                evidence.kept.insert(scored.id);
+            } else {
+                evidence.weak.push(WeakMediaHit {
+                    id: scored.id,
+                    space: space.id.clone(),
+                    floors: pair,
+                    score: scored.score,
+                });
             }
         }
         Ok(results)

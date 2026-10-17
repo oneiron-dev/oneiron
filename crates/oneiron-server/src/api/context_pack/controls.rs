@@ -238,6 +238,31 @@ pub(crate) struct ContextPackReaderControls {
     pub(super) task_family: Option<String>,
 }
 
+/// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
+#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(example = json!({"valence": -0.4, "arousal": 0.7, "dominance": 0.5}))]
+pub(crate) struct ContextPackQueryAffect {
+    valence: f32,
+    arousal: f32,
+    dominance: f32,
+}
+
+impl ContextPackQueryAffect {
+    /// The affect as the engine takes it, refused out of range.
+    pub(super) fn vad(self) -> Result<oneiron::Vad, crate::error::ApiError> {
+        let vad = oneiron::Vad {
+            valence: self.valence,
+            arousal: self.arousal,
+            dominance: self.dominance,
+        };
+        vad.validate().map_err(|error| {
+            crate::error::ApiError::bad_request(error.to_string(), Some("query_affect"))
+        })?;
+        Ok(vad)
+    }
+}
+
 /// Context-pack request on the canonical core route.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -286,6 +311,11 @@ pub(crate) struct CoreContextPackRequest {
     /// and `query_vector`.
     #[serde(default)]
     pub(super) media: Option<ContextPackMediaQuery>,
+    /// Optional affect the query is asked in (OF-423): emotion congruence
+    /// ranks a candidate by how near its own valence, arousal and dominance
+    /// sit.
+    #[serde(default, alias = "queryAffect")]
+    pub(super) query_affect: Option<ContextPackQueryAffect>,
     /// Maximum primary candidates to retrieve. A limit past 1,000 is served
     /// at 1,000 and the response's `limit_clamped` says so.
     #[serde(default = "default_limit")]

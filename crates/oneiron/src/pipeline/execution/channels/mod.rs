@@ -43,7 +43,7 @@ use crate::error::Result;
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
 use crate::store::RetrievalSignal;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
 struct SnapshotInputs<'a> {
@@ -476,7 +476,7 @@ impl PipelineBuilder<'_> {
                     total_in_scope: 0,
                     empty_reason: None,
                     signal_components: HashMap::new(),
-                    media_evidence: HashSet::new(),
+                    media_evidence: Default::default(),
                     blend_components: HashMap::new(),
                     access_factors: HashMap::new(),
                     rerank_merged_components: None,
@@ -926,7 +926,7 @@ impl PipelineBuilder<'_> {
         rtxn: &heed::RoTxn<'_>,
         scores: &mut Vec<super::super::types::ScoredEntity>,
         signal_components: &HashMap<crate::EntityId, Vec<crate::store::RetrievalScoreComponent>>,
-        media_evidence: &HashSet<crate::EntityId>,
+        media_evidence: &super::super::budget::MediaEvidence,
         empty_reason: &mut Option<EmptyReason>,
         skip_ret01_abstain: bool,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
