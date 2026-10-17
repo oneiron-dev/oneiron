@@ -218,6 +218,8 @@ pub(super) async fn serve_with_config(
     workers.push(crate::decision_graph::spawn(&sync_server));
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));
+    // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
+    workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));

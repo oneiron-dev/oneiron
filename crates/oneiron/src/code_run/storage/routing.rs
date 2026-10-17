@@ -532,7 +532,12 @@ impl<'a> ExecutorStorage<'a> {
             call.order,
             actor,
         )?;
-        executor_speech_message_id_for_run(run_ref, run_id, call.order)
+        let id = executor_speech_message_id_for_run(run_ref, run_id, call.order)?;
+        // OF-418: a report on the record reaches the Coach's Issues job.
+        if let Self::Canonical(vault) = self {
+            vault.file_blocked_report(id, actor.entity_ref(), run_id, call.occurred_at)?;
+        }
+        Ok(id)
     }
 
     pub(crate) fn get_code_run_replay_record(
