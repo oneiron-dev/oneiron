@@ -1218,6 +1218,10 @@ fn duplicate_findings(
     for run in runs {
         let cost = project_run_coordination(vault, run, now)?;
         for label in &cost.duplicate_work {
+            // Only a redundant repeat is waste; a planned check is not.
+            if label.kind != crate::learning::DuplicateWorkKind::Redundant {
+                continue;
+            }
             // A work reference is the TASK the attempt did, or the attempt.
             let does = |reference: &str| {
                 dispatched.iter().find_map(|(key, dispatch)| {
@@ -1243,7 +1247,7 @@ fn duplicate_findings(
                     .flatten()
                     .filter_map(|record| entity(record.id))
                     .collect();
-            evidence.extend(EntityId::from_hex(&label.audit_receipt).ok());
+            evidence.extend(EntityId::from_hex(&label.receipt).ok());
             out.push(dup_finding(record, dispatch, evidence));
         }
     }
