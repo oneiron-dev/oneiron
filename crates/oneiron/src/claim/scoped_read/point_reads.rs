@@ -229,6 +229,39 @@ impl ScopedRead<'_> {
         self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
     }
 
+    /// [`Self::read`] under an as-of temporal selection (unix seconds),
+    /// applied to each admitted row before any caller composes it.
+    ///
+    /// The selection is bitemporal at one instant: a row is kept only when
+    /// it had both occurred by `as_of` (`occurred.start <= as_of`) and been
+    /// learned by the vault by then (`learned_at <= as_of`). A row the
+    /// selection drops answers as `None`, exactly like a missing one; it is
+    /// the caller's requested instant, not a policy denial, so the receipt
+    /// counts no suppression for it. All scope and authority gates of the
+    /// underlying point read are unchanged — this only narrows further.
+    ///
+    /// A kept row carries its live body: retained revision frontiers hold
+    /// no per-revision learned-at, so no earlier body can be named for an
+    /// instant between two edits of one row.
+    pub fn read_as_of(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        as_of: u64,
+    ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
+        let result = self.read(reads, requested)?;
+        Ok(ScopedReadResult {
+            value: result
+                .value
+                .into_iter()
+                .map(|row| {
+                    row.filter(|row| row.occurred.start <= as_of && row.learned_at <= as_of)
+                })
+                .collect(),
+            receipt: result.receipt,
+        })
+    }
+
     /// Keeps the scoped rows, their receipt and a dependent projection in the
     /// same read transaction. A projection must not open a newer snapshot for
     /// metadata that labels these rows.

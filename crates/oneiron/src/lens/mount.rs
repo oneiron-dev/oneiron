@@ -1,4 +1,5 @@
 //! Pack-aware lens mount decision, evaluated against the live vault on each render.
+use super::GeneratedLens;
 use crate::{
     Vault,
     entity_id::EntityId,
@@ -46,6 +47,28 @@ impl Vault {
             return Ok(None);
         }
         render().map(Some)
+    }
+
+    /// Render the generated lens the owner selected for a pack/skill slot.
+    ///
+    /// This is the render host for a compiled pack lens: it calls
+    /// [`Vault::active_pack_lens`] before every render, so the slot's
+    /// selection is rechecked against the live install (pack still Active
+    /// at the content the lens was proposed against, skill still loading)
+    /// in the same breath as the render. `render` runs only with the lens
+    /// that check returns; when the slot holds none or no longer mounts,
+    /// `render` never runs and the answer is `None`. Hosts render through
+    /// this instead of caching a tree from `vault.lenses.list`.
+    pub fn render_active_pack_lens<T>(
+        &self,
+        pack_name: &str,
+        skill_id: &EntityId,
+        render: impl FnOnce(&EntityId, &GeneratedLens) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let Some((lens_ref, lens)) = self.active_pack_lens(pack_name, skill_id)? else {
+            return Ok(None);
+        };
+        render(&lens_ref, &lens).map(Some)
     }
 
     fn lens_is_mounted(&self, binding: &LensMount) -> Result<bool> {
