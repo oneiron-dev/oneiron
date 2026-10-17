@@ -915,7 +915,7 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 14
      }
     },
@@ -10440,7 +10440,7 @@
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
       "crate-vis": 7,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -19960,7 +19960,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "KindProbeCheck",
@@ -25839,6 +25839,7 @@
      "path": "src/linear_sync/effect.rs",
      "purpose": "External-effect admission for Linear mirror mutations",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -25865,7 +25866,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 6
      }
     },
@@ -26568,7 +26569,7 @@
       "DecisionReadProvider"
      ],
      "path": "src/llm/decision/read.rs",
-     "purpose": "The escalation rung's decision read: the house model reads the paired \"does this need more thinking?\"…",
+     "purpose": "The escalation rung's decision read: the house model reads the pack's questions over the same state in one…",
      "surface": {
       "fn": 1,
       "struct": 1
@@ -28493,8 +28494,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 36,
-      "fn": 15,
+      "crate-vis": 37,
+      "fn": 16,
       "struct": 2
      }
     },
@@ -30791,7 +30792,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -30799,7 +30800,7 @@
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
      "purpose": "O2 dispatch: shared request preparation, ledger replay, execution and receipts",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -30862,7 +30863,7 @@
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
       "crate-vis": 3,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -31216,7 +31217,7 @@
      "path": "src/outbound_chokepoint/types.rs",
      "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -35943,13 +35944,15 @@
      "kind": "src",
      "notable": [
       "HookBodyRun",
-      "HookBodyRuntime"
+      "HookBodyRuntime",
+      "HookVerdict"
      ],
      "path": "src/runtime_hooks/body.rs",
      "purpose": "The seam between the runner and the hook sandbox (ARCH-0080 §6)",
      "surface": {
       "struct": 1,
-      "trait": 1
+      "trait": 2,
+      "type": 1
      }
     },
     {
@@ -36112,7 +36115,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 5,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -36211,6 +36214,16 @@
      "notable": [],
      "path": "src/runtime_hooks/verb/redact.rs",
      "purpose": "A post-hook's Redact (ARCH-0080 §3): fields removed or masked in this caller's view of the result",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/served.rs",
+     "purpose": "Served rows (ARCH-0080 §11 p15, the automation link): the rows a call served its caller, read off the…",
      "surface": {
       "crate-vis": 3
      }
@@ -38870,6 +38883,7 @@
       "HookActorClass",
       "HookOutcomeKind",
       "HookPhase",
+      "HookRenderClass",
       "HookSelector",
       "PackHook",
       "PackHookBinding"
@@ -38878,7 +38892,7 @@
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
       "crate-vis": 8,
-      "enum": 3,
+      "enum": 4,
       "fn": 4,
       "struct": 3
      }
@@ -43591,8 +43605,18 @@
      "path": "src/task_verb/create_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/create_origin.rs",
+     "purpose": "The creator a created TASK's realizing agent runs under (OF-532)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -43911,7 +43935,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -44081,7 +44105,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "re-export": 10,
       "struct": 32
      }
@@ -44522,7 +44546,7 @@
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -49620,7 +49644,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49858,7 +49882,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 108,
+     "files": 109,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50012,9 +50036,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 115,
+   "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3020,
+   "source_files": 3022,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57452,7 +57476,7 @@
      "purpose": "Label-read seam: a host model scores a closed label set instead of generating text",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 4,
       "struct": 3,
       "trait": 1
      }
@@ -64351,6 +64375,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/hook_verdict.rs",
+     "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67217,6 +67251,13 @@
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
     },
+    "hook_verdict": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through…"
+    },
     "http_listener": {
      "files": 2,
      "impl_vault": false,
@@ -67395,7 +67436,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 480,
+   "source_files": 481,
    "test_files": 182
   },
   "oneiron-spawn": {

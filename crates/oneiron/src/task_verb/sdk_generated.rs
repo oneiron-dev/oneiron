@@ -2996,12 +2996,7 @@ pub fn tasks_create(
         &input,
         &["/label", "/spec"],
     )?;
-    memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(
-        crate::msgpack_value_from_json(&input.spec)?,
-        input.label,
-        Some(memory.actor()),
-        Some(memory.vault().now_recorded_at()),
-    ))
+    memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
