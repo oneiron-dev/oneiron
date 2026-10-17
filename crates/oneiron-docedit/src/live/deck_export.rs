@@ -1228,7 +1228,7 @@ pub fn attach_evidence(
 
 /// One step of the eight-step import-then-export check. A timeout or an
 /// unrun oracle is inconclusive, never a pass.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StepOutcome {
     Passed,
@@ -1239,7 +1239,7 @@ pub enum StepOutcome {
 
 /// The hashed oracle evidence one profile passed under. PowerPoint, macOS
 /// and font versions are recorded on every receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OracleReceipt {
     pub profile: String,
     pub powerpoint_version: String,

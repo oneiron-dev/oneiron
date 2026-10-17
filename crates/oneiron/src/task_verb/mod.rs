@@ -240,6 +240,7 @@ mod sdk_legal_hold;
 mod sdk_record_erase;
 mod sdk_scratchpad;
 mod sdk_secret;
+mod sdk_secret_use;
 mod sdk_self;
 mod sdk_share;
 mod sdk_shared;

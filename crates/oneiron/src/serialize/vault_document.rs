@@ -3,12 +3,13 @@
 //! the archive (OF-222). No retrieval projection, truncation or token budget.
 use super::credential_nulling::null_document_credentials;
 use super::export_value::{ExportBody, ExportValue};
-use crate::batch::export::{ExportCut, ExportSnapshot, VAULT_OKF_FORMAT};
 use crate::batch::export::{
-    ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportReaderFold, ExportResultBody,
-    ExportRun, ExportRunOutput, ExportRunResults, ExportSourceVault, VAULT_ARCHIVE_FORMAT,
-    WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument, WholeVaultDocumentManifest, WholeVaultExport,
+    EmbeddingSetupWithheld, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportReaderFold,
+    ExportResultBody, ExportRun, ExportRunOutput, ExportRunResults, ExportSourceVault,
+    VAULT_ARCHIVE_FORMAT, WHOLE_VAULT_DOCUMENT_VERSION, WholeVaultDocument,
+    WholeVaultDocumentManifest, WholeVaultExport,
 };
+use crate::batch::export::{ExportCut, ExportSnapshot, VAULT_OKF_FORMAT};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
 
@@ -17,6 +18,17 @@ pub(crate) fn serialize_vault_snapshot(
     cut: ExportCut,
 ) -> Result<WholeVaultExport> {
     let storage = snapshot.storage.with_serializer_nulling();
+    // OF-370: each setup descriptor is read alone by this document's nulling
+    // pass first; one the pass would change leaves whole, counted in the
+    // manifest, and the rest go through the pass again with the document.
+    let (embedding_spaces, slot_bindings, embedding_setup_withheld) = match snapshot
+        .embedding_setup
+        .map(|setup| setup.released(|value| null_document_credentials(value) != *value))
+        .transpose()?
+    {
+        Some(setup) => (setup.spaces, Some(setup.slots), setup.withheld),
+        None => (Vec::new(), None, EmbeddingSetupWithheld::default()),
+    };
     let manifest = WholeVaultDocumentManifest {
         manifest_version: WHOLE_VAULT_DOCUMENT_VERSION,
         format: match cut {
@@ -41,6 +53,7 @@ pub(crate) fn serialize_vault_snapshot(
         files: Vec::new(),
         diary_holds: snapshot.diary_holds,
         secrets_included: snapshot.secrets_included,
+        embedding_setup_withheld,
     };
     let (run_results, binary_bodies) =
         export_run_results(snapshot.run_results, snapshot.result_bodies);
@@ -60,6 +73,8 @@ pub(crate) fn serialize_vault_snapshot(
         agent_packs: Vec::new(),
         derivation_envelopes: Vec::new(),
         run_results,
+        embedding_spaces,
+        slot_bindings,
     };
     for raw in snapshot.entities {
         let body = if raw.tainted {

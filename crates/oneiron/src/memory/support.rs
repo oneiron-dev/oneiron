@@ -442,6 +442,9 @@ pub struct Memory<'v> {
     /// The running agent attempt a host bound as this surface's TASK creator
     /// (`with_task_host`, OF-532).
     pub(super) task_host: Option<crate::task_verb::HostBinding>,
+    /// The host's decision path for the task surface's questions, when a
+    /// host bound one (`with_task_decisions`, OF-533): advice, not authority.
+    pub(super) task_decisions: Option<std::sync::Arc<crate::task_verb::TaskDecisions<'v>>>,
     /// The off-record session the host's request named
     /// (`in_off_record_session`): context, not authority.
     pub(super) off_record_session: Option<String>,
@@ -478,6 +481,10 @@ pub struct HostWriteOrigin {
     /// The running agent attempt the dispatcher bound as the call's TASK
     /// creator (OF-532), read from its live lease, never from the guest.
     task_host: Option<crate::task_verb::HostBinding>,
+    /// The model provider the host's ladder served the calling program's
+    /// turn from (OF-560), read from the served receipt, never from the
+    /// guest. `None` when no ladder stamped the turn.
+    model_provider: Option<String>,
 }
 
 impl HostWriteOrigin {
@@ -485,7 +492,20 @@ impl HostWriteOrigin {
         Self {
             envelope,
             task_host: None,
+            model_provider: None,
         }
+    }
+
+    /// This origin with the provider the run's last turn was served from.
+    pub(crate) fn with_model_provider(mut self, provider: Option<String>) -> Self {
+        self.model_provider = provider;
+        self
+    }
+
+    /// The model provider the host bound, if any.
+    #[must_use]
+    pub fn model_provider(&self) -> Option<&str> {
+        self.model_provider.as_deref()
     }
 
     /// This origin with the run's TASK creator binding, if it has one.
@@ -539,6 +559,7 @@ impl Vault {
             task_grant: None,
             origin_conversation: None,
             task_host: None,
+            task_decisions: None,
             off_record_session: None,
             credential: false,
             credential_instrument: None,
@@ -582,6 +603,7 @@ impl Vault {
             task_grant: None,
             origin_conversation: None,
             task_host: None,
+            task_decisions: None,
             off_record_session: None,
             credential: false,
             credential_instrument: None,
@@ -634,6 +656,7 @@ impl<'v> Memory<'v> {
                 task_grant: self.task_grant,
                 origin_conversation: self.origin_conversation,
                 task_host: self.task_host.clone(),
+                task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
                 credential: self.credential,
                 credential_instrument: self.credential_instrument.clone(),
@@ -641,6 +664,23 @@ impl<'v> Memory<'v> {
                 rewrite_admit: self.rewrite_admit.clone(),
             },
         })
+    }
+
+    /// Binds the host's decision path for the task surface's questions
+    /// (OF-533): a post's take question and a report's done and ask-up
+    /// questions then go through its ladder instead of asking up. A model
+    /// rung may block on the host's runtime, so a host binds it only on a
+    /// blocking thread. It grants nothing: decide() advises, and every check
+    /// still runs.
+    #[must_use]
+    pub fn with_task_decisions(mut self, decisions: crate::task_verb::TaskDecisions<'v>) -> Self {
+        self.task_decisions = Some(std::sync::Arc::new(decisions));
+        self
+    }
+
+    /// The task surface's decision path a host bound, if any.
+    pub(crate) fn task_decisions(&self) -> Option<&crate::task_verb::TaskDecisions<'v>> {
+        self.task_decisions.as_deref()
     }
 }
 
@@ -952,6 +992,17 @@ impl Memory<'_> {
         }
         self.host_origin = Some(origin);
         self
+    }
+
+    /// The model provider the host's origin names for this call (OF-560):
+    /// the one its ladder served the calling program's turn from. `None` for
+    /// a caller no host-run model drives, such as an external HTTP or MCP
+    /// agent.
+    #[must_use]
+    pub fn model_provider(&self) -> Option<&str> {
+        self.host_origin
+            .as_ref()
+            .and_then(HostWriteOrigin::model_provider)
     }
 
     /// Whether a host bound this surface to generated code's origin. Such a
