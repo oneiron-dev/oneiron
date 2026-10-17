@@ -829,6 +829,36 @@ Routes: `GET /v1/owner/authority/handoff-alarms` (open alarms first) and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
 signer is 404, and acknowledging an acknowledged alarm changes nothing.
 
+## Learned settings
+
+A learned setting is a knob the vault fits from its own runs, such as the audit rate
+(`audit_rate`), a planner floor or a health dial (`health.loop.repeats`). You can lay two kinds of
+row on a knob. A **seed** is a prior the fit starts from, weighted in runs. A **pin** is the value,
+whatever the fit says.
+
+A row applies to the vault, to one project, or to one task type (a type row matches its node at
+any tree version). A read takes the narrowest pin (project, then type, then vault). Without a
+pin, it takes the vault's fit once the fit has runs of its own. Failing that, it takes the
+narrowest seed, then the catalog seed. The catalog keeps each knob's bounds; a value outside
+them is refused.
+
+```sh
+oneiron learning-settings list                                  # catalog, values now, your rows
+oneiron learning-settings list --key health.loop.repeats
+oneiron learning-settings put health.loop.repeats pin 5 --why "noisy tools" --project HEX32
+oneiron learning-settings put audit_rate seed 0.1 --weight-runs 20 --why "start low"
+oneiron learning-settings put health.silent.minutes pin 60 --why "slow jobs" --task-type research
+oneiron learning-settings clear health.loop.repeats pin --project HEX32
+```
+
+The commands open a stopped vault. A running server answers the same at
+`GET /v1/owner/settings/learning[?key=…]`, `POST /v1/owner/settings/learning` with
+`{"key", "mode": "seed"|"pin", "value", "weight_runs"?, "why", "project"?, "task_type"?}`, and
+`POST /v1/owner/settings/learning/clear` with `{"key", "mode", "project"?, "task_type"?}`.
+Each answers with the key's catalog entry and rows. The host verbs `vault.settings.learning`,
+`.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
+alone, and clearing an absent row succeeds.
+
 ## Legal holds
 
 A legal hold keeps records from being deleted. While a hold names a record, its delete fails for
@@ -936,11 +966,19 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - The media backfill skips any document a space's model refuses by its content (a format it
   cannot read, a content filter) until the document changes, so one bad file never stalls a
   space or a move. A model that refuses everything it is sent before it has embedded anything
-  is treated as down, and the backfill retries it.
-- `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
-  full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
-  `.../move/abandon` ends an open move without one. An undo works for 30 days after the swap.
-  Then the incumbent retires (its rows and declaration go) unless a slot binds it again.
+  is treated as down, and the backfill retries it. `GET .../embedding-spaces` counts each
+  space's refused documents under `refused`; `GET .../refused?space=<id>` lists them with the
+  reason and time, and `POST .../refused/clear` with `{"space", "id"}` forgets one, so the
+  backfill sends the same bytes again (after a provider's policy or model changed).
+- A move that goes 14 days from its start without one check (its model never filled the
+  candidate, or the probes never ran) closes as kept, with a note: the incumbent keeps serving
+  and the candidate's rows go. Begin the move again once that model answers.
+- `POST .../move/check` with `{"candidate"}` runs the probes now. It answers within 20 seconds:
+  past that it answers `running`, and the check finishes on its own and records its reading on
+  the move. `.../move/approve` swaps a full candidate in on your yes. `.../move/undo` binds the
+  incumbent again after a swap, and `.../move/abandon` ends an open move without one. An undo
+  works for 30 days after the swap. Then the incumbent retires (its rows and declaration go)
+  unless a slot binds it again.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
   one.

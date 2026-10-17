@@ -294,6 +294,10 @@ side_tables! {
     /// The serve skill judge (OF-495): its typed-decision journal, and person-time on receipts.
     /// Key: "decision:" hex32 (row id) | "minutes:" string (receipt id) "|" hex32 (row id).
     SKILL_JUDGE: SyncState b"skill:judge:v1:" Named;
+    /// This device's record that it left the shared vault its env holds (OF-158): the notice it
+    /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
+    /// notice's receipt id).
+    SYNC_SHARED_LEAVE_RECEIPT: SyncState b"sl:" Named;
     /// An entity document's shallow-since version vector (document family). Key: hex32 (NOTE head
     /// id).
     DOCUMENT_SHALLOW_SINCE: SyncState b"ssv:e:" Raw;
