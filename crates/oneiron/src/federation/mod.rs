@@ -34,14 +34,16 @@ mod pending_act;
 mod shared_act;
 mod shared_creation;
 pub use pending_act::{
-    ActExecution, PendingActStarted, PendingAuthorityAct, SharedActPolicy, SharedActPrecedence,
+    ActExecution, PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActPolicy,
+    SharedActPrecedence,
 };
 pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_act::{
-    DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, RemoveOwnerPlan, SharedActExecution,
-    SharedActExecutionReceipt, SharedActExport, SharedActKind, SharedActOutcome, SharedVaultChange,
-    SharedVaultDeletion, TransferOwnershipPlan,
+    DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
+    NOTIFICATION_PRODUCER_ERASE_ASK, RemoveOwnerPlan, SharedActExecution,
+    SharedActExecutionReceipt, SharedActExport, SharedActKind, SharedActOutcome, SharedEraseAsk,
+    SharedVaultChange, SharedVaultDeletion, TransferOwnershipPlan,
 };
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;

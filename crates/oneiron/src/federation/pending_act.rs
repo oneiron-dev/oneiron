@@ -542,6 +542,7 @@ impl Vault {
         };
         let creation = check_vault(self, &txn, vault_id)?;
         let base = self.act_policies_in_txn(&txn, &creation)?.effective(act)?;
+        let stored_row = matches!(selection, SettingChoice::Stored);
         let policy = match selection {
             SettingChoice::Stored => base,
             SettingChoice::Host(Some(setting)) => setting,
@@ -573,7 +574,19 @@ impl Vault {
         }) {
             return Err(invalid());
         }
-        let wait = policy.wait_secs;
+        // The veto window applies with two or more Owners (ARCH-0043): a sole
+        // Owner has no other Owner to object, so a stored row's act completes
+        // at once. A host's or holder's chosen setting keeps its own wait.
+        let owners = holders
+            .iter()
+            .filter(|holder| holder.role == Role::Owner)
+            .map(|holder| holder.member)
+            .collect::<BTreeSet<_>>();
+        let wait = if stored_row && owners.len() < 2 {
+            0
+        } else {
+            policy.wait_secs
+        };
         let deadline = now.checked_add(wait).ok_or_else(invalid)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let record = PendingAuthorityAct {
@@ -595,23 +608,34 @@ impl Vault {
             .vault_meta
             .put(&mut txn, &key(ACT_PREFIX, &id), &encode(&record)?)?;
         if wait > 0 {
-            let mut recipients = BTreeSet::new();
-            for holder in holders {
-                if holder.can(&record.objector_roles, &record.required_verb)
-                    && recipients.insert(holder.member)
-                {
-                    let event = PendingActStarted {
-                        act_id: id.clone(),
-                        vault_id,
-                        act: act.to_owned(),
-                        recipient: holder.member.to_hex(),
-                        deadline,
-                    };
-                    let event_key = key(EVENT_PREFIX, &format!("{}:{id}", holder.member.to_hex()));
-                    self.store
-                        .vault_meta
-                        .put(&mut txn, &event_key, &encode(&event)?)?;
-                }
+            // The maturity sweep is due at the deadline, so the Owners hear
+            // the act has matured without waiting out its cadence.
+            crate::housekeeping::note_wake_in_txn(
+                &self.store,
+                &mut txn,
+                crate::housekeeping::HousekeepingSweep::SharedActMaturity,
+                deadline,
+            )?;
+        }
+        // Every Owner is told at once, a zero-wait act's included, and so is
+        // each holder who may object inside the window.
+        let mut recipients = BTreeSet::new();
+        for holder in holders {
+            if (owners.contains(&holder.member)
+                || holder.can(&record.objector_roles, &record.required_verb))
+                && recipients.insert(holder.member)
+            {
+                let event = PendingActStarted {
+                    act_id: id.clone(),
+                    vault_id,
+                    act: act.to_owned(),
+                    recipient: holder.member.to_hex(),
+                    deadline,
+                };
+                let event_key = key(EVENT_PREFIX, &format!("{}:{id}", holder.member.to_hex()));
+                self.store
+                    .vault_meta
+                    .put(&mut txn, &event_key, &encode(&event)?)?;
             }
         }
         txn.commit()?;
@@ -819,6 +843,9 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
         record.completed = true;
     }
 }
+
+mod matured;
+pub use matured::PendingActMatured;
 
 #[cfg(test)]
 mod tests;

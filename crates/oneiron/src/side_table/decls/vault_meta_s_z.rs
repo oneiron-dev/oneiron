@@ -170,8 +170,14 @@ side_tables! {
     SHARE_EXPORT_TRAVEL: VaultMeta b"share:export:travel:v1:" Named;
     /// One-time record of the initial membership/policy defaults applied when a shared vault was
     /// created. Key: ().
+    /// One Member's request or Admin's proposal to erase a record of a shared vault. Key: hex32
+    /// (ask id).
+    SHARED_ACT_ERASE_ASK: VaultMeta b"shared-act:erase-ask:v1:" Raw;
     /// One member's notice of a pending shared act. Key: hex32 (member id) ":" hex32 (act id).
     SHARED_ACT_EVENT: VaultMeta b"shared-act:event:v1:" Raw;
+    /// One Owner's notice that a waiting shared act matured. Key: hex32 (owner id) ":" hex32 (act
+    /// id).
+    SHARED_ACT_MATURED: VaultMeta b"shared-act:matured:v1:" Raw;
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
     /// id) ":" hex32 (receipt id).
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
