@@ -58,6 +58,7 @@ use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
 use super::{ReaderSeats, SyncServer};
+use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::config::models::PlannerSettings;
 use crate::decision_host::DecisionHost;
 use crate::mcp::{EngineRunError, McpCodeModeProvider, engine_run_seat, enter_engine_native_run};
@@ -435,6 +436,12 @@ fn run_bound(
     let metered = AgentDispatcher::new(vault)
         .spend_scope_for_attempt(status.attempt.id)
         .map_err(text)?;
+    // A room-bound run's root must name its payer (OF-531): one whose payer
+    // cannot be read or billed stops here, typed, before any call. Each
+    // entry binds that payer to its calls.
+    if status.input.room.is_some() {
+        scope_funding(vault, metered.as_ref(), true).map_err(EngineRunError::Payer)?;
+    }
     let seat = seats.seat(
         run_id,
         metered.clone(),
@@ -731,7 +738,12 @@ fn settle(
         },
         Err(error) => {
             tracing::warn!(%error, attempt = ?attempt.id, "an agent run failed");
-            match error.llm().and_then(|error| passing(error, now)) {
+            // A run held on its payer-needed ask (OF-531) passes as one that
+            // waits out a limit: it is tried again, and a try after the
+            // owners' yes bills the vault.
+            let payer = matches!(error, EngineRunError::Payer(PayerFault::Needed { .. }))
+                .then_some(("agent_run_payer_needed", None));
+            match error.llm().and_then(|error| passing(error, now)).or(payer) {
                 // A model call that failed for a reason that passes is a
                 // tripwire's typed verdict, its evidence the attempt: the
                 // run is tried again, fresh, once the reason has passed.
