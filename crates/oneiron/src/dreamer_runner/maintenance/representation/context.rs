@@ -169,6 +169,13 @@ pub(super) fn validate_citations(
     Ok(())
 }
 pub(super) fn validate_packet(vault: &Vault, packet: &Packet) -> Result<()> {
+    // A follow-up stands only while its reach-out does: one the owner
+    // reverted or declined, or one rewritten since, refuses it everywhere.
+    if let Some(pin) = &packet.reach_out
+        && !reach_out_stands(vault, pin.claim, pin.revision)?
+    {
+        return Err(invalid());
+    }
     let context = vault.representation_context(&packet.request)?;
     let bytes = crate::compaction::output::restore_output(vault, packet.content)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
@@ -178,4 +185,25 @@ pub(super) fn validate_packet(vault: &Vault, packet: &Packet) -> Result<()> {
     validate_citations(&context.evidence, &packet.evidence, Some(text))?;
     // Voice provenance belongs to the review artifact, not the external message.
     validate_citations(&context.voice, &packet.voice, None)
+}
+
+/// Whether the reach-out `claim` still stands at `revision`.
+pub(super) fn reach_out_stands(vault: &Vault, claim: EntityId, revision: [u8; 32]) -> Result<bool> {
+    let authority = vault.dreamer_authority()?.entity_ref();
+    let txn = vault.store.env.read_txn()?;
+    reach_out_stands_in_txn(vault, &txn, authority, claim, revision)
+}
+
+/// [`reach_out_stands`] in the caller's snapshot, for the Dreamer `authority`.
+pub(super) fn reach_out_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    authority: EntityId,
+    claim: EntityId,
+    revision: [u8; 32],
+) -> Result<bool> {
+    Ok(
+        super::super::stewardship::standing_reach_out_in_txn(vault, txn, authority, claim)?
+            .is_some_and(|(_, standing)| standing == revision),
+    )
 }

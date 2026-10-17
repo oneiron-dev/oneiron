@@ -2,15 +2,20 @@
 //! names the people to keep in touch with and how long a quiet stretch may
 //! run. Each night the facet reads what the vault holds about each person as
 //! the Dreamer, under its relationship grants, and a rule whose person has
-//! gone quiet past its period lands one Proposed reach-out. The reach-out
-//! cites the newest record read, or the person when the vault holds none yet,
-//! and the proactivity digest carries it to the owner. No tie strength is
-//! scored: the quiet stretch is the only signal, and the rule says how long.
+//! gone quiet past its period lands one reach-out. The reach-out applies at
+//! once (OF-023): it lands Auto with a receipt the owner reverts, and the
+//! inbox's finding notice tells them; a reach-out the Gate parks waits in the
+//! run tray as before. It cites the newest record read, or the person when
+//! the vault holds none yet. No tie strength is scored: the quiet stretch is
+//! the only signal, and the rule says how long.
 //!
 //! A rule with a draft route also lets the host draft the follow-up through
 //! the representation seam ([`Vault::stewardship_draft_requests`] →
-//! [`Vault::schedule_stewardship_draft`]). The draft is a proposal the owner
-//! approves before any send; nothing here sends.
+//! [`Vault::schedule_stewardship_draft`]). The draft is saved at once for
+//! the owner's send review, and only their approval at
+//! `/v1/owner/representation/approve` schedules a send; nothing here sends.
+//! Reverting the reach-out withdraws the plans drafted from it.
+use super::applied::{self, MaintenanceInverse, MaintenanceRevert};
 use super::proposals;
 use super::representation::{
     RepresentationKind, RepresentationPlanner, RepresentationRequest, RepresentationSourceRef,
@@ -22,14 +27,15 @@ use crate::dreamer_runner::{
 };
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId, Result, Vault,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
+    Result, Vault, WriteActor,
 };
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const STEWARDSHIP_FACET: &str = "dreamer.stewardship";
-/// The Proposed reach-out one due rule lands, its subject the rule's person.
+/// The reach-out one due rule lands, its subject the rule's person.
 pub const STEWARDSHIP_PREDICATE: &str = "dreamer.stewardship.reach_out";
 const RULES: SideTable<(), StewardshipRules, LegacyJson> =
     SideTable::new(&side_table::DREAMER_STEWARDSHIP_RULES);
@@ -82,14 +88,16 @@ pub struct StewardshipDraftRoute {
     pub instruction: String,
 }
 
-/// One pending reach-out the host may draft a follow-up for.
+/// One standing reach-out the host may draft a follow-up for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StewardshipDraftRequest {
-    /// The reach-out proposal the draft follows up.
+    /// The reach-out the draft follows up.
     pub proposal: EntityId,
     /// The owner's drafting instruction.
     pub instruction: String,
     pub request: RepresentationRequest,
+    /// The reach-out's revision the draft is pinned to.
+    revision: [u8; 32],
 }
 
 fn bad_text(text: &str, max: usize) -> bool {
@@ -176,9 +184,10 @@ impl Vault {
         })
     }
 
-    /// Pending reach-outs whose rule has a draft route and no draft yet, at
-    /// most `limit`. A reach-out the vault holds no record to cite for has
-    /// nothing to ground a draft in and is left to the owner.
+    /// Standing reach-outs whose rule has a draft route and no draft yet, at
+    /// most `limit`: each one applied and not reverted, or held for the owner
+    /// and not declined. A reach-out the vault holds no record to cite for
+    /// has nothing to ground a draft in and is left to the owner.
     pub fn stewardship_draft_requests(&self, limit: usize) -> Result<Vec<StewardshipDraftRequest>> {
         let Some(rules) = self.stewardship_rules()? else {
             return Ok(Vec::new());
@@ -187,34 +196,41 @@ impl Vault {
             return Ok(Vec::new());
         }
         let authority = self.dreamer_authority()?.entity_ref();
-        let pending: Vec<EntityId> = {
-            let txn = self.store.env.read_txn()?;
-            let mut pending = Vec::new();
-            for row in
-                crate::claim::PENDING_PRODUCER.iter_from(&self.store, &txn, authority.as_bytes())?
-            {
-                let ((_, id), _) = row?;
-                pending.push(id);
-            }
-            pending
-        };
         let reader = dreamer_reader(self)?;
         let mut requests = Vec::new();
-        for id in pending {
-            if requests.len() >= limit {
+        let mut after = None;
+        while requests.len() < limit {
+            let page = {
+                let txn = self.store.env.read_txn()?;
+                crate::claim::claim_ids_for_predicate_page_in_txn(
+                    &self.store,
+                    &txn,
+                    STEWARDSHIP_PREDICATE,
+                    after,
+                    READ_CHUNK,
+                )?
+            };
+            let Some(last) = page.last().copied() else {
                 break;
+            };
+            for id in page {
+                if requests.len() >= limit {
+                    break;
+                }
+                if let Some(request) = draft_request(self, &reader, &rules, authority, id)? {
+                    requests.push(request);
+                }
             }
-            if let Some(request) = draft_request(self, &reader, &rules, authority, id)? {
-                requests.push(request);
-            }
+            after = Some(last);
         }
         Ok(requests)
     }
 
     /// Schedules the host's draft for one reach-out through the
     /// representation seam, once. The request is derived again here, so a
-    /// reach-out the owner resolved or a rule they removed meanwhile drafts
-    /// nothing.
+    /// reach-out the owner reverted or declined, or a rule they removed,
+    /// meanwhile drafts nothing; the queued draft carries the reach-out and
+    /// lands only while it still stands.
     pub fn schedule_stewardship_draft(
         &self,
         proposal: EntityId,
@@ -225,7 +241,8 @@ impl Vault {
         let authority = self.dreamer_authority()?.entity_ref();
         let request = draft_request(self, &dreamer_reader(self)?, &rules, authority, proposal)?
             .ok_or_else(invalid)?;
-        let outcome = self.schedule_representation(&request.request, planner, now)?;
+        let outcome =
+            self.schedule_follow_up(&request.request, proposal, request.revision, planner, now)?;
         self.with_write_txn_grouped(|txn| DRAFTED.put(&self.store, txn, &proposal, &now))?;
         Ok(outcome)
     }
@@ -269,9 +286,10 @@ impl DreamerRunnerStore<'_> {
     }
 }
 
-/// Lands one reach-out per due rule. A rule stays due on the same newest
-/// record, and its reach-out is content-keyed, so a replayed night lands
-/// nothing twice; a new record about the person starts a new stretch.
+/// Lands one reach-out per due rule, applied at once. A rule stays due on the
+/// same newest record, and its reach-out is content-keyed, so a replayed
+/// night lands nothing twice and a reverted reach-out never lands again; a
+/// new record about the person starts a new stretch.
 pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
     let Some(rules) = vault.stewardship_rules()? else {
         return Ok(());
@@ -297,23 +315,78 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
     if due.is_empty() {
         return Ok(());
     }
-    let envelope =
-        proposals::run_tray_envelope(vault, STEWARDSHIP_FACET, attempt.status.attempt.id)?;
-    vault.with_write_txn_grouped(|txn| {
-        for (person, value, evidence) in &due {
-            proposals::emit_in_txn(
-                vault,
-                txn,
-                *person,
-                STEWARDSHIP_PREDICATE,
-                value,
-                &[*evidence],
-                &envelope,
-                now,
-            )?;
-        }
-        Ok(())
-    })
+    proposals::land(
+        vault,
+        STEWARDSHIP_FACET,
+        attempt.status.attempt.id,
+        |landing| {
+            vault.with_write_txn_grouped(|txn| {
+                for (person, value, evidence) in &due {
+                    landing.land_in_txn(
+                        vault,
+                        txn,
+                        &proposals::Finding {
+                            subject: *person,
+                            predicate: STEWARDSHIP_PREDICATE,
+                            value,
+                            evidence: &[*evidence],
+                        },
+                        now,
+                        |_| Ok(MaintenanceInverse::ReachOut),
+                    )?;
+                }
+                Ok(())
+            })
+        },
+    )
+}
+
+/// The owner's revert of one applied reach-out, beside its retraction: its
+/// draft marker goes and each follow-up plan drafted from it is withdrawn,
+/// so a draft still queued lands nothing and a plan not yet sent never
+/// sends. A message already sent cannot be unsent.
+pub(super) fn revert_reach_out_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: WriteActor,
+    now: u64,
+    out: &mut MaintenanceRevert,
+) -> Result<()> {
+    let reach_out = out.target.finding().ok_or_else(invalid)?;
+    DRAFTED.delete(&vault.store, txn, &reach_out)?;
+    super::representation::withdraw_follow_ups_in_txn(vault, txn, reach_out, owner, now, out)
+}
+
+/// A reach-out of the Dreamer's that still stands, with the revision a
+/// follow-up pins: live, not stale, and applied at once and not reverted,
+/// or held for the owner and not declined. The revision is its body with
+/// the approval set aside, so the owner's approval of a held one moves
+/// nothing while a retraction or any rewrite does.
+pub(super) fn standing_reach_out_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    authority: EntityId,
+    id: EntityId,
+) -> Result<Option<(ClaimBody, [u8; 32])>> {
+    let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+        return Ok(None);
+    };
+    let standing = match body.approval {
+        ClaimApprovalStatus::Auto => applied::standing_in_txn(vault, txn, id)?,
+        ClaimApprovalStatus::Proposed | ClaimApprovalStatus::Approved => true,
+        _ => false,
+    };
+    if !standing
+        || body.predicate != STEWARDSHIP_PREDICATE
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.source != Some(ClaimSource::Generated)
+        || body.stale
+        || crate::claim::session_claim_producer(&body) != Some(authority)
+    {
+        return Ok(None);
+    }
+    let revision = super::representation::review_revision(&body)?;
+    Ok(Some((body, revision)))
 }
 
 /// The Dreamer's read: a relationship's rows and private rows pass only on
@@ -367,8 +440,8 @@ fn recent(
     Ok(found)
 }
 
-/// The draft request one pending claim makes, when it is a live reach-out
-/// of the Dreamer's whose rule routes drafts and that has no draft yet.
+/// The draft request one claim makes, when it is a standing reach-out of
+/// the Dreamer's whose rule routes drafts and that has no draft yet.
 fn draft_request(
     vault: &Vault,
     reader: &ScopedRead<'_>,
@@ -376,24 +449,16 @@ fn draft_request(
     authority: EntityId,
     proposal: EntityId,
 ) -> Result<Option<StewardshipDraftRequest>> {
-    {
+    let (body, revision) = {
         let txn = vault.store.env.read_txn()?;
         if DRAFTED.contains(&vault.store, &txn, &proposal)? {
             return Ok(None);
         }
-    }
-    let Some(body) = vault.get_claim(&proposal)? else {
-        return Ok(None);
+        match standing_reach_out_in_txn(vault, &txn, authority, proposal)? {
+            Some(standing) => standing,
+            None => return Ok(None),
+        }
     };
-    if body.predicate != STEWARDSHIP_PREDICATE
-        || body.approval != ClaimApprovalStatus::Proposed
-        || body.lifecycle != ClaimLifecycleStatus::Active
-        || body.source != Some(ClaimSource::Generated)
-        || body.stale
-        || crate::claim::session_claim_producer(&body) != Some(authority)
-    {
-        return Ok(None);
-    }
     let ClaimSubject::Entity(person) = body.subject else {
         return Ok(None);
     };
@@ -428,5 +493,6 @@ fn draft_request(
             evidence,
             voice: route.voice.clone(),
         },
+        revision,
     }))
 }

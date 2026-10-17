@@ -535,7 +535,8 @@ pub(super) fn revert_in_txn(
         }
         Rung::Retract => {}
     }
-    let copy = stand_copy_in_txn(vault, txn, inverse, out.finding, now)?;
+    let finding = out.target.finding().ok_or_else(invalid)?;
+    let copy = stand_copy_in_txn(vault, txn, inverse, finding, now)?;
     out.copied.push((inverse.target, copy));
     Ok(())
 }
