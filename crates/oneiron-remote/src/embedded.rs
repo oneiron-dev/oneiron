@@ -490,6 +490,11 @@ impl EmbeddedClient {
         verb: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, MemoryError> {
+        // Task work waits its turn in the vault's one line (Rule 5), as it
+        // does at the served doors.
+        let _turn = oneiron::task_verb::sdk::AgentVerb::from_name(verb)
+            .filter(|verb| verb.is_task_work())
+            .map(|_| self.shared.vault().admit_task_work_blocking(self.actor));
         match self.room_turn {
             Some(room) => memory.for_room_turn(room)?.invoke(verb, input),
             None => oneiron::task_verb::sdk::invoke(&memory, verb, input),

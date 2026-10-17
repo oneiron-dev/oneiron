@@ -74,6 +74,9 @@ pub struct Vault {
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,
+    /// Task work's one fair line on this vault, whichever door the work came
+    /// in by ([`Vault::admit_task_work`]).
+    pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,
     /// World privacy P6b: this install's this-device-only keystore, the world
     /// keys this machine opened, and their OF-520 questions. In memory only,
     /// never persisted, and never shared across vaults.

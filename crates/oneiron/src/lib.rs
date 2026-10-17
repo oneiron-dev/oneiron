@@ -39,6 +39,7 @@ pub mod store;
 pub(crate) mod sweep;
 pub mod temporal;
 mod vault;
+pub mod work_line;
 pub mod write_envelope;
 // ===== Read path ===== indexes, retrieval pipeline, standing queries, context packs, LLM seam
 pub mod analyzer;
