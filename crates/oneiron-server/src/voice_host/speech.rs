@@ -27,7 +27,7 @@ use oneiron::llm::{BudgetGuard, LlmBackend, LlmStreamEvent, VoiceChunkPolicy, Vo
 use oneiron::policy_model::PolicyModelConfig;
 use oneiron::voice_cascade::{
     Brain, BrainEvent, CascadeControl, ControlEvent, GenerationEpoch, OutputStop, PcmFrame,
-    Safeguard, SafeguardRequest, SentenceEnforcement, TtsCommand, TtsSeamClient,
+    Safeguard, SafeguardRequest, SentenceEnforcement, TtsCommand, TtsSeamClient, TurnMemories,
 };
 
 use super::media_bridge::MediaBridge;
@@ -46,6 +46,9 @@ pub struct VoiceBrainOut {
     /// A trusted host mark: the event carries external context, such as a
     /// tool result. It only adds to the generation's taint.
     pub externally_tainted: bool,
+    /// What the generation's memories read found and withheld, on its first
+    /// event; the host sends it to the owner's client and never says it.
+    pub memories: Option<TurnMemories>,
 }
 
 /// What the host hands the owner's playout, in order.
@@ -193,7 +196,19 @@ impl VoiceHost {
             generation,
             event,
             externally_tainted,
+            memories,
         } = out;
+        if let Some(memories) = memories
+            && outputs
+                .control
+                .submit(ControlEvent::Memories {
+                    generation,
+                    memories,
+                })
+                .is_err()
+        {
+            tracing::warn!("voice media: a turn's memories receipt was not delivered");
+        }
         if matches!(event, BrainEvent::Done) {
             // A trailing sentence is completed before the session hears Done.
             let tail =
@@ -267,6 +282,7 @@ impl VoiceHost {
                 generation,
                 event: BrainEvent::Done,
                 externally_tainted,
+                memories: None,
             };
             return self.brain_out(done, bridge, outputs);
         }

@@ -3,8 +3,10 @@
 //! (`pcm`, STANDARD base64 of whole PCM16LE samples, at most ~12 KiB raw per
 //! frame), `cut`, `speaking`, `roster_changed` and `drained`. Out: spoken
 //! audio (`pcm`, mono PCM16LE in frames under the wire's limit),
-//! `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice` and
-//! `session_ended`. Generations go by their epoch value. Spoken audio is
+//! `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice`,
+//! `memories` (what a turn's memories read found, heard and withheld, its
+//! narrowing receipts split across numbered frames) and `session_ended`.
+//! Generations go by their epoch value. Spoken audio is
 //! checked against the session again when it is dequeued for the wire, so a
 //! stopped generation's audio never goes out; `flush` tells the sibling to
 //! drop what it still holds. `drained` acknowledges a `generation_end` once
