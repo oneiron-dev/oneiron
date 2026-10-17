@@ -318,6 +318,36 @@ export class Oneiron {
       /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
     },
+    embedding_spaces: {
+      /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+      list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesList(input) as Facade.EmbeddingSpacesView),
+      /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
+      declare: (input: Facade.EmbeddingSpaceDeclareRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesDeclare(input) as Facade.EmbeddingSpacesView),
+      /** Binds one kind slot to a declared space, or returns it to its default when no space is named. */
+      bind: (input: Facade.EmbeddingSpaceBindRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesBind(input) as Facade.EmbeddingSpacesView),
+      /** Binds every kind slot the space accepts, text included, to that one space. */
+      one_space: (input: Facade.EmbeddingSpaceRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesOneSpace(input) as Facade.EmbeddingSpacesView),
+      /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
+      retire: (input: Facade.EmbeddingSpaceRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesRetire(input) as Facade.EmbeddingSpacesView),
+      /** Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space. */
+      move: (input: Facade.EmbeddingSpaceMoveRequest): Facade.SpaceMove => this.#call(() => this.#client.vaultEmbeddingSpacesMove(input) as Facade.SpaceMove),
+      /** Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes. */
+      move_check: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpaceMoveChecked => this.#call(() => this.#client.vaultEmbeddingSpacesMoveCheck(input) as Facade.EmbeddingSpaceMoveChecked),
+      /** The owner says yes to a full candidate over a check that did not read not worse; it swaps in. */
+      move_approve: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesMoveApprove(input) as Facade.EmbeddingSpacesView),
+      /** Binds a swapped-in move incumbent again. */
+      move_undo: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesMoveUndo(input) as Facade.EmbeddingSpacesView),
+      /** Ends an open embedding space move with no swap. */
+      move_abandon: (input: Facade.EmbeddingSpaceCandidateRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesMoveAbandon(input) as Facade.EmbeddingSpacesView),
+      probes: {
+        /** Every stored embedding space probe with its id. */
+        list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpaceProbes => this.#call(() => this.#client.vaultEmbeddingSpacesProbesList(input) as Facade.EmbeddingSpaceProbes),
+        /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
+        put: (input: Facade.EmbeddingSpaceProbePutRequest): Facade.EmbeddingSpaceProbe => this.#call(() => this.#client.vaultEmbeddingSpacesProbesPut(input) as Facade.EmbeddingSpaceProbe),
+        /** Removes one stored embedding space probe by its id. */
+        delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),
+      },
+    },
     settings: {
       /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {
