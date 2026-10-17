@@ -26,6 +26,7 @@ use crate::memory::{
 use crate::note::{NoteProgramEdit, NoteProgramEditOutcome};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
 /// The registered NOTE kind every pad is born as.
 const PAD_KIND: &str = "scratchpad";
@@ -199,24 +200,54 @@ fn parse_line(line: &str) -> PadLine<'_> {
 /// A sealed pad's markdown as the Dreamer's after-seal review reads it
 /// (ARCH-0032 #scratchpad-marks): every `scratch` line blanked to spaces, so
 /// it never reaches the model and every byte offset still indexes the stored
-/// markdown. The flag says whether any line is marked `keep`.
-pub(crate) fn sealed_pad_review_text(markdown: &str) -> (String, bool) {
+/// markdown. With it, the byte range of each `keep` line's text (after its
+/// header) that holds any text.
+pub(crate) fn sealed_pad_review_text(markdown: &str) -> (String, Vec<Range<usize>>) {
     let mut text = String::with_capacity(markdown.len());
-    let mut keep = false;
+    let mut keep = Vec::new();
+    let mut at = 0;
     for line in markdown.split_inclusive('\n') {
         let body = line.strip_suffix('\n').unwrap_or(line);
-        match parse_line(body).mark {
+        let parsed = parse_line(body);
+        match parsed.mark {
             Some(ScratchpadMark::Scratch) => {
                 text.extend(std::iter::repeat_n(' ', body.len()));
                 text.push_str(&line[body.len()..]);
             }
             mark => {
-                keep |= mark == Some(ScratchpadMark::Keep);
+                if mark == Some(ScratchpadMark::Keep) && !parsed.text.trim().is_empty() {
+                    keep.push(at + body.len() - parsed.text.len()..at + body.len());
+                }
                 text.push_str(line);
             }
         }
+        at += line.len();
     }
     (text, keep)
+}
+
+/// A sealed pad's markdown as the review's one re-ask reads it (FIX 2240):
+/// only the lines holding a `missed` range stay; every other line is
+/// blanked to spaces, so every byte offset still indexes the stored
+/// markdown.
+pub(crate) fn sealed_pad_reask_text(markdown: &str, missed: &[Range<usize>]) -> String {
+    let mut text = String::with_capacity(markdown.len());
+    let mut at = 0;
+    for line in markdown.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        let end = at + body.len();
+        if missed
+            .iter()
+            .any(|range| at <= range.start && range.end <= end)
+        {
+            text.push_str(line);
+        } else {
+            text.extend(std::iter::repeat_n(' ', body.len()));
+            text.push_str(&line[body.len()..]);
+        }
+        at += line.len();
+    }
+    text
 }
 
 fn mark_token(mark: Option<ScratchpadMark>) -> &'static str {
