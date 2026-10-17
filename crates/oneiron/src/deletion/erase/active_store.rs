@@ -83,6 +83,9 @@ impl Vault {
         crate::calendar::origin::invalidate_dependents(self, wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         self.scrub_identity_op_actor_in_txn(wtxn, id)?;
+        // An erased actor's call receipts keep their rows and times, not who
+        // called (FIX 812).
+        self.erase_call_receipt_actor_in_txn(wtxn, id)?;
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =

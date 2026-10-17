@@ -18,7 +18,16 @@
 //! holds is refused. The decision keeps it as a blob artifact written on the
 //! run, so its receipt's evidence pin names pixels a later reader can pull
 //! back after the browser dropped them.
-use std::sync::Arc;
+//!
+//! A verdict is a read, metered to the caller's own line (FIX 1123, Engine
+//! ruling 10-18): every model rung it reaches spends on a meter bound to the
+//! caller ([`rung_meter`]), never the host's. No caller has a spending cap
+//! (rule 5). A caller whose verdicts spend past [`VERDICT_SPEND_CHECK_UNITS`]
+//! in a window raises the host's typed "is everything okay" check, and every
+//! verdict still answers.
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::claim::ScopedRead;
@@ -35,7 +44,7 @@ use oneiron::memory::{
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
-use oneiron::{BudgetExhaustionPolicy, EdgeActorClass, EntityId, WriteActor};
+use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, WriteActor};
 
 use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
@@ -45,6 +54,71 @@ const IMAGE: &str = "image";
 
 /// The ref prefix of a screenshot a code run's browser holds.
 pub(crate) const HELD_PREFIX: &str = "blake3:";
+
+/// A caller's `ai.verdict` spend, in budget units, past which within one
+/// [`VERDICT_SPEND_WINDOW_SECS`] window the host raises its typed "is
+/// everything okay" check (FIX 1123). Never a cap and never a refusal: the
+/// verdict that crosses it has already answered. Engine call 10-18, behind
+/// this one constant.
+pub(crate) const VERDICT_SPEND_CHECK_UNITS: u64 = 10_000_000;
+
+/// The window, in vault clock seconds, a caller's verdict spend is tallied
+/// over for its check.
+pub(crate) const VERDICT_SPEND_WINDOW_SECS: u64 = 86_400;
+
+thread_local! {
+    /// The caller's own meter the verdict on this thread spends on.
+    static CALLER_METER: RefCell<Option<BudgetGuard>> = const { RefCell::new(None) };
+}
+
+/// The meter a model rung spends on: inside a verdict, the caller's own
+/// line; else the rung's own. Every rung admits on its calling thread before
+/// it blocks, so a verdict's scope reaches each one it asks.
+pub(crate) fn rung_meter(own: &BudgetGuard) -> BudgetGuard {
+    caller_meter().unwrap_or_else(|| own.clone())
+}
+
+/// The caller's own meter, inside a verdict on this thread.
+fn caller_meter() -> Option<BudgetGuard> {
+    CALLER_METER.with(|slot| slot.borrow().clone())
+}
+
+/// Runs `call` with every model rung it reaches on this thread spending on
+/// `meter`, and puts back what was there before, panic or not.
+fn on_caller_meter<T>(meter: &BudgetGuard, call: impl FnOnce() -> T) -> T {
+    struct Restore(Option<BudgetGuard>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            CALLER_METER.with(|slot| *slot.borrow_mut() = previous);
+        }
+    }
+    let _restore = Restore(CALLER_METER.with(|slot| slot.replace(Some(meter.clone()))));
+    call()
+}
+
+/// Each caller's verdict spend in the current window, on this server: a
+/// tally for the check, never a budget.
+#[derive(Debug, Default)]
+pub(crate) struct VerdictSpend {
+    /// Each caller's window start and the units spent in it.
+    tally: Mutex<HashMap<EntityId, (u64, u64)>>,
+}
+
+impl VerdictSpend {
+    /// Adds `units` to `caller`'s tally at `now`: the window's start and the
+    /// tally when this spend is the one that crosses the check.
+    fn add(&self, caller: EntityId, units: u64, now: u64) -> Option<(u64, u64)> {
+        let window = now - now % VERDICT_SPEND_WINDOW_SECS;
+        let mut tally = self.tally.lock().unwrap_or_else(PoisonError::into_inner);
+        tally.retain(|_, (started, _)| *started == window);
+        let (_, spent) = tally.entry(caller).or_insert((window, 0));
+        let before = *spent;
+        *spent = before.saturating_add(units);
+        (before <= VERDICT_SPEND_CHECK_UNITS && *spent > VERDICT_SPEND_CHECK_UNITS)
+            .then_some((window, *spent))
+    }
+}
 
 tokio::task_local! {
     /// The screenshot an `ai.verdict` in this task names by its `blake3:`
@@ -106,8 +180,67 @@ impl HeldImage {
 /// absent); a verdict never queues an owner ask.
 ///
 /// Every model rung blocks on the server's runtime: call this on a blocking
-/// thread.
+/// thread. Each rung spends on the caller's own line, a meter bound to
+/// `principal` under the vault's budget policy and sized as one model turn,
+/// and its spend counts toward the caller's check (FIX 1123).
 pub(crate) fn run_verdict(
+    server: &SyncServer,
+    principal: EntityId,
+    class: EdgeActorClass,
+    reader: &Memory<'_>,
+    lane: Option<&ScopedRead<'_>>,
+    held: Option<DecisionImage>,
+    request: &AiVerdictRequest,
+) -> MemoryResult<AiVerdict> {
+    let vault = server.vault();
+    let settings = server.ai.chat_settings();
+    let meter = vault
+        .policy_budget_guard(
+            format!("ai.verdict:{}:{}", principal.to_hex(), vault.now_recorded_at()),
+            settings.turn_budget_units,
+            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
+            BudgetExhaustionPolicy::Suspend,
+            WriteActor::new(principal, class),
+        )
+        .map_err(|error| {
+            MemoryError::bad_request_with(
+                format!("ai.verdict has no line to meter on: {error}"),
+                &["Repair the vault's budget policy, then ask again."],
+            )
+        })?;
+    let answered = on_caller_meter(&meter, || {
+        answer_verdict(server, principal, class, reader, lane, held, request)
+    });
+    let now = vault.now_recorded_at();
+    if let Some((window, spent)) =
+        server
+            .decision_host()
+            .verdict_spend()
+            .add(principal, meter.read().used_units, now)
+    {
+        tracing::warn!(
+            caller = %principal.to_hex(),
+            spent,
+            threshold = VERDICT_SPEND_CHECK_UNITS,
+            "a caller's ai.verdict spend crossed its check; is everything okay?"
+        );
+        if let Err(error) = crate::wire_health::raise_verdict_spend(
+            vault,
+            principal,
+            spent,
+            VERDICT_SPEND_CHECK_UNITS,
+            window,
+            now,
+        ) {
+            tracing::warn!(%error, "the ai.verdict spend check was not kept");
+        }
+    }
+    answered
+}
+
+/// [`run_verdict`]'s question through the ladder, on whatever line the
+/// calling thread meters.
+fn answer_verdict(
     server: &SyncServer,
     principal: EntityId,
     class: EdgeActorClass,
@@ -454,20 +587,24 @@ pub(crate) fn vision_rung(
         .unwrap_or_default();
     let run_id = format!("{label}:{asset}:{}", vault.now_recorded_at());
     let settings = server.ai.chat_settings();
-    let meter = vault
-        .policy_budget_guard(
-            run_id.clone(),
-            settings.turn_budget_units,
-            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
-            BudgetExhaustionPolicy::Suspend,
-            WriteActor::new(principal, class),
-        )
-        .map_err(|error| {
-            MemoryError::bad_request_with(
-                format!("the Local-vision call was not admitted: {error}"),
-                &["Raise the turn budget, or ask without an image."],
+    // Inside a verdict, the caller's own line (FIX 1123); else this call's.
+    let meter = match caller_meter() {
+        Some(meter) => meter,
+        None => vault
+            .policy_budget_guard(
+                run_id.clone(),
+                settings.turn_budget_units,
+                oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
+                BudgetExhaustionPolicy::Suspend,
+                WriteActor::new(principal, class),
             )
-        })?;
+            .map_err(|error| {
+                MemoryError::bad_request_with(
+                    format!("the Local-vision call was not admitted: {error}"),
+                    &["Raise the turn budget, or ask without an image."],
+                )
+            })?,
+    };
     let run = server.ai.undeclared_run(run_id, meter);
     let seat = LocalVisionModel::new(&server.ai, vault, run, tokio::runtime::Handle::current())
         .ok_or_else(unbound)?;
