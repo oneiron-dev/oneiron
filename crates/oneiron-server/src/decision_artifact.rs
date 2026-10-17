@@ -5,7 +5,9 @@
 //! Local-vision rung, and returns the full decision for the engine to land
 //! as a proposal held for Keep.
 use oneiron::edit_roundtrip::{UnitCall, UnitDecider};
-use oneiron::llm::decision::TypedDecision;
+use oneiron::llm::decision::{
+    DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
+};
 use oneiron::{EdgeActorClass, Result};
 
 use crate::ai_host::LocalVisionModel;
@@ -34,6 +36,20 @@ impl<'s> HostUnitDecider<'s> {
 impl UnitDecider for HostUnitDecider<'_> {
     fn reads_images(&self) -> bool {
         LocalVisionModel::bound(&self.server.ai)
+    }
+
+    /// Images ride to the Local-vision rung, when it is bound and the dial
+    /// spans it, as [`ladder_decide`] sends them.
+    fn first_taking(
+        &self,
+        _question: &DecisionQuestion,
+        dial: DecisionDial,
+        _images: &[DecisionImage],
+    ) -> Option<DecisionRung> {
+        (self.reads_images()
+            && dial.first <= DecisionRung::Local
+            && DecisionRung::Local <= dial.ceiling)
+            .then_some(DecisionRung::Local)
     }
 
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {

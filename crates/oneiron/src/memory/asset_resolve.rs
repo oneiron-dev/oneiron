@@ -32,8 +32,8 @@ use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::QuestionFamily;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionLadder, Reversibility, cut_text, fit_state,
+    AnswerContract, AudioRef, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial,
+    DecisionLadder, EvidenceVersion, ImageRef, ResolvedMedia, Reversibility, cut_text, fit_state,
 };
 use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
 use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
@@ -615,6 +615,99 @@ pub fn pull_image(
         },
         receipt,
     })
+}
+
+/// The image a decision reads by `handle` (owner point 3), through `lane`: the ASSET's
+/// own bytes, whole or `frame`d, and the ref that pins them, the asset at the full hash
+/// of its bytes, their type and size. The read is recorded as an `ask_image` pull before
+/// the pixels return. A handle whose asset is absent, withheld, holds no image or no
+/// longer holds the bytes it names is `NOT_FOUND`; no thumbnail or text form stands in.
+pub fn resolve_image_ref(
+    lane: &ScopedRead<'_>,
+    name: &str,
+    handle: &str,
+    frame: Option<PixelRegion>,
+) -> MemoryResult<ScopedReadResult<ResolvedMedia>> {
+    let parsed = ImageHandle::parse(handle)?;
+    let ScopedReadResult { value, receipt } =
+        asset_forms_in_lane(lane, parsed.asset, true, &mut |_| false)?;
+    let Some(image) = value
+        .and_then(|forms| forms.image)
+        .filter(|image| parsed.names(image))
+    else {
+        return Err(no_form(handle).with_read_receipt(receipt));
+    };
+    let evidence = EvidenceVersion {
+        id: parsed.asset,
+        body_hash: *blake3::hash(&image.bytes).as_bytes(),
+    };
+    let reference = ImageRef::of(evidence, &image, frame).map_err(|_| {
+        MemoryError::bad_request("an image a decision reads is PNG or JPEG, its frame inside it")
+    })?;
+    let (pixels, ..) = region_pixels(&image, frame, None)?;
+    lane.commit_served_forms(&[ServedForm::pulled(parsed.asset, PixelPull::AskImage)])?;
+    Ok(ScopedReadResult {
+        value: ResolvedMedia::Image {
+            name: name.to_owned(),
+            reference,
+            image: pixels,
+        },
+        receipt,
+    })
+}
+
+/// The audio a decision reads by `reference` (owner point 3), through `lane`: the
+/// ASSET's own audio bytes, refused as `NOT_FOUND` when the asset is absent, withheld,
+/// holds no audio or no longer holds the bytes the ref names.
+pub fn resolve_audio_ref(
+    lane: &ScopedRead<'_>,
+    name: &str,
+    reference: &AudioRef,
+) -> MemoryResult<ScopedReadResult<ResolvedMedia>> {
+    let asset = reference.evidence.id;
+    let ScopedReadResult { value, receipt } = lane.read(&[PointRead::id(asset)], None)?;
+    let bytes = value
+        .into_iter()
+        .flatten()
+        .find(|row| row.entity_type == ENTITY_TYPE_ASSET)
+        .and_then(|row| row.body)
+        .and_then(|body| audio_of(&body))
+        .filter(|(bytes, media_type)| {
+            *blake3::hash(bytes).as_bytes() == reference.evidence.body_hash
+                && media_type.eq_ignore_ascii_case(&reference.media_type)
+        });
+    let Some((bytes, _)) = bytes else {
+        return Err(no_form(&asset.to_hex()).with_read_receipt(receipt));
+    };
+    Ok(ScopedReadResult {
+        value: ResolvedMedia::Audio {
+            name: name.to_owned(),
+            reference: reference.clone(),
+            bytes,
+        },
+        receipt,
+    })
+}
+
+/// The audio bytes and type an ASSET body holds.
+fn audio_of(body: &[u8]) -> Option<(Vec<u8>, String)> {
+    let Some(Value::Map(entries)) = decode_whole(body) else {
+        return None;
+    };
+    let field = |name: &str| {
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    match (field(BODY_BYTES), field(BODY_MEDIA_TYPE).and_then(Value::as_str)) {
+        (Some(Value::Binary(bytes)), Some(media_type))
+            if !bytes.is_empty() && media_type.starts_with("audio/") =>
+        {
+            Some((bytes.clone(), media_type.to_owned()))
+        }
+        _ => None,
+    }
 }
 
 fn no_form(asset_ref: &str) -> MemoryError {
