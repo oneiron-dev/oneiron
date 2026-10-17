@@ -137,6 +137,9 @@ pub(crate) async fn execute_mcp_generated_verb(
     )
     .await?;
     let mut served = Vec::new();
+    // The hook blocks a fresh board read's answer shows; a continuation
+    // restates a retained answer and spends nothing again.
+    let mut hooks = None;
     let (mut output, health, carrier, snapshot, producer_epoch) =
         if let Some(continuation) = dispatch.continuation.as_ref() {
             let snapshot = continuation.snapshot.clone().ok_or_else(|| {
@@ -179,7 +182,8 @@ pub(crate) async fn execute_mcp_generated_verb(
                 } else {
                     None
                 };
-                let produced = execute_mcp_agent_verb(server, &args, actor, &mut served).await;
+                let produced =
+                    execute_mcp_agent_verb(server, &args, actor, &mut served, &mut hooks).await;
                 let produced = match produced {
                     // A verb hook's stop is a result the client reads, not a
                     // refusal (ARCH-0080 §3).
@@ -234,6 +238,11 @@ pub(crate) async fn execute_mcp_generated_verb(
             args.payload.cache,
         ),
     });
+    // A board read records the receipt its hook rows owe before it goes out
+    // and spends their blocks once it has, as setup's page one does (OF-579).
+    if let Some(hooks) = &mut hooks {
+        hooks.record_receipt(server).await?;
+    }
     let continued = dispatch.continuation.is_some();
     let result = mcp_endpoint_result(
         server,
@@ -243,7 +252,13 @@ pub(crate) async fn execute_mcp_generated_verb(
         carrier,
     )
     .await;
-    mcp_release_result(server, actor, &snapshot.rows, continued, result)
+    let result = mcp_release_result(server, actor, &snapshot.rows, continued, result);
+    if result.is_ok()
+        && let Some(hooks) = &hooks
+    {
+        hooks.spend(server);
+    }
+    result
 }
 
 /// Caps the row array this verb result pages over, in place: the output itself
@@ -546,6 +561,7 @@ async fn execute_mcp_agent_verb(
     args: &McpVerbToolArgs,
     actor: &McpCallContext,
     served: &mut Vec<oneiron::EntityId>,
+    board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<
     (
         Value,
@@ -556,7 +572,16 @@ async fn execute_mcp_agent_verb(
     McpGatewayError,
 > {
     let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-    execute_agent_verb_input(server, args.tool.name, input, actor, None, served).await
+    execute_agent_verb_input(
+        server,
+        args.tool.name,
+        input,
+        actor,
+        None,
+        served,
+        board_hooks,
+    )
+    .await
 }
 
 fn mcp_agent_verb_input(
@@ -1831,7 +1856,9 @@ pub(crate) fn mcp_agent_verb_arguments(
 /// The input names only fields the verb's advertised closed schema lists, and
 /// a code-mode call's claims are written under its run's host `origin`.
 /// Every row the result was derived from is listed in `served`: those its
-/// input names, and those the verb's reads picked themselves.
+/// input names, and those the verb's reads picked themselves. A board read
+/// leaves the hook blocks its answer shows in `board_hooks`; the caller spends
+/// them once the answer is out (OF-579).
 pub(crate) async fn execute_agent_verb_input(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -1839,6 +1866,7 @@ pub(crate) async fn execute_agent_verb_input(
     actor: &McpCallContext,
     origin: Option<oneiron::memory::HostWriteOrigin>,
     served: &mut Vec<oneiron::EntityId>,
+    board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<
     (
         Value,
@@ -1849,8 +1877,17 @@ pub(crate) async fn execute_agent_verb_input(
     McpGatewayError,
 > {
     let producers = oneiron::memory::ProducerRows::default();
-    let produced =
-        execute_agent_verb_listing(server, tool, input, actor, origin, &producers, served).await;
+    let produced = execute_agent_verb_listing(
+        server,
+        tool,
+        input,
+        actor,
+        origin,
+        &producers,
+        served,
+        board_hooks,
+    )
+    .await;
     served.extend(producers.take());
     produced
 }
@@ -1867,6 +1904,7 @@ async fn execute_agent_verb_listing(
     origin: Option<oneiron::memory::HostWriteOrigin>,
     producers: &oneiron::memory::ProducerRows,
     served: &mut Vec<oneiron::EntityId>,
+    board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<
     (
         Value,
@@ -1934,8 +1972,16 @@ async fn execute_agent_verb_listing(
         None
     };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
-    let (output, source, carrier, epoch) =
-        execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
+    let (output, source, carrier, epoch) = execute_agent_verb_row(
+        server,
+        tool,
+        hooks.args.clone(),
+        actor,
+        memory,
+        served,
+        board_hooks,
+    )
+    .await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
         .await
         .map_err(mcp_facade_error)?;
@@ -1950,6 +1996,7 @@ async fn execute_agent_verb_row(
     actor: &McpCallContext,
     memory: oneiron::Memory<'_>,
     served: &mut Vec<oneiron::EntityId>,
+    board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<
     (
         Value,
@@ -1995,7 +2042,7 @@ async fn execute_agent_verb_row(
         "self.focus.refresh" => {
             let input: oneiron::task_verb::sdk::BoardRefreshRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, served, |context| {
+            execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
                 oneiron::task_verb::sdk::self_focus_refresh(context, input)
             })
             .await
@@ -2003,7 +2050,7 @@ async fn execute_agent_verb_row(
         "self.focus.subscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, served, |context| {
+            execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
                 oneiron::task_verb::sdk::self_focus_subscribe(context, input)
             })
             .await
@@ -2011,7 +2058,7 @@ async fn execute_agent_verb_row(
         "self.focus.unsubscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, served, |context| {
+            execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
                 oneiron::task_verb::sdk::self_focus_unsubscribe(context, input)
             })
             .await
@@ -2225,7 +2272,7 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             if let Some(key) = input.key.clone() {
                 let frame_epoch = input.frame_epoch;
-                return execute_mcp_board_verb(server, actor, served, |context| {
+                return execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
                     oneiron::board_verb::dispatch_board_verb(
                         context,
                         oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch },
