@@ -3,6 +3,8 @@ use crate::claim::ClaimApprovalStatus;
 use crate::context_board::TasksSection;
 use crate::entity_id::EntityId;
 use crate::gate::PolicyApprovalCeiling;
+use crate::lens::RecordRef;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
 use crate::run_tree::RunTreeStatus;
 
 use super::terminal_state::TaskTerminalDisposition;
@@ -79,6 +81,27 @@ pub struct TaskCreateReceipt {
     /// The lane the created TASK routed to. `None` when nothing was created —
     /// a parked proposal has not routed anywhere yet.
     pub route: Option<TaskRouteOutcome>,
+    /// The created TASK as a typed record ref (OF-063), built from its id
+    /// with no read. `None` when no TASK was created.
+    #[serde(default)]
+    pub task_record: Option<RecordRef>,
+    /// The parked proposal CLAIM as a typed record ref, built the same way.
+    #[serde(default)]
+    pub proposal_record: Option<RecordRef>,
+}
+
+impl TaskCreateReceipt {
+    /// This receipt with its typed refs named from the ids it holds.
+    #[must_use]
+    pub(super) fn with_record_refs(mut self) -> Self {
+        self.task_record = self
+            .task_ref
+            .map(|id| RecordRef::from_id(ENTITY_TYPE_TASK, &id, None));
+        self.proposal_record = self
+            .proposal_ref
+            .map(|id| RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None));
+        self
+    }
 }
 
 /// Receipt for stamping the authoritative `started_at` fact on a TASK.

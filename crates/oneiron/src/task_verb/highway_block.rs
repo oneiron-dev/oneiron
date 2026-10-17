@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
-use crate::context_board::TASK_LABEL_MAX_BYTES;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -152,15 +151,6 @@ fn block_ask_target(to: &TaskAskTarget, owner: EntityId) -> TaskAskTarget {
     }
 }
 
-/// An ask's label becomes its member TASKs' label, so it fits one.
-fn ask_label(text: &str) -> String {
-    let mut end = text.len().min(TASK_LABEL_MAX_BYTES);
-    while !text.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    text.get(..end).unwrap_or_default().to_owned()
-}
-
 fn continuation_value(continuation: &BlockContinuation) -> MemoryResult<Value> {
     let encoded = rmp_serde::to_vec_named(continuation)
         .map_err(|_| MemoryError::bad_request("block continuation does not encode"))?;
@@ -276,7 +266,7 @@ impl Memory<'_> {
         let group = ask_record::group_id(self.vault(), txn, self.actor(), &intent_key)?;
         let mut question =
             TaskAskQuestion::new(ConsultPayloadRef::Claim(block_question_id(group)?));
-        question.label = Some(ask_label(&label));
+        question.label = Some(label.clone());
         let options = match continuation.purpose {
             BlockPurpose::Done { .. } => [
                 (DONE_MET_OPTION, "Done means met"),
