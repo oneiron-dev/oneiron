@@ -83,6 +83,11 @@ pub const COACH_JUDGE_SWAP_FACET: &str = "coach.judge_swap";
 /// and drawn random audit, checked on the host by a judge other than the
 /// model that produced the result (see [`super::seal_checks`]).
 pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
+/// The attribution judge's held-out audits (ARCH-0053, OF-542): both built-in
+/// fixture sets through the host's model rungs, so the
+/// `attribution_unclear_floor` fitter reads model answers (see
+/// [`super::attribution_audits`]).
+pub const COACH_ATTRIBUTION_AUDITS_FACET: &str = "coach.attribution_audits";
 /// Type-tree upkeep (ARCH-0079 #task-type, OF-541): the vault tree recounted
 /// from its receipts, split and merged on anchored decisions, its new types
 /// named on the host, and a changed tree put in force (see
@@ -103,7 +108,7 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 8] = [
+const HOST_FACETS: [&str; 9] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -112,6 +117,7 @@ const HOST_FACETS: [&str; 8] = [
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,
     COACH_TYPE_TREE_UPKEEP_FACET,
+    COACH_ATTRIBUTION_AUDITS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 9] = [
