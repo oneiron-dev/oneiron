@@ -366,6 +366,38 @@ reason, the connection and who answered, never the value. An agent's granted rev
 lease to its model connection, and an unanswered ask lapses after an hour. A standing grant is
 revoked in the consent registry like any other.
 
+A file stored with keys in it reads masked to an agent. An agent that needs the keys passes `why`
+to `vault.artifacts.export`. The same check then runs over the file's keys. Inside a standing grant
+the agent reads the stored bytes, and each read leaves its own receipt with the why. Outside one it
+gets the masked copy, and you get one ask for that agent, file, project and run. You answer it
+like any other reveal; approve once opens the agent's next read of that file.
+
+## Answer a found key
+
+When a write's mask lifts a key out of a record, or marks a file, you get one inbox notice for
+that record, whatever number of keys it held. The notice lists each key's handle, its kind and
+where it sat. Answer each key one of four ways:
+
+```sh
+oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
+oneiron api raw POST /v1/owner/secrets/rotate --data '{"name": "masked/<hex>", "value_base64": "..."}'
+oneiron api raw POST /v1/owner/secrets/found/delete --data '{"handle": "sc12"}'
+oneiron api raw POST /v1/owner/secrets/found/grant \
+  --data '{"handle": "sc12", "agent": "<32 hex>", "project": "<32 hex>"}'
+oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc12"}'
+```
+
+- **Rotate** gives the key's custody record a new value. Use the custody `name` from the listing.
+- **Delete** hard-deletes the record or file that held the key. The key itself stays in custody.
+- **Grant** gives one agent a standing grant on the key's class, in that project (or outside any
+  project when you leave it out), until you revoke it.
+- **Not a secret** overrules the scan. The value goes back into the record's body where the handle
+  was, or the file's mark drops it. The custody record is revoked, and the scan stops flagging that
+  value in that record.
+
+Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
+file. A key in a claim or a text field keeps its handle.
+
 ## Hand a served repository's origin to another host
 
 A repository this vault serves at `/git/<repo>` has no origin authority until you set one. With
