@@ -36,6 +36,28 @@ async fn report(
         rows,
     })
 }
+async fn self_focus_scratchpad_recall(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.focus.scratchpad.recall",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn self_memory_diary(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -5029,6 +5051,7 @@ pub(crate) async fn call_verb(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     match verb {
         "report" => report(server, call, input).await,
+        "self.focus.scratchpad.recall" => self_focus_scratchpad_recall(server, call, input).await,
         "self.memory.diary" => self_memory_diary(server, call, input).await,
         "self.memory.diary.reads" => self_memory_diary_reads(server, call, input).await,
         "self.memory.diary.review" => self_memory_diary_review(server, call, input).await,

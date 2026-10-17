@@ -26,6 +26,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<BoardSubscriptionRequest>(),
             ),
             (
+                "self.focus.scratchpad.recall",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ScratchpadRecallRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary",
                 crate::code_run::vault_read::request_schema::<DiaryEntryRequest>(),
             ),
@@ -1390,6 +1396,13 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/scopes")?.clone(),
             );
             &["scopes"]
+        }
+        "self.focus.scratchpad.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "self.memory.diary" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -2987,6 +3000,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.focus.unsubscribe" => {
             let _input: BoardSubscriptionRequest = decode(value.clone())?;
         }
+        "self.focus.scratchpad.recall" => {
+            let _input: crate::task_verb::sdk::ScratchpadRecallRequest = decode(value.clone())?;
+        }
         "self.memory.diary" => {
             let _input: DiaryEntryRequest = decode(value.clone())?;
         }
@@ -3851,6 +3867,9 @@ pub fn invoke(
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
         "report" => encode(report(memory, decode(value)?)?),
+        "self.focus.scratchpad.recall" => {
+            encode(self_focus_scratchpad_recall(memory, decode(value)?)?)
+        }
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
@@ -4376,6 +4395,12 @@ pub fn self_focus_unsubscribe<S: crate::board_verb::LiveBoardSource>(
             scopes: input.scopes,
         },
     )
+}
+pub fn self_focus_scratchpad_recall(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ScratchpadRecallRequest,
+) -> MemoryResult<crate::task_verb::sdk::ScratchpadRecallReply> {
+    crate::task_verb::sdk::scratchpad_recall_reply(memory, &input)
 }
 pub fn self_memory_diary(
     memory: &Memory<'_>,
@@ -5906,7 +5931,7 @@ pub fn vault_questions_read(
 pub fn vault_questions_answers(
     memory: &Memory<'_>,
     input: crate::receipt::QuestionAnswersRequest,
-) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
+) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.answers", &input)
 }
 pub fn vault_decisions_asks_answer(
