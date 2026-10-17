@@ -57,11 +57,15 @@ impl TaskHolderFallback {
 /// A bound on conversion, not a grant of extra authority. The chosen leader
 /// must be in the source roster unless the policy allows an actual task holder
 /// outside it. The latter exception is bound to the holder read in this txn.
+/// A thread's task count only ever asks: `max_tasks` is a question threshold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProjectConversionPolicy {
     pub(crate) leader_fallback: LeaderFallback,
     pub(crate) task_holder_fallback: TaskHolderFallback,
     pub(crate) roster_selection: RosterSelection,
+    /// The thread task count past which binding and conversion raise the
+    /// owner's "is everything okay" question (rule 5, OF-522). Never a
+    /// refusal: both count past it and go on.
     pub(crate) max_tasks: usize,
     pub(crate) allow_holder_override: bool,
 }
@@ -79,7 +83,8 @@ impl Default for ProjectConversionPolicy {
 }
 
 impl ProjectConversionPolicy {
-    /// Every trusted manifest narrows the policy; no later row can widen a cap.
+    /// Every trusted manifest narrows the policy; no later row can widen it.
+    /// The lowest task threshold stands, so its question is raised earliest.
     pub(crate) fn restrict(self, other: Self) -> Self {
         Self {
             leader_fallback: if self.leader_fallback == LeaderFallback::SourceLeaderOnly
@@ -197,11 +202,13 @@ pub(super) fn parse_project_conversion(value: &Value) -> Option<ProjectConversio
                 if max_tasks.is_some() {
                     return None;
                 }
-                let cap = value.as_u64()?;
-                if cap > 4096 {
+                // A row may lower the shipped question threshold, never
+                // raise it.
+                let threshold = value.as_u64()?;
+                if threshold > 4096 {
                     return None;
                 }
-                max_tasks = Some(usize::try_from(cap).ok()?);
+                max_tasks = Some(usize::try_from(threshold).ok()?);
             }
             "precedence" => {
                 if precedence.is_some()
