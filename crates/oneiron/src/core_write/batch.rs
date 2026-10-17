@@ -82,8 +82,11 @@ impl Vault {
         let mut entities = Vec::with_capacity(input.entities.len());
         for entity in &input.entities {
             let id = write_id(entity.id.as_deref())?;
-            let times =
-                core_write_times(entity.occurred_start, entity.occurred_end, entity.learned_at)?;
+            let times = core_write_times(
+                entity.occurred_start,
+                entity.occurred_end,
+                entity.learned_at,
+            )?;
             batch = stage_core_put(
                 batch,
                 &id,

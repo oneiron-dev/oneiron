@@ -43,8 +43,7 @@ pub struct StoredShapeSeed {
 
 /// The digest a seed's rows hash to, independent of who stored them when.
 pub(super) fn seed_digest(seed: &ShapeSeed) -> Result<[u8; 32]> {
-    let bytes =
-        rmp_serde::to_vec_named(&seed.rows).map_err(|_| invalid("seed encoding failed"))?;
+    let bytes = rmp_serde::to_vec_named(&seed.rows).map_err(|_| invalid("seed encoding failed"))?;
     Ok(*blake3::Hasher::new()
         .update(b"oneiron.vault_shape.seed_digest.v1\0")
         .update(&bytes)
@@ -86,7 +85,10 @@ impl Vault {
         self.shape_seed_in_txn(&txn)
     }
 
-    pub(crate) fn shape_seed_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Option<StoredShapeSeed>> {
+    pub(crate) fn shape_seed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<StoredShapeSeed>> {
         let mut newest: Option<StoredShapeSeed> = None;
         for id in self
             .store
@@ -141,8 +143,8 @@ impl Vault {
                 written_at: now,
                 rows: seed.rows.clone(),
             };
-            let bytes = rmp_serde::to_vec_named(&envelope)
-                .map_err(|_| invalid("seed encoding failed"))?;
+            let bytes =
+                rmp_serde::to_vec_named(&envelope).map_err(|_| invalid("seed encoding failed"))?;
             let digest = blake3::Hasher::new()
                 .update(ID_DOMAIN)
                 .update(&bytes)

@@ -179,21 +179,21 @@ pub(crate) async fn append_core_record(
     // credential binds one that writes as this actor, else through the
     // row's own door as the actor the body bound. Either lands the turn
     // once.
-    let receipt = match super::facade::action_routes::rest_action_bound(
-        &server, &auth, &headers, &input,
-    )? {
-        Some(bound) if bound.writes_as() == actor => {
-            let row = AgentVerb::VaultConversationsRecordsAppend;
-            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
-            let output = super::facade::action_routes::execute_facade_row(
-                &server, headers, extensions, bound, row, &input, key,
-            )
-            .await?;
-            serde_json::from_value::<DagRecordAppendReceipt>(output)
-                .map_err(|_| ApiError::internal_server_error("append result encoding failed"))?
-        }
-        _ => super::facade::host_doors::write_dag_record(&server, &auth, actor, &input)?,
-    };
+    let receipt =
+        match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
+            Some(bound) if bound.writes_as() == actor => {
+                let row = AgentVerb::VaultConversationsRecordsAppend;
+                let key =
+                    super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+                let output = super::facade::action_routes::execute_facade_row(
+                    &server, headers, extensions, bound, row, &input, key,
+                )
+                .await?;
+                serde_json::from_value::<DagRecordAppendReceipt>(output)
+                    .map_err(|_| ApiError::internal_server_error("append result encoding failed"))?
+            }
+            _ => super::facade::host_doors::write_dag_record(&server, &auth, actor, &input)?,
+        };
     Ok(project_appended(&server, receipt)?)
 }
 

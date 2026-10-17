@@ -86,7 +86,11 @@ pub struct ShapePlan {
 }
 
 /// How a change to `target` lands. One policy, so a ruling moves one line.
-fn classify(change: ShapeChange, before: Option<&ShapeRow>, after: Option<&ShapeRow>) -> ShapeItemClass {
+fn classify(
+    change: ShapeChange,
+    before: Option<&ShapeRow>,
+    after: Option<&ShapeRow>,
+) -> ShapeItemClass {
     use ShapeItemClass::{Receipted, Widening};
     if change == ShapeChange::Retire {
         return Widening;
@@ -204,7 +208,9 @@ impl Vault {
         let stored = self.shape_seed()?;
         let (seed, seed_id) = match (seed, stored) {
             (Some(seed), stored) => {
-                let id = stored.filter(|stored| stored.seed == *seed).map(|stored| stored.id);
+                let id = stored
+                    .filter(|stored| stored.seed == *seed)
+                    .map(|stored| stored.id);
                 (seed.clone(), id)
             }
             (None, Some(stored)) => (stored.seed, Some(stored.id)),
@@ -213,8 +219,11 @@ impl Vault {
         seed.validate()?;
         let live = self.read_live_shape(visible)?;
         let frontier = frontier(&seed, &live)?;
-        let by_target: BTreeMap<ShapeTarget, &ShapeRow> =
-            live.rows.iter().map(|(row, _)| (row.target(), row)).collect();
+        let by_target: BTreeMap<ShapeTarget, &ShapeRow> = live
+            .rows
+            .iter()
+            .map(|(row, _)| (row.target(), row))
+            .collect();
 
         let mut pending = Vec::new();
         for (index, row) in seed.rows.iter().enumerate() {

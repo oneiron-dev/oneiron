@@ -124,7 +124,8 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("oneiron-slides-{}", EntityId::now().to_hex()));
+        let path =
+            std::env::temp_dir().join(format!("oneiron-slides-{}", EntityId::now().to_hex()));
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);

@@ -15,5 +15,7 @@ pub use batch::{
 pub use conversations::{
     ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt,
 };
-pub use dag::{CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt};
+pub use dag::{
+    CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt,
+};
 pub use shape::{CoreWriteTextField, CoreWriteTimes};

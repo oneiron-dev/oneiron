@@ -26,12 +26,9 @@ pub(crate) async fn vault_shape_apply(
     let server = Arc::clone(server);
     if let Ok(owner) = crate::api::owner_routes::owner(auth, &server) {
         return tokio::task::spawn_blocking(move || -> MemoryResult<ShapeApplyReceipt> {
-            Ok(server.vault().apply_shape(
-                ShapeApplier::Owner(&owner),
-                &input,
-                now,
-                &mut |_| Ok(true),
-            )?)
+            Ok(server
+                .vault()
+                .apply_shape(ShapeApplier::Owner(&owner), &input, now, &mut |_| Ok(true))?)
         })
         .await
         .map_err(|_| internal(VERB))?;

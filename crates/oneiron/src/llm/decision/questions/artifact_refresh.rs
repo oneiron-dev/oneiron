@@ -23,8 +23,8 @@ use crate::blob_artifact::{ArtifactAskUnits, read_blob_artifact_head_in_txn};
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::slides_review::SlideReviewLabels;
 use crate::edit_roundtrip::{
-    ArtifactAsk, ArtifactAskRun, CellRef, CellValue, FolderAsk, FolderItem, ParagraphAsk,
-    RangeRef, SheetRowsAsk, UnitDecider,
+    ArtifactAsk, ArtifactAskRun, CellRef, CellValue, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
+    SheetRowsAsk, UnitDecider,
 };
 use crate::edit_settle::PendingProposalView;
 use crate::llm::decision::{DecisionBandPolicy, DecisionRung, Reversibility};

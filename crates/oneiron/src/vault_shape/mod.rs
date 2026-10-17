@@ -38,7 +38,9 @@ pub const SHAPE_NAME_MAX_BYTES: usize = 256;
 
 /// An actor's approval ceiling as a seed states it: `auto` lands its writes,
 /// `proposed` holds them for review.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeCeiling {
     Auto,

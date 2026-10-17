@@ -3,8 +3,8 @@ use super::CoreCreateEntityRequest;
 use super::CoreEntityWriteResponse;
 use super::CoreListQuery;
 use super::CoreTextField;
-use super::DagWriteError;
 use super::DagTurnQuery;
+use super::DagWriteError;
 use super::SearchResponse;
 use super::collect_live_entity_page;
 use super::core_engine_error;
@@ -330,20 +330,20 @@ pub(crate) async fn create_core_conversation(
     // OF-181: `vault.conversations.create`, as an action when the
     // credential binds one that writes as this actor, else through the
     // row's own Vault door as the actor the request bound.
-    let receipt = match super::facade::action_routes::rest_action_bound(
-        &server, &auth, &headers, &input,
-    )? {
-        Some(bound) if actor.is_none_or(|actor| actor == bound.writes_as()) => {
-            let row = AgentVerb::VaultConversationsCreate;
-            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
-            let output = super::facade::action_routes::execute_facade_row(
-                &server, headers, extensions, bound, row, &input, key,
-            )
-            .await?;
-            entity_receipt(output)?
-        }
-        _ => server.vault.write_core_conversation(&input, actor)?,
-    };
+    let receipt =
+        match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
+            Some(bound) if actor.is_none_or(|actor| actor == bound.writes_as()) => {
+                let row = AgentVerb::VaultConversationsCreate;
+                let key =
+                    super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+                let output = super::facade::action_routes::execute_facade_row(
+                    &server, headers, extensions, bound, row, &input, key,
+                )
+                .await?;
+                entity_receipt(output)?
+            }
+            _ => server.vault.write_core_conversation(&input, actor)?,
+        };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = if members {
         project_core_entity(&server.vault, &id, View::Full)?.0
@@ -460,20 +460,20 @@ pub(crate) async fn create_core_conversation_turn(
     // OF-181: `vault.conversations.turns.create`, as an action when the
     // credential binds one, else through the row's own door. Either lands
     // the turn on the vault once.
-    let receipt = match super::facade::action_routes::rest_action_bound(
-        &server, &auth, &headers, &input,
-    )? {
-        Some(bound) => {
-            let row = AgentVerb::VaultConversationsTurnsCreate;
-            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
-            let output = super::facade::action_routes::execute_facade_row(
-                &server, headers, extensions, bound, row, &input, key,
-            )
-            .await?;
-            entity_receipt(output)?
-        }
-        None => super::facade::host_doors::write_core_turn(&server, input).await?,
-    };
+    let receipt =
+        match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
+            Some(bound) => {
+                let row = AgentVerb::VaultConversationsTurnsCreate;
+                let key =
+                    super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+                let output = super::facade::action_routes::execute_facade_row(
+                    &server, headers, extensions, bound, row, &input, key,
+                )
+                .await?;
+                entity_receipt(output)?
+            }
+            None => super::facade::host_doors::write_core_turn(&server, input).await?,
+        };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = projection::project_entity_parts(
         &id,
