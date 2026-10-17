@@ -22,7 +22,7 @@
 
 use crate::driver::{crop_region, encode_png, png_dimensions};
 use crate::mcp::{Mcp, ToolError, ToolReply};
-use crate::session::{effect_class, press_for};
+use crate::session::{effect_class, press_for, receipt_class};
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HotkeyInput,
@@ -1036,6 +1036,7 @@ impl BrowserDriver for DesktopSession {
                 .input("click", json!({"pid": pid, "element_token": token}))
                 .map_err(|e| refusal(e, Some(input.target.as_str())))
         })?;
+        let class = receipt_class(class, Some(&line.row));
         self.receipt("click", Some(&line.row), class, press, &mut observation);
         Ok(observation)
     }
@@ -1082,6 +1083,7 @@ impl BrowserDriver for DesktopSession {
                 )
                 .map_err(BrowserError::from)
         })?;
+        let class = receipt_class(class, row.as_ref());
         self.receipt("click_at", row.as_ref(), class, press, &mut observation);
         Ok(observation)
     }

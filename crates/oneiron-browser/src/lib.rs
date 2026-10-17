@@ -411,6 +411,12 @@ pub const EFFECT_CLASSES: &[&str] = &[
     EFFECT_DESTRUCTIVE,
 ];
 
+/// The class a click's receipt names when its target names none: a point on
+/// no row, or a row with no name. The click runs as any unclassified one
+/// (DEC-0006 #6, biased-permissive), and its trail shows it was blind. No
+/// grant names it.
+pub const EFFECT_UNKNOWN: &str = "browser.unknown";
+
 /// How much press one effect class needs, as the vault's grant sets it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -616,6 +622,11 @@ pub struct BatchOutput {
 
 /// Looks one routine step takes before it goes up to the planner.
 pub const ROUTINE_LOOKS: u32 = 4;
+
+/// How long a routine step waits, once, for a row its role and name match
+/// before it goes up: a page still loading has none yet. Never past the
+/// subgoal's clock.
+pub const ROUTINE_WAIT_MS: u32 = 5_000;
 
 /// One routine step's question to the host's decider.
 pub struct RoutineAsk<'a> {
@@ -973,6 +984,22 @@ struct Routine<'d> {
 }
 
 impl Routine<'_> {
+    /// A step's wait for a row: [`ROUTINE_WAIT_MS`], or what is left of the
+    /// subgoal's clock when that ends sooner.
+    fn wait_ms(&self) -> u32 {
+        let Some(until) = self.until_ms else {
+            return ROUTINE_WAIT_MS;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            });
+        u32::try_from(until.saturating_sub(now))
+            .unwrap_or(u32::MAX)
+            .min(ROUTINE_WAIT_MS)
+    }
+
     /// One routine step: look, ask, act. A look reads the outline, and a
     /// screenshot too for a locate step or once the trail says so.
     fn step<D: BrowserDriver + ?Sized>(
@@ -994,7 +1021,10 @@ impl Routine<'_> {
             name: step.name.clone(),
         };
         let mut trigger = step.locate.then_some(ScreenshotTrigger::OutlineThin);
-        for _ in 0..ROUTINE_LOOKS {
+        let no_row = || BrowserError::AskUp("no row on the page matches the step".to_owned());
+        let mut waited = false;
+        let mut looks = 0;
+        while looks < ROUTINE_LOOKS {
             let page = driver.observe(ObserveInput::default())?;
             // A desktop window with no tree is read by its pixels: a step
             // that only clicks locates its target in a screenshot there.
@@ -1024,10 +1054,25 @@ impl Routine<'_> {
                     .collect()
             };
             if !locate && candidates.is_empty() {
-                return Err(BrowserError::AskUp(
-                    "no row on the page matches the step".to_owned(),
-                ));
+                // One bounded wait for the step's role and name, then a fresh
+                // look. Named targets come from a page already read, and a
+                // window with no tree grows none, so neither waits.
+                let wait = self.wait_ms();
+                if waited || !step.targets.is_empty() || page.no_tree || wait == 0 {
+                    return Err(no_row());
+                }
+                waited = true;
+                let rows = driver.wait_for(WaitForInput {
+                    role: step.role.clone(),
+                    name: step.name.clone(),
+                    timeout_ms: Some(wait),
+                })?;
+                if rows.timed_out {
+                    return Err(no_row());
+                }
+                continue;
             }
+            looks += 1;
             if candidates.len() > ROUTINE_MAX_CANDIDATES {
                 return Err(BrowserError::Input(format!(
                     "a decide step offers at most {ROUTINE_MAX_CANDIDATES} rows; name its targets, role or name"

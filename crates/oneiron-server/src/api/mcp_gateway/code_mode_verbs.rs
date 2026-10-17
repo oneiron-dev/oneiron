@@ -33,7 +33,9 @@
 //! as the browser's do.
 
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
-use super::admission::{mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb};
+use super::admission::{
+    mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
+};
 use super::tasks_response::{execute_agent_verb_input, mcp_agent_verb_arguments};
 use super::{McpCallContext, McpGatewayError};
 use crate::decision_host::PLACEMENT_BUDGET;
@@ -243,8 +245,8 @@ fn browser_send_policy(server: &SyncServer) -> SendPolicy {
 }
 
 /// A batch's routine steps through the host's ladder: each step is the
-/// run's own `ai.verdict` call through its door (a connector's admission,
-/// verb gate and hooks, or an agent run's hooks), under the batch call's
+/// run's own `ai.verdict` call through its door (a connector's scope
+/// admission, verb gate and hooks, or an agent run's hooks), under the batch call's
 /// origin, with the step's screenshot handed in from the run's browser as an
 /// evidence ref on the run.
 #[derive(Clone)]
@@ -259,8 +261,9 @@ struct LadderDecider {
 /// Whom a run's routine decisions are asked for.
 #[derive(Clone)]
 pub(crate) enum VerdictAsker {
-    /// The `execute_code` connector: each decision is its own `ai.verdict`
-    /// tool call by that credential, under a fresh invocation.
+    /// The `execute_code` connector: each decision is an `ai.verdict` call by
+    /// that credential, under a fresh invocation. The browser batch it is
+    /// bound for carries it, so `ai.verdict` need not be bound itself.
     Connector(McpCallContext),
     /// A pumped run's own agent, which holds no credential: each decision is
     /// the agent's `ai.verdict` through its run's host door, under a fresh
@@ -298,9 +301,7 @@ impl RoutineDecider for LadderDecider {
         match self.asker.clone() {
             VerdictAsker::Connector(actor) => {
                 self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-                    let _ = sender.send(
-                        execute_code_mode_verb(&server, &actor, "ai.verdict", input, origin).await,
-                    );
+                    let _ = sender.send(execute_step_verdict(&server, &actor, input, origin).await);
                 }));
             }
             VerdictAsker::Agent(actor) => {
@@ -928,6 +929,45 @@ async fn execute_code_mode_verb(
     input: Value,
     origin: HostWriteOrigin,
 ) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
+    run_code_mode_verb(server, actor, verb, input, origin, mcp_admit_scoped_verb).await
+}
+
+/// A browser batch's routine decision: the connector's `ai.verdict`, admitted
+/// by its scope only, since the batch it is bound for carries it. Its
+/// credential gate and hooks run as on any verb call.
+async fn execute_step_verdict(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    input: Value,
+    origin: HostWriteOrigin,
+) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
+    run_code_mode_verb(
+        server,
+        actor,
+        "ai.verdict",
+        input,
+        origin,
+        mcp_admit_step_verb,
+    )
+    .await
+}
+
+/// How one verb call's tool binding and scope are admitted.
+type VerbAdmission = fn(
+    &Arc<SyncServer>,
+    crate::mcp::McpGeneratedVerbTool,
+    &crate::mcp::McpVerbArguments,
+    &McpCallContext,
+) -> Result<(), McpGatewayError>;
+
+async fn run_code_mode_verb(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    verb: &str,
+    input: Value,
+    origin: HostWriteOrigin,
+    admit: VerbAdmission,
+) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
     let Some(McpEndpointTool::Verb(tool)) =
         registered_surface(McpSurfaceMode::ToolFirst).resolve(verb)
     else {
@@ -944,7 +984,7 @@ async fn execute_code_mode_verb(
     arguments
         .validate(tool.name, tool)
         .map_err(mcp_tool_validation_error)?;
-    mcp_admit_scoped_verb(server, tool, &arguments, actor)?;
+    admit(server, tool, &arguments, actor)?;
     mcp_verb_gate(server, tool, &arguments, actor)?;
     // A run's call is answered once and never continued.
     let mut served = Vec::new();
