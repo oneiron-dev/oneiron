@@ -188,6 +188,8 @@ pub(super) struct ProviderFile {
     output_limit_field: Option<OutputLimitField>,
     response_format: Option<ResponseFormatWire>,
     capabilities: Option<Vec<LlmCapability>>,
+    #[serde(default)]
+    model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
     locality: Option<ModelLocality>,
     revision: Option<String>,
     payer: Option<Payer>,
@@ -220,6 +222,9 @@ pub struct ProviderConfig {
     /// Whether an OpenAI-compatible endpoint is sent a JSON call's schema.
     pub response_format: ResponseFormatWire,
     pub capabilities: Vec<LlmCapability>,
+    /// One wire model's own capabilities, in place of `capabilities`, so two
+    /// models on one provider can differ (one hears audio, one does not).
+    pub model_capabilities: BTreeMap<String, Vec<LlmCapability>>,
     /// Where calls to this provider run, for the engine's route checks.
     pub locality: ModelLocality,
     /// Revision stamped on every engine model id from this provider, so a
@@ -303,6 +308,13 @@ impl ProviderFile {
                 "models.providers.{name}: the provider name and revision may use only A-Z, a-z, 0-9, '.', '-' and '_'"
             );
         }
+        if self
+            .model_capabilities
+            .keys()
+            .any(|model| model.trim().is_empty())
+        {
+            anyhow::bail!("models.providers.{name}.model_capabilities names a blank model");
+        }
         for rate in &self.rates {
             if rate.per == 0 || LeaseUnit::new(rate.unit.as_str()).is_err() {
                 anyhow::bail!(
@@ -331,6 +343,7 @@ impl ProviderFile {
             capabilities: self
                 .capabilities
                 .unwrap_or_else(|| kind.default_capabilities()),
+            model_capabilities: self.model_capabilities,
             locality: self.locality.unwrap_or_else(|| kind.default_locality()),
             revision,
             payer,

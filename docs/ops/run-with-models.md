@@ -117,7 +117,11 @@ default, or `none`; OpenAI-compatible providers only), `capabilities` (`streamin
 `reasoning`; `audio_input` sends a chat message's audio clips as `input_audio`,
 WAV or MP3, on OpenAI-compatible providers only, and no provider has it unless
 the list says so; a `local-openai-compat` provider declares `streaming`, `json_response` and
-`reasoning` unless the list is written out),
+`reasoning` unless the list is written out), `model_capabilities` (one wire
+model's own list in place of `capabilities`, keyed by the model's name, so
+two models on one provider can differ: `model_capabilities = { "gpt-audio" =
+["streaming", "audio_input"] }`; the Big rung hears a clip only on a model
+whose list has `audio_input`),
 `locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
