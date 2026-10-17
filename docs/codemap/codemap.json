@@ -10202,7 +10202,28 @@
      "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
      "surface": {
       "crate-vis": 1,
-      "re-export": 4
+      "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeFileChange",
+      "CodeFileDiffView",
+      "CodeProposalView",
+      "CodeProposalViewRequest",
+      "CodeProposedStamp",
+      "CodeRepoDiffRequest",
+      "CodeRepoDiffView",
+      "CodeTreeRequest"
+     ],
+     "path": "src/code_document/review_views.rs",
+     "purpose": "The code review views (OF-323)",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 7
      }
     },
     {
@@ -10278,6 +10299,7 @@
      "path": "src/code_document/verbs.rs",
      "purpose": "The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one…",
      "surface": {
+      "crate-vis": 3,
       "fn": 2,
       "struct": 10
      }
@@ -18901,7 +18923,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerAttemptExecution",
@@ -37026,7 +37048,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "FactHookRunner",
@@ -37038,7 +37060,8 @@
       "const": 2,
       "crate-vis": 5,
       "fn": 4,
-      "struct": 2
+      "struct": 2,
+      "type": 1
      }
     },
     {
@@ -45393,7 +45416,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 258
+      "fn": 260
      }
     },
     {
@@ -50130,7 +50153,7 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51404,9 +51427,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 140,
+   "over_bar": 141,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3107,
+   "source_files": 3108,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59277,7 +59300,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 213
+      "fn": 215
      }
     },
     {
@@ -60292,7 +60315,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 214
+      "fn": 216
      }
     },
     {
@@ -64999,7 +65022,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 12,
       "re-export": 19,
       "struct": 1
@@ -65329,7 +65352,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -70047,10 +70070,18 @@
       "CodeChangeView",
       "CodeDiffRequest",
       "CodeDiffView",
+      "CodeFileChange",
+      "CodeFileDiffView",
       "CodeOperationView",
+      "CodeProposalView",
+      "CodeProposalViewRequest",
+      "CodeProposedStamp",
+      "CodeRepoDiffRequest",
+      "CodeRepoDiffView",
       "CodeSpanView",
       "CodeStateRequest",
       "CodeStateView",
+      "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
       "CompanionSharingRequest",
@@ -70375,6 +70406,7 @@
       "ReleasedWait",
       "ReplyStripsPage",
       "ReplyStripsRequest",
+      "RepoProposalStatus",
       "ReportDisclosure",
       "ReportKind",
       "ReportReceipt",
@@ -70575,8 +70607,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 171,
-      "struct": 427
+      "enum": 173,
+      "struct": 434
      }
     },
     {
