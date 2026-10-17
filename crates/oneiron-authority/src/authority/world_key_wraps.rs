@@ -47,7 +47,9 @@ const WORLD_KEY_WRAPS_KEYS: [&str; 9] = [
 
 /// One world key: the world, its generation, and the random id of the mint
 /// that made it. The current key is the greatest `(generation, mint)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct WorldKeyId {
     pub world: EntityId,
     pub generation: u64,
@@ -68,7 +70,9 @@ impl WorldKeyId {
 
 /// The world's settings as the wrapping machine saw them: a digest of the
 /// world's live settings edits. All zero means no edit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct PolicyRevision(pub [u8; 32]);
 
 impl PolicyRevision {
@@ -92,7 +96,9 @@ impl PolicyRevision {
 }
 
 /// Who one envelope opens for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum WrapRecipient {
     /// A machine (its MACHINE row) through its machine secret.
     Machine(EntityId),

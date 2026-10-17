@@ -84,11 +84,11 @@ side_tables! {
     /// Pointer to the current default (winning) authoring strategy pin and its promotion receipt.
     /// Key: ().
     AUTOREASON_BEAM_DEFAULT: VaultMeta b"authoring/default-beam-winner" LegacyJson;
-    /// Content hash of the current head of the local authority-checkpoint chain. Key: ().
-    AUTHORITY_CHECKPOINT_HEAD: VaultMeta b"authority.checkpoint.head.v1" Raw;
-    /// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map), keyed by its
-    /// content hash. Key: hash32.
-    AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
+    /// The id of the newest checkpoint v2 image of this vault's local chain (OF-469). Key: ().
+    AUTHORITY_CHECKPOINT_V2_HEAD: VaultMeta b"authority.checkpoint.head.v2" Raw;
+    /// One checkpoint v2 image's canonical bytes (domain, then named MessagePack), keyed by its
+    /// unsigned id (OF-469). Key: hash32.
+    AUTHORITY_CHECKPOINT_V2_IMAGE: VaultMeta b"authority.checkpoint.v2." Raw;
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;

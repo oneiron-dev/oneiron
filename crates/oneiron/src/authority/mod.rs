@@ -38,6 +38,7 @@ mod anchor_fold;
 mod anchor_marks;
 mod causal_write;
 mod checkpoint;
+mod checkpoint_image;
 mod checkpoint_policy;
 mod claim_write;
 mod engine_machine;
@@ -139,7 +140,7 @@ pub use federation_activation::federation_grant_activation;
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
 pub use causal_write::CausalWriteDisposition;
-pub use checkpoint::*;
+pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use fold_engine::*;
 pub use fold_state::*;
