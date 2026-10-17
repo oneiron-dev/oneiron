@@ -108,6 +108,9 @@ side_tables! {
     /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
     /// auto). Value: the mode's ASCII name. Key: ().
     DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
+    /// Owner-set action-mode policy: the state-index window and its mode bands (OF-335).
+    /// Key: ().
+    DREAMER_ACTION_MODE_POLICY: VaultMeta b"settings:dreamer:action_mode:v1" LegacyJson;
     /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
     DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson;
     /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
