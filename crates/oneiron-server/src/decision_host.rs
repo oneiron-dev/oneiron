@@ -16,7 +16,7 @@
 //! blocking thread.
 use std::sync::Arc;
 
-use oneiron::llm::decision::catalogue::{ASK_UP, TASK_SURFACE, THINK_MORE};
+use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadProvider,
@@ -29,7 +29,10 @@ use oneiron::llm::{
     ModelId, ReasoningEffort,
 };
 use oneiron::task_verb::TaskDecisions;
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, HostingPrivacyPosture, Vault};
+use oneiron::{
+    BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
+    Vault,
+};
 
 use crate::config::models::{BigSettings, ModelsConfig, SeatPickSettings, SystemOneSettings};
 use crate::models::DecisionReadDoor;
@@ -78,6 +81,7 @@ impl DecisionHost {
                 human: asks.clone(),
                 human_pin: pin(DecisionRung::Human, OWNER_ASKS, ONE),
                 person: None,
+                presence: None,
             },
             asks,
             bands: DecisionBandPolicy::default(),
@@ -94,6 +98,7 @@ impl DecisionHost {
     ) -> Self {
         self.ladder.escalation = None;
         self.ladder.person = None;
+        self.ladder.presence = None;
         self.bands = DecisionBandPolicy::default();
         let Some((door, meter)) = read else {
             return self;
@@ -121,6 +126,13 @@ impl DecisionHost {
                     }
                 }
                 Err(error) => tracing::warn!(%error, "the recipe's person question is invalid"),
+            }
+        }
+        // A Box or Point call asks the recipe's presence question first.
+        if let Some(wording) = &probe.presence {
+            match IMAGE_PRESENCE.question(&[], wording.clone(), AnswerContract::Noul) {
+                Ok(presence) => self.ladder.presence = Some(presence),
+                Err(error) => tracing::warn!(%error, "the recipe's presence question is invalid"),
             }
         }
         // The read takes the ladder's person question, which it reads apart.
@@ -269,6 +281,23 @@ impl DecisionHost {
             done: question(b"done_met".as_slice(), TASK_DONE_MET_WORDING)?,
             ask_up: question(b"ask_up".as_slice(), TASK_ASK_UP_WORDING)?,
             budget: TASK_DECISION_BUDGET,
+        })
+    }
+
+    /// The Dreamer's consolidation questions through this ladder, in the
+    /// shipped wording: the verdict role's generated read sits at the Local
+    /// slot, and an answer still in the band steps up the host's stronger
+    /// rungs to the Big rung, under the host's bands.
+    pub(crate) fn consolidation_decisions(&self) -> oneiron::Result<ConsolidationDecisions> {
+        Ok(ConsolidationDecisions {
+            ladder: self.ladder.clone(),
+            dial: DecisionDial {
+                first: DecisionRung::Local,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            ..ConsolidationDecisions::shipped()?
         })
     }
 
@@ -485,6 +514,10 @@ impl DecisionProvider for SystemOneRung {
     fn reads_images(&self) -> bool {
         (self.posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
             && self.posture != HostingPrivacyPosture::Relay
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        self.seat.image_edge()
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {

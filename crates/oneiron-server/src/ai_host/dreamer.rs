@@ -36,6 +36,7 @@ use oneiron_driver::{
 use super::policy::extraction_egress;
 use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
+use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, RoleRefusal, RoleRoute, RunBackend, Seat};
 
 /// Stamped on every admission and park this server makes.
@@ -67,6 +68,8 @@ pub(super) struct DreamerStart {
     pub(super) idle: IdleSample,
     /// The input each served model's window holds, for residents' dreaming.
     pub(super) windows: BTreeMap<ModelId, u64>,
+    /// The server's decision host, once it is staffed.
+    pub(super) decisions: Arc<std::sync::OnceLock<DecisionHost>>,
     pub(super) question_timer: QuestionTimer,
 }
 
@@ -166,6 +169,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         status,
         idle,
         windows,
+        decisions,
         question_timer,
     } = start;
     // Stewardship follow-up drafts ride this thread and stop with it.
@@ -204,6 +208,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             line: None,
             inner: None,
             status: Arc::clone(&status),
+            decisions,
             question_timer,
         };
         let lifecycle = SessionLifecycleDriver::new(
@@ -322,6 +327,10 @@ struct ObservedFactory {
     line: Option<oneiron::BudgetGuard>,
     inner: Option<ConsolidationExecutorFactory>,
     status: Arc<StatusCell>,
+    /// The server's decision host: a pass asks its typed questions on its
+    /// ladder and promotes through its auto check. Until the server staffs
+    /// it, a pass runs on the shipped, unstaffed ladder.
+    decisions: Arc<std::sync::OnceLock<DecisionHost>>,
     question_timer: QuestionTimer,
 }
 
@@ -383,6 +392,9 @@ impl ObservedFactory {
             .cloned()
             .ok_or_else(|| oneiron::Error::InvalidConfig("dreamer extraction unrouted".into()))?;
         let selected = routes.iter().map(|(_, route)| route.model.clone());
+        let host = self.decisions.get();
+        let sink = AttemptPromotionSink::new(Arc::clone(&self.vault))
+            .with_checker(host.and_then(DecisionHost::auto_checker).cloned());
         let mut factory = ConsolidationExecutorFactory::new(
             extraction.backend,
             DreamerClaimAuthoringStrategy::SinglePass,
@@ -390,7 +402,7 @@ impl ObservedFactory {
             extraction.model,
             extraction.binding,
             self.egress.then(|| extraction_egress(selected.collect())),
-            Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
+            Box::new(sink),
         )
         .with_role_backends(roles)
         // A fired commitment proposes its reminder where the vault already
@@ -400,6 +412,9 @@ impl ObservedFactory {
         ))?;
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
+        }
+        if let Some(host) = host {
+            factory = factory.with_decisions(host.consolidation_decisions()?);
         }
         self.inner = Some(factory);
         Ok(())

@@ -636,7 +636,13 @@ yes/no question lists no before yes, as test 6b's side questions did; its
 readout still reports yes first), the single-token label verbalizers
 (`tokens`, at least four), the end token (`eos`), `n_probs` (how many of the
 top probabilities come back), `n_probs_full` (the whole vocabulary, for the
-retry below) and, for the owner's probe, `[probe] paired` and `person`.
+retry below) and, for the owner's probe, `[probe] paired` and `person`. An
+optional `[probe] presence` words the presence question every Box or Point
+call asks first, over the same images and clock, with the coordinate
+question's wording in the `locate` state field ("is that target in the image
+at all?"). Only a confident yes, with no person asked, starts the
+coordinates; a confident no answers that the target is absent; anything else
+abstains. Without it, the coordinates are asked directly.
 
 A question and "does this need more thinking?" stay joint (ARCH-0076
 `#ask-a-person`): the question renders the joint template, its text as
@@ -695,6 +701,22 @@ stays rare (0.9 asked nobody on test 5's held-out set) until the Coach tunes
 it from the cases where a person changed the answer. A host passes it to
 `DecisionBandPolicy::set_person_threshold`. Without the row, the person
 reading is recorded on every receipt and routes nothing.
+
+"Ask a person?" asks for escalation, not for an actor. Who the ask goes to is
+the caller's: it sets `DecisionLadder.ask_to` to an `AskTo` (the role asked,
+`Responsible { actor, project }`, `Board { project }` or `Owner`; the highest
+`RoleRank` it may climb to; and the act an answer authorises). With none set,
+the ask goes to the vault's owners, as before. When `DecisionAsks` queues the
+ask, the vault resolves the first role on the chain that has a live holder:
+the responsible actor, then the boards of its project and that project's
+parents, then the owners, cut at the ceiling. A live person or a live bound
+agent can hold a role. An `ESignature` or `Payment` act resolves only to a
+person. When no role up to the ceiling has a holder, the ask stays unresolved;
+it never goes wider. A holder answers through `DecisionAsks::answer_as` with
+its verified `WriteActor`, and the door reads the role's holders again before
+it takes the answer. The owner door answers any ask whose ceiling is `Owner`.
+`DecisionAsks::climb` moves an open ask to the next role. The answer keeps the
+role and the kind of actor that gave it.
 
 To tune it, the host keeps each changed answer
 (`HumanDecisionRequest::changed_by`) with `Vault::record_person_changed_answer`,

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 166 facade rows, 627 declarations.
+Census: 166 facade rows, 629 declarations.
 Inputs: 144 of 166 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 140 of 166 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 39; unread shapes: 0.
@@ -2072,7 +2072,7 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -2101,6 +2101,9 @@ class ImageBox(TypedDict):
     bottom: float
     left: float
     right: float
+class ImagePoint(TypedDict):
+    x: float
+    y: float
 class DecisionAnswerNoul(TypedDict):
     kind: Literal["noul"]
     value: bool
@@ -2113,9 +2116,12 @@ class DecisionAnswerScore(TypedDict):
 class DecisionAnswerBox(TypedDict):
     kind: Literal["box"]
     value: ImageBox | None
+class DecisionAnswerPoint(TypedDict):
+    kind: Literal["point"]
+    value: ImagePoint | None
 class DecisionAnswerAbstain(TypedDict):
     kind: Literal["abstain"]
-DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerAbstain
+DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
 class OutcomeLabel(TypedDict):
     answer: str
     fact: str
@@ -2774,6 +2780,16 @@ class DecisionTime(TypedDict):
     stop: StopCause
     answered: NotRequired[DecisionRung | None]
     reasoning: Reasoning
+class ImagePin(TypedDict):
+    provider: ProviderPin
+    name: str
+    evidence: EvidenceVersion
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+    edge: NotRequired[int | None]
+    sent_width: int
+    sent_height: int
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -2786,6 +2802,7 @@ class DecisionReceipt(TypedDict):
     paired: NotRequired[list[PairedReading]]
     person: NotRequired[list[PairedReading]]
     time: NotRequired[DecisionTime | None]
+    images: NotRequired[list[ImagePin]]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline"]
 class RoutineOutcomeAct(TypedDict):
     outcome: Literal["act"]
@@ -2794,7 +2811,7 @@ class RoutineOutcomePoint(TypedDict):
     outcome: Literal["point"]
     x: float
     y: float
-    found: ImageBox
+    found: NotRequired[ImageBox | None]
 class RoutineOutcomeNone(TypedDict):
     outcome: Literal["none"]
 class RoutineOutcomeReobserve(TypedDict):
@@ -2823,7 +2840,9 @@ class AnswerContractScore(TypedDict):
     max: float
 class AnswerContractBox(TypedDict):
     kind: Literal["box"]
-AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox
+class AnswerContractPoint(TypedDict):
+    kind: Literal["point"]
+AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
 DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):
     entity_type: int
