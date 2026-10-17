@@ -22,7 +22,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::authorship::*;
 use super::{Memory, MemoryError, MemoryResult};
 use crate::agent_inbox_lens::{
-    AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
+    AgentInboxDiaryReview, AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant,
+    InboxImpact,
 };
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ConsentReceipt, GrantBound,
@@ -519,9 +520,8 @@ impl Vault {
 
     /// Each pending review as a row of its agent's INBOX: one unthreaded
     /// update per request, named by its `diary-read:` handle, until the agent
-    /// answers it. The row says a reader is waiting; the reader and reason
-    /// stay behind `self.memory.diary.reads`, and `self.memory.diary.review`
-    /// answers it.
+    /// answers it. The row carries the reader and their reason, and
+    /// `self.memory.diary.review` answers it.
     pub(crate) fn diary_read_inbox_items(&self) -> Result<Vec<AgentInboxLensItem>> {
         let txn = self.store.env.read_txn()?;
         let mut items = Vec::new();
@@ -546,6 +546,12 @@ impl Vault {
                 receipt_ref: None,
                 payload_ref: Some(handle),
                 concern: None,
+                diary_review: Some(AgentInboxDiaryReview {
+                    request,
+                    reader: row.reader,
+                    reader_class: row.reader_class,
+                    reason: row.reason,
+                }),
             });
         }
         Ok(items)

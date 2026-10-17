@@ -32,6 +32,7 @@
 
 mod converge;
 mod handshake;
+mod home_search;
 mod node_batch;
 mod session;
 mod steady;
@@ -39,11 +40,12 @@ mod topology;
 
 use std::sync::Arc;
 
-use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
+use crate::sync::client::{ResidenceHomeRoute, SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
+pub use home_search::HomeSearch;
 pub use topology::HomeNodeTopology;
 
 /// Configuration for the connection manager.
@@ -77,6 +79,9 @@ pub struct SyncConnection {
     left: tokio::sync::watch::Sender<bool>,
     /// Whether the run loop is going; a leave waits for it to stop.
     running: tokio::sync::watch::Sender<bool>,
+    /// Held so this device's query doors reach the home while the
+    /// connection lives (OF-534); a federation lane lends none.
+    _home_search: Option<Arc<HomeSearch>>,
 }
 
 /// How long a confirmed leave waits for the run loop to stop and queue what
@@ -105,7 +110,7 @@ impl SyncConnection {
     /// All); the configured mode stands when the owner never chose.
     pub fn new(
         manager: Arc<WindowManager>,
-        config: ConnectionConfig,
+        mut config: ConnectionConfig,
     ) -> crate::error::Result<Self> {
         let queue = SyncQueue::new(Arc::clone(manager.vault()))?;
         let mode = if config.client_config.federation_peer.is_some() {
@@ -117,13 +122,30 @@ impl SyncConnection {
             )?
         };
         let left = crate::sync::shared_leave::has_left(manager.vault())?;
+        // The topology moves residence reads to the elected home when the
+        // host names the candidates' endpoints.
+        if config.client_config.home_node_topology.is_some()
+            && config.client_config.residence_home_route.is_none()
+        {
+            config.client_config.residence_home_route = Some(ResidenceHomeRoute::new(None));
+        }
+        let mode = tokio::sync::watch::channel(mode).0;
+        // An own device's query doors ask the home through this connection.
+        let home_search = config.client_config.federation_peer.is_none().then(|| {
+            HomeSearch::attach(
+                manager.vault(),
+                config.client_config.clone(),
+                mode.subscribe(),
+            )
+        });
         Ok(Self {
             manager,
             queue,
             config,
-            mode: tokio::sync::watch::channel(mode).0,
+            mode,
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
+            _home_search: home_search,
         })
     }
 
