@@ -10474,7 +10474,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "struct": 6,
       "type": 1
      }
@@ -10651,7 +10651,7 @@
      "path": "src/code_run/dispatcher/leader.rs",
      "purpose": "Host entry points for the CEO starter on a leased, task-bound leader",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 1
      }
@@ -10731,7 +10731,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 4,
       "re-export": 10
      }
@@ -10882,7 +10882,18 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/run_verb_call.rs",
+     "purpose": "The four memory run rows as typed calls, outside the sandbox (OF-181)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
+      "AgentSpawnInput",
       "LeaderAdviceInput",
       "LeaderPatternInput",
       "MemoryClaimInput",
@@ -10892,6 +10903,9 @@
       "MemoryTimeRange",
       "ReaderSpawnInput",
       "SkillCallInput",
+      "SpawnCare",
+      "SpawnKnob",
+      "SpawnPattern",
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskWaitSetRequest"
@@ -10900,8 +10914,9 @@
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "struct": 11
+      "enum": 4,
+      "fn": 1,
+      "struct": 12
      }
     },
     {
@@ -15246,13 +15261,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -15315,7 +15330,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -15333,19 +15348,24 @@
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/policy.rs",
-     "purpose": "Actor-bound write-policy preflight for the append operation",
+     "purpose": "Actor-bound write-policy preflight for the append operation, and the caller binding of its two public doors…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "QuoteAnchor",
+      "RoomQuote"
+     ],
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 27,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -15359,7 +15379,7 @@
       "ReplyStripsRequest"
      ],
      "path": "src/conversation_dag/quote_strips.rs",
-     "purpose": "Reply strips by quoted MESSAGE over one selected thread chain",
+     "purpose": "Reply strips by quoted MESSAGE over one selected thread chain, or, for a room turn, over the room's own…",
      "surface": {
       "enum": 1,
       "fn": 1,
@@ -19766,6 +19786,7 @@
      "notable": [
       "SheetAnswerBundle",
       "SheetCellAnswer",
+      "SheetRowReads",
       "SheetRowsAsk"
      ],
      "path": "src/edit_roundtrip/judgment.rs",
@@ -19773,7 +19794,7 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -19863,7 +19884,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ParagraphAsk",
@@ -19872,7 +19893,7 @@
      "path": "src/edit_roundtrip/paragraph_review.rs",
      "purpose": "Typed questions over paragraphs (ARCH-0076 §2, \"Paragraph or clause\"): each selected paragraph of a DOCX…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 2
      }
@@ -20104,6 +20125,25 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ReaskShape",
+      "UnitWithdrawal",
+      "WithdrawReason",
+      "WithdrawnAnswer",
+      "WithdrawnUnit"
+     ],
+     "path": "src/edit_settle/carry.rs",
+     "purpose": "ARCH-0075 §4: a held answer proposal whose units change under it",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -20121,7 +20161,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 47
+      "crate-vis": 48
      }
     },
     {
@@ -20132,7 +20172,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
       "crate-vis": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -20162,7 +20202,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -20208,7 +20248,7 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -22512,7 +22552,7 @@
      "path": "src/gate/policy_values.rs",
      "purpose": "Typed behaviour values and deterministic, scoped manifest-row selection",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -22638,7 +22678,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 65
+      "crate-vis": 66
      }
     },
     {
@@ -26951,7 +26991,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 8
      }
     },
@@ -27019,6 +27059,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
+      "crate-vis": 1,
       "fn": 7,
       "struct": 2
      }
@@ -34223,7 +34264,7 @@
       "const": 1,
       "crate-vis": 10,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -47311,7 +47352,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 17
      }
     },
@@ -48053,7 +48094,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 6,
       "re-export": 7,
@@ -48151,6 +48192,16 @@
      "path": "src/workspace_roster/rooms/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/thread_projection.rs",
+     "purpose": "A trunk's or thread's reply selection from the room's own index (OF-460): every room thread anchored on a…",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -48315,9 +48366,28 @@
      "path": "src/world_keys/doors.rs",
      "purpose": "The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConfirmedWorldKit",
+      "IssuedWorldKit",
+      "StoredCost",
+      "StoredKit",
+      "WorldKitRestore",
+      "WorldKitStatus"
+     ],
+     "path": "src/world_keys/kit.rs",
+     "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 6
      }
     },
     {
@@ -48343,7 +48413,7 @@
      "surface": {
       "crate-vis": 10,
       "fn": 3,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 2
      }
     },
@@ -48426,6 +48496,7 @@
      "path": "src/world_keys/root_doors.rs",
      "purpose": "The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -48440,7 +48511,7 @@
      "path": "src/world_keys/root_issue.rs",
      "purpose": "Kit issue, phase 1: a fresh recovery root and its signed record, held in memory until the kit issuer reports…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -48506,7 +48577,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 23,
       "struct": 2
@@ -49639,7 +49710,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49802,7 +49873,7 @@
     "conversation_dag": {
      "files": 22,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution"
     },
@@ -49940,7 +50011,7 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
     "edit_settle": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50864,14 +50935,14 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50885,9 +50956,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 137,
+   "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3073,
+   "source_files": 3077,
    "test_files": 903
   },
   "oneiron-android": {
@@ -62031,7 +62102,7 @@
      "path": "src/api/conversation_dag/mod.rs",
      "purpose": "HTTP adapters for transactional conversation DAG and summary doors",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -62271,7 +62342,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/action_routes.rs",
@@ -63166,6 +63237,16 @@
      "notable": [],
      "path": "src/api/owner_routes/proactivity_routes.rs",
      "purpose": "`/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_routes.rs",
+     "purpose": "`/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173)",
      "surface": {
       "crate-vis": 1
      }
@@ -64158,7 +64239,7 @@
      "surface": {
       "enum": 9,
       "fn": 3,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 21
      }
     },
@@ -64277,6 +64358,24 @@
      "surface": {
       "enum": 14,
       "struct": 41
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KitPieceArgs",
+      "RecoveryKitCommand",
+      "RecoveryKitConfirmArgs",
+      "RecoveryKitIssueArgs",
+      "RecoveryKitRestoreArgs",
+      "RecoveryKitStatusArgs"
+     ],
+     "path": "src/cli/recovery_kit_args.rs",
+     "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173)",
+     "surface": {
+      "enum": 1,
+      "struct": 5
      }
     },
     {
@@ -64563,7 +64662,18 @@
      "surface": {
       "crate-vis": 4,
       "fn": 17,
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_kit.rs",
+     "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -64581,7 +64691,7 @@
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -65002,7 +65112,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -65205,7 +65315,7 @@
      "path": "src/decision_artifact.rs",
      "purpose": "Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -66682,10 +66792,20 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/broker_media.rs",
+     "purpose": "A `key_secret` provider's media leg (OF-131): each exchange a media adapter makes is one credential-broker…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -67310,7 +67430,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -67351,6 +67471,16 @@
      "purpose": "Persona snapshot, mode A (OF-325): compile a shareable card about one person, let the owner strike rows at…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/recovery_kit.rs",
+     "purpose": "The world kit's public side, shared by `oneiron recovery-kit` and `GET /v1/owner/recovery-kit` (OF-173): the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -68583,7 +68713,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 267,
+     "files": 268,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68625,14 +68755,14 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "cli": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -68779,7 +68909,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68800,7 +68930,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68900,7 +69030,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 520,
+   "source_files": 525,
    "test_files": 182
   },
   "oneiron-spawn": {

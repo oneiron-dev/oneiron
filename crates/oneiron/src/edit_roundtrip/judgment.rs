@@ -37,6 +37,21 @@ pub struct SheetCellAnswer {
     /// read. Keep refuses the column when that file has moved.
     #[serde(default)]
     pub source: Option<EvidenceVersion>,
+    /// The version of what the call read: the workbook for a row, the file
+    /// for a folder column. With the evidence hash it names the revision
+    /// the answer was judged against.
+    #[serde(default)]
+    pub judged_version: Option<u64>,
+}
+
+/// What each row's call read beside its own cells: the row's cells in
+/// columns `first_col..=last_col` (the answer column aside) and the header
+/// row's. An answer whose read cells change under it is withdrawn at Keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SheetRowReads {
+    pub first_col: u32,
+    pub last_col: u32,
+    pub header_row: Option<u32>,
 }
 
 /// The ask, bound to a selection and an access principal. Every decision is
@@ -51,6 +66,9 @@ pub struct SheetAnswerBundle {
     /// Holder-selected run cap; the manifest vault and scoped rows can only narrow it.
     #[serde(default)]
     pub max_count_override: Option<u64>,
+    /// A sheet-row ask's read columns; a folder column reads its files.
+    #[serde(default)]
+    pub reads: Option<SheetRowReads>,
 }
 
 impl SheetAnswerBundle {
@@ -123,6 +141,9 @@ pub struct SheetRowsAsk<'a> {
     /// The row naming the read columns, given to the call beside the cells.
     pub header_row: Option<u32>,
     pub max_count_override: Option<u64>,
+    /// Only these rows of `rows` are asked: a wake asks again only the rows
+    /// that changed under a held answer.
+    pub only_rows: Option<&'a BTreeSet<u32>>,
 }
 
 impl Vault {
@@ -240,6 +261,12 @@ impl Vault {
         let mut abstained = Vec::new();
         let mut refused = Vec::new();
         for row in rows.start.row..=rows.end.row {
+            if request
+                .only_rows
+                .is_some_and(|only| !only.contains(&row))
+            {
+                continue;
+            }
             let target = CellRef {
                 col: answer_col,
                 row,
@@ -292,6 +319,7 @@ impl Vault {
                 value,
                 decision,
                 source: None,
+                judged_version: Some(version),
             });
         }
         let bundle = SheetAnswerBundle {
@@ -310,6 +338,11 @@ impl Vault {
             },
             answers,
             max_count_override: request.max_count_override,
+            reads: Some(SheetRowReads {
+                first_col: rows.start.col,
+                last_col: rows.end.col,
+                header_row,
+            }),
         };
         Ok(ArtifactAskRun {
             proposal: self.stage_sheet_answers(artifact, bundle, ask.run_ref, version, frontier)?,
@@ -322,7 +355,7 @@ impl Vault {
     /// workbook version they were asked over; a head that moved meanwhile is
     /// refused rather than answered on bytes nobody read. `None` when every
     /// unit abstained: no empty edit is proposed.
-    pub(super) fn stage_sheet_answers(
+    pub(crate) fn stage_sheet_answers(
         &self,
         artifact: &EntityId,
         bundle: SheetAnswerBundle,

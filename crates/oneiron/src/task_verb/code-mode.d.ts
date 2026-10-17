@@ -24,6 +24,9 @@ declare function describe(input: { fold?: string | null; frame_epoch?: number | 
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
+  const agents: {
+    spawn(input: { agent?: string | null; budget?: object | object | null; care?: "light" | "medium" | "high" | "xhigh" | "max" | null; context?: unknown; context_from?: string[] | null; depth?: number | null; intent_key: string; model?: object | object | null; need: string; notes?: string | null; pattern?: object | object | null; project?: string | null; prompt: string; width?: object | object | null }): Promise<unknown>;
+  };
   const browser: {
     batch(input: { no_model?: boolean; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
@@ -89,6 +92,8 @@ declare namespace self {
       move(input: { card: string; move: "ask_coach" }): Promise<unknown>;
       outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
     };
+    list(input: { after?: string | null; limit?: number | null }): Promise<unknown>;
+    mark(input: { mark: "seen" | "acked"; notification_ref: string }): Promise<unknown>;
   };
   const leader: {
     advice(input: { top?: number | null }): Promise<unknown>;
@@ -154,6 +159,7 @@ declare const vault: {
     list(input: { lifecycle?: string | null; limit: number; predicate?: string | null; subject_ref?: string | null }): Promise<unknown>;
     put(input: { confidence?: number | null; id: string; learnedAt?: number | null; occurred?: object | null; predicate: string; subject: string; value: unknown }): Promise<unknown>;
     retract(input: { claim_ref: string }): Promise<unknown>;
+    seed(input: { claims: object[] }): Promise<unknown>;
     supersede(input: { newId: string; now: number; oldId: string }): Promise<unknown>;
     upsert(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   };
@@ -163,6 +169,10 @@ declare const vault: {
       get(input: { companion_ref: string; contact_ref: string }): Promise<unknown>;
       set(input: { companion_ref: string; contact_ref: string; expected_delta: string; proposal_ref: string }): Promise<unknown>;
     };
+  };
+  consolidation: {
+    enqueue(input: { dedupe_key?: string | null; input: unknown; now?: number | null; run_id?: string | null; scope: string }): Promise<unknown>;
+    status(input: { job_ref: string }): Promise<unknown>;
   };
   conversations: {
     turn: {

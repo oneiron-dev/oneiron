@@ -53,6 +53,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_inbox_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_inbox_mark(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.inbox.mark", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_inbox_concern(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.inbox.concern", input)
@@ -1723,6 +1735,30 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.artifacts.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_enqueue(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.enqueue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_seed(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.seed", input)
             .map_err(facade_error)
     }
     #[napi]

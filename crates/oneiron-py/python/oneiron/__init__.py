@@ -292,6 +292,12 @@ class Oneiron:
     class _SelfInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def list(self, spec):
+            """Lists one page of notifications delivered to the bound actor, without marking them."""
+            return json.loads(_translate(lambda: self._client.self_inbox_list(json.dumps(spec))))
+        def mark(self, spec):
+            """Marks one delivered notification seen or acknowledged for the bound actor."""
+            return json.loads(_translate(lambda: self._client.self_inbox_mark(json.dumps(spec))))
         @property
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs":
             return Oneiron._SelfInboxConcernVerbs(self._client)
@@ -474,6 +480,9 @@ class Oneiron:
         def habits(self) -> "Oneiron._VaultHabitsVerbs":
             return Oneiron._VaultHabitsVerbs(self._client)
         @property
+        def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
+            return Oneiron._VaultConsolidationVerbs(self._client)
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
     class _VaultPeopleVerbs:
@@ -503,6 +512,9 @@ class Oneiron:
         def admit(self, input: dict[str, Any]) -> Any:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
             return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
+        def seed(self, input: dict[str, Any]) -> Any:
+            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
+            return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1049,6 +1061,15 @@ class Oneiron:
         def checkin(self, input: dict[str, Any]) -> Any:
             """Appends one immutable check-in under a Habit TASK."""
             return json.loads(_translate(lambda: self._client.vault_habits_checkin(json.dumps(input, allow_nan=False))))
+    class _VaultConsolidationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def enqueue(self, spec):
+            """Enqueues one consolidation attempt and returns its durable job reference."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_enqueue(json.dumps(spec))))
+        def status(self, spec):
+            """Reads the status of one consolidation attempt by its durable job reference."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -30,6 +30,16 @@ export_facade! {
     let output = client.self_identity_settle(&input)?;
     crate::codec::encode("self.identity.settle", &output)
 };
+"self.inbox.list" => fn self_inbox_list(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::InboxListRequest = crate::codec::decode("self.inbox.list", &input)?;
+    let output = client.self_inbox_list(&input)?;
+    crate::codec::encode("self.inbox.list", &output)
+};
+"self.inbox.mark" => fn self_inbox_mark(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::InboxMarkRequest = crate::codec::decode("self.inbox.mark", &input)?;
+    let output = client.self_inbox_mark(&input)?;
+    crate::codec::encode("self.inbox.mark", &output)
+};
 "self.inbox.concern" => fn self_inbox_concern(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest = crate::codec::decode("self.inbox.concern", &input)?;
     let output = client.self_inbox_concern(&input)?;
@@ -929,6 +939,21 @@ export_facade! {
     let output = client.vault_artifacts_read(&input)?;
     Lift::lift(output)
 };
+"vault.consolidation.enqueue" => fn vault_consolidation_enqueue(&self, input: ConsolidationJobInput) -> DreamerJobRef = |client| {
+    let input: oneiron::task_verb::sdk::ConsolidationEnqueueRequest = input.lower()?;
+    let output = client.vault_consolidation_enqueue(&input)?;
+    Lift::lift(output)
+};
+"vault.consolidation.status" => fn vault_consolidation_status(&self, job_ref: String) -> Option<DreamerJobView> = |client| {
+    let input: oneiron::task_verb::sdk::ConsolidationStatusRequest = job_ref.lower()?;
+    let output = client.vault_consolidation_status(&input)?;
+    Lift::lift(output)
+};
+"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
+    let output = client.vault_claims_seed(&input)?;
+    Lift::lift(output)
+};
 "connector.outbound.schedule" => fn connector_outbound_schedule(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt = |client| {
     let input: oneiron::task_verb::sdk::OutboundScheduleRequest = draft.lower()?;
     let output = client.connector_outbound_schedule(&input)?;
@@ -948,17 +973,5 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EditNoteRequest = crate::codec::decode("vault.notes.edit", &input)?;
     let output = client.vault_notes_edit(&input)?;
     crate::codec::encode("vault.notes.edit", &output)
-};
-"vault.consolidation.enqueue" => fn vault_consolidation_enqueue(&self, input: ConsolidationJobInput) -> DreamerJobRef = |_client| {
-    let _ = (&input,);
-    definition_only("vault.consolidation.enqueue")
-};
-"vault.consolidation.status" => fn vault_consolidation_status(&self, job_ref: String) -> Option<DreamerJobView> = |_client| {
-    let _ = (&job_ref,);
-    definition_only("vault.consolidation.status")
-};
-"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |_client| {
-    let _ = (&claims,);
-    definition_only("vault.claims.seed")
 };
 }
