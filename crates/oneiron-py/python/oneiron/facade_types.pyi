@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 278 facade rows, 1065 declarations.
+Census: 278 facade rows, 1066 declarations.
 Inputs: 232 of 278 fully typed, 44 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 226 of 278 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 2.
@@ -2637,14 +2637,25 @@ class LearningSettingSpecView(TypedDict):
     seed: float
     value: float
 LearningSettingMode = Literal["seed", "pin"]
-LearningSettingScope = Literal["vault", "project", "task_type"]
+LearningSettingScope = Literal["vault", "goal", "project", "task_type"]
+class LearningChoiceValueModel(TypedDict):
+    model: str
+class LearningChoiceValueWidth(TypedDict):
+    width: int
+class LearningChoiceValuePattern(TypedDict):
+    pattern: str
+class LearningChoiceValueBudget(TypedDict):
+    budget: int
+LearningChoiceValue = LearningChoiceValueModel | LearningChoiceValueWidth | LearningChoiceValuePattern | LearningChoiceValueBudget
 class LearningSettingRowView(TypedDict):
     key: str
     mode: LearningSettingMode
     scope: LearningSettingScope
+    goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
-    value: float
+    value: NotRequired[float | None]
+    choice: NotRequired[LearningChoiceValue | None]
     weight_runs: NotRequired[float | None]
     by: str
     at: int
@@ -2655,14 +2666,17 @@ class LearningSettingsView(TypedDict):
 class LearningSettingPut(TypedDict):
     key: str
     mode: LearningSettingMode
-    value: float
+    value: NotRequired[float | None]
+    choice: NotRequired[LearningChoiceValue | None]
     weight_runs: NotRequired[float | None]
     why: str
+    goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
 class LearningSettingClear(TypedDict):
     key: str
     mode: LearningSettingMode
+    goal: NotRequired[str | None]
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
 LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
