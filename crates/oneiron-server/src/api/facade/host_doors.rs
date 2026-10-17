@@ -36,7 +36,7 @@ use oneiron::task_verb::sdk::{
     PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
-use crate::api::ai::{VoiceRefusal, bind_voice};
+use crate::api::ai::{VoiceRefusal, bind_voice, caller_options};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
 use crate::server::SyncServer;
@@ -85,6 +85,8 @@ pub(crate) use super::reaction_doors::*;
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
 pub(crate) use super::critic_review_doors::*;
+// The owner's project-card tap door (OF-501), likewise.
+pub(crate) use super::project_card_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -336,11 +338,12 @@ pub(crate) async fn vault_mesh_path_receipts(
     .map_err(|_| internal("vault.mesh.path_receipts"))?
 }
 
-/// `ai.options`: the rows a call could use, where each runs, what it takes,
-/// the rates its native counts settle at, and what the media meter has left.
+/// `ai.options`: the rows the credential could call now, where each runs,
+/// what it takes, its price, the rates its native counts settle at, and
+/// what its meter has left (FIX 2942).
 pub(crate) async fn ai_options(
     server: &Arc<SyncServer>,
-    _auth: &CoreAuth,
+    auth: &CoreAuth,
     input: AiOptionsRequest,
 ) -> MemoryResult<AiOptions> {
     let operation = input
@@ -363,16 +366,16 @@ pub(crate) async fn ai_options(
             })?;
         inputs.insert(modality);
     }
-    let runtime = server.ai.model_runtime();
-    let options = runtime
-        .ai_options(operation, &inputs)
+    let listed = caller_options(server, auth.is_owner_grade(), operation, &inputs);
+    let options = listed
+        .options
         .into_iter()
         .map(serde_json::to_value)
         .collect::<Result<_, _>>()
         .map_err(|_| internal("ai.options"))?;
     Ok(AiOptions {
         options,
-        media_units_left: runtime.media().units_left(),
+        media_units_left: listed.media_units_left,
     })
 }
 
