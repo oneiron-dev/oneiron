@@ -4624,8 +4624,48 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container.rs",
+     "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/archive.rs",
+     "purpose": "A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/gzip.rs",
+     "purpose": "A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/pdf.rs",
+     "purpose": "A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -5144,6 +5184,7 @@
      "path": "src/blob_artifact/esign/render.rs",
      "purpose": "Lossless bounded PDF preparation and shared field presentation",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -37862,7 +37903,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 3
      }
@@ -50521,7 +50562,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 108,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51951,7 +51992,7 @@
    },
    "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3140,
+   "source_files": 3144,
    "test_files": 903
   },
   "oneiron-android": {
@@ -68292,7 +68333,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 10,
-      "fn": 15,
+      "fn": 16,
       "struct": 3
      }
     },
@@ -68303,7 +68344,7 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
