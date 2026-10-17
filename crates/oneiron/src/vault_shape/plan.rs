@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::{EntityId, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What an item does to the named structure.
@@ -72,9 +73,14 @@ pub struct ShapePlanSummary {
 
 impl ShapePlanSummary {
     /// The count over `items`.
-    pub fn of(items: impl IntoIterator<Item = &ShapePlanItem>) -> Self {
+    pub fn of<I>(items: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Borrow<ShapePlanItem>,
+    {
         let mut summary = Self::default();
         for item in items {
+            let item = item.borrow();
             summary.changes += 1;
             match item.class {
                 ShapeItemClass::Widening => summary.needs_word += 1,
