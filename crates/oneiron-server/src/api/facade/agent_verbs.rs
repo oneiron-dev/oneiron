@@ -256,6 +256,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.body.deck.export", post(facade_route))
         .route("/vault.artifacts.body.deck.gate", post(facade_route))
         .route("/vault.artifacts.body.deck.oracle", post(facade_route))
+        .route("/vault.artifacts.body.deck.preview", post(facade_route))
         .route("/vault.artifacts.append", post(facade_route))
         .route("/vault.artifacts.read", post(facade_route))
         .route("/vault.consolidation.enqueue", post(facade_route))
