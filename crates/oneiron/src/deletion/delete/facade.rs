@@ -249,6 +249,8 @@ impl Vault {
                 .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor)
                 .privacy(reason == DeleteReason::GdprDelete);
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
+            // A pad is held by its world's holds too (OF-470).
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
             if reason.active_store_hard_purge_v1() {
                 self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
             }
@@ -544,6 +546,7 @@ impl Vault {
             // true (nothing replays back).
             reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
             self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
             self.reject_held_redirect_shells_in_txn(&wtxn, id)?;
             if !authority_settled {
                 self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
@@ -662,6 +665,7 @@ impl Vault {
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
         self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }

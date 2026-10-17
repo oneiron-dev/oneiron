@@ -15,6 +15,7 @@ impl Vault {
         )?;
         for shell in shells {
             self.store.reject_legal_hold_in_txn(txn, shell.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, txn, &[shell])?;
         }
         Ok(())
     }
@@ -55,6 +56,7 @@ impl Vault {
         for shell in &shells {
             self.store
                 .reject_legal_hold_in_txn(&*wtxn, shell.as_bytes())?;
+            crate::world_keys::reject_held_pad_world_in_txn(&self.store, &*wtxn, &[*shell])?;
         }
         let mut changed = Vec::new();
         let mut had_vector = false;
