@@ -1318,7 +1318,7 @@
      "path": "src/anchored_annotation/codec.rs",
      "purpose": "MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -1450,7 +1450,7 @@
      "path": "src/anchored_annotation/threads.rs",
      "purpose": "Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 8
      }
     },
@@ -1554,7 +1554,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AnnotationHold",
@@ -9235,7 +9235,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityProviderAdapter",
@@ -9243,20 +9243,23 @@
       "ChannelIdentityProviderProvision",
       "EmailProviderInbound",
       "EmailThreadHeaders",
+      "LineChat",
+      "LineChatKind",
       "LineOfficialAccountInbound",
       "SlackProviderInbound"
      ],
      "path": "src/channel_identity_provider/inbound_types.rs",
      "purpose": "Shared provider envelope: inbound payload structs, provision result, and the adapter trait",
      "surface": {
-      "enum": 1,
-      "fn": 12,
-      "struct": 5,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 17,
+      "struct": 6,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LineOfficialAccountAdapter",
@@ -9267,7 +9270,7 @@
      "purpose": "LINE Official Account adapter: plan tier, config, and trait impl",
      "surface": {
       "enum": 1,
-      "fn": 10,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -9372,7 +9375,7 @@
      "purpose": "Cross-channel provision guards, email/LINE normalizers, and blank/bytes primitives",
      "surface": {
       "const": 9,
-      "crate-vis": 37
+      "crate-vis": 39
      }
     },
     {
@@ -27821,12 +27824,12 @@
       "BoundedAutoChecker"
      ],
      "path": "src/llm/autocheck.rs",
-     "purpose": "Auto-check seam: candidate types, fail-closed verdicts, the bounded host wrapper, and the request contract",
+     "purpose": "Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 5,
       "trait": 1
      }
@@ -31683,6 +31686,7 @@
       "MemberAnswer",
       "MemberVerdict",
       "OfficeBodyProposal",
+      "ProposalAsk",
       "ProposalHeader",
       "ProposalMember",
       "ProposalSettleRequest",
@@ -31694,10 +31698,10 @@
      "purpose": "Office proposals (DEC-0006, \"A content proposal is a set of forks that share its id\"; ARCH-0035's embedded…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 4,
       "fn": 2,
-      "struct": 7
+      "struct": 8
      }
     },
     {
@@ -31737,6 +31741,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/holder_ask.rs",
+     "purpose": "Holder asks for office proposals (DEC-0006: \"The rest wait together as one review bundle, offered to every…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -31754,7 +31768,7 @@
      "path": "src/office_body/mod.rs",
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 18,
       "re-export": 8,
@@ -38373,7 +38387,7 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -40334,7 +40348,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 7,
       "struct": 2,
@@ -43913,6 +43927,7 @@
       "Materializer",
       "ObserverAState",
       "OriginMark",
+      "OutboundAttachment",
       "OutboundSink"
      ],
      "path": "src/sync/bridge/observers.rs",
@@ -43921,7 +43936,7 @@
       "const": 1,
       "crate-vis": 12,
       "fn": 13,
-      "struct": 5,
+      "struct": 6,
       "trait": 1
      }
     },
@@ -44266,7 +44281,7 @@
      "purpose": "Handshake: run loop, connect_and_sync, overflow check, resync markers",
      "surface": {
       "crate-vis": 5,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -50089,7 +50104,7 @@
      "path": "src/workspace_roster/project/house.rs",
      "purpose": "The house mind leads the root project (ONEIRON-ARCH-0063: the vault is the root project, its house mind…",
      "surface": {
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -52922,7 +52937,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53561,7 +53576,7 @@
    },
    "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3252,
+   "source_files": 3253,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60563,7 +60578,7 @@
      "purpose": "Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event…",
      "surface": {
       "const": 2,
-      "fn": 22,
+      "fn": 23,
       "struct": 4
      }
     },
@@ -66392,6 +66407,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/house_routes.rs",
+     "purpose": "`/v1/owner/workspace/finish`: the owner finishes a stored workspace and its house mind takes the root…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/inbox_routes.rs",
      "purpose": "`/v1/owner/inbox`: the owner's view of the agent inbox lens (ARCH-0063 R4, INB-03)",
      "surface": {
@@ -67710,7 +67735,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 12,
       "re-export": 20,
       "struct": 1
@@ -67728,13 +67753,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -68141,6 +68166,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeviceSyncConfig"
+     ],
+     "path": "src/config/device_sync.rs",
+     "purpose": "`[device_sync]`: the home this machine keeps its vault in sync with",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -68345,8 +68383,8 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
       "crate-vis": 1,
-      "mod": 13,
-      "re-export": 23
+      "mod": 14,
+      "re-export": 24
      }
     },
     {
@@ -68815,6 +68853,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync.rs",
+     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69257,7 +69305,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -70604,7 +70652,7 @@
      "path": "src/models/responses_socket.rs",
      "purpose": "Responses over a held socket (ARCH-0081 §5)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -70981,6 +71029,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/owner/house.rs",
+     "purpose": "The house mind leads the root project (ARCH-0067: the vault is the root project, its house mind leads it and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/owner/imports.rs",
      "purpose": "Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202)",
      "surface": {
@@ -71004,7 +71062,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -72367,7 +72425,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 301,
+     "files": 302,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72430,7 +72488,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72505,6 +72563,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
+    },
+    "device_sync": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
      "files": 2,
@@ -72640,7 +72705,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72754,7 +72819,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 597,
+   "source_files": 601,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -73497,6 +73562,7 @@
       "ProjectRosterWriteOutcome",
       "ProjectRosterWriteRequest",
       "ProjectTradeoffRouteRequest",
+      "ProposalAsk",
       "ProposalHeader",
       "ProposalMember",
       "ProposalSettleRequest",
@@ -73850,7 +73916,7 @@
      "purpose": "—",
      "surface": {
       "enum": 255,
-      "struct": 647
+      "struct": 648
      }
     },
     {
