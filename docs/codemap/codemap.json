@@ -4764,6 +4764,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/lift_history/authored.rs",
+     "purpose": "The authored carriers whose writers already mask a new write: an owner-policy ruling or proposal, an eval…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/lift_history/carriers.rs",
      "purpose": "Carriers no door rewrites",
      "surface": {
@@ -30380,7 +30390,7 @@
      "path": "src/memory/witness/stream/admission.rs",
      "purpose": "Begin, append and flush",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 5
      }
     },
@@ -30410,6 +30420,16 @@
       "crate-vis": 1,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/stream/lift.rs",
+     "purpose": "The lift sweep's door for a stream's seed (OF-067)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -34229,7 +34249,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PolicyChangedEvent",
@@ -34240,7 +34260,7 @@
      "path": "src/policy_model/owner_rows/ledger.rs",
      "purpose": "Append-only row change history and proposal inbox",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -41680,7 +41700,7 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 4,
       "fn": 7,
       "re-export": 2,
@@ -51579,7 +51599,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 117,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52335,7 +52355,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53009,7 +53029,7 @@
    },
    "over_bar": 164,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3209,
+   "source_files": 3211,
    "test_files": 902
   },
   "oneiron-android": {
