@@ -85,6 +85,9 @@ pub(super) struct JsonReply {
 #[derive(Clone)]
 pub(super) struct ProviderHttp {
     client: reqwest::Client,
+    /// The same client with no provider header and no key: what a file the
+    /// provider redirects to elsewhere is fetched with.
+    bare: reqwest::Client,
     base_url: String,
 }
 
@@ -128,18 +131,19 @@ impl ProviderHttp {
         // One request per call (`SingleSend`): a redirect is answered, never
         // followed, and nothing is sent twice. reqwest's default policy would
         // resend a request an HTTP/2 server refused at the protocol level.
-        let mut builder = reqwest::Client::builder()
-            .default_headers(headers)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .connect_timeout(Duration::from_secs(provider.timeout_secs.min(30)))
-            .timeout(Duration::from_secs(provider.timeout_secs));
-        if direct {
-            builder = builder.no_proxy();
-        }
-        let client = builder.build()?;
+        let builder = || {
+            let builder = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
+                .connect_timeout(Duration::from_secs(provider.timeout_secs.min(30)))
+                .timeout(Duration::from_secs(provider.timeout_secs));
+            if direct { builder.no_proxy() } else { builder }
+        };
+        let client = builder().default_headers(headers).build()?;
+        let bare = builder().build()?;
         Ok(Self {
             client,
+            bare,
             base_url: provider.base_url.clone(),
         })
     }
@@ -158,6 +162,7 @@ impl ProviderHttp {
     pub(super) fn native(&self) -> Self {
         Self {
             client: self.client.clone(),
+            bare: self.bare.clone(),
             base_url: self
                 .base_url
                 .strip_suffix("/v1")
@@ -237,6 +242,45 @@ impl ProviderHttp {
                 .body(body),
         };
         let response = request.send().await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// A file the provider named by its full URI, read whole up to
+    /// [`MAX_MEDIA_REPLY_BYTES`]. The key goes only to the provider's own
+    /// origin; one redirect from there is followed, without the key or any
+    /// provider header when it leaves that origin (a clip served from
+    /// storage).
+    pub(super) async fn fetch_media(&self, uri: &str) -> Result<BytesReply, HttpFailure> {
+        let origin = reqwest::Url::parse(&self.base_url)
+            .map_err(|_| HttpFailure::Connection)?
+            .origin();
+        let target = reqwest::Url::parse(uri).map_err(|_| HttpFailure::Malformed)?;
+        if target.origin() != origin {
+            return Err(HttpFailure::Malformed);
+        }
+        let mut response = self.client.get(target.clone()).send().await?;
+        if response.status().is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|location| location.to_str().ok())
+                .and_then(|location| target.join(location).ok())
+                .filter(|location| location.scheme() == "https")
+                .ok_or(HttpFailure::Malformed)?;
+            let client = if location.origin() == origin {
+                &self.client
+            } else {
+                &self.bare
+            };
+            response = client.get(location).send().await?;
+        }
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let body = bounded_body(response, MAX_MEDIA_REPLY_BYTES).await?;

@@ -30,6 +30,21 @@ export_facade! {
     let output = client.self_identity_settle(&input)?;
     crate::codec::encode("self.identity.settle", &output)
 };
+"self.inbox.concern" => fn self_inbox_concern(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest = crate::codec::decode("self.inbox.concern", &input)?;
+    let output = client.self_inbox_concern(&input)?;
+    crate::codec::encode("self.inbox.concern", &output)
+};
+"self.inbox.concern.outcome" => fn self_inbox_concern_outcome(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest = crate::codec::decode("self.inbox.concern.outcome", &input)?;
+    let output = client.self_inbox_concern_outcome(&input)?;
+    crate::codec::encode("self.inbox.concern.outcome", &output)
+};
+"self.inbox.concern.move" => fn self_inbox_concern_move(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveRequest = crate::codec::decode("self.inbox.concern.move", &input)?;
+    let output = client.self_inbox_concern_move(&input)?;
+    crate::codec::encode("self.inbox.concern.move", &output)
+};
 "vault.people.list" => fn vault_people_list(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::memory::PeopleListRequest = crate::codec::decode("vault.people.list", &input)?;
     let output = client.vault_people_list(&input)?;
@@ -74,7 +89,7 @@ export_facade! {
     crate::codec::encode("tasks.create", &output)
 };
 "tasks.update" => fn tasks_update(&self, input: WireJson) -> WireJson = |client| {
-    let input: oneiron::task_verb::sdk::TaskRequest = crate::codec::decode("tasks.update", &input)?;
+    let input: oneiron::task_verb::sdk::TaskUpdateRequest = crate::codec::decode("tasks.update", &input)?;
     let output = client.tasks_update(&input)?;
     crate::codec::encode("tasks.update", &output)
 };

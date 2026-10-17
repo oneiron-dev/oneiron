@@ -636,7 +636,13 @@ yes/no question lists no before yes, as test 6b's side questions did; its
 readout still reports yes first), the single-token label verbalizers
 (`tokens`, at least four), the end token (`eos`), `n_probs` (how many of the
 top probabilities come back), `n_probs_full` (the whole vocabulary, for the
-retry below) and, for the owner's probe, `[probe] paired` and `person`.
+retry below) and, for the owner's probe, `[probe] paired` and `person`. An
+optional `[probe] presence` words the presence question every Box or Point
+call asks first, over the same images and clock, with the coordinate
+question's wording in the `locate` state field ("is that target in the image
+at all?"). Only a confident yes, with no person asked, starts the
+coordinates; a confident no answers that the target is absent; anything else
+abstains. Without it, the coordinates are asked directly.
 
 A question and "does this need more thinking?" stay joint (ARCH-0076
 `#ask-a-person`): the question renders the joint template, its text as
@@ -744,7 +750,8 @@ Image, video, speech, transcription and embedding calls have their own seats,
 outside the text tiers: one ladder per operation in `[models.media]`, each rung
 `"<provider>:<model>"` on an OpenAI-compatible provider (`openai-compat` or
 `local-openai-compat`, keyed by `key_env`; the credential broker sends chat
-calls only). A media call is admitted, sent and settled like a text call:
+calls only), or an image or video rung on a `gemini` provider (below). A
+media call is admitted, sent and settled like a text call:
 each rung it reaches gets its own permit on the media meter, an offer refused
 for a limit rests and the call goes to the next rung, and the run's receipts
 show every rung.
@@ -769,6 +776,37 @@ rungs = ["local:whisper-large-v3"]
 
 [models.media.embed]             # POST /v1/embeddings
 rungs = ["local:qwen3-embedding"]
+```
+
+A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
+key in `key_env` (sent as `x-goog-api-key`). It serves the image and video
+seats only. An image is `models/{model}:generateContent` asked for image
+output: the instruction and each reference image go inline, a `size`
+(`"WxH"`) or `width`/`height` becomes the nearest drawn `aspectRatio` and an
+`imageSize` (`1K` up to 1024 px a side, `2K` up to 2048, else `4K`),
+`aspect_ratio` / `image_size` name them outright, and any other param joins
+`generationConfig`. It is charged the tokens the answer counts. A video is a
+Veo job (`models/{model}:predictLongRunning`; one reference image is its first
+frame). `seconds` becomes `durationSeconds`, a `size` an `aspectRatio` and
+`resolution`, and other params go as `parameters`. The poll reads the
+operation, and a finished job's clips are fetched from the file URIs it names:
+the key goes to the API's origin only, and the one redirect to storage is
+followed without it. The operation names no clip length, so a clip is charged
+its call's reservation. The API has no cancel for a Veo job, so a cancel lets
+the job go here and the provider finishes it unread.
+
+```toml
+[models.providers.gemini]
+kind = "gemini"
+base_url = "https://generativelanguage.googleapis.com"
+key_env = "GEMINI_API_KEY"
+
+[models.media.image]
+rungs = ["gemini:gemini-2.5-flash-image"]
+max_references = 3
+
+[models.media.video]
+rungs = ["gemini:veo-3.1-generate-preview"]
 ```
 
 A provider that counts tokens is charged them; one that counts images,
@@ -1194,34 +1232,50 @@ on the server's runtime, so a caller runs a ladder call on a blocking thread.
 
 A standing question (a typed question saved over a set of graph units, with
 `refresh.every_seconds` or `refresh.on_arrival`) is answered on this ladder
-without a caller. Each minute the server checks for questions that are due.
-It answers each unit as the question's own principal, reading under that
+without a caller. Only the vault's home node runs the pump: the node the
+vault's home designation names. A server whose vault has no home yet claims
+it, so the pump runs with the Dreamer off. The pump sleeps until the next
+question is due, and a committed write wakes it early (a question's create,
+edit or resume, or a claim write). It also re-reads its due work at least
+once a minute, because an arrival on a unit that is not a claim does not wake
+it. It answers each unit as the question's own principal, reading under that
 principal's grants, and climbs the question's own dial. A ceiling of `human`
 is held at Big, so the pump never queues an owner ask. Each unit has its own
-10-second clock.
+clock: the definition's `deadline_ms` (1 to 60000), or 10 seconds when it
+names none.
 
-- **What the ladder reads.** The unit's body goes into the call's state as
-  the JSON a reader is served.
-- **Images.** When `[models.roles.local_vision]` is bound and the dial spans
-  the Local rung, an image asset is also read as an image at the Local-vision
-  rung. The pull is recorded as an `ask_image` served form. Without that seat,
-  the asset is read as its text alone.
+- **What the ladder reads.** The unit's body and the bodies of its outgoing
+  neighbours go into the call's state, as the JSON a reader is served. A
+  one-off graph ask reads the same neighbours (up to 16, under the
+  principal's grants). A unit whose neighbours sit in scopes that no single
+  answer can stay inside abstains before any model runs. The definition's
+  `criteria` (`yes_if_all`, `no_if_any`, `not_a_reason_to_say_no`) ride in
+  the state as `criteria`. An edit to a line mints the next question version.
+- **Images.** When `[models.roles.local_vision]` is bound, the dial spans the
+  Local rung, and the definition's `media.images` is on (the default), each
+  image asset among the unit and its neighbours is read as an image at the
+  Local-vision rung. The pull is recorded as an `ask_image` served form.
+  Without that seat, or with `media.images` off, the asset is read as its
+  text alone.
 - **Audio.** When a rung inside the dial hears audio (the Big rung above), a
   WAV or MP3 audio asset is read as a clip and the call starts at that rung.
   The clip goes to the model as audio, never as a transcript. A unit with
   both an image and a clip starts at a rung that reads both, or abstains.
   Otherwise the asset is read as its text alone.
 - **What lands.** Each answer lands as a proposed `judgment.answer` claim,
-  readable only by the principal. It keeps the ladder's full receipt: the
-  providers, band, paired and person readings, clock and any owner-ask reason,
-  plus the version of every source, image and clip it read.
-- **Failures.** A question that fails is retried at its next due pass, and
-  the server logs the error's kind only.
+  readable only by the principal (the definition's `audience` is `asker`). It
+  reads no wider than any source it rests on, and it names each of them as
+  evidence. It keeps the ladder's full receipt: the providers, band, paired
+  and person readings, clock and any owner-ask reason, plus the version of
+  every source, image and clip it read. Before the answer lands, the pump
+  reads the neighbours and every source again. If any changed, nothing in
+  that pass lands.
+- **Failures.** A question that fails is held for five minutes and then runs
+  again. An edit or a resume lifts the hold. The server logs the error's
+  kind only.
 
 The engine's one-off graph ask and saved graph recipes take the same
-answerer and keep the same receipts. There, a unit's outgoing neighbours join
-its state, and an image or audio asset among them is read as such. No door serves
-a one-off ask yet.
+answerer and keep the same receipts.
 
 ### Typed questions over files
 

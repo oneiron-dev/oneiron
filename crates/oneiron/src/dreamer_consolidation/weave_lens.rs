@@ -9,7 +9,6 @@
 
 use super::step_charge::StepChargeTally;
 use crate::claim::{WeaveLensPlan, WeaveLensRender, WeaveLiveLens};
-use crate::{Vault, WriteActor};
 use crate::dreamer_runner::{
     DREAMER_WEAVE_LENS_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
@@ -24,6 +23,7 @@ use crate::llm::{
     ModelId, ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence,
     call_as_step,
 };
+use crate::{Vault, WriteActor};
 use std::collections::BTreeMap;
 
 /// Why a weave lens render parks on a host that lends no Dreamer model.

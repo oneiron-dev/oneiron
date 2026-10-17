@@ -82,7 +82,7 @@ impl ImageRef {
 }
 
 /// The pixel size a PNG or JPEG header states.
-fn dimensions(image: &ImageBytes) -> LlmResult<(u32, u32)> {
+pub(super) fn dimensions(image: &ImageBytes) -> LlmResult<(u32, u32)> {
     let format = match image.media_type.to_ascii_lowercase().as_str() {
         "image/png" => image::ImageFormat::Png,
         "image/jpeg" | "image/jpg" => image::ImageFormat::Jpeg,
@@ -217,9 +217,7 @@ impl MediaCall {
     pub fn state(&self, mut state: serde_json::Value) -> LlmResult<serde_json::Value> {
         let entries =
             serde_json::to_value(&self.entries).map_err(|_| FatalLlmError::InvalidRequest)?;
-        let object = state
-            .as_object_mut()
-            .ok_or(FatalLlmError::InvalidRequest)?;
+        let object = state.as_object_mut().ok_or(FatalLlmError::InvalidRequest)?;
         object.insert(MEDIA_FIELD.to_owned(), entries);
         Ok(state)
     }
@@ -248,6 +246,7 @@ impl MediaCall {
                         name: name.clone(),
                         evidence: reference.evidence.clone(),
                         image,
+                        frame: reference.frame,
                     });
                     entries.push(DecisionMedia {
                         name,
@@ -307,6 +306,8 @@ impl DecisionLadder<'_> {
         dial: DecisionDial,
         media: Vec<ResolvedMedia>,
     ) -> LlmResult<MediaCall> {
-        MediaCall::of(dial, media, |images| self.first_taking(question, dial, images))
+        MediaCall::of(dial, media, |images| {
+            self.first_taking(question, dial, images)
+        })
     }
 }

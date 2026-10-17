@@ -765,7 +765,9 @@ pub(in crate::sync) fn validate_sync_identity_body(entity_type: u8, body: &[u8])
     if entity_type == crate::registry::ENTITY_TYPE_FACET
         && crate::companion::is_identity_facet_body(body)
     {
-        return Err(Error::InvalidClaimBody("FACET cannot carry PERSON identity"));
+        return Err(Error::InvalidClaimBody(
+            "FACET cannot carry PERSON identity",
+        ));
     }
     Ok(())
 }
