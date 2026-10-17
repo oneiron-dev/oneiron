@@ -174,6 +174,23 @@ declare const vault: {
   edges: {
     put(input: { kind: string; src: string; tgt: string; weight?: number | null }): Promise<unknown>;
   };
+  embedding_spaces: {
+    bind(input: { kind: string; space?: string | null }): Promise<unknown>;
+    declare(input: object): Promise<unknown>;
+    list(input: object): Promise<unknown>;
+    move(input: { candidate: string; incumbent?: string | null; margin?: number | null }): Promise<unknown>;
+    move_abandon(input: { candidate: string }): Promise<unknown>;
+    move_approve(input: { candidate: string }): Promise<unknown>;
+    move_check(input: { candidate: string }): Promise<unknown>;
+    move_undo(input: { candidate: string }): Promise<unknown>;
+    one_space(input: { space: string }): Promise<unknown>;
+    probes: {
+      delete(input: { id: string }): Promise<unknown>;
+      list(input: object): Promise<unknown>;
+      put(input: { author: string; family: string; kind: string; query: string; targets?: string[] }): Promise<unknown>;
+    };
+    retire(input: { space: string }): Promise<unknown>;
+  };
   export(input: { format?: string | null }): Promise<unknown>;
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;

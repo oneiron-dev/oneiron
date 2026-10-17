@@ -344,6 +344,7 @@ pub use super::recall_door::{
 pub use super::sdk_connector::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
+pub use super::sdk_embedding_space::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_legal_hold::*;
