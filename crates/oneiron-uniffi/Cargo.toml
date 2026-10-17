@@ -32,6 +32,13 @@ oneiron = { path = "../oneiron" }
 # vault THROUGH it, as the napi and Python bindings do, and never depends on
 # an HTTP client directly.
 oneiron-remote = { path = "../oneiron-remote" }
+# OF-237 slice 2: the embedded engine. The full server runs in the app's
+# process (`oneiron_server::embedded`), the app's callbacks are its host
+# (`AppHost`), and their secrets cross as `Zeroizing` bytes.
+oneiron-server = { path = "../oneiron-server" }
+oneiron-vault-contract = { path = "../oneiron-vault-contract" }
+anyhow = "1"
+zeroize = "1"
 # Blob bytes cross as `Vec<u8>`; the shared client's blob request carries
 # them base64-encoded.
 base64 = "0.22"

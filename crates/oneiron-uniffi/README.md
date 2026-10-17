@@ -6,8 +6,9 @@
 > no Docker, no API key: the on-device Swift path); `connect` binds a remote
 > `oneiron-server`. Every facade row of `scripts/sdk/agent-verbs.json` is one
 > exported method that calls the client's typed method for that row on
-> either backend. No Swift or Kotlin package is published yet, and no
-> XCFramework is produced.
+> either backend. `EmbeddedEngine` runs the full server inside the app's
+> process over the same kind of handle. No Swift or Kotlin package is
+> published yet, and no XCFramework is produced.
 
 ## What this is
 
@@ -20,6 +21,8 @@
   and nothing else that talks to a network. Remote calls go through that
   client's one HTTP stack, signed with the credential's connection key;
   embedded calls go through its one dispatcher, writer lease and owner actor.
+  The embedded engine's `oneiron-server` edge serves the API over
+  in-process streams and binds no API socket.
 - **Generated, not hand-bound.** `scripts/sdk/generate.py` writes
   `src/facade_generated.rs` from the verb table: one `export_facade!` arm per
   facade row (host-door rows included). Each arm lowers its foreign
@@ -75,8 +78,8 @@ no generic `call(name, json)`.
   `describe(taskRef:)`, `vaultExport(format:)`.
 - **Generated input, hand-written result (2):** `vault.notes.create`,
   `vault.notes.from_entity` (both return `EntityRefReceipt`).
-- **Generated in and out:** every other facade row, host doors included (162
-  of the 202 facade rows on this table). The generated files are the
+- **Generated in and out:** every other facade row, host doors included (218
+  of the 259 facade rows on this table). The generated files are the
   authoritative list; each method is named for its row (`vault.kv.get` is
   `vaultKvGet(input:)` over the `KeyValueAddress` record).
 - **`WireJson`** stays only where UniFFI cannot say the shape, as a field
@@ -107,11 +110,32 @@ omitted write time is stamped with the current Unix second at the call.
 
 Host-door rows are exported like every other row. An embedded handle answers
 them with the row's own embedded `call`; the ones only a server's state can
-answer (its model seats, the owner proof) refuse there, typed. The full
-server runs inside an app through `oneiron_server::embedded::serve_embedded`
-over `EmbeddedHost` (one duplex stream per connection), sharing the app's one
-open vault with SDK handles through `OneironClient::attach`; this binding
-does not call it yet.
+answer (its model seats, the owner proof) refuse there, typed, on a handle
+from `EmbeddedEngine.client()` too. The server itself answers them through
+`EmbeddedEngine.request`.
+
+## Embedded engine
+
+`EmbeddedEngine` runs the full server `oneiron serve` runs inside the app's
+own process (`oneiron_server::embedded::BlockingEngine`), next to `open`,
+which stays a plain vault with no server.
+
+| Rust | generated Swift | what it does |
+|---|---|---|
+| `start(path, options, config_file, host, limits)` | `EmbeddedEngine.start(path:options:configFile:host:limits:)` | opens the vault at `path` the way `oneiron serve --config <config_file>` does (that config for this path, with `options.dimensions` when given), serves it, and returns once `host.ready()` has run. Refuses a relay host's config. Absent `limits` fields are unbounded |
+| `client() -> Oneiron` | `engine.client()` | a NEW handle attached to the engine's own vault, never a second open; ask again for each handle. Every handle keeps the engine alive |
+| `request(EngineRequest) -> EngineReply` | `engine.request(request:)` | one buffered HTTP/1.1 exchange over a fresh in-process stream; headers pass through (bring your own auth); a 4xx/5xx is a reply. A reply body over 64 MiB, `/ws` and other upgrades are refused |
+| `wake()` | `engine.wake()` | the app's timer fired: run what is due; a stopped engine serves again first, over the same vault |
+| `stop()` | `engine.stop()` | the app backgrounds: drain, stop every worker, keep the vault open |
+| `close()` | `engine.close()` | the ordered stop, then the runtime goes; later calls refuse |
+
+The app implements `AppHostCallbacks`: `keychain(name)` returns the secret's
+bytes or `nil` (the server then falls back as it does on a desktop),
+`scheduleWake(atUnixMs:)` arms or clears (`nil`) the app's timer, and
+`ready()` reports the server up. The engine calls them on threads of its
+own; a call back into the engine from one is refused. The engine owns a
+multi-thread Tokio runtime and blocks the calling thread, so call it from
+app threads, and call `close()` from one before the app lets it go.
 
 ## Toolchain pin
 
