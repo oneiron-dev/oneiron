@@ -2,19 +2,21 @@
 //! children: `self.memory.diary`, one private diary entry (ARCH-0032
 //! `#diary-acl`), and `steer`, the spawner's nudge to its own child, taken
 //! at the child's next safe breakpoint (ARCH-0079 channels: `say` is talk,
-//! `steer` is control).
+//! `steer` is control). The vault's owner steers any live run too, at the
+//! owner route, on their own authenticated session ([`steer_child_as_owner`]).
 use serde::{Deserialize, Serialize};
 
 use super::presence_scan::superseded_attempt_ids;
 use super::rate_limit::task_create_owner_in;
-use crate::EntityId;
 use crate::attempt_queue::AttemptQueue;
+use crate::consent::AuthenticatedOwner;
 use crate::memory::{
     EntityRefReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError,
     MemoryResult,
 };
 use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
 use crate::run_tree::{RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter};
+use crate::{EdgeActorClass, EntityId};
 
 /// `self.memory.diary`'s input: one private entry, and the kind of entry it
 /// is (`reflection`, `daily`), when the agent names one.
@@ -108,6 +110,49 @@ pub struct SteerReceipt {
 /// refused, not proposed: a nudge carries no effect a review could approve.
 pub fn steer_child(memory: &Memory<'_>, input: SteerRequest) -> MemoryResult<SteerReceipt> {
     crate::memory::verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
+    steer_live_run(memory, input, |txn, task| {
+        if task_create_owner_in(memory.vault(), txn, task)? != Some(memory.actor()) {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "only the task's spawner steers it",
+                &["Steer a task you created; say(...) reaches any other agent."],
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// The owner's `steer` (FIX 783, Engine ruling 10-18): the vault's owner
+/// nudges any live run in the vault, whoever spawned it. The proof is the
+/// owner's own authenticated session, rechecked in the transaction that
+/// reads the run, and it must name the bound human caller. Every other
+/// actor stays spawner-bound ([`steer_child`]).
+pub fn steer_child_as_owner(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: SteerRequest,
+) -> MemoryResult<SteerReceipt> {
+    steer_live_run(memory, input, |txn, _task| {
+        if owner.revalidate_in_txn(memory.vault(), txn)? != memory.actor()
+            || memory.actor_class() != EdgeActorClass::Human
+        {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the owner proof must name the bound caller",
+                &["Steer as the vault owner on your own session."],
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// Both steers: `admit` decides who may steer `task` inside the read
+/// transaction, then the signal lands in the task's live attempt's inbox.
+fn steer_live_run(
+    memory: &Memory<'_>,
+    input: SteerRequest,
+    admit: impl FnOnce(&heed::RoTxn<'_>, EntityId) -> MemoryResult<()>,
+) -> MemoryResult<SteerReceipt> {
     let task = EntityId::from_hex(&input.task_ref)
         .map_err(|_| MemoryError::bad_request("task_ref is not an entity id"))?;
     let (branch, run_id) = {
@@ -117,13 +162,7 @@ pub fn steer_child(memory: &Memory<'_>, input: SteerRequest) -> MemoryResult<Ste
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        if task_create_owner_in(memory.vault(), &txn, task)? != Some(memory.actor()) {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "only the task's spawner steers it",
-                &["Steer a task you created; say(...) reaches any other agent."],
-            ));
-        }
+        admit(&txn, task)?;
         let task_key = task.to_hex();
         let records: Vec<_> = AttemptQueue::new(memory.vault())
             .list_in_txn(&txn)?

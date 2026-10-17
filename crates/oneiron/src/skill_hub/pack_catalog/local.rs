@@ -101,6 +101,7 @@ impl Vault {
                     verdict,
                     permissions: &permissions,
                     qualification: qualification.as_ref(),
+                    world: None,
                 },
             )?;
             if matches!(disposition, PackInstallDisposition::Installed(_)) {
@@ -154,6 +155,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
             predicates: Vec::new(),
             kinds: Vec::new(),
             skills: Vec::new(),
+            agent: None,
             installed_at: 0,
         };
         PACK_INSTALL.put(&vault.store, txn, &name, &receipt)?;

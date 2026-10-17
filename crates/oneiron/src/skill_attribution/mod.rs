@@ -33,14 +33,25 @@
 //! consolidation-scoped).
 
 mod audit;
+mod calibration;
+pub(crate) use self::calibration::record_unclear_floor_fit_in_txn;
+pub use self::calibration::{
+    AuditAnswerSource, AuditBatch, AuditCase, FloorFit, RawAnswer, UNCLEAR_FLOOR_FITTER_VERSION,
+};
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 mod judge;
+pub(crate) use self::judge::JudgeTrace;
 mod judge_supersession;
 #[cfg(test)]
 pub(crate) use judge_supersession::set_pre_writer_hook;
 pub(crate) use judge_supersession::{
     judgment_displaced, judgment_displaced_in_txn, judgment_judge_in_txn,
+};
+mod contribution;
+pub use contribution::{
+    ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair,
+    contributed, contribution_check_candidates, record_contribution_pair,
 };
 mod late_credit;
 mod pack_learning;
@@ -57,15 +68,16 @@ pub(crate) use self::projector::{
     withdraw_edit_proposal_in_txn,
 };
 mod split;
-pub(crate) use self::split::{classify_split, settled_split, unclear_floor};
+pub(crate) use self::split::{classify_split_traced, settled_split, unclear_floor};
 mod types;
 mod unclear;
 pub use self::unclear::{UnclearAttribution, unclear_attributions};
 pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
 
 pub use self::audit::{
-    AttributionAuditReport, AuditFixture, attribution_audit_reports, held_out_audit_fixtures,
-    run_attribution_audit, run_attribution_audit_with_decisions,
+    AttributionAuditRecord, AttributionAuditReport, AuditFixture, attribution_audit_records,
+    attribution_audit_reports, held_out_audit_fixtures, run_attribution_audit,
+    run_attribution_audit_with_decisions,
 };
 pub use self::judge::{
     ATTRIBUTION_CALL_PURPOSE_NAME, ATTRIBUTION_DIAL, AttributionDecisions, AttributionNotes,

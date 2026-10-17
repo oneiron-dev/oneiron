@@ -110,7 +110,7 @@ impl Settled {
             .get(&vault.store, txn, &stored.card.join_ref)?
             .map(|receipt| JoinOutcome::of(&receipt));
         Ok(Self {
-            card: stored.card,
+            card: stored.into_card(),
             join,
         })
     }
@@ -473,9 +473,13 @@ impl Memory<'_> {
                 .contains(&branch),
             _ => false,
         };
-        Ok(run_settlement(vault, |txn, now| {
+        let settled = run_settlement(vault, |txn, now| {
             answer_in_txn(vault, txn, request, caller, ended, now)
-        })?
-        .settlement())
+        })?;
+        // FIX 1794: the answered card, its join and the participation fact
+        // an acceptance recorded reach the live window of its room or thread.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(&[], &[request.offer_id.as_str()]);
+        Ok(settled.settlement())
     }
 }

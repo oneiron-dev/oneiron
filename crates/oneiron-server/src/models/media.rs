@@ -7,13 +7,16 @@
 //! a job: its permit is held while the provider renders and settled when
 //! the job ends.
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use oneiron::llm::media::{
-    AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, Modality,
+    AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, MediaVoice,
+    Modality,
 };
 use oneiron::llm::run_admission::{HostAccount, MediaGate, RunPermit, RunReceiptSink};
 use oneiron::llm::{SingleRouteBackend, SingleSend, VoiceBackendBinding};
+use oneiron::voice_cascade::media::BankVoiceBinding;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCatalogEntry,
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
@@ -231,6 +234,83 @@ struct MediaSeat {
     rows: Vec<MediaRow>,
     /// The voice tiers its rungs serve: each tier's one rung, by its id.
     tiers: BTreeMap<ModelTierRef, ModelId>,
+}
+
+/// A banked voice's live bindings for one speech call (FIX 1746): each rung
+/// the call may reach whose target held a current clone or reference of the
+/// voice when the call was admitted, in ladder order. Host-only. The call
+/// goes out on a rung in that rung's own binding, never in another's, and a
+/// rung absent here never takes it, so an outage moves the call only to a
+/// target that already holds the voice. Nothing here clones a voice or asks
+/// for consent.
+pub(crate) struct RungVoices {
+    vault: Arc<Vault>,
+    bound: Vec<(ModelId, BankVoiceBinding)>,
+    /// Where in `bound` the binding the call last went out in sits.
+    sent: AtomicUsize,
+}
+
+impl RungVoices {
+    /// The bindings `bound` takes, or `None` when no rung holds the voice.
+    pub(crate) fn new(vault: Arc<Vault>, bound: Vec<(ModelId, BankVoiceBinding)>) -> Option<Self> {
+        (!bound.is_empty()).then(|| Self {
+            vault,
+            bound,
+            sent: AtomicUsize::new(usize::MAX),
+        })
+    }
+
+    /// The one rung that holds the voice, when only one does: the call is
+    /// that rung's alone.
+    pub(crate) fn only_rung(&self) -> Option<&ModelId> {
+        match self.bound.as_slice() {
+            [(rung, _)] => Some(rung),
+            _ => None,
+        }
+    }
+
+    /// The voice as the first rung that holds it renders it.
+    pub(crate) fn first_voice(&self) -> Option<MediaVoice> {
+        self.bound.first().map(|(_, binding)| binding.voice())
+    }
+
+    /// Whether `rung` held the voice when the call was admitted.
+    pub(super) fn holds(&self, rung: &ModelId) -> bool {
+        self.bound.iter().any(|(model, _)| model == rung)
+    }
+
+    /// The voice the call goes out in on `rung`: that rung's own binding,
+    /// while it is still current. `None` when the rung holds none, or the
+    /// voice was withdrawn or re-recorded since.
+    pub(super) fn send_on(&self, rung: &ModelId) -> Option<MediaVoice> {
+        let (at, (_, binding)) = self
+            .bound
+            .iter()
+            .enumerate()
+            .find(|(_, (model, _))| model == rung)?;
+        if !binding.is_current(&self.vault) {
+            return None;
+        }
+        self.sent.store(at, Ordering::Relaxed);
+        Some(binding.voice())
+    }
+
+    /// Whether the binding the call last went out in is still current: an
+    /// answer rendered in a voice withdrawn or re-recorded meanwhile is not
+    /// handed back.
+    pub(crate) fn answered_current(&self) -> bool {
+        self.bound
+            .get(self.sent.load(Ordering::Relaxed))
+            .is_some_and(|(_, binding)| binding.is_current(&self.vault))
+    }
+
+    /// Whether no binding is current any more: the voice was withdrawn or
+    /// re-recorded everywhere while the call waited.
+    pub(crate) fn withdrawn(&self) -> bool {
+        self.bound
+            .iter()
+            .all(|(_, binding)| !binding.is_current(&self.vault))
+    }
 }
 
 /// One row `GET /v1/ai/options` lists: a model that serves an operation,
@@ -624,10 +704,11 @@ impl MediaRuntime {
             .ok_or_else(|| FatalLlmError::InvalidRequest.into())
     }
 
-    fn walk(
-        &self,
+    fn walk<'a>(
+        &'a self,
         request: MediaRequest,
-    ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + '_> {
+        voices: Option<&'a RungVoices>,
+    ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + 'a> {
         let ladder = self.ladder(&request)?;
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
         let run = undeclared_run(
@@ -636,15 +717,34 @@ impl MediaRuntime {
             self.host.clone(),
             Arc::clone(&self.receipts),
         );
-        Ok(async move { ladder.media(&run, request, None).await })
+        Ok(async move { ladder.media(&run, request, None, voices).await })
     }
 
     /// One call to its answer, on a run of its own on the media meter.
     pub async fn run(&self, request: MediaRequest) -> LlmResult<MediaResponse> {
+        self.run_in(request, None).await
+    }
+
+    /// [`Self::run`] for a speech call in a banked voice (FIX 1746): it goes
+    /// only to the rungs of its ladder that hold the voice, each in its own
+    /// binding of it.
+    pub(crate) async fn run_voiced(
+        &self,
+        request: MediaRequest,
+        voices: &RungVoices,
+    ) -> LlmResult<MediaResponse> {
+        self.run_in(request, Some(voices)).await
+    }
+
+    async fn run_in(
+        &self,
+        request: MediaRequest,
+        voices: Option<&RungVoices>,
+    ) -> LlmResult<MediaResponse> {
         if request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        match self.walk(request)?.await? {
+        match self.walk(request, voices)?.await? {
             MediaAnswer::Done(response) => Ok(response),
             // Only a job operation is submitted.
             MediaAnswer::Job(mut job) => {
@@ -662,7 +762,7 @@ impl MediaRuntime {
         }
         let operation = request.operation;
         let sent = self.store.as_ref().map(|_| request.clone());
-        let MediaAnswer::Job(job) = self.walk(request)?.await? else {
+        let MediaAnswer::Job(job) = self.walk(request, None)?.await? else {
             return Err(FatalLlmError::EmptyResponse.into());
         };
         let id = job_ticket(&job.provider_job);
@@ -917,10 +1017,7 @@ impl super::ModelRuntime {
                     .flat_map(|status| status.rungs.iter().enumerate());
                 for (position, rung) in rungs {
                     let live = health.get(&position).is_none_or(RungHealth::live_now);
-                    let Some(model) = rung
-                        .engine_model
-                        .clone()
-                        .filter(|_| rung.available && live)
+                    let Some(model) = rung.engine_model.clone().filter(|_| rung.available && live)
                     else {
                         continue;
                     };

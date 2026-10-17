@@ -519,9 +519,12 @@ fn admitted_addressing_verdict(
     if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
         return Ok(reject());
     }
-    if admitted_endpoint_type(vault, txn, source_entities, &tgt)?
-        .is_some_and(|kind| kind != crate::registry::ENTITY_TYPE_PERSON)
-    {
+    if admitted_endpoint_type(vault, txn, source_entities, &tgt)?.is_some_and(|kind| {
+        !matches!(
+            kind,
+            crate::registry::ENTITY_TYPE_PERSON | crate::registry::ENTITY_TYPE_AGENT_DEF
+        )
+    }) {
         return Ok(reject());
     }
     let Ok(fields) = crate::edge::decode_edge_value_for_kind(EdgeKind::AddressedTo, value) else {

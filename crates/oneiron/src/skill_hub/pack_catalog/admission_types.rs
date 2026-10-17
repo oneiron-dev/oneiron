@@ -158,6 +158,9 @@ pub enum PackCandidateReason {
     /// A hub source whose dependencies carry OSV advisories, or whose
     /// advisory query did not complete, waits for the owner.
     Advisories,
+    /// A travelling AgentPack whose World scope names no single local world
+    /// waits for the owner to pick one, or to create it (OF-491).
+    NeedsWorld,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -187,6 +190,9 @@ pub struct PackInstallReceipt {
     pub predicates: Vec<String>,
     pub kinds: Vec<String>,
     pub skills: Vec<String>,
+    /// The agent an active travelling AgentPack minted, hex (OF-491).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     pub installed_at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
