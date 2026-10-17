@@ -25,6 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/failure_signals.rs` | src | s | 3 crate-vis | — | The host's failure-signal sender (OF-380) |
 | `src/ai_host/harness.rs` | src | s | 1 crate-vis | — | The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit… |
 | `src/ai_host/identity.rs` | src | s | 1 crate-vis | — | Identity decisions (OF-123, ask rule B): the host side of the Dreamer's identity re-check |
+| `src/ai_host/judge_swap.rs` | src | s | 1 crate-vis | — | The Coach's judge-swap upkeep on this server (OF-184) |
 | `src/ai_host/local_vision.rs` | src | m | 8 crate-vis | — | The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound… |
 | `src/ai_host/mod.rs` | src | L | 2 struct · 20 fn · 1 re-export · 22 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
