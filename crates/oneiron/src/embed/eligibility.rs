@@ -24,6 +24,30 @@ pub(crate) fn embeddable_payload_in_txn(
     Ok(embeddable_payload(entity_type, body))
 }
 
+/// [`embeddable_payload_in_txn`] read through `store`: base, or a room's view, whose turns and
+/// messages compose with base. A TURN's text is its shown messages', as `store` holds them.
+pub(super) fn embeddable_payload_in(
+    vault: &crate::Vault,
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<Option<PendingEmbeddingPayload>> {
+    if entity_type == ENTITY_TYPE_TURN {
+        let Some(members) = crate::tagging::turn_members_in_txn(vault, store, txn, id, false)?
+        else {
+            return Ok(None);
+        };
+        let messages: Vec<(EntityId, String)> = members
+            .into_iter()
+            .filter_map(|(message, text, _)| Some((message, text?)))
+            .collect();
+        return Ok(joined_turn_text(&messages).map(PendingEmbeddingPayload::TurnText));
+    }
+    Ok(embeddable_payload(entity_type, body))
+}
+
 /// A TURN's canonical text: its visible MESSAGE children's text in message
 /// order, one per line, read as edited. `None` for a turn that is gone or
 /// archived, or whose messages hold nothing to embed.

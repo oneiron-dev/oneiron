@@ -4655,7 +4655,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -10900,6 +10900,7 @@
       "ReaderRoute",
       "ReaderRunEnd",
       "ReaderSpawnReceipt",
+      "ReaderSpend",
       "RunDeadline",
       "SelfReaderReportCall",
       "SelfReaderSpawnCall",
@@ -10921,8 +10922,8 @@
      "surface": {
       "const": 6,
       "crate-vis": 12,
-      "enum": 7,
-      "fn": 16,
+      "enum": 8,
+      "fn": 18,
       "struct": 21,
       "trait": 1
      }
@@ -10959,7 +10960,7 @@
      "purpose": "—",
      "surface": {
       "const": 8,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 23,
       "struct": 12
@@ -11366,7 +11367,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -14230,7 +14231,7 @@
      "path": "src/context_board/hook_pins.rs",
      "purpose": "Hook blocks on the board (ARCH-0080 §11, OI-1 = A)",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -18138,9 +18139,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 16,
+      "const": 17,
       "crate-vis": 8,
-      "fn": 7,
+      "fn": 8,
       "trait": 1
      }
     },
@@ -20640,7 +20641,7 @@
      "path": "src/embed/eligibility.rs",
      "purpose": "Which stored records are embedded, and what the embedder receives for each",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -20665,10 +20666,20 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/session_media.rs",
+     "purpose": "The session-aware media door (OF-370): a media vector written while a room is off record stays in the room",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -20684,7 +20695,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 3,
-      "crate-vis": 17,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -27298,6 +27309,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactAskRecord",
+      "ArtifactAskStanding",
       "ArtifactRefreshBatch",
       "ArtifactRefreshFailure"
      ],
@@ -27305,8 +27318,9 @@
      "purpose": "Standing artifact questions (ARCH-0076, OF-506): a question whose adapter is [`ARTIFACT_ADAPTER`] asks each…",
      "surface": {
       "crate-vis": 1,
-      "fn": 1,
-      "struct": 2
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -27364,7 +27378,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 5,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -35488,7 +35502,7 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 93,
+      "crate-vis": 94,
       "enum": 1,
       "fn": 12,
       "struct": 6
@@ -35528,7 +35542,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 17
      }
     },
@@ -35570,13 +35584,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GraphAskDeclined",
       "GraphAskOutcome",
       "GraphAskRequest",
       "GraphAskSelection",
+      "QuestionAnswer",
       "QuestionAnswersRequest",
       "QuestionCreateRequest",
       "QuestionEditRequest",
@@ -35588,8 +35603,8 @@
      "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
      "surface": {
       "const": 2,
-      "enum": 1,
-      "fn": 2,
+      "enum": 2,
+      "fn": 3,
       "struct": 9
      }
     },
@@ -35620,7 +35635,7 @@
      "path": "src/receipt/send_receipt_txn.rs",
      "purpose": "Send receipt persistence inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -41018,6 +41033,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "JudgeIncumbent",
+      "JudgeShadowAnswer",
+      "JudgeShadowCase",
+      "JudgeShadowHost",
+      "JudgeSwapReceipt",
+      "JudgeSwapReport"
+     ],
+     "path": "src/skill_optimize/judge_swap.rs",
+     "purpose": "The judge-swap shadow ladder (ARCH-0053, OF-184)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "JudgeAsk",
       "JudgeAskReason",
       "JudgeLabel"
@@ -41038,8 +41075,8 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 12
+      "crate-vis": 7,
+      "re-export": 13
      }
     },
     {
@@ -41259,7 +41296,7 @@
      "purpose": "Skill reliability reads use learning cells, never SkillRecord confidence",
      "surface": {
       "crate-vis": 11,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -45456,7 +45493,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 35
      }
     },
@@ -45554,7 +45591,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 268
+      "fn": 269
      }
     },
     {
@@ -45676,6 +45713,23 @@
      "surface": {
       "fn": 3,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScratchpadRecallMark",
+      "ScratchpadRecallReply",
+      "ScratchpadRecallReplyLine",
+      "ScratchpadRecallRequest"
+     ],
+     "path": "src/task_verb/sdk_scratchpad.rs",
+     "purpose": "The door of `self.focus.scratchpad.recall` (OF-548, ARCH-0032 `#scratchpad-marks`: \"a recall searches the…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -50765,7 +50819,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -51465,7 +51519,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51556,7 +51610,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51719,7 +51773,7 @@
    },
    "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3126,
+   "source_files": 3129,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54481,6 +54535,7 @@
       "ContextPackDepthControls",
       "ContextPackMediaQuery",
       "ContextPackRetrievalBudgetControls",
+      "ContextPackTypeRef",
       "CoreContextPackRequest",
       "MediaQueryKind"
      ],
@@ -54489,7 +54544,7 @@
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -59591,7 +59646,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 223
+      "fn": 224
      }
     },
     {
@@ -60607,7 +60662,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 224
+      "fn": 225
      }
     },
     {
@@ -62066,6 +62121,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/judge_swap.rs",
+     "purpose": "The Coach's judge-swap upkeep on this server (OF-184)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -62738,7 +62803,7 @@
      "path": "src/api/context_board/board.rs",
      "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -62778,7 +62843,7 @@
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -62835,6 +62900,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/context_pack/audience.rs",
+     "purpose": "The audience an assembly reads for: the room a request names, and the caller's read narrowed to that room's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/context_pack/companion_assembly.rs",
      "purpose": "Companion scope-resolution authorization for context-pack assembly",
      "surface": {
@@ -62848,7 +62923,7 @@
      "path": "src/api/context_pack/controls.rs",
      "purpose": "Request DTOs, control structs, and shared limit constants for context-pack assembly",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 24
      }
     },
     {
@@ -62878,7 +62953,7 @@
      "path": "src/api/context_pack/mod.rs",
      "purpose": "Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -67697,7 +67772,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "struct": 1
      }
@@ -69002,7 +69077,7 @@
      "path": "src/server/reader_runner.rs",
      "purpose": "The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -69815,14 +69890,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 280,
+     "files": 281,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70167,7 +70242,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 553,
+   "source_files": 555,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70368,6 +70443,8 @@
       "AiVideoTicket",
       "AnswerContract",
       "AnswerRecord",
+      "ArtifactAskRecord",
+      "ArtifactAskStanding",
       "ArtifactAskUnits",
       "ArtifactCreateRequest",
       "ArtifactExportFile",
@@ -70726,6 +70803,7 @@
       "ProviderPin",
       "PulledImage",
       "QuestionActivation",
+      "QuestionAnswer",
       "QuestionAnswersRequest",
       "QuestionAudience",
       "QuestionCreateRequest",
@@ -70808,6 +70886,10 @@
       "ScopedReadResultGeneratedLens",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
+      "ScratchpadRecallMark",
+      "ScratchpadRecallReply",
+      "ScratchpadRecallReplyLine",
+      "ScratchpadRecallRequest",
       "SelfDurableWait",
       "SelfDurableWaitReason",
       "SelfEffect",
@@ -70975,8 +71057,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 179,
-      "struct": 456
+      "enum": 182,
+      "struct": 460
      }
     },
     {
