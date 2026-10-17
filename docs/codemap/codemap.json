@@ -2816,7 +2816,7 @@
      "path": "src/authority/slip_pairing.rs",
      "purpose": "Single-use pairing links bind a throwaway key and mint one log-backed slip",
      "surface": {
-      "fn": 15,
+      "fn": 16,
       "struct": 5
      }
     },
@@ -13807,7 +13807,7 @@
      "purpose": "The OpenAI proxy's own connector (ARCH-0028): the proxy registers as a connector with its own key and takes…",
      "surface": {
       "const": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
