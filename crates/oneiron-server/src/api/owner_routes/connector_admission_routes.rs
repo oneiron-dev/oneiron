@@ -17,6 +17,10 @@
 //! again: a change binds a delta slate and puts the key back to Pending at
 //! the revision the connector now answers, for the owner's stamp and a
 //! fresh `/qualify`. A catalog's per-grant keys follow each of these.
+//!
+//! `/proxy` admits the OpenAI proxy for one paired actor (ARCH-0028): its
+//! own key on the proxy connector, over the proxy's fixed slate, stamped by
+//! the owner. No endpoint is listed and no suite runs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -63,6 +67,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/connectors/qualify", post(qualify))
         .route("/connectors/refresh", post(refresh))
         .route("/connectors/enabled", post(enabled))
+        .route("/connectors/proxy", post(proxy))
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +132,21 @@ struct RefreshRequest {
 struct EnabledRequest {
     connector: String,
     enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProxyRequest {
+    /// The paired actor the proxy is admitted for, as 32 hex.
+    actor: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ProxyAdmitted {
+    /// The actor's catalog name on the proxy connector.
+    connector: String,
+    key: KeyView,
+    slate: SlateView,
 }
 
 #[derive(Debug, Serialize)]
@@ -789,6 +809,39 @@ fn switch_connector(vault: &Vault, request: &EnabledRequest) -> OwnerResult<KeyV
         (ConnectorKeyStatus::Revoked, _) => return Err(removed()),
     };
     KeyView::new(catalog.key, record)
+}
+
+/// `POST /v1/owner/connectors/proxy`: admits the OpenAI proxy for one
+/// paired actor. An actor already admitted gets its live registration back
+/// as it stands.
+async fn proxy(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ProxyRequest>, JsonRejection>,
+) -> OwnerReply<ProxyAdmitted> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || -> OwnerResult<ProxyAdmitted> {
+        let actor = entity_id("actor", &request.actor)?;
+        let admitted = server
+            .vault()
+            .admit_proxy_connector(&owner, actor, unix_seconds_now())
+            .map_err(engine)?;
+        let connector = admitted
+            .key
+            .catalog
+            .as_ref()
+            .map(|entry| entry.name.clone())
+            .unwrap_or_default();
+        let slate = SlateView::new(admitted.slate_ref, &admitted.slate);
+        Ok(ProxyAdmitted {
+            connector,
+            key: KeyView::new(admitted.key_ref, admitted.key)?,
+            slate,
+        })
+    })
+    .await?;
+    Ok(Json(reply))
 }
 
 fn removed() -> OwnerError {

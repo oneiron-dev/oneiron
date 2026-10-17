@@ -549,17 +549,33 @@ Each answer writes a `conflict.resolved` claim naming the marker, plus one recei
 itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
 may settle that subject's conflicts too, but an agent never closes a claim you stated.
 
-The Dreamer settles nothing until you let it:
+The Dreamer settles them itself, in every vault from birth, with no grant: after each scheduled
+pass, the home node's Dreamer asks its decision ladder about up to eight open conflicts. Its answer
+applies at once, is signed by the Dreamer and receipted under its standing review. Anything its
+ladder can't settle stays here for you. Its verdicts during consolidation never wait on a person
+either: one it can't settle parks as an open conflict here, with both claims standing.
 
-- `POST /v1/owner/conflicts/review` with `{"scope": "subject", "subject": "<32 hex>"}` lets it
-  settle that subject's conflicts; `{"scope": "vault"}` lets it settle every subject's. The
-  reply names the standing grant.
-- `POST /v1/owner/conflicts/review/revoke` with the same body ends that grant. Ending the whole
-  vault's leaves a subject's own grant standing.
+You undo any settlement, the Dreamer's above all:
 
-Once it holds a grant, the home node's Dreamer asks its decision ladder about up to eight of the
-covered conflicts after each scheduled pass. Its answer is signed by the Dreamer and receipted
-under the grant. Anything its ladder can't settle stays here for you.
+- `GET /v1/owner/conflicts/settled` (optionally `?subject=<32 hex>&limit=<n>`): every standing
+  settlement, newest first, with what it kept and superseded and whether the Dreamer made it.
+- `POST /v1/owner/conflicts/revert` with `{"resolved": "<32 hex>"}` retracts that answer, so its
+  marker is open again, and stands each member it superseded again. A member the Dreamer itself
+  wrote comes back as the Dreamer's fresh copy, born of the old one, since a signed claim's
+  history never reopens. A member some later write closed is left as it is. The reply lists
+  each, and one receipt records the revert. The Dreamer leaves a reverted conflict to you.
+
+To keep the Dreamer off some conflicts:
+
+- `POST /v1/owner/conflicts/review/revoke` with `{"scope": "subject", "subject": "<32 hex>"}`
+  holds its review of that subject's conflicts; `{"scope": "vault"}` holds every subject's. The
+  reply names the hold.
+- `POST /v1/owner/conflicts/review` with the same body ends that hold. Ending the whole vault's
+  leaves a subject's own hold standing.
+
+The Dreamer's nightly strength archive works the same way: it archives a quiet generated claim
+of its own at once, keeps the scored snapshot and leaves one receipt naming the claim, and
+`/v1/owner/cleanup/restore` brings it back.
 
 ## Review cleanup
 
@@ -1219,13 +1235,14 @@ durable wait keeps its handle. Once the run ends or takes a new lease, attach ag
 credential attaches per lease: the same credential gets the same handle back, and another
 credential is refused. The run's record keeps the attachment, so a handle still works after a
 restart once the runner holds the same lease again. An action and the run's own step never run
-at once. Refusals carry these codes:
+at once: an attach or action waits up to 5 seconds for the current step or action to end, and
+then runs before the run's next step. Refusals carry these codes:
 - 400 `live_run_required`: a live-run action named no handle.
 - 400 `live_run_invalid`: the handle is malformed.
 - 403 `live_run_unavailable`: an unknown run, a credential or agent that is not the attached
   one, or a run with no attachment. All of these get the same answer.
 - 409 `live_run_stale`: the run's lease moved on.
-- 409 `code_run_busy`: the run is mid-step or mid-action. Retry.
+- 409 `code_run_busy`: the run stayed mid-step or mid-action for those 5 seconds. Retry.
 - 409 `live_run_attached`: another credential is attached to this lease.
 
 A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
