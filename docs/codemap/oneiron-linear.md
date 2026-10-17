@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/dispatch.rs` | src | s | 1 struct · 3 fn | VaultLinearOutboundDoor | Linear mutations through the vault's replay-first outbound dispatch door |
-| `src/egress.rs` | src | s | 1 struct · 1 trait · 2 fn · 2 crate-vis | LinearHostEgress, LinearOutboundDoor | Outbound mutation mapping; host door enforces policy and replay custody |
+| `src/egress.rs` | src | s | 2 struct · 1 trait · 2 fn · 2 crate-vis | LinearHostEgress, LinearMutation, LinearOutboundDoor | Outbound mutation mapping; host door enforces policy and replay custody |
 | `src/http.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 fn · 1 crate-vis | GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient | Bounded host-owned GraphQL transport; credentials never enter the engine |
 | `src/journal.rs` | src | s | 8 crate-vis | — | Host response custody beneath the engine outbound dispatch, not a second gate |
 | `src/lib.rs` | src | s | 4 re-export | — | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror |
