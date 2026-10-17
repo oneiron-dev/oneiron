@@ -711,6 +711,42 @@ fn judge_revision_due_in_txn(
     Ok(picks.saturating_add(outcomes) >= JUDGE_REVISION_FRESH_LABELS)
 }
 
+/// Whether an approval of an edit to `target` may admit in `cycle`: always,
+/// unless `target` is the judge's rubric and [`judge_revision_due_in_txn`]
+/// holds it. An unreadable target is the stale-target answer's, not this one.
+pub(super) fn judge_cadence_allows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    cycle: &SkillEditCycle,
+    spending: &EntityId,
+    target: &EntityId,
+) -> Result<bool> {
+    let record = readable_target(vault.read_skill_record_in_txn(rtxn, target).map(Some))?;
+    if record.is_none_or(|record| record.skill_id != JUDGE_SKILL_ID) {
+        return Ok(true);
+    }
+    let outcomes = held_out_outcome_results_in_txn(vault, rtxn, target)?.len();
+    judge_revision_due_in_txn(vault, rtxn, cycle, spending, target, outcomes)
+}
+
+/// Why an approved tradeoff cannot admit in `cycle` yet, if it cannot: the
+/// cycle already spent its accepts, or the judge's cadence holds its rubric.
+pub(super) fn approval_deferral_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    cycle: &SkillEditCycle,
+    spending: &EntityId,
+    target: &EntityId,
+) -> Result<Option<SkillEditDisposition>> {
+    if accepted_in_cycle_in_txn(vault, rtxn, cycle, spending)? >= cycle_cap_in_txn(vault, rtxn)? {
+        return Ok(Some(SkillEditDisposition::DeferredCycleCap));
+    }
+    if !judge_cadence_allows_in_txn(vault, rtxn, cycle, spending, target)? {
+        return Ok(Some(SkillEditDisposition::DeferredJudgeCadence));
+    }
+    Ok(None)
+}
+
 /// The standing ruling this delivery would only be repeating, if there is one.
 ///
 /// "Standing" is the LATEST ruling, not any ruling: a proposal accepted and

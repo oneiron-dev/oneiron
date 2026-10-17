@@ -12,6 +12,7 @@
 //! come back as the asking node pulls them, in batches. A message of 16 KiB
 //! or more crosses in the /ws codec frame, zstd, when that is smaller.
 
+mod catalog;
 mod client;
 mod serve;
 
@@ -23,6 +24,7 @@ use oneiron_mesh_transport::{MeshConnection, MeshError};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub use catalog::{COST_DECLARED, CatalogRefresh, MESH_PEER, advertises};
 pub use client::{LlmNodes, MeshLlmTransport, VaultLlmNodes};
 pub use serve::{LlmMeshHandler, LlmMeshService};
 
@@ -59,6 +61,8 @@ enum Request {
     Next { stream: u64 },
     /// The asking side let the stream go.
     Cancel { stream: u64 },
+    /// The models this node offers the owner's other nodes.
+    Catalog,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,6 +79,8 @@ enum Reply {
         end: bool,
     },
     Cancelled,
+    /// The offered models' catalog entries as JSON.
+    Catalog(Carried),
     /// The node does not take this request; another may.
     Refused(String),
 }

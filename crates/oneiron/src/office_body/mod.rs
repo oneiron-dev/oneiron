@@ -28,6 +28,7 @@
 mod consent;
 mod docx;
 mod fork;
+mod holder_ask;
 mod pptx;
 mod verbs;
 mod xlsx;
@@ -35,8 +36,8 @@ mod xlsx;
 pub(crate) use consent::MergeAdmission;
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
-    OfficeBodyProposal, ProposalHeader, ProposalMember, ProposalSettleRequest, ProposalSettlement,
-    ReviewedFork, SettleVerdict,
+    OfficeBodyProposal, ProposalAsk, ProposalHeader, ProposalMember, ProposalSettleRequest,
+    ProposalSettlement, ReviewedFork, SettleVerdict,
 };
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
@@ -57,7 +58,7 @@ pub use verbs::{
     OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
     XlsxBodyView, XlsxSheetView,
 };
-pub use xlsx::{BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
+pub use xlsx::{BodyCell, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
 
 use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance, CalcEngineStamp};
@@ -584,9 +585,22 @@ impl Vault {
         &self,
         artifact: &EntityId,
         fork: &EntityId,
-        (expected_head, expected_fork): (&[u8], &[u8]),
+        pins: (&[u8], &[u8]),
         actor: WriteActor,
     ) -> Result<OfficeBodyDiff> {
+        self.merge_office_body_fork_or_wait(artifact, fork, pins, actor)?
+            .map_err(|proposal| fork_waits(&proposal))
+    }
+
+    /// [`Self::merge_office_body_fork`], with the proposal a fork nothing
+    /// answers waits in, in place of its refusal.
+    pub(crate) fn merge_office_body_fork_or_wait(
+        &self,
+        artifact: &EntityId,
+        fork: &EntityId,
+        (expected_head, expected_fork): (&[u8], &[u8]),
+        actor: WriteActor,
+    ) -> Result<std::result::Result<OfficeBodyDiff, EntityId>> {
         self.with_write_txn_grouped(|wtxn| {
             loro_kind(&self.store, wtxn, artifact)?;
             let proposal = consent::proposal_of(&self.store, wtxn, artifact, fork)?;
@@ -603,12 +617,11 @@ impl Vault {
             };
             let (_, landed) =
                 consent::settle_in_txn(self, wtxn, artifact, &proposal, &request, actor)?;
-            landed.into_iter().next().map(|(_, diff)| diff).ok_or_else(|| {
-                Error::InvalidConfig(format!(
-                    "the fork waits in proposal {} for a person outside its opener's lineage; no grant covers it",
-                    proposal.to_hex()
-                ))
-            })
+            Ok(landed
+                .into_iter()
+                .next()
+                .map(|(_, diff)| diff)
+                .ok_or(proposal))
         })
     }
 
@@ -1087,6 +1100,14 @@ fn version_key(owner: &EntityId, number: u64) -> Vec<u8> {
     let mut key = owner.as_bytes().to_vec();
     key.extend_from_slice(&number.to_be_bytes());
     key
+}
+
+/// The refusal of a fork nothing answers, which waits in `proposal`.
+pub(crate) fn fork_waits(proposal: &EntityId) -> Error {
+    Error::InvalidConfig(format!(
+        "the fork waits in proposal {} for a person outside its opener's lineage; no grant covers it, so its holders are asked",
+        proposal.to_hex()
+    ))
 }
 
 fn invalid(message: &str) -> Error {
