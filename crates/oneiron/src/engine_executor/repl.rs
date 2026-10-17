@@ -452,12 +452,15 @@ impl EngineNativeExecutor<'_> {
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
+            // The fold receipts the step's stores computed land in it too,
+            // beside the bindings they describe.
             let mut next_generation = self
                 .storage
-                .put_code_run_replay_record_if_generation_with_heal(
+                .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
                     expected_generation,
                     repairs.healed().then_some(&config.model),
+                    &host.receipts,
                 )?;
             // The implicit bubble is downstream of its checkpoint commit. A
             // compare-and-put failure emits nothing. A terminal retry replays
