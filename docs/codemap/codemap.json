@@ -64578,7 +64578,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
