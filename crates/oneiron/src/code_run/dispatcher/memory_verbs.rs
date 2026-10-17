@@ -75,6 +75,8 @@ impl HostSelfDispatcher<'_> {
             // A callable skill loads against the canonical vault and the
             // running attempt's lease, and records its invocation there.
             | SelfEffect::SkillsCall
+            // A team spawns canonical children and writes a canonical receipt.
+            | SelfEffect::Team
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),

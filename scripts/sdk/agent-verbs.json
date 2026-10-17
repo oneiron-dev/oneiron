@@ -3346,6 +3346,20 @@
       "effect": "SkillsCall"
     },
     {
+      "name": "self.team.start",
+      "input": "crate::team::TeamStartInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
+      "name": "self.team.record",
+      "input": "crate::team::TeamRecordInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
       "name": "self.spawn",
       "input": "crate::code_run::ReaderSpawnInput",
       "scope": "Write",
