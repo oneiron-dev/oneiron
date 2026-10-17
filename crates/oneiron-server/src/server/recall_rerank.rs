@@ -126,6 +126,10 @@ impl SyncServer {
         let purpose = rerank_request("", &[], ModelLocality::OwnServer);
         let lease = meter
             .admit_for_request(&purpose)
+            .inspect_err(|denied| {
+                self.vault
+                    .budget_denied_hooks(denied, &meter, &run_id, Some(actor));
+            })
             .and_then(|admission| meter.abort(&admission.lease).map(|_| admission.lease))
             .map_err(spent)?;
         Ok(DoorRerank::Served(ServedRerank {

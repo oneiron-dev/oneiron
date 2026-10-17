@@ -82,12 +82,27 @@ impl Vault {
             .into_iter()
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
+        self.hooks_replay_binding(runtime, binding_id, &row, body, since, limit)
+    }
+
+    /// [`Self::hooks_replay_body`] over `row` as given, stored or not: a hub
+    /// hook replays as the binding its Candidate pack would get, as its test
+    /// (ARCH-0080 §9).
+    pub(crate) fn hooks_replay_binding(
+        &self,
+        runtime: &dyn HookBodyRuntime,
+        binding_id: EntityId,
+        row: &PackHookBinding,
+        body: Option<String>,
+        since: Option<FactPositionHex>,
+        limit: usize,
+    ) -> Result<Vec<HookReplayEntry>> {
         if row.selector.phase != HookPhase::Fact {
             return Err(Error::InvalidConfig("only a fact hook replays".to_owned()));
         }
         let since = since.as_ref().map(FactPositionHex::parse).transpose()?;
         let limit = limit.clamp(1, MAX_REPLAY_ENTRIES);
-        let grant = effective_grant(self, binding_id, &row)?;
+        let grant = effective_grant(self, binding_id, row)?;
         let memory = self.memory(grant.reader, filter::edge_class(grant.reader_class));
         let lane = memory
             .read_lane(ClaimReadStatus::Recorded)
@@ -96,12 +111,12 @@ impl Vault {
             vault: self,
             runtime,
             binding_id,
-            binding: &row,
+            binding: row,
             grant: &grant,
             body: match body {
                 Some(body) => Ok(body),
                 None => self
-                    .pack_hook_body(&row)
+                    .pack_hook_body(row)
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| {
                         String::from_utf8(bytes).map_err(|_| "hook body is not UTF-8".to_owned())

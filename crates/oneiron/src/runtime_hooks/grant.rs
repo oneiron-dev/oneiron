@@ -32,13 +32,13 @@ pub struct HookGrant {
 }
 
 impl HookGrant {
-    /// The author's ceiling. Slice 1 bindings are owner-written, so this is
-    /// the owner's own reach.
+    /// The author's ceiling: the owner's own reach for an owner's hook, and
+    /// for a hub hook its publisher's, which reads only what its Grant does.
     #[must_use]
     pub fn author_ceiling(binding: &PackHookBinding) -> Self {
         Self {
-            reader: binding.owner,
-            reader_class: HookActorClass::Human,
+            reader: binding.author_id(),
+            reader_class: binding.author_class(),
             predicates: Vec::new(),
             worlds: Vec::new(),
         }

@@ -1,8 +1,10 @@
 //! Served hub install (OF-519, OF-213): the owner names a configured hub, a
 //! folder and a pin; fetch, the owner's fit rung and the ordinary install door
 //! run in turn. Everything installs; code lands Candidate until its sandbox
-//! suite qualifies it. Hooks bind only on the owner's own consent
-//! ([`Vault::bind_pack_hooks`]).
+//! suite qualifies it; a hook pack's suite is its replay
+//! ([`Vault::qualify_pack_hooks`]). Hooks first bind only on the owner's own
+//! consent ([`Vault::bind_pack_hooks`]); a same-capability update rebinds
+//! them, and a wider one asks again.
 use super::{
     PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource, invalid,
 };
@@ -150,8 +152,13 @@ impl Vault {
         }
         let ask = self.prepare_pack_install(source_id, &pinned, &publisher, &OwnerAskedFit)?;
         let disposition = self.install_pack(&ask)?;
-        if matches!(disposition, PackInstallDisposition::Installed(_)) {
+        if let PackInstallDisposition::Installed(receipt) = &disposition {
             self.mark_hub_ref(&tracked, &revision, true)?;
+            // A hook pack's update lands Candidate until its test; one that
+            // installs here takes its hooks with it, under the update rule.
+            self.with_write_txn_grouped(|txn| {
+                self.follow_pack_hook_update_in_txn(txn, owner, receipt, source_id, &source)
+            })?;
         }
         Ok(disposition)
     }

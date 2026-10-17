@@ -124,6 +124,13 @@ pub struct PermitFacts {
 /// them; the engine never reads them back to decide.
 pub trait RunReceiptSink: Send + Sync {
     fn record(&self, receipt: RunReceipt);
+
+    /// A line the run draws on refused a reservation (`host.budget.hit`):
+    /// `seat` is the model, connector or allocation it refused, and `guard`
+    /// the line's meter. A sink with no vault runs no hooks.
+    fn budget_hit(&self, seat: &str, guard: &super::super::BudgetGuard, denied: &BudgetDenied) {
+        let _ = (seat, guard, denied);
+    }
 }
 
 /// Receipts kept in memory, in order.

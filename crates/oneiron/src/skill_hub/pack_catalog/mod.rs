@@ -22,8 +22,8 @@ pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub(crate) use hooks::is_hook_binding;
 pub use hooks::{
-    HookActorClass, HookOutcomeKind, HookPhase, HookRenderClass, HookSelector, PackHook,
-    PackHookBinding,
+    FOREIGN_SKILL_PUBLISHER, HookActorClass, HookAuthor, HookOutcomeKind, HookPhase,
+    HookRenderClass, HookSelector, PackHook, PackHookBinding,
 };
 pub use hub_install::hub_pin;
 pub use local::LOCAL_PACK_NAME;
@@ -72,8 +72,8 @@ mod removal;
 #[cfg(test)]
 pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 pub use qualify::{
-    ConnectorPackQualification, PackConnectorReceipt, ProbePackQualifier, QualifiedPackFitPolicy,
-    SetupCheckQualifier,
+    ConnectorPackQualification, PackConnectorReceipt, PackHookQualification, PackHookReplay,
+    ProbePackQualifier, QualifiedPackFitPolicy, SetupCheckQualifier,
 };
 mod schema;
 mod screening;

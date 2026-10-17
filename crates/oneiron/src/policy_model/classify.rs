@@ -410,19 +410,25 @@ impl Vault {
         // A budgeted call gets its own admission, even on a stale-policy
         // retry. A denied admission is a skipped sovereign classifier pass,
         // not a free invocation on an old lease.
-        Ok(OwnerPlanePass {
-            verdict: safeguard_verdict(
-                safeguard,
-                request,
-                &prompt,
-                &AnswerPlane::Owner,
-                crate::vault::embedded_owner_actor_id()?,
-                binding,
-                config,
-                audit,
-            )
-            .await?,
-        })
+        let verdict = safeguard_verdict(
+            safeguard,
+            request,
+            &prompt,
+            &AnswerPlane::Owner,
+            crate::vault::embedded_owner_actor_id()?,
+            binding,
+            config,
+            audit,
+        )
+        .await?;
+        // The guard refused the pass: `host.budget.hit` on its line.
+        if let SafeguardModel::Budgeted { budget, .. } = safeguard
+            && verdict.decision.skip_reason() == Some(PolicySkipReason::BudgetExhausted)
+        {
+            let line = budget.read().attempt_id;
+            self.budget_denied_hooks(&crate::llm::BudgetDenied::Exhausted, budget, &line, None);
+        }
+        Ok(OwnerPlanePass { verdict })
     }
 
     /// The prompt this vault would send for `request`, or `None` when the owner

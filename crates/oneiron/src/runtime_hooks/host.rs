@@ -4,8 +4,9 @@
 
 use serde_json::{Value, json};
 
+use crate::llm::BudgetDenied;
 use crate::skill_hub::pack_catalog::HookActorClass;
-use crate::{BudgetExhaustionPolicy, EntityId, Vault};
+use crate::{BudgetExhaustionPolicy, BudgetGuard, EntityId, Vault};
 
 use super::{InvocationId, VerbCall, VerbDomain};
 
@@ -66,5 +67,40 @@ impl Vault {
         if let Err(error) = self.post_verb_hooks(pre, result) {
             tracing::warn!(?error, "host.budget.hit post-hooks failed");
         }
+    }
+
+    /// `host.budget.hit` for a guard that just refused a reservation. `seat`
+    /// is the model or line it refused; the guard gives the policy and the
+    /// accounting. `actor` is whose work the line paid for, else the actor the
+    /// guard is bound to, else the vault's owner. A refusal other than a spent
+    /// line runs nothing, and the refusal itself stands as the host made it.
+    pub fn budget_denied_hooks(
+        &self,
+        denied: &BudgetDenied,
+        guard: &BudgetGuard,
+        seat: &str,
+        actor: Option<EntityId>,
+    ) {
+        if !matches!(denied, BudgetDenied::Exhausted) {
+            return;
+        }
+        let actor = match actor.or_else(|| guard.actor()) {
+            Some(actor) => actor,
+            None => match crate::vault::embedded_owner_actor_id() {
+                Ok(owner) => owner,
+                Err(error) => {
+                    tracing::warn!(?error, "host.budget.hit has no actor");
+                    return;
+                }
+            },
+        };
+        let read = guard.read();
+        self.budget_hit_hooks(BudgetHit {
+            seat,
+            policy: read.on_budget_exhausted,
+            accounting: serde_json::to_value(&read).unwrap_or(Value::Null),
+            actor,
+            invocation: InvocationId::mint(),
+        });
     }
 }

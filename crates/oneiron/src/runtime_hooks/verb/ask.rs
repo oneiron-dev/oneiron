@@ -16,7 +16,7 @@ use crate::task_verb::{
     ConsultPayloadRef, TaskAskDecision, TaskAskDefault, TaskAskHandle, TaskAskOptionId,
     TaskAskQuestion, TaskAskResult, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus,
 };
-use crate::{EdgeActorClass, EntityId, Error, MemoryError, Result, Vault};
+use crate::{EntityId, Error, MemoryError, Result, Vault};
 
 use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop};
 
@@ -47,6 +47,7 @@ struct VerbAsk {
     /// The hook's author, who asked and reads the answer.
     #[serde(with = "crate::serialize::entity_ref")]
     author: EntityId,
+    author_class: HookActorClass,
     /// The ask's group: its handle.
     #[serde(with = "crate::serialize::entity_ref")]
     ask: EntityId,
@@ -101,7 +102,7 @@ pub(super) fn retry(vault: &Vault, call: &VerbCall) -> Result<Retry> {
         return skipped(USED);
     }
     let status = vault
-        .memory(row.author, EdgeActorClass::Human)
+        .memory(row.author, super::super::filter::edge_class(row.author_class))
         .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
     let result = match status {
         Ok(TaskAskStatus::Pending { .. } | TaskAskStatus::Changed { .. }) => {
@@ -186,7 +187,8 @@ pub(super) fn open(
             position: u32::try_from(position).unwrap_or(u32::MAX),
             binding: binding_id,
             hook: format!("{}/{}", binding.pack, binding.hook),
-            author: binding.owner,
+            author: binding.author_id(),
+            author_class: binding.author_class(),
             ask,
             state: VerbAskState::Open,
             created_at: vault.store.clock.now_recorded_at(),
@@ -195,7 +197,10 @@ pub(super) fn open(
     };
     let key = call.invocation.0;
     let opened = vault
-        .memory(binding.owner, EdgeActorClass::Human)
+        .memory(
+            binding.author_id(),
+            super::super::filter::edge_class(binding.author_class()),
+        )
         .tasks_ask_with_txn_effect(&spec, |txn, ask| {
             let row = row(ask).map_err(MemoryError::from)?;
             ASKS.put(&vault.store, txn, &key, &row)

@@ -86,28 +86,31 @@ fn apply_intent(
     intent: HookIntent,
     report: &mut HookPassReport,
 ) -> Result<()> {
-    let live = bindings.iter().any(|(id, binding)| {
-        *id == intent.binding && binding.enabled && binding.owner == intent.author
+    let live = bindings.iter().find(|(id, binding)| {
+        *id == intent.binding && binding.enabled && binding.author_id() == intent.author
     });
-    let refusal = if !enabled {
-        Some("hooks are off")
-    } else if !live {
-        Some("the binding is no longer live and enabled")
-    } else {
-        None
+    let binding = match (enabled, live) {
+        (true, Some((_, binding))) => binding,
+        (false, _) | (true, None) => {
+            let reason = if enabled {
+                "the binding is no longer live and enabled"
+            } else {
+                "hooks are off"
+            };
+            report.intents_refused += 1;
+            return settle(vault, key, Err(reason.to_owned()));
+        }
     };
-    if let Some(reason) = refusal {
-        report.intents_refused += 1;
-        return settle(vault, key, Err(reason.to_owned()));
-    }
     let outcome: HookOutcome = serde_json::from_str(&intent.outcome_json)
         .map_err(|_| Error::CorruptedIndex("hook intent outcome"))?;
     // The doors below run at hook depth 1: no verb hook fires inside them.
     let _depth = super::verb::HookDepth::enter();
+    let class = super::filter::edge_class(binding.author_class());
     let memory = vault
-        .memory(intent.author, EdgeActorClass::Human)
+        .memory(intent.author, class)
         .with_host_origin(HostWriteOrigin::new(hook_envelope(
             intent.author,
+            class,
             intent.binding,
             key,
         )?));
@@ -195,9 +198,14 @@ fn settle_in_txn(
 
 /// The envelope a hook's writes carry: its author, source Generated, and the
 /// binding and run as provenance.
-fn hook_envelope(author: EntityId, binding: EntityId, key: &RunKey) -> Result<WriteEnvelope> {
+fn hook_envelope(
+    author: EntityId,
+    class: EdgeActorClass,
+    binding: EntityId,
+    key: &RunKey,
+) -> Result<WriteEnvelope> {
     Ok(WriteEnvelope::new(
-        WriteActor::new(author, EdgeActorClass::Human),
+        WriteActor::new(author, class),
         ClaimSource::Generated,
         WriteProvenance::new(Value::Map(vec![
             (Value::from("surface"), Value::from("runtime_hooks")),

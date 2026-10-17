@@ -522,7 +522,7 @@ impl Pass<'_> {
             if queued {
                 let intent = HookIntent {
                     binding: run.binding_id,
-                    author: run.binding.owner,
+                    author: run.binding.author_id(),
                     outcome_json: verdict.outcome_json.clone().unwrap_or_default(),
                     lineage: chain,
                     state: HookIntentState::Pending,
@@ -762,7 +762,7 @@ fn receipt(
         receipt_id: store::receipt_id(&run.key),
         receipt_kind: ReceiptKind::Hook,
         occurred_at: now / 1_000,
-        actor: Some(binding.owner.to_hex()),
+        actor: Some(binding.author_id().to_hex()),
         on_behalf_of: None,
         outcome: verdict.token.clone(),
         job_ref: None,

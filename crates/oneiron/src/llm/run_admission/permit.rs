@@ -329,10 +329,13 @@ impl RunInner {
             });
         };
         let units = priced(native_units, native, &unit, rates)?;
-        let lease = meter.admit_reserve(units).map_err(|denied| match denied {
-            BudgetDenied::Exhausted => short(),
-            denied => RunDenied::Budget { denied },
-        })?;
+        let lease = meter
+            .admit_reserve(units)
+            .inspect_err(|denied| self.budget_hit(&reference.id, &meter, denied))
+            .map_err(|denied| match denied {
+                BudgetDenied::Exhausted => short(),
+                denied => RunDenied::Budget { denied },
+            })?;
         Ok(Some((
             reference,
             AllocationHold {
