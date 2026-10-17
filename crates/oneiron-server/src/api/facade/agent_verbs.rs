@@ -116,6 +116,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shares.view", post(facade_route))
         .route("/vault.hooks.replay", post(facade_route))
         .route("/vault.artifacts.view", post(facade_route))
+        .route("/vault.code.diff", post(facade_route))
+        .route("/vault.code.blame", post(facade_route))
         .route("/vault.artifacts.export", post(facade_route))
         .route("/vault.artifacts.born_from", post(facade_route))
         .route("/vault.artifacts.proposals", post(facade_route))

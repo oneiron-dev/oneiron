@@ -379,6 +379,12 @@ impl OneironClient {
                 "vault.artifacts.view" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
                 >(client, verb, &input),
+                "vault.code.diff" => remote_agent_verb_output::<
+                    Option<oneiron::code_document::CodeDiffView>,
+                >(client, verb, &input),
+                "vault.code.blame" => remote_agent_verb_output::<
+                    Option<oneiron::code_document::CodeBlameView>,
+                >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
@@ -2099,6 +2105,32 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.view", value)
+    }
+    /// The semantic changes between two tested states of one code file, each with the operations that made it.
+    pub fn vault_code_diff(
+        &self,
+        input: &oneiron::code_document::CodeDiffRequest,
+    ) -> Result<Option<oneiron::code_document::CodeDiffView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.diff", value)
+    }
+    /// Every unit of one tested code file state, blamed by the operations that wrote it.
+    pub fn vault_code_blame(
+        &self,
+        input: &oneiron::code_document::CodeStateRequest,
+    ) -> Result<Option<oneiron::code_document::CodeBlameView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.blame", value)
     }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(
