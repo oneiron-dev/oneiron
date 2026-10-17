@@ -11551,7 +11551,7 @@
      "path": "src/code_run/vault_read/validate.rs",
      "purpose": "Request-shape validation and short-reference parsing, run before any dispatch",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -55407,6 +55407,7 @@
       "CoreBatchShortIdHydrateRequest",
       "CoreHydrateRequest",
       "CoreMemoryTimelineRequest",
+      "CoreQueryAffect",
       "CoreQueryRequest",
       "CountMode",
       "View"
@@ -55416,7 +55417,7 @@
      "surface": {
       "enum": 2,
       "fn": 3,
-      "struct": 7
+      "struct": 8
      }
     },
     {
