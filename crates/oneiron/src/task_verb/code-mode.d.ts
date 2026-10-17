@@ -97,7 +97,7 @@ declare const vault: {
     put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
     read(input: { artifact_ref: string; version: number }): Promise<unknown>;
     release_wait(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
-    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image: string; target: unknown }[] }): Promise<unknown>;
+    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image?: string | null; review_image_ref?: string | null; target: unknown }[] }): Promise<unknown>;
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
     waits(input: { artifact_ref: string }): Promise<unknown>;
