@@ -912,6 +912,9 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
   `POST .../one-space` with `{"space"}` binds every slot that space accepts, text included. Both
   refuse a slot an open move carries until the move ends.
+  With the text slot bound, a text query embeds through that space's text tower in the context
+  pack, the Context Board, `/v1/core/query` and recall (HTTP, WebSocket and MCP), and its list
+  holds every kind of item the space holds. `/api/search/semantic` still reads the text index.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
