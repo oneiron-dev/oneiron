@@ -84,6 +84,7 @@ pub(super) fn settle_with_owner_in(
     if let Some(result) = read_result(vault, txn, id)? {
         // A replay runs the continuation again; it acts at most once.
         super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
+        deliver_to_parked_runs(vault, txn, id, &result, now)?;
         return Ok(Some(result));
     }
     let Some(group) = ask_record::read_group(vault, txn, id)? else {
@@ -263,7 +264,23 @@ pub(super) fn settle_with_owner_in(
         .map_err(|_| ask_record::invalid())?;
     // OF-220: an engine block's ask moves its TASK in the settling commit.
     super::highway_block::continue_blocked_task_in(vault, txn, id, &result, now)?;
+    deliver_to_parked_runs(vault, txn, id, &result, now)?;
     Ok(Some(result))
+}
+
+/// A code run parked on the group's wait (`tasks.wait`, or a verb hook's
+/// ask) gets the settled status as its reply in the settling commit. A
+/// replay delivers again, to nothing that already has it.
+fn deliver_to_parked_runs(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    result: &TaskAskResult,
+    now: u64,
+) -> Result<()> {
+    let reply = serde_json::to_value(TaskAskStatus::Settled(Box::new(result.clone())))
+        .map_err(|_| crate::Error::InvariantViolation("a settled ask status is not JSON"))?;
+    crate::code_run::deliver_wait_in_txn(vault, txn, id, &reply, now.saturating_mul(1000)).map(drop)
 }
 
 pub(super) fn question_digest(
