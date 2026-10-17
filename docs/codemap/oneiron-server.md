@@ -146,7 +146,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/legal_hold_doors.rs` | src | s | 6 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
-| `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
+| `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 2 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 15 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |

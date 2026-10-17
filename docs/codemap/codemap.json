@@ -39009,7 +39009,7 @@
      "path": "src/skill/exploration_trial.rs",
      "purpose": "Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -40632,7 +40632,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 11
      }
     },
@@ -40779,8 +40779,8 @@
      "path": "src/skill_optimize/gate/tradeoff.rs",
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
-      "crate-vis": 7,
-      "fn": 11,
+      "crate-vis": 10,
+      "fn": 12,
       "struct": 5
      }
     },
@@ -62967,7 +62967,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/role_picks.rs",
-     "purpose": "OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE)",
+     "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
      "surface": {
       "crate-vis": 1
      }
