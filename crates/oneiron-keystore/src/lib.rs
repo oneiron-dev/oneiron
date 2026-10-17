@@ -7,30 +7,45 @@
 //! else. Another of the owner's machines, or the recovery kit, wraps the keys
 //! again for a new seed.
 //!
-//! Adapters:
+//! Adapters, each with the assurance it reports ([`KeystoreAssurance`]):
 //! - Apple: `AppleKeychain`, the data-protection keychain, with the attributes
-//!   `AfterFirstUnlockThisDeviceOnly` and not synchronizable.
+//!   `AfterFirstUnlockThisDeviceOnly` and not synchronizable (platform).
+//! - Apple, hardware tier: `SecureEnclaveKeychain`, the same items sealed to a
+//!   P-256 key the Secure Enclave holds and never releases (hardware).
+//! - Windows: `WindowsDpapiKeystore`, one file per slot sealed by DPAPI to this
+//!   user on this machine (platform).
 //! - Other Unix: `LocalFileKeystore`, 0600 files in a 0700 directory outside the
-//!   vault, tagged so that backup tools skip it.
-//! - Windows has no adapter yet: [`platform_keystore`] returns `Unavailable` there.
+//!   vault, tagged so that backup tools skip it (software).
 //! - Tests: `MemoryKeystore`, process memory only, built under `cfg(test)` or the
 //!   `test-keystore` feature and never for a host.
+//!
+//! [`platform_keystore`] picks the platform tier; [`hardware_keystore`] the
+//! hardware one, refused where this platform has none: never a silent downgrade
+//! to software (identity, signature suites).
 
 use zeroize::Zeroizing;
 
 #[cfg(target_vendor = "apple")]
 mod apple;
+#[cfg(target_vendor = "apple")]
+mod apple_enclave;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod file;
 #[cfg(any(test, feature = "test-keystore"))]
 mod memory;
+#[cfg(windows)]
+mod windows;
 
 #[cfg(target_vendor = "apple")]
 pub use apple::AppleKeychain;
+#[cfg(target_vendor = "apple")]
+pub use apple_enclave::SecureEnclaveKeychain;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub use file::LocalFileKeystore;
 #[cfg(any(test, feature = "test-keystore"))]
 pub use memory::MemoryKeystore;
+#[cfg(windows)]
+pub use windows::WindowsDpapiKeystore;
 
 /// What a slot holds. One variant per secret the engine keeps at rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -107,6 +122,34 @@ pub enum KeystoreLocality {
     ProcessOnly,
 }
 
+/// What keeps a backend's slots at rest, as the owner is told it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeystoreAssurance {
+    /// Each slot is sealed to a key this device's secure hardware holds and never
+    /// releases; a copy of the stored bytes opens nowhere else.
+    Hardware,
+    /// The operating system's protected store, bound to this device or to this
+    /// user's logon on it.
+    Platform,
+    /// Files only the owner's account may read.
+    Software,
+    /// This process's memory.
+    Process,
+}
+
+impl KeystoreAssurance {
+    /// Stable name for reports.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Hardware => "hardware",
+            Self::Platform => "platform",
+            Self::Software => "software",
+            Self::Process => "process",
+        }
+    }
+}
+
 /// No secret appears in these errors.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KeystoreError {
@@ -138,20 +181,33 @@ pub trait DeviceKeystore: Send + Sync + 'static {
     /// Empties the slot. An empty slot is not an error.
     fn delete(&self, slot: &KeystoreSlot) -> Result<()>;
     fn locality(&self) -> KeystoreLocality;
+    /// What keeps the slots at rest. An adapter that claims more than files
+    /// says so; nothing else does.
+    fn assurance(&self) -> KeystoreAssurance {
+        match self.locality() {
+            KeystoreLocality::ThisDeviceOnly => KeystoreAssurance::Software,
+            KeystoreLocality::ProcessOnly => KeystoreAssurance::Process,
+        }
+    }
 }
 
 /// The keychain service the Apple adapter files slots under by default.
 pub const DEFAULT_KEYCHAIN_SERVICE: &str = "oneiron.device-keys";
 
 /// The default key directory on Unix systems other than Apple:
-/// `$XDG_STATE_HOME/oneiron/keys`, else `$HOME/.local/state/oneiron/keys`. Unset,
-/// empty and relative variables name no place a key may be written, so `None`.
+/// `$XDG_STATE_HOME/oneiron/keys`, else `$HOME/.local/state/oneiron/keys`. On
+/// Windows, `%LOCALAPPDATA%\Oneiron\keys`, the profile part that never roams.
+/// Unset, empty and relative variables name no place a key may be written, so
+/// `None`.
 #[must_use]
 pub fn default_key_dir() -> Option<std::path::PathBuf> {
     let absolute = |key: &str| {
         let path = std::path::PathBuf::from(std::env::var_os(key)?);
         path.is_absolute().then_some(path)
     };
+    if cfg!(windows) {
+        return absolute("LOCALAPPDATA").map(|local| local.join("Oneiron").join("keys"));
+    }
     if let Some(state) = absolute("XDG_STATE_HOME") {
         return Some(state.join("oneiron").join("keys"));
     }
@@ -172,15 +228,19 @@ pub fn default_platform_keystore(
     let dir = default_key_dir().ok_or(KeystoreError::Unavailable(
         "neither XDG_STATE_HOME nor HOME names an absolute key directory",
     ))?;
-    #[cfg(not(all(unix, not(target_vendor = "apple"))))]
+    #[cfg(windows)]
+    let dir = default_key_dir().ok_or(KeystoreError::Unavailable(
+        "LOCALAPPDATA names no absolute key directory",
+    ))?;
+    #[cfg(not(any(all(unix, not(target_vendor = "apple")), windows)))]
     let dir = default_key_dir().unwrap_or_default();
     platform_keystore(DEFAULT_KEYCHAIN_SERVICE, &dir, vault_dirs)
 }
 
 /// This platform's this-device-only keystore.
 /// - `service` names the keychain service on Apple.
-/// - `dir` is the key directory on other Unix systems. It must lie outside every
-///   vault directory in `vault_dirs`.
+/// - `dir` is the key directory on Windows and on other Unix systems. It must
+///   lie outside every vault directory in `vault_dirs`.
 pub fn platform_keystore(
     service: &str,
     dir: &std::path::Path,
@@ -198,11 +258,40 @@ pub fn platform_keystore(
             dir, vault_dirs,
         )?))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        let _ = service;
+        Ok(std::sync::Arc::new(WindowsDpapiKeystore::open(
+            dir, vault_dirs,
+        )?))
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (service, dir, vault_dirs);
         Err(KeystoreError::Unavailable(
             "no adapter for this platform yet",
+        ))
+    }
+}
+
+/// This platform's hardware-wrapped keystore: the Secure Enclave on Apple.
+/// Refused where there is none, never answered with a weaker one; the caller
+/// picks the platform tier itself if it wants it.
+pub fn hardware_keystore(
+    service: &str,
+    dir: &std::path::Path,
+    vault_dirs: &[&std::path::Path],
+) -> Result<std::sync::Arc<dyn DeviceKeystore>> {
+    let _ = (dir, vault_dirs);
+    #[cfg(target_vendor = "apple")]
+    {
+        Ok(std::sync::Arc::new(SecureEnclaveKeychain::new(service)?))
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        let _ = service;
+        Err(KeystoreError::Unavailable(
+            "no hardware-wrapped keystore on this platform",
         ))
     }
 }
