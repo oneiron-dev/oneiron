@@ -47,15 +47,17 @@ impl Vault {
         Ok(receipt)
     }
 
-    /// Revokes a secret on the vault owner's behalf: [`Vault::revoke_secret`]
-    /// behind the owner proof, rechecked in the committing transaction. A
+    /// Revokes a secret on the vault owner's behalf: terminal value death,
+    /// the record and every lease over it revoked with a
+    /// [`RotationKind::Revoked`] receipt, behind the owner proof, rechecked in
+    /// the committing transaction. It is the only served revocation. A
     /// portable record's revocation reaches the owner's other machines as a
     /// signed transition (OF-422).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
-    /// the live owner's; otherwise every error [`Vault::revoke_secret`]
-    /// returns.
+    /// the live owner's; [`SecretError::SecretRefNotFound`] for a name
+    /// custody does not hold; otherwise the store's errors.
     pub fn revoke_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
