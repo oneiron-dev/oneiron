@@ -1545,7 +1545,7 @@ export type DeckProposeOutcome = { proposed?: PendingProposalView | null; reject
 /** `oneiron::blob_artifact::verbs::NativeOutputRequest` */
 export type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null }
 /** `oneiron::receipt::kernel::ReceiptKind` */
-export type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal"
+export type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle"
 /** `oneiron::receipt::kernel::ReceiptRecord` */
 export type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> }
 /** `oneiron::blob_artifact::verbs::KeptProposal` */
