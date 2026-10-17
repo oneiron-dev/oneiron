@@ -593,6 +593,19 @@ impl Vault {
         };
         PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
+        // A machine admitted here changed the roster: seal the portable
+        // credentials again, as `enroll_machine` does. The redemption stands
+        // whatever happens, since the link is spent and its slip exists only
+        // in this reply; the sync lane's upkeep re-seal retries a failure.
+        #[cfg(feature = "sync")]
+        if machine.is_some()
+            && let Err(error) = self.reseal_after_machine_admission()
+        {
+            tracing::warn!(
+                error = %error,
+                "custody re-seal after a paired machine's admission failed; upkeep retries it"
+            );
+        }
         Ok(PairingRedeemed {
             slip,
             machine,
