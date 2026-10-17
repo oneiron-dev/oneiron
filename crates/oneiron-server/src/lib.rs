@@ -27,6 +27,7 @@ mod api;
 mod auth;
 mod big_rung;
 mod broadcast;
+mod builtin_host;
 mod byte_line;
 pub mod cli;
 pub mod commands;
