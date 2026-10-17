@@ -80,6 +80,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET => {
             Some(super::super::maintenance::agent_health::COACH_AGENT_HEALTH_FACET)
         }
+        super::super::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET => {
+            Some(super::super::maintenance::agent_health::COACH_AGENT_HEALTH_ASK_FACET)
+        }
         coach::COACH_ISSUES_FACET => Some(coach::COACH_ISSUES_FACET),
         coach::COACH_CODE_FIX_FACET => Some(coach::COACH_CODE_FIX_FACET),
         super::super::maintenance::CURATOR_FACET => Some(super::super::maintenance::CURATOR_FACET),
