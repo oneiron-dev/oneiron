@@ -25,11 +25,11 @@ pub(crate) use self::authority::FrozenCallValidation;
 pub use self::authority::{
     FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization,
 };
-pub(crate) use self::connector_call::held_connector_call_in_txn;
 pub use self::connector_call::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome,
     ConnectorCallRequest, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
 };
+pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
 pub use self::execution::ScopedMcpDispatchResult;
 // Test-only execution entry point: the durable lane is driven by recovery in
 // production builds, so the re-export lives under the same cfg as its callers.
