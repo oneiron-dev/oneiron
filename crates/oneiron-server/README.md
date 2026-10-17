@@ -299,8 +299,9 @@ slower: point reads about 20x, scans about 12x. The tier is chosen when the vaul
 is created; serve refuses the key over a plain vault. A new sealed vault's key is
 wrapped to this keystore, or, with no keystore, to the password `init --secret-file`
 reads. The wraps are mirrored to `.<vault dir>.page-seal` beside the vault, which
-serve unlocks with this keystore before the open. `GET /v1/owner/vault-key` reports
-`pages`: `sealed` or `plain`.
+serve unlocks with this keystore before the open, or with the password the service
+manager's credential store holds as `vault_password`. `GET /v1/owner/vault-key`
+reports `pages`: `sealed` or `plain`.
 
 ## Linear mirror host bridge (opt-in)
 

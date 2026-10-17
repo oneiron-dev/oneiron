@@ -748,13 +748,14 @@ install's keystore. Where one is, it restores over it as above, or rehearses wit
 `oneiron init --maximum-tier` creates a vault whose every LMDB page is sealed under a key derived
 from its data key (OF-570), and writes `maximum_tier = true` to the config. It is slower: point
 reads about 20x, scans about 12x. The tier is chosen when the vault is created; a plain vault is
-never converted. The new key is wrapped to this device's keystore, and with `--secret-file FILE`
-to a vault password too, which a host with no keystore needs. The wraps are mirrored beside the
-vault in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlock before
-the vault opens. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On another
-device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device --unlock
-password`. A restore makes a plain vault, so it is refused over a sealed one; restore to another
-`--vault-path`. Body files, `.lines`, LFS staging and lock files stay outside the tier.
+never converted. The new key is wrapped to this device's keystore, and with `--secret-file FILE` to
+a vault password too, which a host with no keystore needs. The wraps are mirrored beside the vault
+in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlock before the vault
+opens. With no keystore, serve unlocks them with the password the service manager's credential store
+holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
+another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
+--unlock password`. A restore makes a plain vault, so it is refused over a sealed one; restore to
+another `--vault-path`. Body files, `.lines`, LFS staging and lock files stay outside the tier.
 
 ## Contact disclosure
 

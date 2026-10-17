@@ -64,9 +64,15 @@ pub(super) async fn serve_with_config(
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     // A sealed vault (maximum tier) opens with its page seal, and one the
-    // config asks for is created sealed where no vault is yet.
+    // config asks for is created sealed where no vault is yet. One this
+    // keystore holds no wrap of unlocks with the vault password the service
+    // manager's credential store holds, when it holds one.
     if vault_config.page_seal.is_none() {
-        vault_config.page_seal = super::owner::prepare_page_seal(&config, None)?;
+        let password = oneiron::world_keys::vault_is_sealed(&config.vault_path)?
+            .then(|| host.secret("vault_password").ok())
+            .flatten()
+            .map(super::owner::HostUnlock::Password);
+        vault_config.page_seal = super::owner::prepare_page_seal(&config, password.as_ref())?;
     }
     if vault_config.page_seal.is_some() {
         tracing::warn!("{}", oneiron::PAGE_SEAL_WARNING);
