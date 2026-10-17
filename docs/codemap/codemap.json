@@ -34587,6 +34587,7 @@
      "notable": [
       "CanonicalBaseEdge",
       "CanonicalContainerManifest",
+      "CanonicalCustodyTransition",
       "CanonicalDocumentFork",
       "CanonicalDocumentPin",
       "CanonicalDocumentPurge",
@@ -34609,7 +34610,7 @@
       "crate-vis": 18,
       "enum": 2,
       "fn": 8,
-      "struct": 14
+      "struct": 15
      }
     },
     {
@@ -36486,7 +36487,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 4
      }
     },
@@ -36522,7 +36523,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 4
      }
     },
@@ -36557,6 +36558,16 @@
      "path": "src/secret_custody/tests.rs",
      "purpose": "SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/transition.rs",
+     "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as an…",
+     "surface": {
+      "crate-vis": 15
+     }
     },
     {
      "bucket": "m",
@@ -36705,7 +36716,7 @@
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…",
      "surface": {
       "const": 5,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 10,
       "struct": 1
@@ -36719,7 +36730,7 @@
      "purpose": "The owner's rotation door and the one transaction body every rotation shares",
      "surface": {
       "crate-vis": 4,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -41187,7 +41198,7 @@
      "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 13,
       "struct": 5,
       "trait": 1
@@ -41617,6 +41628,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/custody.rs",
+     "purpose": "OF-422: owner-signed custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/documents/destination.rs",
      "purpose": "Destination policy for text-plane admission and release",
      "surface": {
@@ -41929,7 +41950,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 21,
       "re-export": 16
      }
@@ -49574,7 +49595,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49756,7 +49777,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 150,
+     "files": 151,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49940,7 +49961,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3015,
+   "source_files": 3017,
    "test_files": 903
   },
   "oneiron-android": {
