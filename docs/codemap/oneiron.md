@@ -235,7 +235,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/slip_vault.rs` | src | L | 1 struct · 24 fn · 21 crate-vis | HostSlipIssuer | Host-root bootstrap and atomic authority-log capability issuance |
 | `src/authority/slip_vault/courtesy.rs` | src | s | 2 fn | — | The host's signature on a courtesy deletion ask and on its answer (OF-273) |
 | `src/authority/stale_roster.rs` | src | s | 3 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
-| `src/authority/task_actor.rs` | src | s | 4 crate-vis | — | Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task |
+| `src/authority/task_actor.rs` | src | s | 5 crate-vis | — | Who may act on one TASK (OF-220): the authority rule the task highway asks before a verb moves a task |
 | `src/authority/tests/actor_binding.rs` | test | L | — | — | Actor bind, rebind and revoke fold, qualification and DAG merge |
 | `src/authority/tests/anchor_independence.rs` | test | m | — | — | World privacy P6b: an owner anchor's rows rest on no roster key, through every pass of the fold and at every… |
 | `src/authority/tests/basic_fold.rs` | test | s | — | — | Fold validation for enroll, rotate, recovery, revoke and divergent ancestry |
@@ -304,7 +304,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/world_privacy_door.rs` | src | m | 1 struct · 1 enum · 8 fn · 2 crate-vis | EditOrigin, WorldPrivacyView | The signed half of the owner's world-settings door, and the one judge every egress door asks: may a world be… |
 | `src/authority/world_refold.rs` | src | s | 1 crate-vis | — | A world edit above a main-log row the fold did not keep, folded again with that row crossed |
 | `src/authority/world_strength.rs` | src | m | 9 crate-vis | — | Each world's settings-edit frontier and the strength of its edits, judged under one trust set at a time… |
-| `src/authority/write_authorization.rs` | src | s | 1 fn · 5 crate-vis | — | Transaction-bound actor authorization for engine-owned write doors |
+| `src/authority/write_authorization.rs` | src | s | 1 fn · 6 crate-vis | — | Transaction-bound actor authorization for engine-owned write doors |
 | `src/autoreason_campaign.rs` | src | s | 1 enum · 1 type · 4 const · 7 mod · 4 re-export | CampaignError | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `src/autoreason_campaign/archive.rs` | src | m | 7 struct · 1 enum · 1 trait · 20 fn · 1 re-export · 4 crate-vis | ArchiveCell, ArchiveCellJudge, ArchiveCellJudgment, ArchiveEntry, ArchiveOutputRef, ArchiveOutputScore, ArchiveQualityMetric, CampaignArchivePin +1 | OF-545: a rebuildable output archive, joined from placement and scoring receipts |
 | `src/autoreason_campaign/archive/axes.rs` | src | s | 3 struct · 1 enum · 1 trait · 1 fn · 3 crate-vis | ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor, CoachArchiveAxesRecipe | Coach-owned, per-task archive descriptors |
