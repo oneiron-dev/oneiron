@@ -12,6 +12,7 @@
 
 use base64::Engine as _;
 use oneiron::claim::{ScopedReadReceipt, ScopedReadResult};
+use oneiron::dreamer_runner::maintenance::identity;
 use oneiron::memory as engine;
 use oneiron::retrieval_quality as quality;
 use oneiron::task_verb::sdk;
@@ -20,11 +21,12 @@ use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
     ClaimListFilter, ClaimView, ClaimViews, CommitReceipt, DeleteReceipt, Effort, EntityRead,
     EntityRefReceipt, EntityView, EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput,
-    LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance, NeighborHit, NeighborHits,
-    NeighborOpts, OutboundDraftInput, OutboundIntentReceipt, PendingWrite, ReadReceipt, ReadScope,
-    RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
-    SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn,
+    LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance, MentionProvenance,
+    NeighborHit, NeighborHits, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt,
+    PendingWrite, ReadReceipt, ReadScope, RecallScope, RerankReport, RerankSkip,
+    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
+    StructuralPutInput, TemporalHint, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt,
+    WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -700,6 +702,18 @@ impl Lower<sdk::OutboundScheduleRequest> for OutboundDraftInput {
             trigger_ref: self.trigger_ref,
             job_ref: self.job_ref,
             occurred_at: optional_seconds("occurred_at", self.occurred_at)?,
+            mention: self.mention.lower()?,
+        })
+    }
+}
+
+impl Lower<identity::MentionProvenance> for MentionProvenance {
+    fn lower(self) -> Result<identity::MentionProvenance, OneironError> {
+        Ok(identity::MentionProvenance {
+            turn: self.turn,
+            message: self.message,
+            start: self.start,
+            end: self.end,
         })
     }
 }

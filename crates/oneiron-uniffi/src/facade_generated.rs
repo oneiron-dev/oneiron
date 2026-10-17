@@ -149,6 +149,11 @@ export_facade! {
     let output = client.vault_weave_digest(&input)?;
     crate::codec::encode("vault.weave.digest", &output)
 };
+"vault.weave.link.wrong" => fn vault_weave_link_wrong(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::decode("vault.weave.link.wrong", &input)?;
+    let output = client.vault_weave_link_wrong(&input)?;
+    crate::codec::encode("vault.weave.link.wrong", &output)
+};
 "vault.packs.put" => fn vault_packs_put(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::PackPutRequest = crate::codec::decode("vault.packs.put", &input)?;
     let output = client.vault_packs_put(&input)?;

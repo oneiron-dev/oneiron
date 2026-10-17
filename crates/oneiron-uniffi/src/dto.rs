@@ -811,6 +811,23 @@ pub struct OutboundDraftInput {
     pub job_ref: Option<String>,
     /// Unix seconds; omitted means now.
     pub occurred_at: Option<i64>,
+    /// The saved mention `target` came from, when the agent named the person:
+    /// the send refuses while that mention is unsettled.
+    pub mention: Option<MentionProvenance>,
+}
+
+/// Where a saved mention sits: the turn and message holding it, and its byte
+/// span in the message text.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct MentionProvenance {
+    /// The turn whose tags hold the mention, as 32 hex.
+    pub turn: String,
+    /// The message the mention is in, as 32 hex.
+    pub message: String,
+    /// The mention's byte span start in the message text.
+    pub start: u64,
+    /// The mention's byte span end in the message text.
+    pub end: u64,
 }
 
 /// Receipt for one scheduled outbound intent.

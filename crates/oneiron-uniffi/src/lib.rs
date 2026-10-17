@@ -33,11 +33,12 @@ pub use dto::{
     ClaimListFilter, ClaimView, ClaimViews, CommitReceipt, ConsolidationJobInput, DeleteReceipt,
     DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
     FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
-    MemoryPack, MemoryProvenance, NeighborHit, NeighborHits, NeighborOpts, OpenOptions,
-    OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, ReadReceipt, ReadScope,
-    RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
-    SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TemporalHint,
-    TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, ReadReceipt,
+    ReadScope, RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
+    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput,
+    TemporalHint, TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt,
+    WitnessTurn,
 };
 pub use error::OneironError;
 
