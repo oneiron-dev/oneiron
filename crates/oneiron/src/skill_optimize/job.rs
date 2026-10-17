@@ -217,31 +217,7 @@ fn run_skill_optimize_bound(
         }
         SkillEditDraft::Edit { desc, rationale } => (desc, rationale),
     };
-    validate_text(
-        &desc,
-        SKILL_DESC_MAX_BYTES,
-        "drafted desc must be a non-empty UTF-8 string at most 4096 bytes",
-    )?;
-    validate_text(
-        &rationale,
-        SKILL_OPTIMIZE_RATIONALE_MAX_BYTES,
-        "author rationale must be a non-empty string at most 1024 bytes",
-    )?;
-    let SkillOptimizeBrief {
-        desc: target_desc,
-        version: target_version,
-        cited_receipts: cited,
-        defect_receipts: defects,
-        ..
-    } = brief;
-    // An "edit" that changes nothing would mint a revision whose version
-    // (derived from the text) collides with the one it proposes to replace —
-    // and the supersede door would refuse it. Refuse earlier and say why.
-    if desc == target_desc {
-        return Err(invalid(
-            "a drafted edit that restates the current instructions is not an edit",
-        ));
-    }
+    validate_skill_draft(&brief, &desc, &rationale)?;
 
     // Resolved BEFORE the write door and persisted with the proposal: the cap
     // this draft will be counted against is a birth fact, not something a later
@@ -249,72 +225,27 @@ fn run_skill_optimize_bound(
     // A proposal whose cycle cannot be PROVEN at this moment is not born at
     // all — a private label is exactly the free budget the cap exists to deny.
     let drafted_in = proven_cycle(vault, attempt)?;
-    let authority = vault.dreamer_actor_for_attempt(attempt)?;
+    let stamp = SkillRepairStamp {
+        actor: vault.dreamer_actor_for_attempt(attempt)?,
+        facet: crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
+        attempt,
+        cycle: &drafted_in,
+        owner,
+        resident,
+    };
     let proposal_id = vault.store.clock.entity_id()?;
     vault.with_write_txn_grouped(|wtxn| {
-        if let Some(owner) = owner {
-            vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
-        }
-        // Resolved at the WRITE door, not carried from the ranking: the
-        // author ran outside this transaction, so the target may have been
-        // superseded, quarantined or re-proposed in that window. A proposal
-        // against a revision the gate can no longer supersede is dead on
-        // arrival.
-        let target = vault.read_skill_record_in_txn(&*wtxn, &candidate.skill)?;
-        if target.lifecycle_status != SkillLifecycle::Active
-            || target.version != target_version
-            || crate::skill::resident_of(&target)? != resident
-        {
-            return Err(invalid(
-                "optimization target moved while the author was drafting",
-            ));
-        }
-        let mut record = proposal_record(
-            &target,
+        propose_skill_repair_in_txn(
+            vault,
+            wtxn,
+            &brief,
             &desc,
             &rationale,
-            &cited,
-            &defects,
-            &candidate.skill,
-            attempt,
-            &drafted_in,
-            tier_verdict_in_txn(vault, &*wtxn, &candidate.skill, &target)?,
-        )?;
-        let Value::Map(provenance) = &mut record.provenance else {
-            return Err(invalid("invalid optimizer provenance"));
-        };
-        let goal_id = SkillGoalId::of(&candidate.skill, &target)?;
-        provenance.push((
-            Value::from(GOAL_ID_KEY),
-            Value::from(goal_id.entity().to_hex()),
-        ));
-        provenance.extend([
-            (
-                Value::from("actor_entity_ref"),
-                Value::Binary(authority.entity_ref().as_bytes().to_vec()),
-            ),
-            (
-                Value::from("actor_class"),
-                Value::from(authority.actor_class() as u8),
-            ),
-            (
-                Value::from("facet"),
-                Value::from(crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND),
-            ),
-        ]);
-        if let Some(owner) = owner {
-            provenance.push((
-                Value::from(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY),
-                Value::from(owner.entity_ref().to_hex()),
-            ));
-        }
-        let package =
-            vault.optimized_skill_package_in_txn(wtxn, &candidate.skill, &target, &mut record)?;
-        vault.put_skill_record_in_txn(wtxn, &proposal_id, &record, occurred, learned_at)?;
-        if let Some(package) = package {
-            vault.persist_hub_package_in_txn(wtxn, &proposal_id, &package)?;
-        }
-        Ok(())
+            &stamp,
+            &proposal_id,
+            occurred,
+            learned_at,
+        )
     })?;
 
     Ok(SkillOptimizeOutcome {
@@ -323,6 +254,150 @@ fn run_skill_optimize_bound(
         rationale,
         affirmed_receipts: Vec::new(),
     })
+}
+
+/// The DEV-only brief for one exact target its caller already chose, with
+/// nothing ranked: the Coach's heal repairs the skill a failure names
+/// (OF-418). The target must be an active, optimizable skill with no open
+/// revision.
+///
+/// # Errors
+///
+/// Storage and body errors, and [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when the
+/// target is not one the optimizer could revise.
+pub(crate) fn skill_repair_brief(
+    vault: &Vault,
+    skill: &EntityId,
+    learned_at: u64,
+) -> Result<SkillOptimizeBrief> {
+    let candidate = super::selection::repair_candidate(vault, skill)?;
+    optimize_brief_bound_at(vault, &candidate, None, learned_at)
+}
+
+/// Refuses a draft the gate could not use: empty or oversized text, or a
+/// "replacement" identical to the instructions it replaces.
+pub(crate) fn validate_skill_draft(
+    brief: &SkillOptimizeBrief,
+    desc: &str,
+    rationale: &str,
+) -> Result<()> {
+    validate_text(
+        desc,
+        SKILL_DESC_MAX_BYTES,
+        "drafted desc must be a non-empty UTF-8 string at most 4096 bytes",
+    )?;
+    validate_text(
+        rationale,
+        SKILL_OPTIMIZE_RATIONALE_MAX_BYTES,
+        "author rationale must be a non-empty string at most 1024 bytes",
+    )?;
+    // An "edit" that changes nothing would mint a revision whose version
+    // (derived from the text) collides with the one it proposes to replace —
+    // and the supersede door would refuse it. Refuse earlier and say why.
+    if desc == brief.desc {
+        return Err(invalid(
+            "a drafted edit that restates the current instructions is not an edit",
+        ));
+    }
+    Ok(())
+}
+
+/// Who drafted a revision, stamped into its provenance at birth: the
+/// authority's actor, the facet and attempt it drafted under, and the proven
+/// cycle its cap counts against.
+pub(crate) struct SkillRepairStamp<'a> {
+    pub(crate) actor: crate::write_envelope::WriteActor,
+    pub(crate) facet: &'a str,
+    pub(crate) attempt: AttemptId,
+    pub(crate) cycle: &'a SkillEditCycle,
+    /// The host-authenticated preference audience, rechecked at the door.
+    pub(crate) owner: Option<crate::write_envelope::WriteActor>,
+    /// The resident whose fork the target must still be.
+    pub(crate) resident: Option<EntityId>,
+}
+
+/// Lands one validated draft of `brief`'s target as a gated proposal in the
+/// caller's write transaction: `candidate` + `proposed`, continuing the
+/// target's `skillId` and dependency contract, carrying its resolved tier.
+///
+/// # Errors
+///
+/// Storage and body errors, and [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) when the
+/// target moved since `brief` was read.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the proposal's provenance names every input it rests on"
+)]
+pub(crate) fn propose_skill_repair_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    brief: &SkillOptimizeBrief,
+    desc: &str,
+    rationale: &str,
+    stamp: &SkillRepairStamp<'_>,
+    proposal_id: &EntityId,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<()> {
+    if let Some(owner) = stamp.owner {
+        vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
+    }
+    // Resolved at the WRITE door, not carried from the ranking: the
+    // author ran outside this transaction, so the target may have been
+    // superseded, quarantined or re-proposed in that window. A proposal
+    // against a revision the gate can no longer supersede is dead on
+    // arrival.
+    let target = vault.read_skill_record_in_txn(&*wtxn, &brief.skill)?;
+    if target.lifecycle_status != SkillLifecycle::Active
+        || target.version != brief.version
+        || crate::skill::resident_of(&target)? != stamp.resident
+    {
+        return Err(invalid(
+            "optimization target moved while the author was drafting",
+        ));
+    }
+    let mut record = proposal_record(
+        &target,
+        desc,
+        rationale,
+        &brief.cited_receipts,
+        &brief.defect_receipts,
+        &brief.skill,
+        stamp.attempt,
+        stamp.cycle,
+        tier_verdict_in_txn(vault, &*wtxn, &brief.skill, &target)?,
+    )?;
+    let Value::Map(provenance) = &mut record.provenance else {
+        return Err(invalid("invalid optimizer provenance"));
+    };
+    let goal_id = SkillGoalId::of(&brief.skill, &target)?;
+    provenance.push((
+        Value::from(GOAL_ID_KEY),
+        Value::from(goal_id.entity().to_hex()),
+    ));
+    provenance.extend([
+        (
+            Value::from("actor_entity_ref"),
+            Value::Binary(stamp.actor.entity_ref().as_bytes().to_vec()),
+        ),
+        (
+            Value::from("actor_class"),
+            Value::from(stamp.actor.actor_class() as u8),
+        ),
+        (Value::from("facet"), Value::from(stamp.facet)),
+    ]);
+    if let Some(owner) = stamp.owner {
+        provenance.push((
+            Value::from(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY),
+            Value::from(owner.entity_ref().to_hex()),
+        ));
+    }
+    let package = vault.optimized_skill_package_in_txn(wtxn, &brief.skill, &target, &mut record)?;
+    vault.put_skill_record_in_txn(wtxn, proposal_id, &record, occurred, learned_at)?;
+    if let Some(package) = package {
+        vault.persist_hub_package_in_txn(wtxn, proposal_id, &package)?;
+    }
+    Ok(())
 }
 
 /// Healthy skills do not buy an LLM call or a revision. They still produce a
