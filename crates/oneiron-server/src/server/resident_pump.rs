@@ -33,27 +33,30 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
 use oneiron::claim::CallerLocality;
-use oneiron::code_run::{AgentVerbDoor, HostSelfDispatcher, SpawnHostSeat, bind_wait_trap};
+use oneiron::code_run::{
+    AgentVerbDoor, HostSelfDispatcher, SpawnHostSeat, park_and_bind_wait_trap,
+};
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, RunCompaction,
 };
 use oneiron::failure_ladder::{
-    FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
+    DetectorTier, FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
     HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
 };
+use oneiron::llm::SpentKind;
 use oneiron::llm::{
     DurableStepContext, open_trap, register_wait, trap_for_durable_wait, trap_park_owner,
 };
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
-use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
+use oneiron::{DreamerRunnerStore, EntityId, LlmError, RetryableLlmError, Vault, WriteActor};
 use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
 use super::{ReaderSeats, SyncServer};
 use crate::decision_host::DecisionHost;
-use crate::mcp::{McpCodeModeProvider, enter_engine_native_run};
+use crate::mcp::{EngineRunError, McpCodeModeProvider, enter_engine_native_run};
 
 const LEASE_OWNER: &str = "oneiron-server-agent-runs";
 /// The park a run waiting on a durable signal holds its lease under, owned
@@ -71,6 +74,12 @@ const WAKES_PER_PASS: usize = 16;
 /// enters again, and how many such waits in a row it takes before it ends.
 const WINDOW_FULL_WAIT: Duration = Duration::from_secs(2);
 const WINDOW_FULL_TRIES: u32 = 30;
+/// How many tries in a row a run gets whose model call failed for a reason
+/// that passes (an outage, a rate limit, a spent window): the failure
+/// ladder's default bound. Each retry is a fresh attempt, so a fresh run.
+const RUN_MAX_TRIES: NonZeroU16 = NonZeroU16::new(3).expect("three is nonzero");
+/// How long such a retry waits per try when its provider named no reset.
+const RUN_RETRY_BACKOFF_SECS: u64 = 30;
 
 /// What one pass found: the ready runs, and what it could not serve, keyed
 /// by what it was for.
@@ -339,7 +348,7 @@ fn run_bound(
     key: &str,
     seats: &ReaderSeats,
     runtime: tokio::runtime::Handle,
-) -> Result<EngineExecutorOutcome, String> {
+) -> Result<EngineExecutorOutcome, EngineRunError> {
     let vault = server.vault();
     let status = &claimed.status;
     let actor = agent_dispatch_actor(&status.input).map_err(text)?;
@@ -351,7 +360,7 @@ fn run_bound(
         .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled.
-    let skills = ProjectConversationSkills::seeded(None).map_err(text)?;
+    let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
     if let Some(skill) = AgentDispatcher::new(vault)
         .prepare_project_conversation_run(
             &status.attempt,
@@ -387,7 +396,8 @@ fn run_bound(
         .enable_all()
         .build()
         .map_err(text)?;
-    let mut compaction = provider.compaction(actor, key);
+    // Its compaction passes spend under the attempt's scope too.
+    let mut compaction = provider.compaction(actor, key, metered.as_ref());
     let mut full = 0;
     loop {
         let outcome = enter_run(
@@ -436,7 +446,7 @@ fn enter_run(
     spend: Option<&SpendScopeId>,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
-) -> Result<EngineExecutorOutcome, String> {
+) -> Result<EngineExecutorOutcome, EngineRunError> {
     let bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
         .with_callable_skills(Arc::clone(vault))
@@ -453,7 +463,6 @@ fn enter_run(
         reactor,
         spend,
     )
-    .map_err(text)
 }
 
 /// A resident run's task: its frozen definition's instructions, then what
@@ -523,12 +532,13 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .join("\n\n")
 }
 
-/// Settles the run's attempt: complete, parked on its wait, or failed.
+/// Settles the run's attempt: complete, parked on its wait, or failed; a
+/// run whose model call failed for a reason that passes is tried again.
 fn settle(
     vault: &Vault,
     decisions: &DecisionHost,
     claimed: &Claimed,
-    ran: Result<EngineExecutorOutcome, String>,
+    ran: Result<EngineExecutorOutcome, EngineRunError>,
 ) -> oneiron::Result<()> {
     let status = &claimed.status;
     let attempt = &status.attempt;
@@ -543,6 +553,13 @@ fn settle(
     ) {
         tracing::warn!(%error, attempt = ?attempt.id, "an agent run's pack attribution did not bind");
     }
+    let mut evidence = TypedFailureEvidence {
+        evidence_ref: None,
+        verdict: TypedFailureVerdict::Indeterminate,
+        tier: None,
+        stable_reason: String::new(),
+    };
+    let mut retry_at = now;
     let reason = match ran {
         Ok(outcome) => match outcome.status {
             EngineExecutorStatus::Complete => {
@@ -557,30 +574,43 @@ fn settle(
         },
         Err(error) => {
             tracing::warn!(%error, attempt = ?attempt.id, "an agent run failed");
-            "agent_run_failed"
+            match error.llm().and_then(|error| passing(error, now)) {
+                // A model call that failed for a reason that passes is a
+                // tripwire's typed verdict, its evidence the attempt: the
+                // run is tried again, fresh, once the reason has passed.
+                Some((reason, reset)) => {
+                    let tries = AttemptQueue::new(vault)
+                        .retry_chain_depth(attempt.id)?
+                        .saturating_add(1);
+                    evidence.evidence_ref =
+                        Some(EntityId::from_bytes(*attempt.id.as_bytes())?.to_hex());
+                    evidence.verdict = TypedFailureVerdict::Retryable;
+                    evidence.tier = Some(DetectorTier::T1Tripwire);
+                    retry_at = reset.unwrap_or_else(|| {
+                        now.saturating_add(RUN_RETRY_BACKOFF_SECS.saturating_mul(u64::from(tries)))
+                    });
+                    reason
+                }
+                None => "agent_run_failed",
+            }
         }
     };
-    // The host has no detector verdict for the failure, and the ladder never
-    // infers one from prose: the run ends for a person to look at. Its
-    // checkpoint is the run's own replay record, which the run id addresses;
-    // its Q&A thread is the claim's: a resident's home, its TASK, or its
-    // tree's root.
+    evidence.stable_reason = reason.to_owned();
+    // Any other failure has no detector verdict, and the ladder never infers
+    // one from prose: the run ends for a person to look at. Its checkpoint is
+    // the run's own replay record, which the run id addresses; its Q&A
+    // thread is the claim's: a resident's home, its TASK, or its tree's root.
     let ended = DreamerRunnerStore::new(vault).fail_agent_dispatch_with_evidence(
         HandleAttemptFailure {
             attempt_id: attempt.id,
             lease_owner: LEASE_OWNER.to_owned(),
             attempt_count: attempt.attempt_count,
-            evidence: TypedFailureEvidence {
-                evidence_ref: None,
-                verdict: TypedFailureVerdict::Indeterminate,
-                tier: None,
-                stable_reason: reason.to_owned(),
-            },
+            evidence,
             blocked_reports: vault
                 .blocked_reports_of_run(EntityId::from_bytes(*attempt.id.as_bytes())?)?,
             pre_fail_checkpoint_ref: EntityId::from_bytes(*attempt.id.as_bytes())?,
             qa_thread_ref: claimed.qa_thread_ref,
-            retry_at: now,
+            retry_at,
             now,
         },
         FailureScopePolicy {
@@ -588,7 +618,7 @@ fn settle(
                 agent_ref: claimed.agent.to_hex(),
                 skill_ref: None,
             },
-            max_consecutive_transients: NonZeroU16::MIN,
+            max_consecutive_transients: RUN_MAX_TRIES,
             escalation_mode: FailureEscalationMode::Human,
             healer_slot: HealerSlot::Reserved,
         },
@@ -598,6 +628,45 @@ fn settle(
         AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
     }
     Ok(())
+}
+
+/// Whether a run's model call failed for a reason that passes, with its
+/// stable reason and the reset its provider named, if one is still ahead:
+/// an outage, a rate limit, a spent usage window, or no on-device offer
+/// until a resting one is back. Spent credit waits for the owner, and any
+/// other failure is not one a retry answers.
+fn passing(error: &LlmError, now: u64) -> Option<(&'static str, Option<u64>)> {
+    if error.is_provider_unavailable() {
+        return Some(("agent_run_model_unavailable", None));
+    }
+    let (reason, retry_after, resets_at) = match error {
+        LlmError::Retryable(RetryableLlmError::RateLimited {
+            retry_after,
+            resets_at,
+        }) => ("agent_run_rate_limited", retry_after, resets_at),
+        LlmError::Retryable(RetryableLlmError::QuotaSpent {
+            kind: SpentKind::Window,
+            retry_after,
+            resets_at,
+        }) => ("agent_run_window_spent", retry_after, resets_at),
+        LlmError::Retryable(RetryableLlmError::KeptOnDevice {
+            retry_after,
+            resets_at,
+        }) if retry_after.is_some() || !resets_at.is_empty() => {
+            ("agent_run_kept_on_device", retry_after, resets_at)
+        }
+        _ => return None,
+    };
+    let reset = resets_at
+        .iter()
+        .copied()
+        .find(|reset| *reset > now)
+        .or_else(|| {
+            retry_after
+                .filter(|after| *after > 0)
+                .map(|after| now.saturating_add(after))
+        });
+    Some((reason, reset))
 }
 
 /// Completes the attempt through the runner's one completion door, its
@@ -662,10 +731,10 @@ fn complete(
 }
 
 /// Parks a Waiting run's attempt on a C9 trap its wait's reply wakes: the
-/// trap opens and waits, the attempt parks under the trap's owner, and only
-/// then is the trap bound to the wait, so a wake always finds the park. The
-/// woken attempt is ready again, and the next pass enters the run, which
-/// goes on from the reply.
+/// trap opens and waits, then the attempt parks under the trap's owner and
+/// the trap is bound to the wait in one commit, so a wake always finds the
+/// park and no park is left unbound. The woken attempt is ready again, and
+/// the next pass enters the run, which goes on from the reply.
 fn park_on_wait(
     vault: &Vault,
     status: &AgentDispatchStatus,
@@ -695,14 +764,21 @@ fn park_on_wait(
         "code-run wait",
     )?;
     register_wait(vault, &trap, now_ms)?;
-    DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
-        attempt_id: attempt.id,
-        reason: WAITING_PARK_REASON.to_owned(),
-        cause: DreamerParkCause::Signal,
-        park_owner: trap_park_owner(&trap.trap_claim_id),
-        now,
-    })?;
-    bind_wait_trap(vault, &parked.key, &trap, now_ms)?;
+    // The park and its wake binding commit together: a stop between them
+    // would leave a park no delivery wakes.
+    park_and_bind_wait_trap(
+        vault,
+        ParkDreamerAttempt {
+            attempt_id: attempt.id,
+            reason: WAITING_PARK_REASON.to_owned(),
+            cause: DreamerParkCause::Signal,
+            park_owner: trap_park_owner(&trap.trap_claim_id),
+            now,
+        },
+        &parked.key,
+        &trap,
+        now_ms,
+    )?;
     Ok(())
 }
 
