@@ -50,6 +50,8 @@ use crate::store::Store;
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
 const REASON_SENSITIVE_ENV: &str = "gate.secret_scan.sensitive_env";
+/// A file's key that custody already holds (OF-560 C): it keeps that record.
+const REASON_KNOWN_VALUE: &str = "gate.secret_scan.known_value";
 /// The handle a plan leaves: any `sc` handle reads the same to the door.
 const STAND_IN: &str = "sc0";
 
@@ -157,13 +159,21 @@ pub(in crate::batch) fn mask_batch_ops(
             members: Vec::new(),
         };
         for key in file.keys {
-            let (_, custody) = minted.get(&key.value).ok_or(Error::InvariantViolation(
-                "a file's key has no custody record",
-            ))?;
+            let custody = match key.custody {
+                Some(custody) => custody,
+                None => {
+                    minted
+                        .get(&key.value)
+                        .ok_or(Error::InvariantViolation(
+                            "a file's key has no custody record",
+                        ))?
+                        .1
+                }
+            };
             let span = KeySpan {
                 start: offset(key.span.start)?,
                 end: offset(key.span.end)?,
-                custody: *custody,
+                custody,
                 reason: key.reason.to_owned(),
             };
             if key.path.is_empty() {
@@ -291,12 +301,14 @@ struct FoundFile {
 }
 
 /// One key a plan found in a file: the member that holds it (none for the
-/// file's own bytes), its span there, and the key's kind and value.
+/// file's own bytes), its span there, and the key's kind and value. A key
+/// custody already holds names its record, and nothing is minted for it.
 struct FileKey {
     path: Vec<MemberStep>,
     span: Range<usize>,
     reason: &'static str,
     value: Vec<u8>,
+    custody: Option<EntityId>,
 }
 
 /// Each place `keys` sit at, with its spans, in the order they were found.
@@ -450,6 +462,19 @@ impl Masker {
     /// The keys the door's text and field rules place in `leaf` (a file's
     /// own bytes, or one member's), each at `path`.
     fn place(&mut self, path: &[MemberStep], leaf: &[u8], keys: &mut Vec<FileKey>) -> Result<()> {
+        // A value custody already holds is marked with its own record
+        // (OF-560 C); the file's bytes stay as stored, and a read masks it
+        // through the same mark.
+        let known: Vec<(Range<usize>, EntityId)> = match &self.known {
+            Some(known) => known
+                .spans(leaf)
+                .into_iter()
+                .filter(|hit| !self.is_kept(&leaf[hit.span.clone()]))
+                .map(|hit| (hit.span, hit.custody))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut placed = Vec::new();
         let mut spans = file_spans(leaf);
         // A value a structured reading places (a credential field), wherever
         // its bytes sit in the leaf.
@@ -463,6 +488,12 @@ impl Masker {
             spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
         }
         for (span, reason) in merged(spans) {
+            if known
+                .iter()
+                .any(|(held, _)| held.start < span.end && span.start < held.end)
+            {
+                continue;
+            }
             let value = leaf
                 .get(span.clone())
                 .ok_or(Error::InvariantViolation(
@@ -470,13 +501,32 @@ impl Masker {
                 ))?
                 .to_vec();
             self.handle(&value, reason)?;
-            keys.push(FileKey {
+            placed.push(FileKey {
                 path: path.to_vec(),
                 span,
                 reason,
                 value,
+                custody: None,
             });
         }
+        for (span, custody) in known {
+            let value = leaf
+                .get(span.clone())
+                .ok_or(Error::InvariantViolation(
+                    "a file's known span left its bytes",
+                ))?
+                .to_vec();
+            self.placed_known = true;
+            placed.push(FileKey {
+                path: path.to_vec(),
+                span,
+                reason: REASON_KNOWN_VALUE,
+                value,
+                custody: Some(custody),
+            });
+        }
+        placed.sort_by_key(|key| key.span.start);
+        keys.extend(placed);
         if keys.len() > MAX_FILE_KEYS {
             return Err(secret_scan_error(REASON_OVER_BUDGET));
         }
