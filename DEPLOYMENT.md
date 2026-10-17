@@ -163,6 +163,8 @@ code_result_memory_bytes = 8589934592 # result bodies every run holds in memory 
 code_result_session_memory_bytes = 1073741824 # result bodies one run holds in memory (default: memory / 64); past either, a body is read from its file by range
 import_folder_text_bytes = 268435456 # text one notes import or folder rescan holds; past it the folder is imported whole and the row asks
 import_folder_notes = 100000      # notes one notes import or folder rescan reads; past it the folder is imported whole and the row asks
+import_decoded_messages = 1000000 # messages one history import holds decoded; past it the import lands whole and the row asks
+import_decoded_bytes = 1073741824 # bytes those decoded messages hold; past it the import lands whole and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

@@ -247,6 +247,7 @@ impl Memory<'_> {
                     order: 0,
                 }],
                 occurred_at: reserved.occurred_at,
+                assertions: Default::default(),
             })?;
         }
         Ok(reserved.turn)
