@@ -3,7 +3,7 @@
 pub mod mesh;
 pub use mesh::{
     COST_DECLARED, CatalogRefresh, LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MESH_PEER,
-    MeshLlmTransport, VaultLlmNodes, advertises,
+    MeshLlmTransport, MeshPeerTransport, VaultLlmNodes, advertises,
 };
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmGenerateFuture,
@@ -48,6 +48,16 @@ impl<T: OwnServerTransport> OwnServerBackend<T> {
             .get(&request.model)
             .ok_or(FatalLlmError::InvalidRequest)?
             .admit(request, stream)
+    }
+}
+impl<T: OwnServerTransport> OwnServerBackend<T> {
+    /// Serves exactly `models` over `transport`, without reading the vault:
+    /// the rows a router built a node's routes from (FIX 3229).
+    pub fn serving(transport: T, models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
+        Self {
+            transport,
+            models: RwLock::new(models.into_iter().map(|m| (m.model.clone(), m)).collect()),
+        }
     }
 }
 impl OwnServerBackend<MeshLlmTransport> {
