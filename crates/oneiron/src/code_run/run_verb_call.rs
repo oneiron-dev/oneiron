@@ -24,16 +24,19 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 ];
 
 /// The run rows that act on their caller's live agent run and read nothing
-/// else of it: the attempt, its lease and its actor. A host serves them as
+/// else of it: the attempt, its lease and its actor, and for the leader's
+/// rows the planner the host lends beside the lease. A host serves them as
 /// actions only under that run's lease. The fold rows need the run's own log
-/// at its step boundary; `self.skills.call`, `self.spawn`, `summarize` and
-/// `tasks.wait` need the running sandbox (its bridge, its results, its park);
-/// and the leader's rows need the host's planner. None of those is here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 4] = [
+/// at its step boundary, and `self.skills.call`, `self.spawn`, `summarize`
+/// and `tasks.wait` need the running sandbox (its bridge, its results, its
+/// park). None of those is here.
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 6] = [
     RunVerb::TasksRefuse,
     RunVerb::SelfAgentsSpawn,
     RunVerb::SelfTeamStart,
     RunVerb::SelfTeamRecord,
+    RunVerb::SelfLeaderAdvice,
+    RunVerb::SelfLeaderPattern,
 ];
 
 /// The typed `self.*` call a run row makes, `now` in unix seconds: the call,

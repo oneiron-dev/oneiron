@@ -108,7 +108,7 @@ pub use self::pack_drift::{
 pub(crate) use self::pack_drift::{PackMove, repair_saved_queries_after_pack_move_in_txn};
 pub use self::sweep::{
     PersonChanges, SWEEP_CANDIDATE_TYPE, reactive_saved_queries, saved_query_change_head,
-    saved_query_changes_after, sweep_owner_grants, sweep_saved_queries,
+    saved_query_changes_after, sweep_owner_read, sweep_saved_queries,
 };
 
 // The flat saved_query.rs module used to provide these names to the test

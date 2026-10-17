@@ -43,6 +43,7 @@ mod decision_graph;
 pub mod decision_host;
 mod decision_verdict;
 mod device_local;
+pub mod embedded;
 mod embedder;
 pub mod error;
 pub mod feedback_delivery;
