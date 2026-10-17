@@ -258,7 +258,7 @@ export interface FacadeInputs {
   "vault.artifacts.body.proposal.read": Facade.OfficeBodyProposalRequest;
   "vault.artifacts.body.proposal.settle": Facade.OfficeBodyProposalSettleRequest;
   "vault.artifacts.body.export": Facade.OfficeBodyExportVerbRequest;
-  "vault.artifacts.body.preview": Facade.OfficeBodyArtifactRequest;
+  "vault.artifacts.body.preview": Facade.OfficeBodyPreviewRequest;
   "vault.artifacts.body.deck.review": Facade.OfficeBodyForkRequest;
   "vault.artifacts.body.deck.merge": Facade.DeckForkMergeRequest;
   "vault.artifacts.body.deck.export": Facade.DeckExportRequest;
@@ -818,7 +818,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.body.proposal.read": { description: "An office proposal on the artifact: its opener and run, each member fork with its verdict and answer, and its settlement.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.proposal.settle": { description: "Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.export": { description: "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.artifacts.body.preview": { description: "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.preview": { description: "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.review": { description: "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.merge": { description: "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.export": { description: "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1304,8 +1304,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           },
           /** Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export. */
           export: (input: Facade.OfficeBodyExportVerbRequest, options?: O): FacadeReturns<"vault.artifacts.body.export">[K] => invoke("vault.artifacts.body.export", input, options, newInvocation()),
-          /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
-          preview: (input: Facade.OfficeBodyArtifactRequest, options?: O): FacadeReturns<"vault.artifacts.body.preview">[K] => invoke("vault.artifacts.body.preview", input, options, newInvocation()),
+          /** The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands. */
+          preview: (input: Facade.OfficeBodyPreviewRequest, options?: O): FacadeReturns<"vault.artifacts.body.preview">[K] => invoke("vault.artifacts.body.preview", input, options, newInvocation()),
           deck: {
             /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
             review: (input: Facade.OfficeBodyForkRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.review">[K] => invoke("vault.artifacts.body.deck.review", input, options, newInvocation()),

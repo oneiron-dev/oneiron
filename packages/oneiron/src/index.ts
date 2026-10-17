@@ -586,7 +586,7 @@ export class Oneiron {
         /** Exports the live body as the artifact's next version. */
         export: (request: Facade.OfficeBodyExportVerbRequest): Facade.OfficeBodyExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyExport(keyedJson(request))) as Facade.OfficeBodyExportView; return result }),
         /** The workbook an XLSX export would land now, recalculated. */
-        preview: (request: Facade.OfficeBodyArtifactRequest): Facade.XlsxPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyPreview(keyedJson(request))) as Facade.XlsxPreview; return result }),
+        preview: (request: Facade.OfficeBodyPreviewRequest): Facade.XlsxPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyPreview(keyedJson(request))) as Facade.XlsxPreview; return result }),
         deck: {
           /** A deck fork's merge preflight against the live head. */
           review: (request: Facade.OfficeBodyForkRequest): Facade.DeckReviewView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckReview(keyedJson(request))) as Facade.DeckReviewView; return result }),

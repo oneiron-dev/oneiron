@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use super::{
     BodyBlockKind, BodyCell, BodyName, DeckBodyView, DocxBody, DocxBodyOp, OfficeBodyDiff,
     OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork,
-    OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, ProposalSettleRequest, ReviewedFork,
-    SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
+    OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, OfficeRecalcZone, ProposalSettleRequest,
+    ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -25,7 +25,7 @@ use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
 
-/// `vault.artifacts.body.head`, `.commits` and `.preview`: the artifact.
+/// `vault.artifacts.body.head` and `.commits`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyArtifactRequest {
@@ -168,6 +168,25 @@ pub struct OfficeBodyExportVerbRequest {
     pub author: Option<String>,
     #[serde(default)]
     pub made_by: Option<serde_json::Value>,
+    /// The caller's offset east of UTC now: a workbook's TODAY() and NOW()
+    /// read local time there. Absent, UTC.
+    #[serde(default)]
+    pub utc_offset_minutes: Option<i16>,
+    /// The IANA zone that offset was read from, kept as a label.
+    #[serde(default)]
+    pub iana_timezone: Option<String>,
+}
+
+/// `vault.artifacts.body.preview`: the artifact, and the caller's local
+/// time, as an export takes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyPreviewRequest {
+    pub artifact_ref: String,
+    #[serde(default)]
+    pub utc_offset_minutes: Option<i16>,
+    #[serde(default)]
+    pub iana_timezone: Option<String>,
 }
 
 /// One DOCX table cell's text.
@@ -547,6 +566,8 @@ impl Memory<'_> {
             Some(author) => author.clone(),
             None => actor.entity_ref().to_hex(),
         };
+        let zone =
+            OfficeRecalcZone::from_caller(input.utc_offset_minutes, input.iana_timezone.clone())?;
         let export = self.vault().export_office_body(
             &artifact,
             &OfficeBodyExportRequest {
@@ -554,6 +575,7 @@ impl Memory<'_> {
                 author: &author,
                 run_ref: &input.run_ref,
                 made_by: made_by.as_ref(),
+                zone: &zone,
             },
         )?;
         Ok(OfficeBodyExportView {
@@ -566,9 +588,11 @@ impl Memory<'_> {
     /// recalculated; nothing lands.
     pub fn artifacts_body_preview(
         &self,
-        input: &OfficeBodyArtifactRequest,
+        input: &OfficeBodyPreviewRequest,
     ) -> MemoryResult<XlsxPreview> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        Ok(self.vault().preview_xlsx_body(&artifact)?)
+        let zone =
+            OfficeRecalcZone::from_caller(input.utc_offset_minutes, input.iana_timezone.clone())?;
+        Ok(self.vault().preview_xlsx_body(&artifact, &zone)?)
     }
 }

@@ -4059,7 +4059,7 @@ impl OneironClient {
     /// The workbook an XLSX export would land now, recalculated.
     pub fn vault_artifacts_body_preview(
         &self,
-        input: &oneiron::office_body::OfficeBodyArtifactRequest,
+        input: &oneiron::office_body::OfficeBodyPreviewRequest,
     ) -> Result<oneiron::office_body::XlsxPreview, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
