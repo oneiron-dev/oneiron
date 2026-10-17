@@ -104,7 +104,7 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
             if graded == ROUND {
                 return Ok(());
             }
-            let key = detector_window_key(&detector.policy, tier, window.iter().copied());
+            let key = detector_window_key(&detector.policy, tier, &window);
             if vault.detector_window_graded(&key)? {
                 continue;
             }

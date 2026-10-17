@@ -37,7 +37,7 @@ pub struct T3Finding {
 pub fn detector_window_key(
     policy: &DetectorPolicy,
     tier: ProposedTier,
-    runs: impl IntoIterator<Item = &RetrievalRunRecord>,
+    runs: &[&RetrievalRunRecord],
 ) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     for part in [
