@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 270 facade rows, 1019 declarations.
+Census: 270 facade rows, 1022 declarations.
 Inputs: 226 of 270 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 219 of 270 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
@@ -2594,11 +2594,16 @@ class LearningSettingClear(TypedDict):
     mode: LearningSettingMode
     project: NotRequired[str | None]
     task_type: NotRequired[str | None]
+LiftCloseReason = Literal["not_a_secret", "rotated", "accepted", "read_clean", "answered", "deleted"]
+class SecretLiftClose(TypedDict):
+    proposal: str
+    reason: LiftCloseReason
 class SecretLiftRequest(TypedDict):
     start: NotRequired[bool]
+    close: NotRequired[SecretLiftClose | None]
 SecretScanMode = Literal["on", "off"]
 LiftTrigger = Literal["switch", "owner"]
-LiftFamily = Literal["records", "side_rows", "carriers"]
+LiftFamily = Literal["records", "attempts", "side_rows", "carriers"]
 class LiftCounts(TypedDict):
     family: LiftFamily
     read: int
@@ -2623,23 +2628,33 @@ class SecretLiftReceipt(TypedDict):
     proposals: int
     failed: int
 LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "history"]
+class LiftCauseCount(TypedDict):
+    cause: LiftCause
+    open: int
 class SecretLiftProposal(TypedDict):
     path: str
     detector_reason: str
     suggested_secret_name: str
     project_id: str
 class SecretLiftHistoryProposal(TypedDict):
+    id: NotRequired[str]
     family: LiftFamily
     cause: LiftCause
     proposal: SecretLiftProposal
     run_id: str
     filed_at: int
+    closed_at: NotRequired[int | None]
+    closed_by: NotRequired[str | None]
+    close_reason: NotRequired[LiftCloseReason | None]
+    close_receipt: NotRequired[str | None]
 class SecretLiftStatus(TypedDict):
     mode: SecretScanMode
     paused: bool
     running: NotRequired[SecretLiftProgress | None]
     last: NotRequired[SecretLiftReceipt | None]
     open_proposals: int
+    open_by_cause: list[LiftCauseCount]
+    closed_proposals: int
     proposals: list[SecretLiftHistoryProposal]
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):

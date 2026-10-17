@@ -29,6 +29,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_LEASE, LIVE),
     (&t::SECRET_MATERIALIZATION_RECEIPT, LIVE),
     (&t::SECRET_LIFT_MARK, CONTENT),
+    (&t::SECRET_LIFT_NOTICE, LIVE),
     (&t::SECRET_LIFT_PROPOSAL, CONTENT),
     (&t::SECRET_LIFT_RECEIPT, LIVE),
     (&t::SECRET_LIFT_RUN, LIVE),

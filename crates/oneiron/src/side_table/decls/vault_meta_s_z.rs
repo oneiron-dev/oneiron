@@ -76,9 +76,13 @@ side_tables! {
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
     SECRET_LIFT_MARK: VaultMeta b"secret_lift:mark:v1:" Named Engine;
+    /// The needs-you notice the lift sweep raised last for its open proposals: the run that raised
+    /// it and each owner's inbox row, acknowledged once none is open (OF-067). Key: ().
+    SECRET_LIFT_NOTICE: VaultMeta b"secret_lift:notice:v1" Named Engine;
     /// A hit the historical lift sweep could not place, filed for the owner: the record or row
-    /// that holds it, the detector's reason and why the sweep left it (OF-067). Holds no value.
-    /// Key: the family's code, a zero byte, then the record's key.
+    /// that holds it, the detector's reason and why the sweep left it, and once closed, when, by
+    /// whom and why (OF-067). Holds no value. Key: the family's code, a zero byte, `h` for a
+    /// retained-history proposal or `r` for the row's own, then the row's key.
     SECRET_LIFT_PROPOSAL: VaultMeta b"secret_lift:proposal:v1:" Named;
     /// One finished lift sweep run's owner receipt: counts per family, never a value or a digest
     /// (OF-067). Key: id16 (run id).

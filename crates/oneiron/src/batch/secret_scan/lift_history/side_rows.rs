@@ -85,6 +85,11 @@ pub(super) fn path(key: &[u8]) -> String {
     }
 }
 
+/// Whether row `key` is still stored.
+pub(super) fn exists(vault: &Vault, txn: &RoTxn<'_>, key: &[u8]) -> Result<bool> {
+    Ok(vault.store.vault_meta.get(txn, key)?.is_some())
+}
+
 fn table_of(key: &[u8]) -> Option<&'static SideTableDecl> {
     authored_vault_meta().find(|decl| key.starts_with(decl.prefix))
 }

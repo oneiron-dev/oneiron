@@ -446,6 +446,19 @@ pub(crate) fn lift_note_in_txn(
     Ok(doc.view()?.markdown != before)
 }
 
+/// A NOTE's title and each pin's quote: the text it keeps beside its body,
+/// which the historical lift sweep's census reads (OF-067).
+pub(crate) fn note_side_text_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Vec<String>> {
+    let doc = document_store::load(vault, txn, id)?;
+    let mut text: Vec<String> = doc.title()?.into_iter().collect();
+    text.extend(doc.pins()?.into_iter().map(|pin| pin.quote_text));
+    Ok(text)
+}
+
 mod document_store;
 mod folder_source;
 pub use folder_source::{

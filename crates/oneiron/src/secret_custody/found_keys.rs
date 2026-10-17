@@ -254,6 +254,25 @@ pub(crate) fn raise_found_key_notices_in_txn(vault: &Vault, txn: &mut RwTxn<'_>)
     Ok(())
 }
 
+/// What the owner did about each key a mask found in `record`, in the order
+/// they were found; `None` for one not answered yet. The historical lift
+/// sweep closes a proposal on a record whose keys are all answered (OF-067).
+pub(crate) fn found_key_actions_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Vec<Option<FoundKeyAction>>> {
+    Ok(FOUND
+        .get(store, txn, record)?
+        .map_or_else(Vec::new, |found| {
+            found
+                .keys
+                .iter()
+                .map(|key| key.settled.as_ref().map(|settled| settled.action))
+                .collect()
+        }))
+}
+
 /// The values the owner ruled no secret, by record: the write door reads
 /// none of them as a hit in its record, and the mask leaves each as
 /// written. Each value is read from its revoked custody record and wiped

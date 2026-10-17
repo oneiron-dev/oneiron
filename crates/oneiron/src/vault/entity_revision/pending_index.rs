@@ -84,6 +84,58 @@ pub(crate) fn drop_staged_vectors(store: &Store, txn: &mut heed::RwTxn<'_>) -> R
     Ok(())
 }
 
+/// Every text field staged for `id`, whatever revision it was staged for:
+/// the historical lift sweep reads them for secrets (OF-067).
+pub(crate) fn staged_index_fields(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<(String, String)>> {
+    Ok(PENDING
+        .get_lenient(store, txn, id)?
+        .and_then(|pending| pending.inputs.fields)
+        .unwrap_or_default())
+}
+
+/// The text fields `id` staged for its live revision, while that revision
+/// waits for idle publication: what the lift sweep sends through the batch
+/// door again, masked, in their place (OF-067).
+pub(crate) fn staged_live_index_fields(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<(String, String)>>> {
+    let Some(current) = state(store, txn, id)? else {
+        return Ok(None);
+    };
+    if current.live == current.indexed {
+        return Ok(None);
+    }
+    Ok(load(store, txn, id, current.live)?.fields)
+}
+
+/// Drops the text staged for `id` and keeps a staged vector: its publication
+/// then reads the text from the live body (OF-067's lift sweep, for staged
+/// text that still holds a secret).
+pub(crate) fn drop_staged_index_fields(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(mut pending) = PENDING.get_lenient(store, txn, id)? else {
+        return Ok(());
+    };
+    if pending.inputs.fields.take().is_none() {
+        return Ok(());
+    }
+    if pending.inputs.vector.is_none() && pending.inputs.pending_embedding_token.is_none() {
+        PENDING.delete(store, txn, id)?;
+    } else {
+        PENDING.put(store, txn, id, &pending)?;
+    }
+    Ok(())
+}
+
 pub(super) fn load(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,

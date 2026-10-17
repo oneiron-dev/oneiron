@@ -104,8 +104,8 @@ pub use self::found_keys::{
     NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
-    FoundNote, KeptValues, note_found_keys_in_txn, raise_found_key_notices_in_txn,
-    settle_found_key_in_txn,
+    FoundNote, KeptValues, found_key_actions_in_txn, note_found_keys_in_txn,
+    raise_found_key_notices_in_txn, settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSweep, KnownValues};
