@@ -17,6 +17,9 @@ pub enum CallOutcome<'a> {
     Used(u64),
     /// No answer arrived: the call failed, or its response was lost.
     Failed,
+    /// The call goes on past this process: a kept job a restart takes up
+    /// again, whose new permit pays its end. It is charged nothing here.
+    Kept,
 }
 
 impl RunInner {
@@ -38,9 +41,14 @@ impl RunInner {
                 Some(u128::from(quantity) * u128::from(permit.unit_cost))
             }
             CallOutcome::Failed => None,
+            CallOutcome::Kept => Some(0),
         };
+        let kept = matches!(outcome, CallOutcome::Kept);
         let line_unit = &permit.facts.unit;
         let line_units = native.map(|native| {
+            if kept {
+                return 0;
+            }
             charge(
                 native,
                 &permit.native,
@@ -65,6 +73,7 @@ impl RunInner {
         let allocation = permit.allocation.as_ref().map(|hold| {
             let reserved = hold.meter.reserved_for(&hold.lease).unwrap_or(0);
             match native {
+                Some(_) if kept => (0, hold.meter.settle_usage(&hold.lease, 0)),
                 Some(native) => {
                     let units = charge(native, &permit.native, &hold.unit, &permit.rates, reserved);
                     (units, hold.meter.settle_usage(&hold.lease, units))

@@ -162,10 +162,11 @@ pub struct EvalPolicy {
 
 /// Declared execution mode.
 ///
-/// [`Self::Reactive`] is STORED but not wired: reactive delivery adopts OF-241
-/// when it exists. Until then every mode executes through the same explicit
-/// on-demand and bounded-wake calls, so a reactive query is never silently
-/// inert — it is evaluated by whatever calls the evaluator.
+/// A host re-checks a [`Self::Reactive`] query for each person a claim write
+/// moves, read off the vault's change log
+/// ([`super::saved_query_changes_after`]), and still sweeps it in bounded
+/// wakes for what that feed cannot see; OF-241's live-query tee may replace
+/// the feed when it exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalMode {

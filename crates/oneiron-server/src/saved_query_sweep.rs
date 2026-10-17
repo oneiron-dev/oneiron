@@ -4,7 +4,10 @@
 //! last stopped. A query's LLM judge asks the membership question through the
 //! host's ladder, its first read on the query's named model, paid on the
 //! owner's line. Verdicts land in the query's memo; a person whose evidence
-//! has not moved costs nothing.
+//! has not moved costs nothing. A committed write also wakes a reactive pass:
+//! each Reactive query is re-checked at once for the people the vault's
+//! change log says a claim write moved, and its paged wake stays the backstop
+//! for what that log cannot show.
 //!
 //! Only the home node sweeps, so a judge is paid once per vault.
 use std::collections::BTreeMap;
@@ -14,7 +17,8 @@ use std::time::Duration;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::saved_query::{
     MatcherSpec, QueryScope, SWEEP_CANDIDATE_TYPE, SavedQueryEvaluator, SavedQueryJudgeBinding,
-    SavedQueryRecord, WakeEvaluationReport, sweep_owner_grants, sweep_saved_queries,
+    SavedQueryRecord, WakeEvaluationReport, reactive_saved_queries, saved_query_change_head,
+    saved_query_changes_after, sweep_owner_grants, sweep_saved_queries,
 };
 use oneiron::{
     BudgetExhaustionPolicy, BudgetLease, CallClass, CallEnvelope, CallPurpose, EdgeActorClass,
@@ -27,32 +31,80 @@ use crate::ladder_poll::block_on;
 use crate::models::RunBackend;
 use crate::server::SyncServer;
 
-/// How long the sweep rests between passes.
+/// How long the sweep rests between paged passes.
 const SWEEP: Duration = Duration::from_secs(60);
+/// Change-log rows one reactive pass reads; a longer backlog drains over
+/// passes that run back to back.
+const REACTIVE_ROWS: usize = 256;
 
-/// Starts the sweep. Each pass runs on a blocking thread: the ladder's model
-/// rungs block on the server's runtime.
-pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+/// Starts the sweep. Each pass runs on a blocking thread, held by `admit` (a
+/// managed vault frozen for reap skips it): the ladder's model rungs block on
+/// the server's runtime. A committed write wakes a reactive pass at once; a
+/// paged pass runs every [`SWEEP`].
+pub(crate) fn spawn(
+    server: &Arc<SyncServer>,
+    admit: crate::server::HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
+    // Subscribed before the change log's head is read, so no write between
+    // them is missed.
+    let mut changes = server.vault().subscribe_proactivity_changes();
+    // The reactive pass reads only what changes from now on; the first
+    // paged pass covers what came before.
+    let head = saved_query_change_head(server.vault()).unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "the change log's head could not be read; reactive passes start from its beginning");
+        None
+    });
     tokio::spawn(async move {
         // Where each query's next wake goes on from.
         let mut cursors = BTreeMap::<EntityId, EntityId>::new();
+        // The last change-log row a reactive pass read.
+        let mut after = head;
+        let mut next_wake = tokio::time::Instant::now();
         loop {
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            let ran = tokio::task::spawn_blocking(move || {
-                let now = oneiron_vault_contract::now_ts();
-                if crate::decision_graph::at_home(server.vault(), now)? {
-                    sweep_pass(&server, &mut cursors, now)?;
+            let wake = tokio::time::Instant::now() >= next_wake;
+            let Some(pass) = admit() else {
+                if wake {
+                    next_wake = tokio::time::Instant::now() + SWEEP;
                 }
-                Ok::<_, oneiron::Error>(cursors)
+                tokio::select! {
+                    () = tokio::time::sleep_until(next_wake) => {}
+                    changed = changes.changed() => {
+                        if changed.is_err() {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            };
+            let ran = tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                let now = oneiron_vault_contract::now_ts();
+                let mut read = after;
+                let result = (|| {
+                    let home = crate::decision_graph::at_home(server.vault(), now)?;
+                    let more = reactive_pass(&server, &mut read, home, now)?;
+                    if wake && home {
+                        sweep_pass(&server, &mut cursors, now)?;
+                    }
+                    Ok::<_, oneiron::Error>(more)
+                })();
+                (cursors, read, result)
             })
             .await;
+            let mut more = false;
             match ran {
-                Ok(Ok(kept)) => cursors = kept,
-                Ok(Err(error)) => {
+                Ok((kept, read, Ok(remaining))) => {
+                    cursors = kept;
+                    after = read;
+                    more = remaining;
+                }
+                Ok((_, read, Err(error))) => {
                     cursors = BTreeMap::new();
+                    after = read;
                     tracing::warn!(kind = ?error.kind(), "the saved-query sweep failed; it runs again next pass");
                 }
                 Err(error) => {
@@ -60,9 +112,73 @@ pub(crate) fn spawn(server: &Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
                     tracing::warn!(%error, "the saved-query sweep stopped");
                 }
             }
-            tokio::time::sleep(SWEEP).await;
+            if wake {
+                next_wake = tokio::time::Instant::now() + SWEEP;
+            }
+            if more {
+                continue;
+            }
+            tokio::select! {
+                () = tokio::time::sleep_until(next_wake) => {}
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                }
+            }
         }
     })
+}
+
+/// One read of the change log after `after`, then each Reactive query
+/// re-checked for the people it moved, in one bounded wake each: a person
+/// past the query's wake bounds waits for its paged pass. Off home, or with
+/// no Reactive query, it skips to the log's head. Returns whether changes
+/// remain to read.
+fn reactive_pass(
+    server: &SyncServer,
+    after: &mut Option<[u8; 16]>,
+    home: bool,
+    now: u64,
+) -> oneiron::Result<bool> {
+    let vault = server.vault();
+    let queries = if home {
+        reactive_saved_queries(vault)?
+    } else {
+        Vec::new()
+    };
+    if queries.is_empty() {
+        *after = saved_query_change_head(vault)?.or(*after);
+        return Ok(false);
+    }
+    let changes = saved_query_changes_after(vault, *after, REACTIVE_ROWS)?;
+    if changes.through.is_some() {
+        *after = changes.through;
+    }
+    if changes.persons.is_empty() {
+        return Ok(changes.more);
+    }
+    let page: Vec<EntityId> = changes.persons.into_iter().collect();
+    for record in &queries {
+        let Some(grants) = sweep_owner_grants(vault, record.definition.owner_actor)? else {
+            continue;
+        };
+        match evaluate(server, record, &grants, &page, now) {
+            Ok(report) => tracing::debug!(
+                query = %record.query_ref.to_hex(),
+                evaluated = report.evaluated,
+                memo_hits = report.memo_hits,
+                judges = report.judges_run,
+                "a saved query's reactive re-check ran"
+            ),
+            Err(error) => tracing::warn!(
+                query = %record.query_ref.to_hex(),
+                kind = ?error.kind(),
+                "a saved query's reactive re-check failed; its paged pass covers it"
+            ),
+        }
+    }
+    Ok(changes.more)
 }
 
 /// One wake of each query the sweep evaluates.

@@ -104,7 +104,10 @@ pub use self::pack_drift::{
     pack_drift_repairs, put_pack_migration_map, repair_pack_drift,
 };
 pub(crate) use self::pack_drift::{PackMove, repair_saved_queries_after_pack_move_in_txn};
-pub use self::sweep::{SWEEP_CANDIDATE_TYPE, sweep_owner_grants, sweep_saved_queries};
+pub use self::sweep::{
+    PersonChanges, SWEEP_CANDIDATE_TYPE, reactive_saved_queries, saved_query_change_head,
+    saved_query_changes_after, sweep_owner_grants, sweep_saved_queries,
+};
 
 // The flat saved_query.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports

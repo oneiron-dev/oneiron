@@ -373,4 +373,11 @@ impl RunPermit {
             None => self.settle(CallOutcome::Answered(&LlmUsage::zero())),
         }
     }
+
+    /// Ends a kept media job's permit at a stop without a charge
+    /// ([`CallOutcome::Kept`]): the job runs on at its provider, and the
+    /// permit that takes it up after the restart pays its end.
+    pub fn hand_off_media(self) -> Result<BudgetSettlement, RunDenied> {
+        self.settle(CallOutcome::Kept)
+    }
 }

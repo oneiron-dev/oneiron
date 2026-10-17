@@ -259,7 +259,10 @@ pub(super) async fn serve_with_config(
         ));
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
-    workers.push(crate::saved_query_sweep::spawn(&sync_server));
+    workers.push(crate::saved_query_sweep::spawn(
+        &sync_server,
+        crate::server::admit_every_pass(),
+    ));
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(
         &sync_server,
