@@ -59,6 +59,10 @@ both bindings and their export-census tests in one change.
 - `vault.members.change`
 - `vault.members.remove`
 - `vault.members.leave`
+- `vault.members.invitations`
+- `vault.members.accept`
+- `vault.members.decline`
+- `vault.members.withdraw_invitation`
 - `vault.guests.revoke`
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`

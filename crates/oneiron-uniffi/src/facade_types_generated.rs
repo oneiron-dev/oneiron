@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 166 facade rows, 507 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 137.
+// UniFFI census: 170 facade rows, 511 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 141.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -1666,6 +1666,13 @@ pub enum WeaveItemView {
         #[serde(rename = "entries")]
         entries: u64,
     },
+    #[serde(rename = "agent_health")]
+    AgentHealth {
+        #[serde(rename = "card_ref")]
+        card_ref: String,
+        #[serde(rename = "card")]
+        card: AgentHealthCard,
+    },
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveSectionView`.
@@ -2723,6 +2730,40 @@ pub enum SharedVaultChange {
         #[serde(rename = "role")]
         role: FederationGrantRole,
     },
+    #[serde(rename = "member_invited")]
+    MemberInvited {
+        #[serde(rename = "invitation")]
+        invitation: String,
+        #[serde(rename = "member")]
+        member: String,
+        #[serde(rename = "role")]
+        role: FederationGrantRole,
+        #[serde(rename = "expires_at")]
+        expires_at: u64,
+    },
+    #[serde(rename = "invitation_accepted")]
+    InvitationAccepted {
+        #[serde(rename = "invitation")]
+        invitation: String,
+        #[serde(rename = "member")]
+        member: String,
+        #[serde(rename = "role")]
+        role: FederationGrantRole,
+    },
+    #[serde(rename = "invitation_declined")]
+    InvitationDeclined {
+        #[serde(rename = "invitation")]
+        invitation: String,
+        #[serde(rename = "member")]
+        member: String,
+    },
+    #[serde(rename = "invitation_withdrawn")]
+    InvitationWithdrawn {
+        #[serde(rename = "invitation")]
+        invitation: String,
+        #[serde(rename = "member")]
+        member: String,
+    },
     #[serde(rename = "member_role_changed")]
     MemberRoleChanged {
         #[serde(rename = "member")]
@@ -2803,6 +2844,12 @@ pub struct SharedActExecutionReceipt {
     pub revoked_slips: Vec<String>,
     #[serde(rename = "export", default, skip_serializing_if = "Option::is_none")]
     pub export: Option<SharedActExport>,
+    #[serde(
+        rename = "authority_entry",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub authority_entry: Option<String>,
     #[serde(rename = "completed_at")]
     pub completed_at: u64,
 }
@@ -2890,6 +2937,74 @@ pub struct SharedMemberRequest {
     pub vault_id: u64,
     #[serde(rename = "member")]
     pub member: String,
+}
+
+/// `oneiron::federation::shared_act::membership::invitation::SharedInvitationState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SharedInvitationState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "accepted")]
+    Accepted {
+        #[serde(rename = "at")]
+        at: u64,
+    },
+    #[serde(rename = "declined")]
+    Declined {
+        #[serde(rename = "at")]
+        at: u64,
+    },
+    #[serde(rename = "withdrawn")]
+    Withdrawn {
+        #[serde(rename = "by")]
+        by: String,
+        #[serde(rename = "at")]
+        at: u64,
+    },
+}
+
+/// `oneiron::federation::shared_act::membership::invitation::SharedInvitation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedInvitation {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "inviter")]
+    pub inviter: String,
+    #[serde(rename = "invitee")]
+    pub invitee: String,
+    #[serde(rename = "role")]
+    pub role: FederationGrantRole,
+    #[serde(rename = "issued_at")]
+    pub issued_at: u64,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "state")]
+    pub state: SharedInvitationState,
+}
+
+/// `oneiron::task_verb::sdk_shared_members::SharedInvitationRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedInvitationRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "invitation")]
+    pub invitation: String,
+}
+
+/// `oneiron::task_verb::sdk_shared_members::SharedInvitationWithdrawRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedInvitationWithdrawRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "member")]
+    pub member: String,
+    #[serde(rename = "invitation")]
+    pub invitation: String,
 }
 
 /// `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest`.

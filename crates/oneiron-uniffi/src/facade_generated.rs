@@ -264,6 +264,26 @@ export_facade! {
     let output = client.vault_members_leave(&input)?;
     crate::codec::lift_record("vault.members.leave", &output)
 };
+"vault.members.invitations" => fn vault_members_invitations(&self, input: SharedVaultRequest) -> Vec<SharedInvitation> = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.members.invitations", input)?;
+    let output = client.vault_members_invitations(&input)?;
+    crate::codec::lift_record("vault.members.invitations", &output)
+};
+"vault.members.accept" => fn vault_members_accept(&self, input: SharedInvitationRequest) -> SharedActExecutionReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationRequest = crate::codec::lower_record("vault.members.accept", input)?;
+    let output = client.vault_members_accept(&input)?;
+    crate::codec::lift_record("vault.members.accept", &output)
+};
+"vault.members.decline" => fn vault_members_decline(&self, input: SharedInvitationRequest) -> SharedActExecutionReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationRequest = crate::codec::lower_record("vault.members.decline", input)?;
+    let output = client.vault_members_decline(&input)?;
+    crate::codec::lift_record("vault.members.decline", &output)
+};
+"vault.members.withdraw_invitation" => fn vault_members_withdraw_invitation(&self, input: SharedInvitationWithdrawRequest) -> SharedActExecutionReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationWithdrawRequest = crate::codec::lower_record("vault.members.withdraw_invitation", input)?;
+    let output = client.vault_members_withdraw_invitation(&input)?;
+    crate::codec::lift_record("vault.members.withdraw_invitation", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;
