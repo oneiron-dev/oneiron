@@ -10,7 +10,6 @@
 
 mod ask;
 mod chain;
-mod install;
 mod redact;
 mod served;
 mod state;

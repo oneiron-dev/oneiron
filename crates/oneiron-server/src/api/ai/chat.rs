@@ -422,6 +422,13 @@ fn start_turn(
                 refusal.to_string(),
             ),
         })?;
+    // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
+    // is admitted, so a refused admission leaves no hook's blocks or notes,
+    // and before the user's turn is witnessed, so a skip or an ask ends the
+    // turn before anything lands and a retry of it witnesses once.
+    let generating = turn_generate_pre(&vault, actor, invocation, &request.conversation_ref)
+        .map_err(|error| engine(&error))?
+        .map_err(|stop| hook_stopped(&stop))?;
 
     // The assistant message closes after the vault's idle timeout without
     // an append; read before anything is written.
@@ -458,13 +465,6 @@ fn start_turn(
         .unwrap_or_default()
         .to_owned();
     server.ai.turn_landed(&vault, WakeTurnSubject::Vault);
-    // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
-    // is admitted and the user's turn is witnessed, so a refused admission
-    // or witness leaves no hook's blocks or notes, and before the reply's
-    // stream opens, so a skip ends the turn before any model is called.
-    let generating = turn_generate_pre(&vault, actor, invocation, &request.conversation_ref)
-        .map_err(|error| engine(&error))?
-        .map_err(|stop| hook_stopped(&stop))?;
     let turn = EntityId::now();
     let credential = TurnCredential::Request {
         auth: auth.clone(),
