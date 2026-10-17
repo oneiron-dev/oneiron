@@ -1,7 +1,10 @@
 //! The device side of sync (ARCH-0023b): a machine that is not the elected
-//! home dials its home and keeps its vault in sync there. It dials over the
-//! paired mesh, on the mesh listener's own endpoint, and presents the paired
-//! owner-grade credential its `[device_sync]` section names.
+//! home dials its home and keeps its vault in sync there. The home is the one
+//! `oneiron device enrol` recorded ([`enrolment`]), or one its `[device_sync]`
+//! section names by hand. It dials over the paired mesh, on the mesh
+//! listener's own endpoint, when the home has a paired mesh address and a
+//! listener runs here; otherwise at the home's URL, over `wss` (or `ws` to a
+//! loopback host). Either way it presents the paired owner-grade credential.
 //!
 //! One connection runs for the server's life. Its own loop reconnects with
 //! backoff, so there is no second loop here. It attaches its outbound channel
@@ -13,6 +16,8 @@
 //! endpoint, as the connection's home-node topology. The paired credential
 //! also binds each socket's NOTE session, and the own-device grant it names
 //! selects what residence reads (index, first touch, promotion) may return.
+//! The checkpoint the enrolment's link pinned is adopted on the first
+//! connection's authority catch-up.
 //!
 //! While the home connection is synced, the device also learns the models
 //! the owner's other nodes offer (OF-575): it asks them on each sync and then
@@ -24,9 +29,12 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::config::DeviceSyncConfig;
+use crate::config::{DeviceSyncConfig, ServeConfig};
 use crate::handler::mesh::MeshHost;
 use crate::server::SyncServer;
+
+mod enrolment;
+pub(crate) use enrolment::{EnrolmentFiles, enrol};
 
 /// The running connection to the home.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -36,17 +44,22 @@ pub(crate) struct DeviceSyncHost {
 }
 
 impl DeviceSyncHost {
-    /// Dials the home `config` names, when it names one and this machine may:
-    /// an enrolled machine that is not the elected home, with the home a live
-    /// paired machine and a mesh listener to ride. Otherwise one "disabled"
-    /// line says why, and serve runs on without it.
+    /// Dials this machine's home, when it has one and may: an enrolled
+    /// machine that is not the elected home, with the home a live machine.
+    /// Otherwise one "disabled" line says why, and serve runs on without it.
     pub(crate) async fn start(
         server: &Arc<SyncServer>,
-        config: Option<&DeviceSyncConfig>,
+        config: &ServeConfig,
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
-        let config = config?;
-        match open(server, config, mesh).await {
+        let dial = match Dial::resolve(server, config) {
+            Ok(dial) => dial?,
+            Err(reason) => {
+                tracing::warn!("device sync disabled: {reason:#}");
+                return None;
+            }
+        };
+        match open(server, dial, mesh).await {
             Ok(host) => Some(host),
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
@@ -65,10 +78,81 @@ impl DeviceSyncHost {
     }
 }
 
+/// What this machine dials: the home `[device_sync]` names by hand, else the
+/// one it enrolled with, and the worlds the section follows.
+#[cfg_attr(not(feature = "mesh"), allow(dead_code))]
+struct Dial {
+    home: oneiron::EntityId,
+    url: String,
+    credential_file: std::path::PathBuf,
+    worlds: Vec<oneiron::EntityId>,
+    home_node: Option<u64>,
+    pin: Option<oneiron::authority::AuthorityCheckpointPin>,
+    /// Enrolled by `oneiron device enrol`: the home holds this machine's
+    /// profile, which reaches this vault on the first authority catch-up.
+    enrolled: bool,
+}
+
+impl Dial {
+    /// `None` when this machine has no home: no section and no enrolment.
+    fn resolve(server: &SyncServer, config: &ServeConfig) -> anyhow::Result<Option<Self>> {
+        let section = config.device_sync.as_ref();
+        // No directory to look in means `device enrol` wrote nothing either.
+        let enrolment = match EnrolmentFiles::for_vault(&config.keystore, &server.vault) {
+            Ok(files) => files.read()?.map(|record| (files, record)),
+            Err(_) => None,
+        };
+        let worlds = section
+            .map(DeviceSyncConfig::followed_worlds)
+            .transpose()?
+            .unwrap_or_default();
+        let node = section.and_then(|section| section.home_node_id);
+        if let Some(named) = section
+            .map(DeviceSyncConfig::named_home)
+            .transpose()?
+            .flatten()
+        {
+            // An enrolment's pin is its own home's only.
+            let pin = enrolment
+                .filter(|(_, record)| {
+                    crate::config::device_sync::parse_machine(&record.home_machine).ok()
+                        == Some(named.machine)
+                })
+                .and_then(|(_, record)| record.authority_checkpoint_pin);
+            return Ok(Some(Self {
+                home: named.machine,
+                url: named.url.to_owned(),
+                credential_file: named.credential_file.to_owned(),
+                worlds,
+                home_node: node,
+                pin,
+                enrolled: false,
+            }));
+        }
+        let Some((files, record)) = enrolment else {
+            anyhow::ensure!(
+                section.is_none(),
+                "[device_sync] names no home and this machine is not enrolled; run `oneiron \
+                 device enrol` with the vault stopped"
+            );
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            home: crate::config::device_sync::parse_machine(&record.home_machine)?,
+            url: record.home_url,
+            credential_file: files.credential,
+            worlds,
+            home_node: Some(node.unwrap_or(record.home_node_id)),
+            pin: record.authority_checkpoint_pin,
+            enrolled: true,
+        }))
+    }
+}
+
 #[cfg(not(feature = "mesh"))]
 async fn open(
     _server: &Arc<SyncServer>,
-    _config: &DeviceSyncConfig,
+    _dial: Dial,
     _mesh: Option<&MeshHost>,
 ) -> anyhow::Result<DeviceSyncHost> {
     anyhow::bail!("this server was built without the `mesh` feature")
@@ -77,29 +161,41 @@ async fn open(
 #[cfg(feature = "mesh")]
 async fn open(
     server: &Arc<SyncServer>,
-    config: &DeviceSyncConfig,
+    dial: Dial,
     mesh: Option<&MeshHost>,
 ) -> anyhow::Result<DeviceSyncHost> {
     use oneiron::sync::client::NoteSyncSession;
     use oneiron::sync::{
-        ConnectionConfig, SyncClientConfig, SyncConnection, SyncEvent, SyncTransportCredential,
+        ConnectionConfig, SyncClientConfig, SyncConnection, SyncDialer, SyncEvent,
+        SyncTransportCredential,
     };
     use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
 
-    let mesh = mesh
-        .ok_or_else(|| anyhow::anyhow!("no mesh listener to dial from; set ONEIRON_MESH_BIND"))?;
-    let home = config.home()?;
-    let home_node = config.home_node_id;
+    let Dial {
+        home,
+        url,
+        credential_file,
+        worlds,
+        home_node,
+        pin,
+        enrolled,
+    } = dial;
     let vault = Arc::clone(&server.vault);
-    let machine = tokio::task::spawn_blocking(move || {
+    let (machine, paired) = tokio::task::spawn_blocking(move || {
         if let Some(node) = home_node {
             hold_home(&vault, node)?;
         }
-        standing(&vault, home)
+        standing(&vault, home, enrolled)
     })
     .await??;
+    // Over the mesh when the home has a paired address and a listener runs
+    // here; otherwise at the home's URL.
+    let mesh = mesh.filter(|_| paired);
+    if mesh.is_none() {
+        direct(&url)?;
+    }
     let credential =
-        crate::commands::credential_file::PairedCredentialFile::read(&config.credential_file)?;
+        crate::commands::credential_file::PairedCredentialFile::read(&credential_file)?;
     let key = credential.signing_key()?;
     let selector = residence_selector(&credential.token)?;
     if selector.is_none() {
@@ -108,7 +204,7 @@ async fn open(
         );
     }
     let client_config = SyncClientConfig {
-        server_url: config.home_url.clone(),
+        server_url: url.clone(),
         transport_credential: Some(SyncTransportCredential::new(
             credential.token.clone(),
             key.clone(),
@@ -117,9 +213,14 @@ async fn open(
         // the NOTE session too.
         note_session: Some(NoteSyncSession::new(credential.token, key)),
         residence_selector: selector,
-        followed_worlds: Some(config.followed_worlds()?),
-        home_node_topology: home_node.map(|node| home_topology(node, &config.home_url)),
-        mesh_dialer: Some(Arc::new(MeshSyncDialer::new(mesh.transport(), home))),
+        followed_worlds: Some(worlds),
+        home_node_topology: home_node.map(|node| home_topology(node, &url)),
+        mesh_dialer: mesh.map(|mesh| {
+            Arc::new(MeshSyncDialer::new(mesh.transport(), home)) as Arc<dyn SyncDialer>
+        }),
+        // The checkpoint the enrolment's link pinned: the first authority
+        // catch-up adopts it.
+        authority_checkpoint_pin: pin,
         ..SyncClientConfig::default()
     };
     let connection = SyncConnection::new(
@@ -131,7 +232,8 @@ async fn open(
     )?;
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
-    let catalog = MeshCatalog {
+    let over = if mesh.is_some() { "mesh" } else { "url" };
+    let catalog = mesh.map(|mesh| MeshCatalog {
         vault: Arc::clone(&server.vault),
         transport: mesh.transport(),
         backend: None,
@@ -139,8 +241,8 @@ async fn open(
             .ai
             .models()
             .mesh_routes(&server.vault, mesh.transport()),
-    };
-    tracing::info!(machine = %machine.to_hex(), %home, "device sync started");
+    });
+    tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
         // The observer is synchronous, so each status goes to the catalog
         // loop; the channel closes when the connection's run ends.
@@ -156,7 +258,14 @@ async fn open(
                 _ => {}
             }
         });
-        let ((), ran) = tokio::join!(catalog.run(status_rx, &home), observed);
+        // Off the mesh there are no other nodes to ask, so no catalog.
+        let catalog = async {
+            match catalog {
+                Some(catalog) => catalog.run(status_rx, &home).await,
+                None => drop(status_rx),
+            }
+        };
+        let ((), ran) = tokio::join!(catalog, observed);
         match ran {
             Ok(()) => tracing::info!(%home, "device sync stopped"),
             Err(error) => tracing::warn!(%home, %error, "device sync ended"),
@@ -320,35 +429,70 @@ fn residence_selector(token: &str) -> anyhow::Result<Option<oneiron::sync::SyncS
     )))
 }
 
-/// This install's MACHINE, when it may dial `home`: enrolled and live, not
-/// the elected home, and `home` a live machine with a paired mesh address.
+/// A home dialed at its URL, off the mesh: `wss`, or `ws` to a loopback
+/// host, as the NOTE session binds only over TLS or on this machine.
 #[cfg(feature = "mesh")]
-fn standing(vault: &oneiron::Vault, home: oneiron::EntityId) -> anyhow::Result<oneiron::EntityId> {
+fn direct(url: &str) -> anyhow::Result<()> {
+    let uri: axum::http::Uri = url
+        .parse()
+        .map_err(|_| anyhow::anyhow!("home_url is not a URL"))?;
+    let loopback = uri.host().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    });
+    anyhow::ensure!(
+        uri.scheme_str() == Some("wss") || loopback,
+        "the home has no paired mesh address here, and off the mesh its home_url must be \
+         wss:// (or ws:// to a loopback host)"
+    );
+    Ok(())
+}
+
+/// This install's MACHINE, when it may dial `home`, and whether `home` has a
+/// paired mesh address. It may when it is enrolled and live, not the elected
+/// home, and `home` is a live machine. A machine `oneiron device enrol` added
+/// (`enrolled`) is enrolled at the home: its own profile, and the home's,
+/// reach this vault on the first authority catch-up.
+#[cfg(feature = "mesh")]
+fn standing(
+    vault: &oneiron::Vault,
+    home: oneiron::EntityId,
+    enrolled: bool,
+) -> anyhow::Result<(oneiron::EntityId, bool)> {
     let live = |machine: &oneiron::authority::FoldedMachine| {
         machine.chains().any(|(_, chain)| chain.is_live())
     };
     let local = vault
         .local_machine()?
         .ok_or_else(|| anyhow::anyhow!("this install is not a machine yet"))?;
-    anyhow::ensure!(
-        local.profile.as_ref().is_some_and(live),
-        "this machine is not enrolled live in the vault"
-    );
+    match &local.profile {
+        Some(profile) => anyhow::ensure!(
+            live(profile),
+            "this machine is not enrolled live in the vault"
+        ),
+        None => anyhow::ensure!(
+            enrolled,
+            "this machine is not enrolled in the vault; `oneiron device enrol` enrols it"
+        ),
+    }
     anyhow::ensure!(local.id != home, "home_machine names this machine");
     anyhow::ensure!(
         !oneiron::sync::residence::local_is_elected_home(vault)?,
         "this machine is the elected home, which dials no one (name the home's \
          sync_node_id as home_node_id to hold it as home instead)"
     );
-    anyhow::ensure!(
-        vault.mesh_machine(home)?.is_some(),
-        "home_machine {} has no paired mesh address",
-        home.to_hex()
-    );
-    anyhow::ensure!(
-        vault.authority_fold()?.machine(home).is_some_and(live),
-        "home_machine {} is not a live machine",
-        home.to_hex()
-    );
-    Ok(local.id)
+    match vault.authority_fold()?.machine(home) {
+        Some(machine) => anyhow::ensure!(
+            live(machine),
+            "home_machine {} is not a live machine",
+            home.to_hex()
+        ),
+        None => anyhow::ensure!(
+            enrolled,
+            "home_machine {} is not a machine of this vault",
+            home.to_hex()
+        ),
+    }
+    Ok((local.id, vault.mesh_machine(home)?.is_some()))
 }

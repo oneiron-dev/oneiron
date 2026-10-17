@@ -17,6 +17,7 @@ use crate::dreamer_consolidation::{decode_turn_body, evidence_source_from_row};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::ports::EdgeDirection;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
@@ -26,6 +27,47 @@ use crate::registry::{
 #[must_use]
 pub fn history_import_review_id(source: HistorySource, imported_at: u64) -> String {
     format!("import:{}:{imported_at}", source.source_id())
+}
+
+/// Producer name of a finished history import's inbox row.
+const NOTIFICATION_PRODUCER_HISTORY_IMPORT: &str = "history_import";
+
+impl Vault {
+    /// Surfaces one finished history import in the inbox (OF-221): one
+    /// `ImportFinished` row for the batch's review of `source`, named by the
+    /// review id, never one per conversation. The batch's caller writes it
+    /// once the batch has landed; writing it again for the same review finds
+    /// the row it wrote.
+    ///
+    /// # Errors
+    /// A storage error.
+    pub fn record_history_import_finished(
+        &self,
+        source: HistorySource,
+        imported_at: u64,
+    ) -> Result<EntityId> {
+        let review = history_import_review_id(source, imported_at);
+        self.with_write_txn(|txn| {
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            self.record_notification_in_txn(
+                txn,
+                &NotificationEvent {
+                    kind: NotificationKind::ImportFinished,
+                    source: NotificationSource {
+                        producer: NOTIFICATION_PRODUCER_HISTORY_IMPORT.to_owned(),
+                        // The review is the run `oneiron runs` shows.
+                        run: Some(review.clone()),
+                        event: review,
+                        ..NotificationSource::default()
+                    },
+                    subject_refs: Vec::new(),
+                    recipient: None,
+                    created_at: now,
+                    origin_conversation: None,
+                },
+            )
+        })
+    }
 }
 
 /// What a claim's evidence says about imports.
