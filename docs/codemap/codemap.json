@@ -27350,7 +27350,7 @@
       "const": 1,
       "crate-vis": 13,
       "enum": 4,
-      "fn": 19,
+      "fn": 20,
       "struct": 12,
       "trait": 4
      }
@@ -27421,7 +27421,7 @@
       "const": 1,
       "crate-vis": 1,
       "enum": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 4
      }
     },
