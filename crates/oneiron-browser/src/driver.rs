@@ -287,7 +287,7 @@ impl CdpDriver {
     }
 
     /// The page's scroll offset as it is now, in CSS pixels.
-    fn scroll(&self) -> Result<(f64, f64), BrowserError> {
+    fn scroll_offset(&self) -> Result<(f64, f64), BrowserError> {
         let scroll = self.page(
             "Runtime.evaluate",
             json!({"expression": "[scrollX, scrollY]", "returnByValue": true}),
@@ -312,7 +312,7 @@ impl CdpDriver {
                 "a point is two fractions of its image, each from 0 to 1".to_owned(),
             ));
         }
-        let scroll = self.scroll()?;
+        let scroll = self.scroll_offset()?;
         let (url, _) = self.page_info()?;
         if url != frame.url
             || (scroll.0 - frame.scroll.0).abs() >= 1.0
@@ -612,7 +612,7 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
-        let scroll = self.scroll()?;
+        let scroll = self.scroll_offset()?;
         self.mask_secrets(true)?;
         let captured = self.page("Page.captureScreenshot", json!({"format": "png"}));
         let restored = self.mask_secrets(false);

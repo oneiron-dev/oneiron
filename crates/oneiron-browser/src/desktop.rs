@@ -527,15 +527,7 @@ impl DesktopSession {
     }
 
     fn fingerprint(&mut self) -> Result<blake3::Hash, BrowserError> {
-        let snapshot = self.snapshot(false)?;
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(snapshot.key.name().as_bytes());
-        for line in &snapshot.lines {
-            let row =
-                serde_json::to_vec(&line.row).map_err(|e| BrowserError::Protocol(e.to_string()))?;
-            hasher.update(&row);
-        }
-        Ok(hasher.finalize())
+        print_of(&self.snapshot(false)?)
     }
 
     /// Waits for the window to settle after an action that began at `start`.
@@ -608,16 +600,18 @@ impl DesktopSession {
         })
     }
 
-    /// Runs `act` on the desktop, then returns the settled window as a
-    /// diff, or whole when the act opened a window in front: that window is
-    /// where the next step reads.
+    /// Runs `act` on the desktop as `read` saw it, then returns the settled
+    /// window as a diff, or whole when the act opened a window in front:
+    /// that window is where the next step reads. No read comes between
+    /// `read` and the act, since each read retires the last one's tokens.
     fn act(
         &mut self,
+        read: &Snapshot,
         act: impl FnOnce(&Self) -> Result<(), BrowserError>,
     ) -> Result<Observation, BrowserError> {
         let since = self.seq;
         let windows: Vec<WindowKey> = self.listed()?.into_iter().map(|w| w.key).collect();
-        let before = self.fingerprint()?;
+        let before = print_of(read)?;
         let start = Instant::now();
         act(self)?;
         self.settle(before, start)?;
@@ -729,6 +723,18 @@ fn front(listed: &[Listed], among: impl Fn(&Listed) -> bool) -> Option<WindowKey
         .filter(|(_, window)| among(window))
         .max_by_key(|(index, window)| (window.z, *index))
         .map(|(_, window)| window.key)
+}
+
+/// What a read of a window shows, as one hash: a settled window reads the same.
+fn print_of(snapshot: &Snapshot) -> Result<blake3::Hash, BrowserError> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(snapshot.key.name().as_bytes());
+    for line in &snapshot.lines {
+        let row =
+            serde_json::to_vec(&line.row).map_err(|e| BrowserError::Protocol(e.to_string()))?;
+        hasher.update(&row);
+    }
+    Ok(hasher.finalize())
 }
 
 fn no_window() -> BrowserError {
@@ -1025,7 +1031,7 @@ impl BrowserDriver for DesktopSession {
         let class = effect_class(&line.row.name);
         let press = self.press(class, &line.row)?;
         let pid = snapshot.key.pid;
-        let mut observation = self.act(|session| {
+        let mut observation = self.act(&snapshot, |session| {
             session
                 .input("click", json!({"pid": pid, "element_token": token}))
                 .map_err(|e| refusal(e, Some(input.target.as_str())))
@@ -1068,7 +1074,7 @@ impl BrowserDriver for DesktopSession {
         let down =
             ((y - bounds.y) * frame.scale).clamp(0.0, (bounds.h * frame.scale - 1.0).max(0.0));
         let key = snapshot.key;
-        let mut observation = self.act(|session| {
+        let mut observation = self.act(&snapshot, |session| {
             session
                 .input(
                     "click",
@@ -1091,7 +1097,7 @@ impl BrowserDriver for DesktopSession {
             .then_some(EFFECT_SEND);
         let press = self.press(class, &line.row)?;
         let pid = snapshot.key.pid;
-        let mut observation = self.act(|session| {
+        let mut observation = self.act(&snapshot, |session| {
             let refused = |error: ToolError| refusal(error, Some(input.target.as_str()));
             if input.clear {
                 for (key, modifiers) in [("a", vec!["ctrl"]), ("backspace", Vec::new())] {
@@ -1122,7 +1128,7 @@ impl BrowserDriver for DesktopSession {
         let snapshot = self.snapshot(false)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
         let pid = snapshot.key.pid;
-        let mut observation = self.act(|session| {
+        let mut observation = self.act(&snapshot, |session| {
             session
                 .input(
                     "set_value",
@@ -1313,7 +1319,7 @@ impl BrowserDriver for DesktopSession {
             Some((_, token)) => arguments["element_token"] = Value::from(token.as_str()),
             None => arguments["window_id"] = Value::from(key.id),
         }
-        let mut observation = self.act(|session| {
+        let mut observation = self.act(&snapshot, |session| {
             session
                 .input("press_key", arguments)
                 .map_err(|e| refusal(e, input.target.as_deref()))
@@ -1330,14 +1336,15 @@ impl BrowserDriver for DesktopSession {
                 "a hotkey holds two keys or more".to_owned(),
             ));
         }
-        let key = self.snapshot(false)?.key;
+        let snapshot = self.snapshot(false)?;
+        let key = snapshot.key;
         let class = input
             .keys
             .iter()
             .any(|k| is_return(k))
             .then_some(EFFECT_SEND);
         let press = self.press(class, &key_row(&input.keys.join("+")))?;
-        let mut observation = self.act(|session| {
+        let mut observation = self.act(&snapshot, |session| {
             session
                 .input(
                     "hotkey",
@@ -1365,7 +1372,7 @@ impl BrowserDriver for DesktopSession {
             }
             None => arguments["window_id"] = Value::from(snapshot.key.id),
         }
-        self.act(|session| {
+        self.act(&snapshot, |session| {
             session
                 .input("scroll", arguments)
                 .map_err(|e| refusal(e, input.target.as_deref()))

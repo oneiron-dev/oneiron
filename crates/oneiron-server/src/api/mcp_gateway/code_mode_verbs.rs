@@ -494,6 +494,18 @@ impl McpCodeModeVerbs {
         };
         // A desktop row drives the run's desktop; every other row its browser.
         let desktop = call.verb.as_str().starts_with("self.desktop.");
+        // The browser guest runs only once its setup connection is checked.
+        if !desktop
+            && self
+                .server
+                .vault
+                .require_pack_connection_verified("oneiron.browser", "browser-guest")
+                .is_err()
+        {
+            return Ok(Err(AgentVerbRefusal {
+                code: "browser_connection_unchecked".to_owned(),
+            }));
+        }
         let run_id = if desktop {
             self.desktop.as_ref().map(|desktop| desktop.run_id)
         } else {
