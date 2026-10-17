@@ -73,6 +73,14 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// TURN ref (create-or-get for hex); `None` ⇒ a fresh TURN is created.
     pub turn_ref: Option<String>,
+    /// A quote on a project room's thread reply (OF-460): a scalar span of one
+    /// MESSAGE in the room. The witness proves it in its own write and mints
+    /// the TURN with the engine-issued anchor, the reply pointer to the quoted
+    /// message's TURN and its DAG edges; the reply's thread chain stays its
+    /// own. A stored turn's quote is a birth fact, so a retry carries the same
+    /// one. Absent ⇒ no quote.
+    #[serde(default)]
+    pub quote: Option<crate::conversation_dag::QuoteSpan>,
     /// Messages, all attributed to the bound actor unless `System`.
     ///
     /// A TURN is the maximal consecutive run of ONE speaker, so every

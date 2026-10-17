@@ -4,12 +4,14 @@
 //! The engine reads each unit's identity and text from the typed deck view; the
 //! host supplies only the rendered image. Its ref (what it was rendered from or
 //! the ASSET it is, its hash and size) sits in `state.media`, and its pixels ride
-//! beside the state to a rung that reads images (owner point 3). When no rung up
-//! to the ceiling reads one, the entry says so and the call stands on the text.
-//! No provider output may select the principal, receipt, comment anchor, or
-//! settle authority. The existing PPTX writer owns OOXML.
+//! beside the state, through the host's decider, to a rung that reads images
+//! (owner point 3). When no rung up to the ceiling reads one, the entry says so
+//! and the call stands on the text. No provider output may select the principal,
+//! receipt, comment anchor, or settle authority. The existing PPTX writer owns
+//! OOXML.
 
 use super::EditProposal;
+use super::artifact_question::{UnitCall, UnitDecider};
 use super::pptx::{
     PptxAuthor, PptxCommentAction, PptxCommentPatch, PptxCommentTarget, PptxError,
     PptxProposalError, PptxSlideIdentity, inspect_pptx, run_comment_roundtrip,
@@ -17,9 +19,10 @@ use super::pptx::{
 use crate::EntityId;
 use crate::llm::decision::{
     AnswerContract, BandMode, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionLadder, DecisionMedia, DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef,
-    MAX_DECISION_IMAGE_BYTES, MAX_DECISION_STATE_BYTES, MediaServed, PairedReading, Reasoning,
-    ReasoningCause, ResolvedMedia, Reversibility, SlideReviewLimits, StopCause, TypedDecision,
+    DecisionMedia, DecisionMediaRef, DecisionQuestion, DecisionRung, EvidenceVersion, ImageRef,
+    MAX_DECISION_IMAGE_BYTES, MAX_DECISION_STATE_BYTES, MediaCall, MediaServed, PairedReading,
+    Reasoning, ReasoningCause, ResolvedMedia, Reversibility, SlideReviewLimits, StopCause,
+    TypedDecision,
 };
 use crate::llm::image::ImageBytes;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -75,6 +78,12 @@ impl SlideReviewImage {
     }
 }
 
+/// A review image's BLAKE3 hash in hex: the `hash` its [`ImageRef`] names in
+/// `state.media`, and its judgment's `render_hash`, as text.
+pub fn review_image_key(image: &[u8]) -> String {
+    blake3::hash(image).to_hex().to_string()
+}
+
 /// User-configured display words, including the severity words in comments.
 /// No question, glossary, prompt or user-facing label is compiled into Rust.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,7 +96,7 @@ pub struct SlideReviewLabels {
 }
 
 impl SlideReviewLabels {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if [&self.yes, &self.no, &self.low, &self.middle, &self.high]
             .iter()
             .any(|s| s.trim().is_empty() || s.len() > 128)
@@ -96,7 +105,12 @@ impl SlideReviewLabels {
         }
         Ok(())
     }
-    fn comment(&self, answer: &DecisionAnswer, probability: f64, band: DecisionBand) -> String {
+    pub(crate) fn comment(
+        &self,
+        answer: &DecisionAnswer,
+        probability: f64,
+        band: DecisionBand,
+    ) -> String {
         let severity = if probability < band.low {
             &self.low
         } else if probability > band.high {
@@ -163,6 +177,9 @@ pub struct SlideJudgment {
     /// with the call.
     #[serde(default)]
     pub media: Vec<DecisionMedia>,
+    /// The hash of the image its media entry names (its ref's `hash`). A row
+    /// from before media entries pinned its image on the receipt by it.
+    pub render_hash: [u8; 32],
     /// Hash of the exact state the providers read: the unit, its text and its
     /// media entries.
     pub evidence_hash: [u8; 32],
@@ -244,8 +261,8 @@ pub struct SlideReviewRequest<'a> {
     pub policy: &'a DecisionBandPolicy,
     pub reversibility: Reversibility,
     pub labels: &'a SlideReviewLabels,
-    /// The decide() ladder every unit goes through; the review keeps no rungs.
-    pub ladder: &'a DecisionLadder<'a>,
+    /// The host's decide() every unit goes through; the review keeps no rungs.
+    pub decider: &'a dyn UnitDecider,
     /// Access-checked evidence beside the deck, such as the excerpt a claim cites.
     pub evidence: &'a [EntityId],
     /// Each unit call's anytime budget, from when it is asked.
@@ -278,7 +295,7 @@ pub fn review_slides(
         policy,
         reversibility,
         labels,
-        ladder,
+        decider,
         evidence,
         budget,
         deadline,
@@ -374,13 +391,9 @@ pub fn review_slides(
         }
         let medium = match &unit.image {
             SlideReviewImage::Rendered(bytes) => {
-                let media_type = match image::guess_format(bytes) {
-                    Ok(image::ImageFormat::Png) => "image/png",
-                    Ok(image::ImageFormat::Jpeg) => "image/jpeg",
-                    _ => {
-                        refused.push(refusal(target, SlideUnitRefusalReason::UnreadableImage));
-                        continue;
-                    }
+                let Some(media_type) = image_media_type(bytes) else {
+                    refused.push(refusal(target, SlideUnitRefusalReason::UnreadableImage));
+                    continue;
                 };
                 let image = ImageBytes {
                     bytes: bytes.clone(),
@@ -398,9 +411,16 @@ pub fn review_slides(
             }
             SlideReviewImage::Stored(medium) => medium.clone(),
         };
-        let call = ladder
-            .media_call(question, dial, vec![medium])
-            .map_err(|_| invalid("invalid slide review image"))?;
+        // The host's decider says which rung its pixels ride to, if any.
+        let call = MediaCall::of(dial, vec![medium], |images| {
+            decider.first_taking(question, dial, images)
+        })
+        .map_err(|_| invalid("invalid slide review image"))?;
+        let render_hash = call
+            .entries
+            .first()
+            .map(|entry| medium_hash(&entry.reference))
+            .ok_or_else(|| invalid("invalid slide review image"))?;
         // A Box question locates in pixels: with none sent, nothing is asked.
         if call.images.is_empty() && question.contract == AnswerContract::Box {
             abstained.push(SlideAbstention {
@@ -432,21 +452,27 @@ pub fn review_slides(
         let now = Instant::now();
         let clock =
             RetrievalDeadline::hard(now, budget.min(deadline.saturating_duration_since(now)));
-        let mut decision = ladder.run_images(
+        let mut decision = decider.decide_unit(&UnitCall {
             question,
             principal,
-            &evidence,
-            &call.images,
-            &state,
-            call.dial,
+            evidence: &evidence,
+            images: &call.images,
+            state: &state,
+            dial: call.dial,
             policy,
             reversibility,
-            &clock,
-        )?;
-        // The images' versions stand; the deck's frontier joins them.
-        if !decision.receipt.evidence_versions.contains(&deck) {
-            decision.receipt.evidence_versions.push(deck.clone());
-        }
+            deadline: &clock,
+        })?;
+        // The deck at its frontier, then each other version an image the
+        // ladder was shown is of (a rendered image is of the deck itself).
+        decision.receipt.evidence_versions = std::iter::once(deck.clone())
+            .chain(
+                call.images
+                    .iter()
+                    .map(|image| image.evidence.clone())
+                    .filter(|version| *version != deck),
+            )
+            .collect();
         if decision.answer == DecisionAnswer::Abstain {
             abstained.push(SlideAbstention {
                 target: target.clone(),
@@ -481,6 +507,7 @@ pub fn review_slides(
             renderer: unit.renderer.clone(),
             frontier,
             media: call.entries,
+            render_hash,
             evidence_hash: *blake3::hash(&state_bytes).as_bytes(),
             judged_version: base.version,
             comment,
@@ -586,7 +613,7 @@ fn read_unit(
 }
 
 /// A shape's paragraphs, one line each; `None` for a shape with no text body.
-fn shape_text(shape: &ShapeView) -> Option<String> {
+pub(super) fn shape_text(shape: &ShapeView) -> Option<String> {
     let body = shape.text.as_ref()?;
     Some(
         body.paragraphs
@@ -618,6 +645,26 @@ fn refusal(target: &PptxCommentTarget, reason: SlideUnitRefusalReason) -> SlideU
         target: target.clone(),
         reason,
         offer,
+    }
+}
+
+/// A render's media type, from its signature: PNG or JPEG only.
+fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else {
+        None
+    }
+}
+
+/// The hash of the exact bytes a media entry names: an image's own, or an
+/// audio clip's, which its ASSET version is at.
+fn medium_hash(reference: &DecisionMediaRef) -> [u8; 32] {
+    match reference {
+        DecisionMediaRef::Image(image) => image.hash,
+        DecisionMediaRef::Audio(audio) => audio.evidence.body_hash,
     }
 }
 
@@ -721,7 +768,13 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
                     && !row.media.iter().any(|entry| {
                         entry.served == MediaServed::Full && entry.reference.evidence() == version
                     })
+                    // A row from before media entries pinned its image by its hash.
+                    && (!row.media.is_empty() || version.body_hash != row.render_hash)
             })
+            || row
+                .media
+                .iter()
+                .any(|entry| medium_hash(&entry.reference) != row.render_hash)
             || row.anchor.slide_part.is_empty()
             || row.anchor.shape.is_some() != target.shape_creation_id.is_some()
             || row.frontier != proposal.base_content_hash
