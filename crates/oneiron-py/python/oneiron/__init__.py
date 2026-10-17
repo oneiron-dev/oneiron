@@ -240,6 +240,9 @@ class Oneiron:
         @property
         def identity(self) -> "Oneiron._SelfIdentityVerbs":
             return Oneiron._SelfIdentityVerbs(self._client)
+        @property
+        def inbox(self) -> "Oneiron._SelfInboxVerbs":
+            return Oneiron._SelfInboxVerbs(self._client)
         def message(self, spec):
             return json.loads(_translate(lambda: self._client.self_message(json.dumps(spec))))
         @property
@@ -272,6 +275,19 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.self_identity_answer(json.dumps(spec))))
         def settle(self, spec):
             return json.loads(_translate(lambda: self._client.self_identity_settle(json.dumps(spec))))
+    class _SelfInboxVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def concern(self) -> "Oneiron._SelfInboxConcernVerbs":
+            return Oneiron._SelfInboxConcernVerbs(self._client)
+    class _SelfInboxConcernVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            return json.loads(_translate(lambda: self._client.self_inbox_concern(json.dumps(spec))))
+        def outcome(self, spec):
+            return json.loads(_translate(lambda: self._client.self_inbox_concern_outcome(json.dumps(spec))))
     class _SelfGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

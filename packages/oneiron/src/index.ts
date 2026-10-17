@@ -141,6 +141,11 @@ export class Oneiron {
       answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentityAnswer(input) as unknown),
       settle: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfIdentitySettle(input) as unknown),
     },
+    inbox: {
+      concern: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfInboxConcern(input) as unknown), {
+        outcome: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfInboxConcernOutcome(input) as unknown),
+      }),
+    },
     message: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfMessage(input) as unknown),
     grants: {
       ask: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.selfGrantsAsk(input) as unknown),
