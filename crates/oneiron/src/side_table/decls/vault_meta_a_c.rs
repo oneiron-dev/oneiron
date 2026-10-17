@@ -89,6 +89,9 @@ side_tables! {
     /// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map), keyed by its
     /// content hash. Key: hash32.
     AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
+    /// One signed authority row a repair page staged while this vault's history is incomplete
+    /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
+    AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
     /// The saved fork alarm for one key a held handoff retired, kept until the owner acknowledges
     /// it. Key: string (signer suite ":" key hex).
     AUTHORITY_HANDOFF_ALARM: VaultMeta b"authority:handoff-alarm:v1:" Raw;
