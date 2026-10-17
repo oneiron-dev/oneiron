@@ -306,7 +306,14 @@ export class Oneiron {
       speak: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSpeak(input) as unknown),
       join: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsJoin(input) as unknown),
       consent: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsConsent(input) as unknown),
-      host: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown),
+      offer: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOffer(input) as unknown), {
+        answer: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOfferAnswer(input) as unknown),
+      }),
+      offers: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsOffers(input) as unknown),
+      host: Object.assign((input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHost(input) as unknown), {
+        pin: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHostPin(input) as unknown),
+        hand: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsHostHand(input) as unknown),
+      }),
       sharing: (input: Record<string, unknown>): unknown => this.#call(() => this.#client.vaultRoomsSharing(input) as unknown),
     },
     projects: {
