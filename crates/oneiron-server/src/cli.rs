@@ -108,8 +108,9 @@ pub enum Command {
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
     SecretScan(Box<SecretScanArgs>),
-    /// Register a secret in a stopped vault's custody, or rotate one. The
-    /// value is read from stdin.
+    /// Register, rotate, revoke or reveal a secret in a stopped vault's
+    /// custody, or sign its custody transition with your owner anchor.
+    /// Register and rotate read the value from stdin.
     #[command(subcommand)]
     Secrets(SecretsCommand),
     /// A stopped vault's data key: its wraps (password, passkey, escrow,
@@ -969,9 +970,6 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::RecoverClock(args) => commands::recover_clock(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
-        // Revoke and reveal read no value, so they never reach the stdin read.
-        Command::Secrets(SecretsCommand::Revoke(args)) => commands::revoke_secret(*args),
-        Command::Secrets(SecretsCommand::Reveal(args)) => commands::reveal_secret(*args),
         Command::Secrets(command) => commands::secrets(command),
         Command::VaultKey(command) => commands::vault_key(command),
         Command::RecoveryKit(command) => commands::recovery_kit(command),

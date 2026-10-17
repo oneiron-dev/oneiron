@@ -729,8 +729,16 @@ run), the child's birth fails. It is never moved to another model. The pick
 and the placement go through the host's decision ladder (section 13), each on
 its own 10-second clock. A seat whose definition this vault does not hold is
 skipped, with a log line. With no seat, the server lends no planner: a spawn
-that names an `agent` runs it directly, and a planned spawn or a leader call
-answers `planner_unbound`.
+that names an `agent` runs it directly, and a planned spawn or a leader's
+advice or pattern call answers `planner_unbound`.
+
+A leader's `self.leader.split({leader?, slice?})` reads no planner. It splits
+the TASK her run realizes into a subproject under that TASK's project (her
+lease names both), led by `leader` (herself when unset) over `slice` (the
+parent's when unset). The parent still sees one checkbox. The server signs the
+spawn with its host key: the managed issuer, or the one `auth_secret` derives;
+a host with neither answers `slip_issuer_unbound`. A TASK wraps one child, so a
+retry answers the same child.
 
 ## 7. Raw calls
 
@@ -1788,6 +1796,13 @@ Answers never go to the owner's queue: the slide door holds its ceiling at
 Big. On a server the engine's
 `Memory::artifacts_ask_through` answers these asks. Until its door is in the
 SDK table, `vault.artifacts.review_slides` is the only door that serves one.
+
+A `vault.artifacts.review_slides` unit may name no image (neither
+`review_image` nor `review_image_ref`). On a host with the LibreOffice slide
+renderer, the door then renders that slide from the head itself, on local CPU
+and unmetered, and saves the host renderer's name on the judgment. Without the
+renderer, or when the render fails, the unit is read for its structure only
+and abstains. It is never refused. A unit that names both images is refused.
 
 ## 14. Tagger tiers and the teacher's handoff
 

@@ -51,8 +51,20 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
+  /** A quote on a project room's thread reply: a span of one MESSAGE in the room. */
+  quote?: QuoteSpan
   /** A new project room thread root's audience (32-hex ids); fixed once set. */
   threadAudience?: string[]
+}
+
+/** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
+export type QuoteSpan = {
+  /** The quoted MESSAGE (not the TURN that holds it), as 32 hex. */
+  message: string
+  /** First quoted scalar. */
+  start: number
+  /** One past the last quoted scalar. */
+  end: number
 }
 
 /** Receipt for one witnessed turn. */
@@ -370,12 +382,21 @@ class WitnessMessage(TypedDict):
     is_visible: NotRequired[bool]
     order: int
 
+class QuoteSpan(TypedDict):
+    # The quoted MESSAGE (not the TURN that holds it), as 32 hex.
+    message: str
+    # Half-open Unicode scalar indices into its text.
+    start: int
+    end: int
+
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
+    # A quote on a project room's thread reply: a span of one MESSAGE in the room.
+    quote: NotRequired[QuoteSpan | None]
     # A new project room thread root's audience; fixed once set.
     thread_audience: NotRequired[list[str] | None]
 
@@ -588,7 +609,11 @@ LensFrameToolReply = TypedDict(
     "LensFrameToolReply",
     {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
 )
-LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply
+LensFrameCallbackReply = TypedDict(
+    "LensFrameCallbackReply",
+    {"queued": bool, "callbackId": str},
+)
+LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply | LensFrameCallbackReply
 
 class CloseLensFrameReply(TypedDict):
     closed: bool
@@ -1312,7 +1337,7 @@ class Oneiron:
         def get(self, spec: Facade.WorkspaceRefRequest) -> Facade.WorkCompanionPolicy:
             """A workspace's work_companion policy, readable by every member it governs."""
         def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
-            """The owner sets a workspace's work_companion policy in person."""
+            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
     class _VaultQuestionsVerbs:
@@ -1363,11 +1388,13 @@ class Oneiron:
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
-            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
+            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
         def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
             """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
+        def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
+            """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
