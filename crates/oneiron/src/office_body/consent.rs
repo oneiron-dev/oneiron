@@ -11,7 +11,9 @@
 //! settlement selects the waiting members its approve scope covers and its
 //! review pinned, so a fork that joins later never inherits an answer. A
 //! proposal keeps to one artifact, so the artifact's read admission covers
-//! every member (CALLS "OF-505 slice D").
+//! every member (CALLS "OF-505 slice D"). The members a settlement leaves
+//! waiting are asked of their holders (`holder_ask`); the proposal records
+//! each ask.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -113,6 +115,16 @@ pub enum BundleVerdict {
     LetGo,
 }
 
+/// The holder ask raised for the members a settlement left waiting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalAsk {
+    /// The ask group its TASKs share.
+    pub ask: EntityId,
+    /// The waiting forks it asks about, in member order.
+    pub forks: Vec<EntityId>,
+    pub at: u64,
+}
+
 /// The one receipt that closes a proposal once no member waits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalSettlement {
@@ -126,6 +138,9 @@ pub struct OfficeBodyProposal {
     pub header: ProposalHeader,
     pub members: Vec<ProposalMember>,
     pub settlement: Option<ProposalSettlement>,
+    /// The holder asks raised while members waited, oldest first.
+    #[serde(default)]
+    pub asks: Vec<ProposalAsk>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -192,6 +207,26 @@ impl Vault {
             settle_in_txn(self, wtxn, artifact, proposal, request, actor).map(|(record, _)| record)
         })
     }
+
+    /// Record a holder ask on an unsettled proposal, once per ask group.
+    pub(super) fn record_office_proposal_ask(
+        &self,
+        artifact: &EntityId,
+        proposal: &EntityId,
+        ask: ProposalAsk,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|wtxn| {
+            let key = (*artifact, *proposal);
+            let Some(mut record) = PROPOSALS.get(&self.store, wtxn, &key)? else {
+                return Ok(());
+            };
+            if record.settlement.is_some() || record.asks.iter().any(|held| held.ask == ask.ask) {
+                return Ok(());
+            }
+            record.asks.push(ask);
+            PROPOSALS.put(&self.store, wtxn, &key, &record)
+        })
+    }
 }
 
 /// Registers a just-opened DOCX or XLSX fork in `proposal`, or in a proposal
@@ -221,6 +256,7 @@ pub(super) fn join_in_txn(
             },
             members: vec![member],
             settlement: None,
+            asks: Vec::new(),
         },
         Some(proposal) => {
             let mut record = PROPOSALS
@@ -527,12 +563,18 @@ fn office_effect(artifact: &EntityId, opener: &EntityId) -> Result<ComposedEffec
 }
 
 fn office_bound(artifact: &EntityId, opener: &EntityId) -> Result<GrantBound> {
+    let (class, envelope) = office_scope(artifact)?;
+    GrantBound::action(ActorBound::new(opener.to_hex())?, class, envelope)
+}
+
+/// The scope of office edits to `artifact`: what a standing grant names to
+/// land a fork there, and whose holders a waiting member is asked of.
+pub(super) fn office_scope(artifact: &EntityId) -> Result<(ActionClass, ActionEnvelope)> {
     let target = format!("entity:{}", artifact.to_hex());
-    GrantBound::action(
-        ActorBound::new(opener.to_hex())?,
+    Ok((
         ActionClass::new(OFFICE_BODY_EDIT_CLASS)?,
         ActionEnvelope::new([target.clone()])?.with_target(target)?,
-    )
+    ))
 }
 
 /// The ref of a standing grant that lands `opener`'s work on `artifact`,
