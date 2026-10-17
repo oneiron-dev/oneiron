@@ -560,11 +560,11 @@ impl Pass<'_> {
                     created_at: at,
                     settled_at: None,
                 };
-                store::INTENTS.put(&vault.store, txn, &key, &intent)?;
+                store::INTENTS.put(vault, txn, &key, &intent)?;
             }
-            store::MEMOS.put(&vault.store, txn, &key, &memo)?;
+            store::MEMOS.put(vault, txn, &key, &memo)?;
             let hook_receipt = receipt(run, verdict, check, rows_read, duration_ms, now);
-            store::RECEIPTS.put(&vault.store, txn, &key, &hook_receipt)?;
+            store::RECEIPTS.put(vault, txn, &key, &hook_receipt)?;
             store::advance_cursor_in_txn(vault, txn, run.binding_id, run.entry.position, at)?;
             Ok(check)
         })?;

@@ -4136,6 +4136,7 @@
       "ExportLedger",
       "ExportPack",
       "ExportPackSource",
+      "ExportReaderFold",
       "ExportResultBody",
       "ExportRun",
       "ExportRunOutput",
@@ -4153,7 +4154,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "struct": 15
+      "struct": 16
      }
     },
     {
@@ -10795,8 +10796,18 @@
      "path": "src/code_run/dispatcher/reader_spawn.rs",
      "purpose": "Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/summarize.rs",
+     "purpose": "`summarize` at the dispatcher (code-mode-summary-sdk-v1): one summary of a run's results, memoised by its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -10836,9 +10847,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 4,
-      "re-export": 10
+      "re-export": 13
      }
     },
     {
@@ -10860,6 +10871,7 @@
       "ReaderActor",
       "ReaderFindingRef",
       "ReaderJob",
+      "ReaderJobKind",
       "ReaderJobRunner",
       "ReaderJobState",
       "ReaderJobWake",
@@ -10871,8 +10883,12 @@
       "RunDeadline",
       "SelfReaderReportCall",
       "SelfReaderSpawnCall",
+      "SelfSummarizeCall",
       "SpawnHostSeat",
       "SpawnParentBinding",
+      "SummarizeEffort",
+      "SummarizeRecipe",
+      "SummarizeReply",
       "TaskWaitFailure",
       "TaskWaitFinding",
       "TaskWaitPolicy",
@@ -10883,12 +10899,22 @@
      "path": "src/code_run/reader.rs",
      "purpose": "Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and…",
      "surface": {
-      "const": 1,
-      "crate-vis": 10,
-      "enum": 4,
-      "fn": 8,
-      "struct": 19,
+      "const": 6,
+      "crate-vis": 12,
+      "enum": 7,
+      "fn": 16,
+      "struct": 21,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/reader_fold.rs",
+     "purpose": "The model call behind `summarize` (code-mode-summary-sdk-v1): the one prompt a summary job sends, by its…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -10915,22 +10941,22 @@
       "const": 8,
       "crate-vis": 11,
       "enum": 1,
-      "fn": 22,
+      "fn": 23,
       "struct": 12
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/result_read/chunks.rs",
      "purpose": "`chunks`: a result cut into range refs, a page at a time",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ResultFacet"
@@ -10939,7 +10965,7 @@
      "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 4
      }
@@ -10999,29 +11025,40 @@
      "kind": "src",
      "notable": [
       "AgentSpawnInput",
+      "AgentSpawnKind",
+      "AgentSpawnOutput",
       "LeaderAdviceInput",
+      "LeaderPatternFile",
       "LeaderPatternInput",
+      "LeaderPatternOutput",
       "MemoryClaimInput",
       "MemoryEdgeInput",
+      "MemoryEdgeOutput",
+      "MemorySearchHit",
       "MemorySearchInput",
+      "MemorySearchOutput",
       "MemorySupersedeInput",
       "MemoryTimeRange",
+      "MemoryWriteOutput",
       "ReaderSpawnInput",
       "SkillCallInput",
       "SpawnCare",
       "SpawnKnob",
       "SpawnPattern",
+      "SummarizeInput",
+      "SummarizeInputEffort",
       "TaskRefuseDomain",
       "TaskRefuseInput",
+      "TaskRefuseOutput",
       "TaskWaitSetRequest"
      ],
      "path": "src/code_run/run_verbs.rs",
-     "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
+     "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "enum": 4,
+      "enum": 7,
       "fn": 1,
-      "struct": 12
+      "struct": 20
      }
     },
     {
@@ -11059,22 +11096,35 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/reader_folds.rs",
+     "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
      "bucket": "L",
      "kind": "src",
      "notable": [
-      "ReaderJobs"
+      "ReaderJobs",
+      "SummaryMember",
+      "SummaryRead"
      ],
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 23,
-      "fn": 9,
-      "struct": 1
+      "crate-vis": 26,
+      "enum": 1,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -11087,19 +11137,19 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "fn": 11,
       "struct": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -12764,13 +12814,21 @@
      "kind": "src",
      "notable": [
       "FoldCompactAsk",
+      "FoldCompactAsked",
       "FoldCompactInput",
+      "FoldDescription",
       "FoldLedger",
+      "FoldList",
       "FoldMark",
       "FoldMarkInput",
+      "FoldMarked",
+      "FoldPending",
       "FoldRecord",
+      "FoldReply",
+      "FoldSpan",
       "FoldUnfold",
       "FoldUnfoldInput",
+      "FoldUnfolded",
       "FoldsInput",
       "SelfFoldCall"
      ],
@@ -12778,9 +12836,9 @@
      "purpose": "Folds (ARCH-0067 §2.2): an agent marks spans of its own run's log at any time, `self.compact` folds every…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 3,
       "fn": 12,
-      "struct": 9
+      "struct": 15
      }
     },
     {
@@ -16546,6 +16604,16 @@
       "enum": 1,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/disclosure/clearance_use.rs",
+     "purpose": "The quiet receipt of a disclosure under standing clearance (OF-365, DEC-0006: \"the owner sees a post-hoc…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -20727,7 +20795,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/host.rs",
@@ -20872,7 +20940,9 @@
       "JsResultRef",
       "JsResultTarget",
       "ParkedWait",
-      "SelfDispatchResponse"
+      "SelfDispatchResponse",
+      "StoreReceiptInput",
+      "StoreReceiptTree"
      ],
      "path": "src/engine_executor/types.rs",
      "purpose": "Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types",
@@ -20881,7 +20951,7 @@
       "crate-vis": 3,
       "enum": 5,
       "fn": 8,
-      "struct": 10,
+      "struct": 12,
       "trait": 2,
       "type": 1
      }
@@ -26526,7 +26596,7 @@
      "surface": {
       "crate-vis": 20,
       "mod": 193,
-      "re-export": 74
+      "re-export": 75
      }
     },
     {
@@ -48875,9 +48945,9 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 2
      }
     },
@@ -48894,6 +48964,21 @@
       "crate-vis": 15,
       "enum": 1,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VaultPageSeal"
+     ],
+     "path": "src/world_keys/page_seal.rs",
+     "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
+     "surface": {
+      "const": 1,
+      "crate-vis": 9,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -49041,7 +49126,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 17,
       "enum": 4,
       "fn": 23,
       "struct": 2
@@ -50174,7 +50259,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 61,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50384,7 +50469,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50491,7 +50576,7 @@
     "engine_executor": {
      "files": 20,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Engine-native JS code-mode executor"
     },
@@ -51413,7 +51498,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51427,9 +51512,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 141,
+   "over_bar": 143,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3108,
+   "source_files": 3113,
    "test_files": 903
   },
   "oneiron-android": {
@@ -61734,13 +61819,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -61793,7 +61878,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -64952,6 +65037,7 @@
       "SecretsCommand",
       "ServeOnlyArgs",
       "UnlockMethod",
+      "VaultKeyAddDeviceArgs",
       "VaultKeyArgs",
       "VaultKeyCommand",
       "VaultKeyNamedArgs",
@@ -64961,7 +65047,7 @@
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 14,
-      "struct": 41
+      "struct": 42
      }
     },
     {
@@ -65281,7 +65367,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 18,
       "re-export": 2
      }
@@ -65312,7 +65398,7 @@
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -65571,7 +65657,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1,
       "struct": 1
      }
@@ -67374,7 +67460,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 1
      }
@@ -68275,7 +68361,7 @@
      "path": "src/owner/vault_key.rs",
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -68673,7 +68759,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/reader_runner.rs",
@@ -69825,7 +69911,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 37,
+   "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 549,
    "test_files": 182

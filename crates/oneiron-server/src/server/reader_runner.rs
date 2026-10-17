@@ -29,8 +29,10 @@ use std::time::Duration;
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
-    AgentVerbDoor, ClaimOutcome, HostSelfDispatcher, ReaderJob, ReaderJobRunner, ReaderJobWake,
-    ReaderJobs, ReaderRunEnd, RunDeadline, SpawnHostSeat, reader_task_brief,
+    AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
+    ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, RunDeadline,
+    SUMMARY_READ_BYTES_PER_TOKEN, SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief,
+    summarize_input, summarize_prompt, summary_exceeds_window, summary_token_budget,
 };
 use oneiron::engine_executor::{
     EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor, JsCodeModeRuntime,
@@ -38,7 +40,10 @@ use oneiron::engine_executor::{
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::BudgetDenied;
 use oneiron::off_record::OffRecordSession;
-use oneiron::{BudgetGuard, EntityId, LlmBackend, LlmError, Vault};
+use oneiron::{
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, LlmBackend, LlmError,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+};
 
 use crate::admission::Permit;
 use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider};
@@ -57,6 +62,9 @@ const TICK: Duration = Duration::from_secs(1);
 /// Queued children one tick looks at in one store.
 const QUEUED_PER_TICK: usize = 64;
 
+/// The purpose a summary job's model call is admitted under.
+const SUMMARY_PURPOSE_NAME: &str = "code-reader-summary";
+
 /// What a reader child's door answers every call but its report, its
 /// `self.context` and `self.think`, and its reads: the engine's own word.
 pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
@@ -70,22 +78,34 @@ pub(crate) fn run_launch_scope(run: EntityId) -> Option<SpendScopeId> {
 
 /// The seats hosts lend their runs to spawn readers under, and where each
 /// parent run's caller sits, as its host noted it at the run's last entry.
-#[derive(Default)]
 pub(crate) struct ReaderSeats {
     callers: Mutex<HashMap<EntityId, (CallerLocality, u64)>>,
+    /// The memory one running child may hold: its run's memory share over
+    /// the children one parent runs at once.
+    child_memory_bytes: u64,
 }
 
 impl ReaderSeats {
+    fn new(child_memory_bytes: u64) -> Self {
+        Self {
+            callers: Mutex::default(),
+            child_memory_bytes,
+        }
+    }
+
     /// The seat run `run` spawns its children under. `spend` is the scope
     /// they spend under; one that is not open answers every spawn
     /// `reader_spawn_unmetered`. Their clock is one window from now, which
     /// the run's first spawn fixes. `caller` is where the run's caller sits,
-    /// noted for its children's reads.
+    /// noted for its children's reads. `window_tokens` is the input window
+    /// of the model its children and summaries run on, when its host knows
+    /// it.
     pub(crate) fn seat(
         &self,
         run: EntityId,
         spend: SpendScopeId,
         caller: CallerLocality,
+        window_tokens: Option<u64>,
     ) -> SpawnHostSeat {
         let now = unix_millis_now();
         lock(&self.callers).insert(run, (caller, now));
@@ -98,6 +118,8 @@ impl ReaderSeats {
             // A child holds nothing at its claim: it tops up from its
             // parent's chain as it spends, the cap enforced at each spend.
             hold_units: 0,
+            window_tokens: window_tokens.unwrap_or(DEFAULT_READER_WINDOW_TOKENS),
+            memory_bytes: self.child_memory_bytes,
         }
     }
 
@@ -176,16 +198,16 @@ impl ReaderRunner {
     /// claims nothing until a code host is bound.
     pub(crate) fn start(vault: &Arc<Vault>, limits: &crate::config::LimitsConfig) -> Arc<Self> {
         let (signals, wakes) = std::sync::mpsc::channel();
-        let per_parent = limits
+        let memory = limits
             .engine
-            .bound(EngineLimit::CodeResultSessionMemoryBytes)
-            / READER_RESIDENT_BYTES;
+            .bound(EngineLimit::CodeResultSessionMemoryBytes);
+        let per_parent = (memory / READER_RESIDENT_BYTES).max(1);
         let shared = Arc::new(Shared {
             vault: Arc::downgrade(vault),
             host: RwLock::new(None),
-            seats: Arc::default(),
+            seats: Arc::new(ReaderSeats::new(child_memory_bytes(memory, per_parent))),
             running: Mutex::default(),
-            per_parent: usize::try_from(per_parent).unwrap_or(usize::MAX).max(1),
+            per_parent: usize::try_from(per_parent).unwrap_or(usize::MAX),
         });
         let worker = Worker {
             shared: Arc::clone(&shared),
@@ -453,7 +475,8 @@ impl Child {
 
     /// Runs the child on its own child scope's meter: its backend spends on
     /// a guard of what the scope may still spend, and what the guard used is
-    /// recorded on the scope once the run ends.
+    /// recorded on the scope once the run ends. A summary job makes its one
+    /// model call instead of a run.
     fn metered(
         &self,
         vault: &Vault,
@@ -473,7 +496,21 @@ impl Child {
         let Some(backend) = self.provider.reader_backend(guard.clone()) else {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
         };
-        let end = self.run(vault, session, backend.as_ref(), &guard, door);
+        let end = match &job.kind {
+            ReaderJobKind::Read => self.run(vault, session, backend.as_ref(), &guard, door),
+            ReaderJobKind::Summarize {
+                recipe,
+                window_tokens,
+                ..
+            } => self.run_summarize_job(
+                vault,
+                session,
+                backend.as_ref(),
+                door.as_ref(),
+                recipe,
+                *window_tokens,
+            ),
+        };
         if let Err(error) = spend.record_guard_spend(&scope, guard.read().used_units) {
             tracing::warn!(%error, task = %job.task.to_hex(), "a reader child's spend was not recorded");
         }
@@ -589,6 +626,165 @@ impl Child {
             };
         }
     }
+}
+
+impl Child {
+    /// A summary job's one model call (code-mode-summary-sdk-v1), never
+    /// inside a parent's step: each member read with the checks a child's
+    /// `src` read makes (the job live, the door's rows, the member's taint
+    /// now), counted with the executor's tokenizer against half the model's
+    /// window, then one generate on the job's own meter, its text stored as
+    /// the job's finding. A group past the window fails
+    /// `group_exceeds_window`, and the helper splits it.
+    fn run_summarize_job(
+        &self,
+        vault: &Vault,
+        session: Option<&OffRecordSession<'_>>,
+        backend: &dyn LlmBackend,
+        door: &dyn AgentVerbDoor,
+        recipe: &SummarizeRecipe,
+        window_tokens: u64,
+    ) -> ReaderRunEnd {
+        let job = &self.job;
+        let failed = |reason: &str| ReaderRunEnd::Failed(reason.to_owned());
+        let jobs = match session {
+            Some(session) => match self.session.as_ref() {
+                Some((_, participant)) => match ReaderJobs::for_session(session, *participant) {
+                    Ok(jobs) => jobs,
+                    Err(_) => return failed("reader_binding_failed"),
+                },
+                None => return failed("reader_binding_failed"),
+            },
+            None => ReaderJobs::canonical(vault),
+        };
+        let budget = summary_token_budget(window_tokens);
+        let members = match jobs.summary_members(
+            job.task,
+            job.generation,
+            budget.saturating_mul(SUMMARY_READ_BYTES_PER_TOKEN),
+        ) {
+            Ok(SummaryRead::Members(members)) => members,
+            Ok(SummaryRead::Refused(reason)) => return ReaderRunEnd::Failed(reason),
+            Err(error) => {
+                tracing::warn!(%error, task = %job.task.to_hex(), "a summary's members were not read");
+                return failed("summary_read_failed");
+            }
+        };
+        for member in &members {
+            if !matches!(door.withholds_retained(member.rows.as_deref()), Ok(false)) {
+                return failed("result_withheld");
+            }
+        }
+        let prompt = summarize_prompt(recipe);
+        let input = summarize_input(
+            members
+                .iter()
+                .map(|member| (member.handle.as_str(), member.text.as_str())),
+        );
+        let tokens = (oneiron::count_context_pack_tokens(&prompt)
+            + oneiron::count_context_pack_tokens(&input)) as u64;
+        if tokens > budget {
+            return ReaderRunEnd::Failed(summary_exceeds_window(tokens, window_tokens));
+        }
+        let config = match self.provider.executor_config(vault, job.run, "summarize") {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::warn!(%error, task = %job.task.to_hex(), "a summary's config did not bind");
+                return failed("reader_config_failed");
+            }
+        };
+        let purpose = CallPurpose::Other {
+            name: SUMMARY_PURPOSE_NAME.to_owned(),
+        };
+        let request = LlmRequest {
+            model: config.model.clone(),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: oneiron::llm::Scope::default(),
+                tier: TierPrecedence::for_purpose(
+                    &purpose,
+                    ModelTierRef(SUMMARY_PURPOSE_NAME.to_owned()),
+                ),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: config.model_locality,
+            },
+            messages: vec![
+                LlmMessage {
+                    role: LlmMessageRole::System,
+                    content: vec![ContentPart::Text { text: prompt }],
+                },
+                LlmMessage {
+                    role: LlmMessageRole::User,
+                    content: vec![ContentPart::Text { text: input }],
+                },
+            ],
+            tools: Vec::new(),
+            params: std::collections::BTreeMap::new(),
+            provider_options: std::collections::BTreeMap::new(),
+        };
+        let reactor = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(reactor) => reactor,
+            Err(_) => return failed("reader_reactor_failed"),
+        };
+        let left = job
+            .binding
+            .child_cutoff_unix_ms
+            .saturating_sub(unix_millis_now());
+        if left == 0 {
+            return ReaderRunEnd::Cutoff;
+        }
+        let lease = self.provider.lease();
+        let generated = reactor.block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(left),
+                backend.generate(request, lease),
+            )
+            .await
+        });
+        let response = match generated {
+            Err(_) => return ReaderRunEnd::Cutoff,
+            Ok(Err(LlmError::BudgetDenied(BudgetDenied::Exhausted))) => {
+                return ReaderRunEnd::SpendExhausted;
+            }
+            Ok(Err(_)) => {
+                tracing::warn!(task = %job.task.to_hex(), "a summary's model call failed");
+                return failed("summary_call_failed");
+            }
+            Ok(Ok(response)) => response,
+        };
+        let text: String = response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        if text.trim().is_empty() {
+            return failed("summary_empty");
+        }
+        match jobs.store_summary(job.task, job.generation, &text) {
+            Ok(Ok(())) => ReaderRunEnd::Completed,
+            Ok(Err(reason)) => ReaderRunEnd::Failed(reason),
+            Err(error) => {
+                tracing::warn!(%error, task = %job.task.to_hex(), "a summary was not stored");
+                failed("summary_store_failed")
+            }
+        }
+    }
+}
+
+/// The memory one running child may hold, which `can({read, child})`
+/// answers as `memory_bytes`: its run's memory share over the children one
+/// parent runs at once.
+const fn child_memory_bytes(run_memory: u64, per_parent: u64) -> u64 {
+    run_memory / per_parent
 }
 
 fn earliest(a: Option<u64>, b: Option<u64>) -> Option<u64> {

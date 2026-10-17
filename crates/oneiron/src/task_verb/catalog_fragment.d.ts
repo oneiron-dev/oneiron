@@ -4,12 +4,12 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 271 code-mode rows (254 host rows, 17 run rows), 814 declarations.
-// Replies: 202 fully typed, 39 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 19 unknown (the run rows and ask, wait).
-// Opaque serde_json::Value leaves: 54; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 272 code-mode rows (254 host rows, 18 run rows), 839 declarations.
+// Replies: 219 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Opaque serde_json::Value leaves: 55; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
-  /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, or the refusal it met; `budget` rides on every reply inside a wake pass. */
-  type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) & { budget?: BudgetLegibilityEnvelope };
+  /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
+  type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
   type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
   type ReportKind = "problem" | "proposal";
   type FeedbackProposal = { problem: string; fix: string };
@@ -513,7 +513,7 @@ declare namespace Sdk {
   type TaskAskSettlementReason = "first_word" | "all_responded" | "deadline" | "stale";
   type TaskAskSettlement = { group_ref: EntityId; reference: EntityId; revision: number; at: number; cutoff_order: number; reason: TaskAskSettlementReason; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: EntityId[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref?: EntityId | null; policy_surface: TaskAskSurface; link_result_proof?: number[] | null };
   type TaskAskResult = { effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback?: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Leader" | "Team";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "Team";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
@@ -796,33 +796,58 @@ declare namespace Sdk {
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
   type MemorySearchInput = { query: string; limit?: number | null };
+  type MemorySearchHit = { id: EntityId; score: number };
+  type MemorySearchOutput = { results: MemorySearchHit[] };
   type MemoryTimeRange = { start: number; end: number };
   type MemoryClaimInput = { id: string; predicate: string; subject: string; value: unknown; confidence?: number | null; occurred?: MemoryTimeRange | null; learnedAt?: number | null };
+  type MemoryWriteOutput = { id: EntityId };
   type MemorySupersedeInput = { newId: string; oldId: string; now: number };
   type MemoryEdgeInput = { src: string; kind: string; tgt: string; weight?: number | null };
+  type MemoryEdgeOutput = { src: EntityId; kind: string; tgt: EntityId };
   type FoldMarkOptions = { note?: string | null };
   type FoldMarkWire = number[] | [number[], FoldMarkOptions];
   type FoldMarkInput = FoldMarkWire;
+  type FoldReply<T> = T | { error: string };
+  type FoldMarked = { fold: string; from: number; through: number; pending: boolean };
   type FoldCompactInput = { note?: string | null };
+  type FoldCompactAsked = { pending: string[]; applies: string };
   type FoldUnfoldInput = { fold: string };
+  type FoldUnfolded = { fold: string; from: number; through: number; unfolded_after_step: number };
   type FoldsInput = Record<string, never>;
+  type FoldSpan = { fold: string; from: number; through: number };
+  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null };
+  type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
   type TaskRefuseDomain = "bond" | "logistics";
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
+  type TaskRefuseOutput = { task: EntityId; level: string; outcome: string; replay: boolean };
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null };
+  type AgentSpawnKind = "agent_spawn";
+  type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
+  type LeaderPatternFile = { path: string; text: string };
+  type LeaderPatternOutput = { skill: EntityId; skill_id: string; version: string; desc: string; files?: LeaderPatternFile[] | null };
   type SkillCallInput = { skill: string; args: unknown };
   type TeamMemberInput = { agent: string; intentKey: string; briefing?: string | null };
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
+  type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
+  type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
+  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; models: string[]; patternSkill?: string | null; replay: boolean };
   type TeamAxis = "converge" | "diverge";
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null; confessions?: number | null; spend?: number | null; spendCap?: number | null; calls?: number | null };
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
+  type ReaderSpawnReceipt = { task: EntityId; attempt: string; run: EntityId; cutoff_unix_ms: number; state: string; replay: boolean };
   type TaskWaitSetRequest = { tasks: string[]; all?: boolean | null; n_of?: number | null; until?: number | null; step_key: string };
+  type TaskWaitFinding = { task: EntityId; ref: string; bytes: number; reason?: string | null };
+  type TaskWaitFailure = { task: string; reason: string };
+  type TaskWaitSetResult = { ready: TaskWaitFinding[]; partial: TaskWaitFinding[]; failed: TaskWaitFailure[]; pending: EntityId[]; done: boolean; reason?: string | null; until: number };
+  type SummarizeInputEffort = "low" | "medium" | "high";
+  type SummarizeInput = { ref: string; effort?: SummarizeInputEffort | null; group?: string[] | null; defer?: boolean | null };
   type BudgetLegibilityEnvelope = { remaining_units: number; limit_units: number; remaining_ms: number; wrap_up: boolean; finalize_by_ms?: number | null };
 }
 declare const ai: {
@@ -847,7 +872,7 @@ declare const ai: {
   };
 };
 /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
-declare function ask(input: Sdk.TaskAskRequest): Promise<unknown>;
+declare function ask(input: Sdk.TaskAskRequest): Promise<Sdk.Reply<Sdk.TaskAskReceipt>>;
 /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
 declare function can(input: Sdk.TaskCanAskRequest): Promise<Sdk.Reply<Sdk.TaskAskPreflight>>;
 /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
@@ -870,7 +895,7 @@ declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.Reply<Sdk.TaskAskPe
 declare function report(input: Sdk.ReportRequest): Promise<Sdk.Reply<Sdk.ReportReceipt>>;
 declare namespace self {
   const agents: {
-    spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.Reply<unknown>>;
+    spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.Reply<Sdk.AgentSpawnOutput>>;
   };
   const browser: {
     /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails. */
@@ -910,7 +935,7 @@ declare namespace self {
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.Reply<Sdk.ImageOutput>>;
   };
-  const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.Reply<unknown>>;
+  const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldCompactAsked>>>;
   const decisions: {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.Reply<Sdk.DecisionAsk[]>>;
   };
@@ -962,8 +987,8 @@ declare namespace self {
     /** Unsubscribes the run's board stream from the named scopes. */
     unsubscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.Reply<Sdk.BoardVerbOutput>>;
   };
-  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.Reply<unknown>>;
-  const folds: (input: Sdk.FoldsInput) => Promise<Sdk.Reply<unknown>>;
+  const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldMarked>>>;
+  const folds: (input: Sdk.FoldsInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldList>>>;
   const grants: {
     /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
     ask(input: Sdk.GrantAskRequest): Promise<Sdk.Reply<Sdk.GrantAskReceipt>>;
@@ -986,7 +1011,7 @@ declare namespace self {
   };
   const leader: {
     advice(input: Sdk.LeaderAdviceInput): Promise<Sdk.Reply<unknown>>;
-    pattern(input: Sdk.LeaderPatternInput): Promise<Sdk.Reply<unknown>>;
+    pattern(input: Sdk.LeaderPatternInput): Promise<Sdk.Reply<Sdk.LeaderPatternOutput>>;
   };
   const memory: {
     /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */
@@ -1010,15 +1035,16 @@ declare namespace self {
     /** An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it. */
     save(input: Sdk.SkillSaveRequest): Promise<Sdk.Reply<Sdk.SkillAuthoringReceipt>>;
   };
-  const spawn: (input: Sdk.ReaderSpawnInput) => Promise<Sdk.Reply<unknown>>;
+  const spawn: (input: Sdk.ReaderSpawnInput) => Promise<Sdk.Reply<Sdk.ReaderSpawnReceipt>>;
   const team: {
-    record(input: Sdk.TeamRecordInput): Promise<Sdk.Reply<unknown>>;
-    start(input: Sdk.TeamStartInput): Promise<Sdk.Reply<unknown>>;
+    record(input: Sdk.TeamRecordInput): Promise<Sdk.Reply<Sdk.TeamRunAnswer>>;
+    start(input: Sdk.TeamStartInput): Promise<Sdk.Reply<Sdk.TeamRunAnswer>>;
   };
-  const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.Reply<unknown>>;
+  const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldUnfolded>>>;
 }
 /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
 declare function steer(input: Sdk.SteerRequest): Promise<Sdk.Reply<Sdk.SteerReceipt>>;
+declare function summarize(input: Sdk.SummarizeInput): Promise<Sdk.Reply<unknown>>;
 declare const tasks: {
   /** Admits one person's word on an ask; the word is evidence, never approval. */
   answer(input: Sdk.TaskAnswerRequest): Promise<Sdk.Reply<Sdk.TaskAskAnswer>>;
@@ -1026,10 +1052,10 @@ declare const tasks: {
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.Reply<Sdk.TaskCreateReceipt>>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
   outcomes(input: Sdk.TaskAskHandle): Promise<Sdk.Reply<Sdk.CalibrationPair[]>>;
-  refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.Reply<unknown>>;
+  refuse(input: Sdk.TaskRefuseInput): Promise<Sdk.Reply<Sdk.TaskRefuseOutput>>;
   /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
   update(input: Sdk.TaskUpdateRequest): Promise<Sdk.Reply<Sdk.TaskUpdateReceipt>>;
-  wait(input: Sdk.TaskWaitSetRequest): Promise<Sdk.Reply<unknown>>;
+  wait(input: Sdk.TaskWaitSetRequest): Promise<Sdk.Reply<Sdk.TaskWaitSetResult>>;
   /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
   wave(input: Sdk.TaskWaveRequest): Promise<Sdk.Reply<Sdk.TaskWaveReceipt>>;
 };
@@ -1084,12 +1110,12 @@ declare const vault: {
     history(input: Sdk.ClaimRefRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.ClaimView[]>>>;
     /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
     list(input: Sdk.ClaimListFilter): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.ClaimView[]>>>;
-    put(input: Sdk.MemoryClaimInput): Promise<Sdk.Reply<unknown>>;
+    put(input: Sdk.MemoryClaimInput): Promise<Sdk.Reply<Sdk.MemoryWriteOutput>>;
     /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
     retract(input: Sdk.ClaimRefRequest): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
     /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
     seed(input: Sdk.CommitRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;
-    supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.Reply<unknown>>;
+    supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.Reply<Sdk.MemoryWriteOutput>>;
     /** Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate. */
     upsert(input: Sdk.ClaimInput): Promise<Sdk.Reply<Sdk.CommitReceipt>>;
   };
@@ -1140,7 +1166,7 @@ declare const vault: {
     offer(input: Sdk.DisclosureOfferRequest): Promise<Sdk.Reply<Sdk.DisclosureOffered>>;
   };
   edges: {
-    put(input: Sdk.MemoryEdgeInput): Promise<Sdk.Reply<unknown>>;
+    put(input: Sdk.MemoryEdgeInput): Promise<Sdk.Reply<Sdk.MemoryEdgeOutput>>;
   };
   embedding_spaces: {
     /** Binds one kind slot to a declared space, or returns it to its default when no space is named. */
@@ -1376,7 +1402,7 @@ declare const vault: {
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.Reply<Sdk.RoomTrunk>>;
   };
-  search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.Reply<unknown>>) & {
+  search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.Reply<Sdk.MemorySearchOutput>>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */
     bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.LexicalHit[]>>>;
   };
@@ -1472,4 +1498,4 @@ declare const vault: {
   };
 };
 /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
-declare function wait(input: Sdk.TaskWaitRequest): Promise<unknown>;
+declare function wait(input: Sdk.TaskWaitRequest): Promise<Sdk.Reply<Sdk.TaskAskWait>>;
