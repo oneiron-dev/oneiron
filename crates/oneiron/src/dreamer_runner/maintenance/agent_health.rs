@@ -437,27 +437,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         now,
     )?);
     findings.extend(misalignment_findings(vault, &dispatched, &attempts, since)?);
-    findings.extend(widen_denial_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &dials,
-        since,
-    )?);
-    findings.extend(unsupported_done_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        since,
-    )?);
-    findings.extend(cost_spike_findings(
-        vault,
-        &dispatched,
-        &attempts,
-        &dials,
-        since,
-        now,
-    )?);
+    findings.extend(widen_denial_findings(vault, &dispatched, &attempts, &dials, since)?);
+    findings.extend(unsupported_done_findings(vault, &dispatched, &attempts, since)?);
+    findings.extend(cost_spike_findings(vault, &dispatched, &attempts, &dials, since, now)?);
     // What each agent said itself, for its card.
     for finding in &mut findings {
         let began = finding
@@ -1173,10 +1155,7 @@ fn widen_denial_findings(
             task: task_of(record),
             attempt: Some(record.id),
             evidence: vec![attempt],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
             actual: count,
             dial: dials.widen_denials as i64,
             measured: count,
@@ -1228,10 +1207,7 @@ fn unsupported_done_findings(
             task: Some(task),
             attempt: Some(record.id),
             evidence: vec![attempt, task],
-            window: (
-                record.claimed_at.unwrap_or(record.created_at),
-                record.updated_at,
-            ),
+            window: (record.claimed_at.unwrap_or(record.created_at), record.updated_at),
             actual: count,
             dial: 0,
             measured: count,
