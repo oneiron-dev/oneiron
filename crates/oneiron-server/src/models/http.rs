@@ -16,6 +16,16 @@ use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
+
+/// Whether this process serves from a cloud node, where gzip costs more on
+/// the link than it saves (ARCH-0081 §6): a gzip route then sends plain, and
+/// zstd still compresses.
+static CLOUD_NODE: AtomicBool = AtomicBool::new(false);
+
+/// Marks this process a cloud node: a managed or host-readable deployment.
+pub(crate) fn mark_cloud_node() {
+    CLOUD_NODE.store(true, Ordering::Relaxed);
+}
 const GZIP_LEVEL: u32 = 1;
 const ZSTD_LEVEL: i32 = 3;
 
@@ -114,11 +124,13 @@ struct Compressor {
 impl Compressor {
     /// `plain` in this provider's codec, for a post to `path`: `None` when
     /// it is off, the route is not one it decodes on, the body is under
-    /// [`MIN_COMPRESSED_BYTES`], or encoding would not make it smaller.
+    /// [`MIN_COMPRESSED_BYTES`], the codec is gzip on a cloud node, or
+    /// encoding would not make it smaller.
     fn encode(&self, path: &str, plain: &[u8]) -> Option<Vec<u8>> {
         if !self.on.load(Ordering::Relaxed)
             || self.compression.route.is_some_and(|route| route != path)
             || plain.len() < MIN_COMPRESSED_BYTES
+            || (self.compression.codec == RequestCodec::Gzip && CLOUD_NODE.load(Ordering::Relaxed))
         {
             return None;
         }
