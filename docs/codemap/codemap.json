@@ -14601,7 +14601,7 @@
      "purpose": "Explicit memory pins bypass query relevance and render shedding, never read authority",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -70983,7 +70983,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChatBrain",
