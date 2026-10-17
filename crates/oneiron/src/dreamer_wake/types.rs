@@ -273,6 +273,14 @@ pub trait DreamerAttemptExecutor {
     async fn judge_done(&self, _question: RunnerDoneQuestion) -> Option<RunnerDoneAnswer> {
         None
     }
+
+    /// The runner ledger line a candidate's admission and settlement debit
+    /// when the host routes it off the pass's line: a resident dreaming on
+    /// its own model debits its own line (FIX 1152). Accounting only: `None`
+    /// keeps the pass's line, and no answer refuses admission.
+    fn runner_budget_id(&mut self, _candidate: &AttemptRecord) -> Option<String> {
+        None
+    }
 }
 
 /// Durable milestone authorship for driver-written Started/Done milestones.
