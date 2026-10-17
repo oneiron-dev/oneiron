@@ -88,6 +88,15 @@ fn reaches(ask: &SkillTradeoffAsk, project: EntityId) -> bool {
         )
 }
 
+/// Whether admitting `new` voids the open route `old`: the same proposal
+/// asked again under another question digest, on any TASK or project. The
+/// one supersession rule for routed tradeoff asks.
+fn superseded_by(old: &ProjectTradeoffRoute, new: &ProjectTradeoffRoute) -> bool {
+    old.state == RouteState::Open
+        && old.proposal == new.proposal
+        && old.question_digest != new.question_digest
+}
+
 /// The preference a pick teaches, spelled as the goal record spells one.
 fn preference(prefer: &BTreeSet<String>, over: &BTreeSet<String>) -> String {
     let side = |axes: &BTreeSet<String>| axes.iter().cloned().collect::<Vec<_>>().join("+");
@@ -153,10 +162,7 @@ impl Memory<'_> {
             // its ask with this admission, on whichever TASK it was routed.
             let now = vault.store.clock.now_recorded_at();
             for (old, row) in ROUTES.scan(&vault.store, txn)? {
-                if row.state == RouteState::Open
-                    && row.proposal == route.proposal
-                    && row.question_digest != route.question_digest
-                {
+                if superseded_by(&row, &route) {
                     close_route_in(vault, txn, old, RouteState::Void { at: now })?;
                 }
             }

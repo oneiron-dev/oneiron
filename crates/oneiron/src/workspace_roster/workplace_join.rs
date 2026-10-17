@@ -190,10 +190,8 @@ pub(super) fn file_roster_joins_in_txn(
         }
     }
     for subject in subjects {
-        match super::join_door::caller_stands_for_in_txn(vault, txn, caller, &subject, now) {
-            Ok(_) => {}
-            Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => continue,
-            Err(error) => return Err(error),
+        if !roster_caller_files_for_in_txn(vault, txn, caller, &subject, now)? {
+            continue;
         }
         let purpose = match subject {
             JoinSubject::Agent(agent) if houses.contains(&agent) => Purpose::House,
@@ -205,6 +203,25 @@ pub(super) fn file_roster_joins_in_txn(
         }
     }
     Ok(())
+}
+
+/// Whether `caller` files `subject`'s join on a roster update: OF-531's
+/// caller rule, read live. A caller that does not stand for the subject
+/// files nothing for it, so a board write is never an unrelated person's
+/// join consent, and the subject joins on its own first write or explicit
+/// join. The one place a roster filing passes a subject by.
+fn roster_caller_files_for_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    caller: WriteActor,
+    subject: &JoinSubject,
+    at: u64,
+) -> Result<bool> {
+    match super::join_door::caller_stands_for_in_txn(vault, txn, caller, subject, at) {
+        Ok(_) => Ok(true),
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Whether `caller` speaks for `person`: it is that PERSON, or its own pen.
