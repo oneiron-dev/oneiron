@@ -817,6 +817,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.projects.roster.write",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ProjectRosterWriteRequest,
+                >(),
+            ),
+            (
                 "vault.projects.goal.intake",
                 crate::code_run::vault_read::request_schema::<ProjectRefRequest>(),
             ),
@@ -2621,6 +2627,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.projects.roster.write" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.projects.goal.intake" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3830,6 +3843,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.projects.confirm" => {
             let _input: crate::workspace_roster::ProjectCardConfirmRequest = decode(value.clone())?;
         }
+        "vault.projects.roster.write" => {
+            let _input: crate::workspace_roster::ProjectRosterWriteRequest = decode(value.clone())?;
+        }
         "vault.projects.goal.intake" => {
             let _input: ProjectRefRequest = decode(value.clone())?;
         }
@@ -4512,6 +4528,9 @@ pub fn invoke(
             encode(vault_projects_dismiss_card(memory, decode(value)?)?)
         }
         "vault.projects.confirm" => encode(vault_projects_confirm(memory, decode(value)?)?),
+        "vault.projects.roster.write" => {
+            encode(vault_projects_roster_write(memory, decode(value)?)?)
+        }
         "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
@@ -6154,6 +6173,12 @@ pub fn vault_projects_confirm(
     input: crate::workspace_roster::ProjectCardConfirmRequest,
 ) -> MemoryResult<crate::workspace_roster::ProjectMintReceipt> {
     memory.projects_confirm(&input)
+}
+pub fn vault_projects_roster_write(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ProjectRosterWriteRequest,
+) -> MemoryResult<crate::workspace_roster::ProjectRosterWriteOutcome> {
+    memory.projects_write_roster(input.project, &input.record)
 }
 pub fn vault_projects_goal_intake(
     memory: &Memory<'_>,

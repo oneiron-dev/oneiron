@@ -776,9 +776,14 @@ class Oneiron:
         def confirm(self, spec: Facade.ProjectCardConfirmRequest) -> Facade.ProjectMintReceipt:
             """The owner's tap that confirms a host-held project card; only the host's own door can complete it."""
         @property
+        def roster(self) -> "Oneiron._VaultProjectsRosterVerbs": ...
+        @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs": ...
         def route_tradeoff(self, spec: Facade.ProjectTradeoffRouteRequest) -> Facade.TaskAskReceipt:
             """Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."""
+    class _VaultProjectsRosterVerbs:
+        def write(self, spec: Facade.ProjectRosterWriteRequest) -> Facade.ProjectRosterWriteOutcome:
+            """Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."""
     class _VaultProjectsGoalVerbs:
         def intake(self, spec: Facade.ProjectRefRequest) -> Facade.ProjectGoalInterviewContext:
             """What a project's goal-intake interview starts from, for a member of its home room."""
