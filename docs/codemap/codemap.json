@@ -39021,9 +39021,9 @@
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…",
      "surface": {
       "const": 5,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
-      "fn": 9,
+      "fn": 8,
       "struct": 1
      }
     },
