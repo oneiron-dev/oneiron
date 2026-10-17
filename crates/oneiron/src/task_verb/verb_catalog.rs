@@ -3313,7 +3313,7 @@ impl AgentVerb {
                 "Checks one pack connection with the engine's fixed read-only provider call for its declared check."
             }
             Self::VaultAuthorityAudit => {
-                "One page of the dated authority log audit: grants, revokes and confirms, for the owner."
+                "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
@@ -3888,7 +3888,7 @@ impl AgentVerb {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
             }
             Self::VaultCommit => {
-                "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."
+                "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
             }
             Self::VaultRemember => {
                 "Commits one claim through the gate, the same as vault.claims.upsert."
@@ -4026,7 +4026,7 @@ impl AgentVerb {
                 "Reads the status of one consolidation attempt by its durable job reference."
             }
             Self::VaultClaimsSeed => {
-                "Seeds claims through their individual gates, forced proposed, returning one receipt per claim."
+                "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."

@@ -8094,7 +8094,7 @@ pub fn self_desktop_handover(
 pub fn vault_commit(
     memory: &Memory<'_>,
     input: CommitRequest,
-) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     for claim in &input.claims {
         crate::memory::caps::check_claim_input(claim)?;
@@ -8591,7 +8591,7 @@ pub fn vault_consolidation_status(
 pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: CommitRequest,
-) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     for claim in &input.claims {
         crate::memory::caps::check_claim_input(claim)?;

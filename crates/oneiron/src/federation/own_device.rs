@@ -3,7 +3,8 @@
 //! grant's ceiling. Pairing a device to a live owner provisions the owner's
 //! grant (one serves every device they pair) and names it in the paired
 //! slip's `grant_ref`, where the device reads it; the slip then stands only
-//! while the grant does.
+//! while the grant does. The grant retires when its holder stops being an
+//! Owner (FIX 3294).
 use super::{
     FederationGrant, FederationGrantPreset as GrantPreset, FederationGrantRole as Role,
     FederationGrantScope, decode_federation_grant_body, encode_federation_grant_body,
@@ -23,6 +24,13 @@ const OWN_DEVICE_RESIDENCE_VAULT_ID: u64 = 7;
 /// own-device grant is minted under it.
 pub const fn own_device_residence_scope() -> FederationGrantScope {
     FederationGrantScope::vault(OWN_DEVICE_RESIDENCE_VAULT_ID)
+}
+
+/// FIX 3294: whether a member moved from `from` to `to` (`None` leaves the
+/// vault) loses their own-device grant. Pairing provisions it only for a live
+/// owner, so it retires with Owner standing, whatever role they keep.
+pub(crate) fn own_device_grant_retires(from: Role, to: Option<Role>) -> bool {
+    from == Role::Owner && to != Some(Role::Owner)
 }
 
 /// Whether `grant` is an own-device grant: an Owner-role member grant under
@@ -100,6 +108,50 @@ impl Vault {
             true,
         )?;
         Ok(Some(id))
+    }
+
+    /// Delete `member`'s live own-device grants in the caller's writer and
+    /// return their ids (FIX 3294). A paired slip naming one stops standing
+    /// at once, whether or not a slip issuer revokes it.
+    pub(crate) fn retire_own_device_grants_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        member: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut ids = Vec::new();
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } = live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
+                continue;
+            };
+            let grant = decode_federation_grant_body(&body)?;
+            if is_own_device_grant(&grant) && grant.member_ref == member {
+                ids.push(id);
+            }
+        }
+        if !ids.is_empty() {
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                txn,
+                ids.iter().map(|id| BatchOp::Delete { id: *id }).collect(),
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )?;
+        }
+        Ok(ids)
     }
 
     /// `owner`'s live own-device grant that confers at `now`, if any.

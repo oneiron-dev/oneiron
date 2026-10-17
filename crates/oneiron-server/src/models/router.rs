@@ -1,15 +1,22 @@
 //! Every configured model and seat by id: the raw `/v1/llm` routes call
 //! whichever model they name, through its ladder and a run.
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use oneiron::{LlmCatalogEntry, ModelId, ModelLocality};
 
 use super::ladder::OfferLadder;
 
+/// Each model by id: where it runs and the ladder that serves it.
+pub(super) type Routes = BTreeMap<ModelId, (ModelLocality, Arc<OfferLadder>)>;
+
 #[derive(Default)]
 pub struct ModelRouter {
-    routes: BTreeMap<ModelId, (ModelLocality, Arc<OfferLadder>)>,
+    routes: Routes,
+    /// The models the owner's other nodes offer (FIX 3229), as the last mesh
+    /// catalog refresh left them, each served alone at its node. A configured
+    /// route of the same id wins. Readers clone the map and let go at once.
+    discovered: RwLock<Arc<Routes>>,
     /// Each configured chat model served alone by its own id, and the family
     /// its provider's config names for it.
     chat: BTreeMap<ModelId, Option<String>>,
@@ -73,16 +80,44 @@ impl ModelRouter {
         self.routes.is_empty()
     }
 
-    /// Where `model` runs, when this router serves it. This is the host's
-    /// attestation for the engine's inference admission.
+    /// Where `model` runs, when this router's config serves it. This is the
+    /// host's attestation for the engine's inference admission. A model the
+    /// mesh discovered has none: its own-server row vouches for it, and this
+    /// node never serves it on to another node.
     pub fn locality(&self, model: &ModelId) -> Option<ModelLocality> {
         self.routes.get(model).map(|(locality, _)| *locality)
     }
 
-    /// Where `model` runs and the ladder that serves it.
+    /// Where `model` runs and the ladder that serves it: its configured
+    /// route, or else the route a mesh catalog refresh found for it.
     pub fn served(&self, model: &ModelId) -> Option<(ModelLocality, Arc<OfferLadder>)> {
-        self.routes
-            .get(model)
-            .map(|(locality, ladder)| (*locality, Arc::clone(ladder)))
+        let route = |routes: &Routes| {
+            routes
+                .get(model)
+                .map(|(locality, ladder)| (*locality, Arc::clone(ladder)))
+        };
+        route(&self.routes).or_else(|| route(&self.discovered()))
+    }
+
+    /// The routes the last mesh catalog refresh found.
+    fn discovered(&self) -> Arc<Routes> {
+        Arc::clone(
+            &self
+                .discovered
+                .read()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+    }
+
+    /// Serves `routes`, the models the owner's other nodes offer now, in
+    /// place of the ones the last refresh found. An id a configured route
+    /// serves keeps that route.
+    #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
+    pub(super) fn discover(&self, mut routes: Routes) {
+        routes.retain(|model, _| !self.routes.contains_key(model));
+        *self
+            .discovered
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(routes);
     }
 }

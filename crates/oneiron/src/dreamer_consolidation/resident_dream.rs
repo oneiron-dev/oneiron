@@ -223,7 +223,27 @@ impl Room {
         self.0 -= tokens;
         true
     }
+
+    /// The longest prefix of `text`, cut at a character and followed by
+    /// `mark`, that fits what is left; `None` when not even `mark` does.
+    fn fit(&self, text: &str, mark: &str) -> Option<String> {
+        let mut end = text.len();
+        loop {
+            let end_at = text.floor_char_boundary(end);
+            let cut = format!("{}{mark}", &text[..end_at]);
+            if crate::count_context_pack_tokens(&cut) as u64 <= self.0 {
+                return Some(cut);
+            }
+            if end_at == 0 {
+                return None;
+            }
+            end = end_at * 9 / 10;
+        }
+    }
 }
+
+/// What a row's quoted words, cut to fit, end with.
+const WORDS_CUT_MARK: &str = "\n  > (the words run on past this dreaming's window)";
 
 /// The agent definitions forked from `resident` whose sealed pads its
 /// dreaming reads: each whose fork chain reaches it before any other bound
@@ -418,8 +438,11 @@ fn cut_for(
                 crate::llm::decision::cut_text(&review.reason, Some(REVIEW_REASON_BYTES))
             ));
         }
-        // The words are quoted as data someone outside the vault wrote. A
-        // row whose words overflow the room still goes in as its index line.
+        // The words are quoted as data someone outside the vault wrote. Words
+        // that overflow what is left wait, with the cursor, for the next
+        // dreaming's fresh window. The first row a dreaming reads goes in cut
+        // to what is left instead, so words too long for any window are read
+        // in part rather than never, and every dreaming moves on (FIX 1148).
         let quoted = texts.get(&item.item_id).map(|words| {
             let mut quoted = format!(
                 "{index}\n  quoted from {}{}:",
@@ -438,8 +461,13 @@ fn cut_for(
         });
         let line = match quoted {
             Some(quoted) if room.take(&quoted) => quoted,
-            _ if room.take(&index) => index,
-            _ => break,
+            Some(quoted) if inbox_lines.is_empty() => match room.fit(&quoted, WORDS_CUT_MARK) {
+                Some(cut) if room.take(&cut) => cut,
+                _ => break,
+            },
+            Some(_) => break,
+            None if room.take(&index) => index,
+            None => break,
         };
         inbox_lines.push(line);
         cut.inbox_after = Some((item.occurred_at, item.item_id));

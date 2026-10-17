@@ -2,7 +2,7 @@
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
-use crate::context_pack::source_ranking::{SourceRankingPolicy, source_outranks};
+use crate::context_pack::source_ranking::{SourceRankingPolicy, question_key, source_outranks};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
@@ -227,14 +227,24 @@ impl ClaimStore for Vault {
 
 /// The current value among one subject and predicate's eligible heads, given
 /// newest first: the newest head no other eligible head outranks (OF-023). An
-/// observed head held beside a stated one never takes the current value from
-/// it, however new; recency decides among the rest. Some head always wins
-/// when any is eligible, so a conflicting head is found whenever one exists.
+/// observed head held beside a stated one on the same question (the clamp's
+/// [`question_key`]) never takes the current value from it, however new; a
+/// stated head of another world, facet or topic does not hold it back, and
+/// recency decides among the rest. Some head always wins when any is
+/// eligible, so a conflicting head is found whenever one exists.
 pub(super) fn current_claim_head(
     heads: Vec<(EntityId, ClaimBody)>,
 ) -> Option<(EntityId, ClaimBody)> {
     let policy = SourceRankingPolicy::default();
-    let sources: BTreeSet<_> = heads.iter().map(|(_, body)| body.source).collect();
-    let outranked = |held| sources.iter().any(|&a| source_outranks(&policy, a, held));
-    heads.into_iter().find(|(_, body)| !outranked(body.source))
+    let sources: BTreeSet<_> = heads
+        .iter()
+        .map(|(_, body)| (question_key(body), body.source))
+        .collect();
+    let outranked = |held: &ClaimBody| {
+        let question = question_key(held);
+        sources
+            .iter()
+            .any(|&(at, a)| at == question && source_outranks(&policy, a, held.source))
+    };
+    heads.into_iter().find(|(_, body)| !outranked(body))
 }
