@@ -44,6 +44,16 @@ pub use self::wait::{
     bind_human_wait, human_wait_binding, release_human_wait, signal_human_response,
 };
 
+/// [`human_followup_record`] in the caller's read snapshot, for a reader
+/// that already holds one: LMDB refuses recursive reuse of its reader slot.
+pub(crate) fn human_followup_record_in_txn(
+    vault: &crate::Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task_ref: crate::EntityId,
+) -> crate::Result<Option<HumanTaskFollowupRecord>> {
+    storage::followup_record_in_txn(vault, rtxn, task_ref)
+}
+
 #[cfg(test)]
 mod followup_tests;
 #[cfg(test)]
