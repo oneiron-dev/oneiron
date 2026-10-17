@@ -127,8 +127,8 @@ never read off the provider's name), `model_families` (one wire model's own
 family in place of `family`: `model_families = { "claude-opus-5-5" = "claude",
 "gpt-6.1" = "gpt" }`; a judge's tie-breaker is asked only of a model whose
 family neither judge has),
-`locality` (`own_server` or `third_party`), `revision` (`live`) and
-`responses_socket` (below). Plain
+`locality` (`own_server` or `third_party`), `revision` (`live`),
+`responses_socket` and `request_compression` (both below). Plain
 `http://` is accepted only for this machine, or for a `local-openai-compat`
 server on the private network.
 
@@ -213,6 +213,21 @@ call whose socket will not open, or that carries audio, goes out over
 route say, holds a socket when its entry sets `responses_socket = true` (a
 59-minute limit) or `responses_socket = { max_age_secs = 3600 }`. A
 `key_secret` provider stays on HTTP: the credential broker runs no socket yet.
+
+An `anthropic-compat` provider at `https://api.anthropic.com` sends a
+`/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
+makes it smaller, except on a cloud node (a managed or host-readable
+deployment), where gzip costs more on the link than it saves; zstd still
+compresses there. Replies do not change. Any other provider sends plain bodies
+unless its entry names the codec its route decodes: `request_compression =
+"zstd"` (level 3) for our CPA agents route, say, or `"gzip"`. Set
+`request_compression = false` to send plain. If a compressed body is answered
+400 or 415, it is sent once more, plain; when that answer differs, the
+provider sends plain until restart. For a `key_secret` provider the credential
+broker compresses instead, after its checks and just before its one send: gzip
+level 1 on `/v1/messages` at `https://api.anthropic.com`, under the same
+16 KiB and smaller rules, with no plain resend. A `key_secret` entry takes no
+`request_compression`.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
@@ -549,7 +564,13 @@ no new record is minted. The match is exact and needs at least 12 bytes. It
 reads a keyed index that holds each value's length and fingerprint, never the
 value. The index's key never leaves this machine. The owner's "not a secret"
 ruling for a record wins over the match. The step's program is stored as the
-model wrote it, so a resumed step runs the same code.
+model wrote it, so a resumed step runs the same code. A run in an off-record
+session is swept the same way.
+
+A stored file keeps its bytes. A known value in a file, or in a member of a
+container file, is marked with its existing record, as a key the scan finds
+is marked. A reader without a grant then gets the file with that value
+masked, and a granted read gets the real bytes, both through the same mark.
 
 ### Reader children, summaries and fold receipts
 

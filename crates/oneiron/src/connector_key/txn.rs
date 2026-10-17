@@ -294,7 +294,8 @@ pub(super) fn reject_terminal_transition() -> Error {
 }
 
 /// Flips a key to Suspended inside the caller's transaction (used by the gate
-/// on exhaust-suspend and by `Vault::suspend_connector_key`).
+/// on exhaust-suspend and by `Vault::suspend_connector_key`). A catalog key's
+/// Active per-grant keys are held with it, whatever suspended it.
 pub(crate) fn suspend_connector_key_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -310,6 +311,9 @@ pub(crate) fn suspend_connector_key_in_txn(
         ..record.clone()
     };
     rewrite_connector_key_in_txn(store, wtxn, id, &suspended)?;
+    if suspended.catalog.is_some() {
+        super::lifecycle::hold_derived_keys_in_txn(store, wtxn, &suspended, at)?;
+    }
     Ok(suspended)
 }
 

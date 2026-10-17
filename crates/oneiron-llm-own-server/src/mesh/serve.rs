@@ -14,7 +14,7 @@ use oneiron_mesh_transport::{
     MachineId, MeshConnection, MeshError, MeshFuture, MeshService, MeshStream,
 };
 
-use super::{Batch, LLM_ALPN, Reply, Request, Staging, decode, encode, lock};
+use super::{Batch, LLM_ALPN, Reply, Request, Staging, encode, lock, seal, unseal};
 
 /// How long a pull waits for the first event before it answers with none.
 const PULL_WAIT: Duration = Duration::from_secs(20);
@@ -98,7 +98,7 @@ impl LlmMeshService {
         session: &Session,
         mut stream: Box<dyn MeshStream>,
     ) -> Result<(), MeshError> {
-        let request: Request = decode(&stream.recv().await?)?;
+        let request: Request = unseal(&stream.recv().await?)?;
         let reply = match request {
             Request::Put {
                 hash,
@@ -141,7 +141,7 @@ impl LlmMeshService {
                 Reply::Cancelled
             }
         };
-        stream.send(&encode(&reply)?).await
+        stream.send(&seal(&reply)?).await
     }
 
     /// The request a body names, refused when this node does not run its

@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 269 facade rows, 855 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 226.
-// WireJson rows: vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
+// UniFFI census: 274 facade rows, 865 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 230.
+// WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
@@ -1162,6 +1162,13 @@ pub enum ShapeTarget {
         #[serde(rename = "name")]
         name: String,
     },
+    #[serde(rename = "facet")]
+    Facet {
+        #[serde(rename = "person")]
+        person: String,
+        #[serde(rename = "name")]
+        name: String,
+    },
     #[serde(rename = "pack")]
     Pack {
         #[serde(rename = "name")]
@@ -1188,6 +1195,11 @@ pub enum ShapeTarget {
     Grant {
         #[serde(rename = "grant_ref")]
         grant_ref: String,
+    },
+    #[serde(rename = "manifest")]
+    Manifest {
+        #[serde(rename = "manifest_ref")]
+        manifest_ref: String,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -1216,6 +1228,13 @@ pub enum ShapeRow {
     },
     #[serde(rename = "world")]
     World {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "facet")]
+    Facet {
+        #[serde(rename = "person")]
+        person: String,
         #[serde(rename = "name")]
         name: String,
     },
@@ -1259,6 +1278,13 @@ pub enum ShapeRow {
         grant_ref: Option<String>,
         #[serde(rename = "bound", default, skip_serializing_if = "Option::is_none")]
         bound: Option<ShapeGrantBound>,
+    },
+    #[serde(rename = "manifest")]
+    Manifest {
+        #[serde(rename = "manifest_ref")]
+        manifest_ref: String,
+        #[serde(rename = "body")]
+        body: String,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -3560,6 +3586,160 @@ pub struct KeyValueNamespaces {
     pub offset: Option<u64>,
 }
 
+/// `oneiron::campaign::surface::program::CampaignProgramOutboundSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignProgramOutboundSpec {
+    #[serde(rename = "call_seq")]
+    pub call_seq: u64,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "payload")]
+    pub payload: String,
+    #[serde(rename = "idempotency_supported")]
+    pub idempotency_supported: bool,
+}
+
+/// `oneiron::campaign::surface::program::CampaignProgramStepSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignProgramStepSpec {
+    #[serde(rename = "step_ref")]
+    pub step_ref: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "sender_ref")]
+    pub sender_ref: String,
+    #[serde(rename = "basis_evidence")]
+    pub basis_evidence: String,
+    #[serde(rename = "outbound", default, skip_serializing_if = "Option::is_none")]
+    pub outbound: Option<CampaignProgramOutboundSpec>,
+}
+
+/// `oneiron::campaign::surface::program::CampaignProgramAudienceSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignProgramAudienceSpec {
+    #[serde(rename = "query_ref")]
+    pub query_ref: String,
+    #[serde(rename = "entry_step_ref")]
+    pub entry_step_ref: String,
+}
+
+/// `oneiron::campaign::surface::program::CreateCampaignProgramRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CreateCampaignProgramRequest {
+    #[serde(
+        rename = "schema_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub schema_version: Option<u32>,
+    #[serde(rename = "campaign_ref")]
+    pub campaign_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps", default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<CampaignProgramStepSpec>>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<CampaignProgramAudienceSpec>,
+}
+
+/// `oneiron::campaign::surface::program::CampaignProgramLifecycle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CampaignProgramLifecycle {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "archived")]
+    Archived,
+}
+
+/// `oneiron::campaign::surface::program::CampaignProgramDefinitionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CampaignProgramDefinitionView {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u32,
+    #[serde(rename = "owner_actor")]
+    pub owner_actor: String,
+    #[serde(rename = "campaign_ref")]
+    pub campaign_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "definition_version")]
+    pub definition_version: u64,
+    #[serde(rename = "lifecycle")]
+    pub lifecycle: CampaignProgramLifecycle,
+    #[serde(rename = "steps")]
+    pub steps: Vec<CampaignProgramStepSpec>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<CampaignProgramAudienceSpec>,
+}
+
+/// `oneiron::campaign::surface::program::CampaignProgramRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CampaignProgramRecord {
+    #[serde(rename = "program_ref")]
+    pub program_ref: String,
+    #[serde(rename = "definition")]
+    pub definition: CampaignProgramDefinitionView,
+    #[serde(rename = "automatic_intake")]
+    pub automatic_intake: bool,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::campaign::surface::program::CampaignProgramReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignProgramReadRequest {
+    #[serde(rename = "campaign_ref")]
+    pub campaign_ref: String,
+    #[serde(rename = "program_ref")]
+    pub program_ref: String,
+}
+
+/// `oneiron::campaign::surface::program::CampaignProgramReadResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CampaignProgramReadResult {
+    #[serde(rename = "found")]
+    pub found: bool,
+    #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<CampaignProgramRecord>,
+}
+
+/// `oneiron::campaign::surface::program::UpdateCampaignProgramRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateCampaignProgramRequest {
+    #[serde(rename = "campaign_ref")]
+    pub campaign_ref: String,
+    #[serde(rename = "program_ref")]
+    pub program_ref: String,
+    #[serde(rename = "expected_definition_version")]
+    pub expected_definition_version: u64,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<CampaignProgramStepSpec>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<CampaignProgramAudienceSpec>,
+}
+
+/// `oneiron::campaign::surface::program::ArchiveCampaignProgramRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveCampaignProgramRequest {
+    #[serde(rename = "campaign_ref")]
+    pub campaign_ref: String,
+    #[serde(rename = "program_ref")]
+    pub program_ref: String,
+    #[serde(rename = "expected_definition_version")]
+    pub expected_definition_version: u64,
+}
+
 /// `oneiron::claim::scoped_read::weave_report::WeaveSectionKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum WeaveSectionKind {
@@ -3770,54 +3950,6 @@ pub struct WeaveDigestRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub scheduled_for: Option<u64>,
-}
-
-/// `oneiron::lens::generated_ui::genui_envelope::GeneratedLens`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct GeneratedLens {
-    #[serde(rename = "kit_version")]
-    pub kit_version: u16,
-    #[serde(rename = "apps_contract_version")]
-    pub apps_contract_version: u16,
-    #[serde(rename = "root")]
-    pub root: crate::WireJson,
-}
-
-/// `oneiron::claim::scoped_read::weave_lens::WeaveLensRefusal`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveLensRefusal {
-    #[serde(rename = "reason")]
-    pub reason: String,
-    #[serde(rename = "skill_ref")]
-    pub skill_ref: String,
-    #[serde(rename = "skill_version")]
-    pub skill_version: String,
-    #[serde(rename = "model")]
-    pub model: String,
-    #[serde(rename = "refused_at")]
-    pub refused_at: u64,
-}
-
-/// `oneiron::claim::scoped_read::weave_serve::WeaveDigestView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct WeaveDigestView {
-    #[serde(rename = "scheduled_for")]
-    pub scheduled_for: u64,
-    #[serde(rename = "rendered_at")]
-    pub rendered_at: u64,
-    #[serde(rename = "sections")]
-    pub sections: Vec<WeaveSectionView>,
-    #[serde(rename = "narrowing")]
-    pub narrowing: ScopedReadReceipt,
-    #[serde(rename = "lens", default, skip_serializing_if = "Option::is_none")]
-    pub lens: Option<GeneratedLens>,
-    #[serde(
-        rename = "lens_refused",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub lens_refused: Option<WeaveLensRefusal>,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveWrongLinkRequest`.
@@ -6519,6 +6651,17 @@ pub enum LensProposalState {
     Active,
 }
 
+/// `oneiron::lens::generated_ui::genui_envelope::GeneratedLens`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GeneratedLens {
+    #[serde(rename = "kit_version")]
+    pub kit_version: u16,
+    #[serde(rename = "apps_contract_version")]
+    pub apps_contract_version: u16,
+    #[serde(rename = "root")]
+    pub root: crate::WireJson,
+}
+
 /// `oneiron::lens::proposal::LensListRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LensListRow {
@@ -8263,6 +8406,8 @@ pub enum HumanAskReason {
     NeedsPerson,
     #[serde(rename = "deadline")]
     Deadline,
+    #[serde(rename = "exploration_budget")]
+    ExplorationBudget,
 }
 
 /// `oneiron::llm::decision::types::TypedDecision`.
@@ -8617,6 +8762,21 @@ pub enum TaskAskRequest {
 pub enum TaskAskHoldReason {
     #[serde(rename = "NoLiveRoute")]
     NoLiveRoute,
+    #[serde(rename = "ApprovalRequired")]
+    ApprovalRequired,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskLaunchHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskAskLaunchHold {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+    #[serde(rename = "plan_digest")]
+    pub plan_digest: String,
+    #[serde(rename = "surface_ref")]
+    pub surface_ref: String,
+    #[serde(rename = "denied")]
+    pub denied: bool,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskReceipt`.
@@ -8634,6 +8794,8 @@ pub struct TaskAskReceipt {
     pub statement: Option<FanoutStatement>,
     #[serde(rename = "task_records")]
     pub task_records: Vec<RecordRef>,
+    #[serde(rename = "launch", default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<TaskAskLaunchHold>,
 }
 
 /// `oneiron::task_verb::sdk::TaskWaitRequest`.

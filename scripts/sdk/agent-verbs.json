@@ -903,6 +903,46 @@
       }
     },
     {
+      "name": "vault.campaign.program.create",
+      "description": "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns.",
+      "input": "crate::campaign::surface::CreateCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.read",
+      "description": "One campaign program under a campaign the caller owns, with whether its audience gets automatic intake now.",
+      "input": "crate::campaign::surface::CampaignProgramReadRequest",
+      "output": "crate::campaign::surface::CampaignProgramReadResult",
+      "call": "memory.campaign_program_read(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.update",
+      "description": "Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops.",
+      "input": "crate::campaign::surface::UpdateCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_update(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.campaign.program.archive",
+      "description": "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops.",
+      "input": "crate::campaign::surface::ArchiveCampaignProgramRequest",
+      "output": "crate::campaign::surface::CampaignProgramRecord",
+      "call": "memory.campaign_program_archive(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.weave.report",
       "description": "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role.",
       "input": "crate::claim::WeaveReportRequest",
@@ -914,10 +954,11 @@
     },
     {
       "name": "vault.weave.digest",
-      "description": "One of the bound actor's saved weave digests, or the newest, under the current read policy.",
+      "description": "One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none.",
       "input": "crate::claim::WeaveDigestRequest",
       "output": "Option<crate::claim::WeaveDigestView>",
       "call": "memory.weave_digest(None, &input)?",
+      "host_door": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -939,6 +980,17 @@
       "input": "crate::claim::WeaveWrongLinkRequest",
       "output": "crate::claim::WeaveLinkCorrectionView",
       "call": "memory.weave_wrong_link(None, &memory.embedded_owner(\"vault.weave.link.wrong\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.weave.owner.link.wrong",
+      "description": "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays.",
+      "input": "crate::claim::WeaveWrongLinkRequest",
+      "output": "crate::claim::WeaveLinkCorrectionView",
+      "call": "memory.weave_owner_wrong_link(&memory.embedded_owner(\"vault.weave.owner.link.wrong\")?, &input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -3310,7 +3362,7 @@
     },
     {
       "name": "self.browser.wait_for",
-      "description": "Waits until some page row matches a role and name.",
+      "description": "Waits until a page row its refs name, or else some row matching a role and name, is there.",
       "input": "oneiron_browser::WaitForInput",
       "output": "oneiron_browser::WaitForOutput",
       "call": "driver.wait_for(input)?",
@@ -3541,7 +3593,7 @@
     },
     {
       "name": "self.desktop.wait_for",
-      "description": "Waits until some window row matches a role and name.",
+      "description": "Waits until a window row its refs name, or else some row matching a role and name, is there.",
       "input": "oneiron_browser::WaitForInput",
       "output": "oneiron_browser::WaitForOutput",
       "call": "driver.wait_for(input)?",
@@ -5118,6 +5170,14 @@
       "name": "self.team.record",
       "input": "crate::team::TeamRecordInput",
       "output": "crate::team::TeamRunAnswer",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
+      "name": "self.team.submit",
+      "input": "crate::code_run::TeamSubmitInput",
+      "output": "crate::code_run::TeamSubmitAnswer",
       "scope": "Write",
       "context": "run",
       "effect": "Team"
