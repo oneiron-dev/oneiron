@@ -36,11 +36,26 @@ pub enum SigningOutcome {
     },
     AwaitingSeal,
     /// D6: the signing dial does not open this automated sign act, so the
-    /// call is held for the vault owner role's answer, never dropped.
+    /// call is held for its role chain's answer, never dropped.
     HeldForOwner {
         held_at: u64,
     },
     ConsentRequired,
+}
+
+/// Who a signing call shows itself to be (OF-415). The capability proves
+/// access to a recipient's turn, not who holds the link: only a vault
+/// credential the call presents says that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigningCaller {
+    /// No credential: the capability alone, as a browser signer brings it.
+    Bearer,
+    /// A verified credential bound to a person.
+    Person,
+    /// A verified credential not shown to be a person: an agent, the
+    /// system, or one that binds no actor class. Its sign act is automated
+    /// whatever the recipient's flag says.
+    Agent,
 }
 
 pub const ESIGN_SEAL_ATTEMPT_KIND: &str = "esign.seal";
@@ -138,6 +153,21 @@ impl Vault {
         &self,
         token: &EsignCapability,
         action: &SigningAction,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<SigningOutcome> {
+        self.execute_signing_action_as(token, action, SigningCaller::Bearer, ip, user_agent)
+    }
+
+    /// [`Self::execute_signing_action`] by a caller that showed who it is. An
+    /// agent's Complete is an automated sign act: on a recipient the law
+    /// keeps with a natural person it is refused, and elsewhere the D6 dial
+    /// decides, holding what it does not open.
+    pub fn execute_signing_action_as(
+        &self,
+        token: &EsignCapability,
+        action: &SigningAction,
+        caller: SigningCaller,
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
@@ -271,14 +301,20 @@ impl Vault {
                     if !consent {
                         return Ok(SigningOutcome::ConsentRequired);
                     }
-                    if recipient.automated
+                    let automated = recipient.automated || caller == SigningCaller::Agent;
+                    if automated && recipient.natural_person.is_some() {
+                        return Err(invalid(
+                            "a natural-person recipient signs in person, never through an agent",
+                        ));
+                    }
+                    if automated
                         && !automated_signing_allowed(
                             self,
                             txn,
                             recipient.principal_ref.as_deref(),
                         )?
                     {
-                        // D6 redirects the sign act to the vault owner role.
+                        // D6 redirects the sign act up its role chain.
                         // Only a call that would land now is held.
                         state.clone().apply(
                             &EsignEvent::Signed {
