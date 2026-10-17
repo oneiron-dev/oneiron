@@ -28236,7 +28236,7 @@
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
       "crate-vis": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -37864,12 +37864,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "PersonChanges"
+     ],
      "path": "src/saved_query/sweep.rs",
      "purpose": "The host's saved-query sweep (ARCH-0059 `eval`): the queries a wake evaluates, the people it pages through…",
      "surface": {
       "const": 1,
-      "fn": 2
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -69518,7 +69521,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/saved_query_sweep.rs",
@@ -70818,7 +70821,7 @@
     "saved_query_sweep": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the…"
     },
