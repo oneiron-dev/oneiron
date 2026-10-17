@@ -1,7 +1,8 @@
 //! Async scope-authority asks over existing consult TASKs.
+use super::ask_effect::AskEffect;
 use super::ask_record::{self, AskGroup, AskMember};
 use super::ask_types::*;
-use super::create_validation::{consult_refusal, validate_task_create_in};
+use super::create_validation::{ValidatedTaskCreate, consult_refusal, validate_task_create_in};
 use super::{ConsultPayload, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl};
 use crate::agent_dispatch::{AgentDispatcher, FanoutCaller, FanoutWork};
 use crate::code_run::peer_result_wait;
@@ -10,53 +11,238 @@ use crate::gate::PolicyApprovalCeiling;
 use crate::memory::{Memory, MemoryError, MemoryResult, facade_provenance, verify_actor_binding};
 use crate::side_table::{self, Named, SideTable};
 
+/// What an ask's admission composes with the asker's own write.
+enum AskThen<F> {
+    /// A closure run in the admission's transaction. The closure cannot
+    /// wait, so this ask is never held for launch approval.
+    Now(F),
+    /// A typed effect, or none. In `manual` mode the ask may be held for the
+    /// owner's launch approval (ASK-3); the effect is kept on its hold and
+    /// runs as the approval releases the ask.
+    Typed(Option<AskEffect>),
+}
+
+/// The closure type of an admission that composes no closure.
+type NoClosure = fn(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>;
+
+/// An ask's census, read in one snapshot: its recipients, its effective
+/// spec and one validated member TASK per recipient.
+struct AskCensus {
+    holders: Vec<EntityId>,
+    context_class: Option<TaskAskClass>,
+    governed_task: Option<EntityId>,
+    effective: TaskAskSpec,
+    validated: Vec<(ValidatedTaskCreate, bool)>,
+    work: Vec<FanoutWork>,
+    no_live_route: bool,
+}
+
+/// What a first admission, or an approval releasing a held ask, mints.
+struct AskMint<'a> {
+    group_ref: EntityId,
+    request_digest: &'a str,
+    requested: TaskAskSpec,
+    census: AskCensus,
+    question_digest: [u8; 32],
+    statement: crate::agent_dispatch::FanoutStatement,
+    now: u64,
+}
+
 impl Memory<'_> {
     /// Returns at admission. This does not open a trap, lease a run, or wait.
     /// A question answer never stands in for an authenticated consent receipt.
+    /// In `manual` mode the ask may be held for the owner's launch approval
+    /// (ASK-3): its receipt names the hold and no member TASK exists yet.
     pub fn tasks_ask(&self, input: &TaskAskSpec) -> MemoryResult<TaskAskReceipt> {
-        self.tasks_ask_with_txn_effect(input, |_, _| Ok(()))
+        self.tasks_ask_composed(input, None)
     }
 
-    /// Compose a project arc projection into the same ask admission transaction.
-    /// A replay has already committed its effect and does not execute it twice.
+    /// Compose a closure into the same ask admission transaction. A replay
+    /// has already committed its effect and does not execute it twice. A
+    /// closure cannot wait for a launch approval, so this ask is never held.
     pub(crate) fn tasks_ask_with_txn_effect(
         &self,
         input: &TaskAskSpec,
         effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<TaskAskReceipt> {
         let digest = ask_admission_digest(input)?;
-        self.with_verified_actor_write_txn(|txn| self.admit_ask_in_txn(txn, input, &digest, effect))
+        self.with_verified_actor_write_txn(|txn| {
+            self.admit_ask_in_txn(txn, input, &digest, AskThen::Now(effect))
+        })
     }
 
-    /// [`Self::tasks_ask_with_txn_effect`] inside a transaction an engine
-    /// writer already holds (OF-220: a runner's report opens its owner ask
-    /// in the runner's own commit). The caller has verified this actor's
-    /// write on `txn`; admission is the one body the public door runs.
-    pub(super) fn tasks_ask_in_txn(
+    /// An ask with a typed effect composed beside it, run in its admission
+    /// transaction, or kept on its launch hold and run as the owner's
+    /// approval releases it. A replay runs it neither time.
+    pub(super) fn tasks_ask_composed(
+        &self,
+        input: &TaskAskSpec,
+        effect: Option<AskEffect>,
+    ) -> MemoryResult<TaskAskReceipt> {
+        let digest = ask_admission_digest(input)?;
+        self.with_verified_actor_write_txn(|txn| {
+            self.admit_ask_in_txn(txn, input, &digest, AskThen::<NoClosure>::Typed(effect))
+        })
+    }
+
+    /// [`Self::tasks_ask_composed`] inside a transaction an engine writer
+    /// already holds (OF-220: a runner's report opens its owner ask in the
+    /// runner's own commit). The caller has verified this actor's write on
+    /// `txn`; admission is the one body the public door runs.
+    pub(super) fn tasks_ask_composed_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         input: &TaskAskSpec,
-        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+        effect: Option<AskEffect>,
     ) -> MemoryResult<TaskAskReceipt> {
         let digest = ask_admission_digest(input)?;
-        self.admit_ask_in_txn(txn, input, &digest, effect)
+        self.admit_ask_in_txn(txn, input, &digest, AskThen::<NoClosure>::Typed(effect))
     }
 
-    /// One ask's admission in `txn`: replay, the ask rules, the census, the
-    /// member TASKs and the group, then `effect` on a first admission.
-    fn admit_ask_in_txn(
+    /// One ask's admission in `txn`: replay (of a group, or of a held
+    /// launch), the ask rules, the census, then either the launch hold or
+    /// the member TASKs and the group, and the composed effect on a first
+    /// admission.
+    fn admit_ask_in_txn<F>(
         &self,
         txn: &mut heed::RwTxn<'_>,
         input: &TaskAskSpec,
         digest: &str,
-        effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
-    ) -> MemoryResult<TaskAskReceipt> {
+        then: AskThen<F>,
+    ) -> MemoryResult<TaskAskReceipt>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    {
         let now = self.vault().store.clock.now_recorded_at();
         let group_ref = ask_record::group_id(self.vault(), txn, self.actor(), &input.intent_key)?;
         if let Some(group) = ask_record::read_group(self.vault(), txn, group_ref)? {
             return replay_receipt(group_ref, group, self.actor(), digest);
         }
-        // An actor that may not ask is refused before any census runs.
+        // A held ask replays its hold: the same intent never asks twice.
+        if let Some(receipt) = super::fanout_launch::held_ask_receipt_in(
+            self.vault(),
+            txn,
+            group_ref,
+            self.actor(),
+            digest,
+        )? {
+            return Ok(receipt);
+        }
+        self.require_ask_ceiling_in(txn)?;
+        // Revocation and admission observe the SAME snapshot.
+        let census = self.ask_census_in(txn, input, group_ref, now)?;
+        // One ask counts once on the asker's ask window, whatever its
+        // recipients; a replay returned above never counts again.
+        super::rate_limit::record_task_ask(
+            self.vault(),
+            txn,
+            self.actor(),
+            now,
+            super::TaskCreateRateLimit::default(),
+        )?;
+        // Stated after the census and before any grant or member TASK.
+        // An ask holds no spend context, so it states no cap.
+        let mut statement = AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
+            txn,
+            &FanoutCaller::default(),
+            &census.work,
+            now,
+        )?;
+        let question = census.effective.what.reference.short_ref();
+        let (check_scope, check_row) =
+            super::fanout_launch::ask_check_keys(self.actor(), group_ref, &question);
+        let question_digest =
+            super::ask_settlement::question_digest(self.vault(), txn, &census.effective.what)?
+                .ok_or(crate::Error::EntityNotFound)?;
+        let then = match then {
+            AskThen::Typed(effect)
+                if super::fanout_launch::ask_launch_needs_approval(
+                    self.vault(),
+                    txn,
+                    &census.holders,
+                )? =>
+            {
+                // Held: no guest grant, no member TASK and no group exist
+                // until the owner approves; the effect waits on the hold.
+                return super::fanout_launch::hold_ask_in(
+                    self.vault(),
+                    txn,
+                    super::fanout_launch::AskHold {
+                        group_ref,
+                        actor: self.actor(),
+                        actor_class: self.actor_class(),
+                        requested: input,
+                        effective: census.effective,
+                        holders: census.holders,
+                        context_class: census.context_class,
+                        question_digest,
+                        request_digest: digest,
+                        statement,
+                        scope: check_scope,
+                        effect,
+                        now,
+                    },
+                );
+            }
+            then => then,
+        };
+        // Width is a check on an ask that goes out, never a hold.
+        let width_asked = super::fanout_check::raise_unheld_width_check(
+            self.vault(),
+            txn,
+            &mut statement,
+            &check_scope,
+            check_row,
+        )?;
+        let holders = census.holders.clone();
+        let group = self.mint_ask_in(
+            txn,
+            AskMint {
+                group_ref,
+                request_digest: digest,
+                requested: input.clone(),
+                census,
+                question_digest,
+                statement,
+                now,
+            },
+        )?;
+        // An asked width check names a durable row the owner acknowledges;
+        // it holds nothing and touches no member TASK.
+        if width_asked {
+            super::fanout_launch::record_ask_check_in(
+                self.vault(),
+                txn,
+                super::fanout_launch::AskCheck {
+                    group_ref,
+                    actor: self.actor(),
+                    actor_class: self.actor_class(),
+                    request_digest: digest,
+                    question,
+                    recipients: &holders,
+                    task_refs: group
+                        .members
+                        .iter()
+                        .map(|member| ask_record::entity(&member.task))
+                        .collect::<crate::Result<_>>()?,
+                    statement: &group.statement,
+                    scope: check_scope,
+                    now,
+                },
+            )?;
+        }
+        let mut receipt = replay_receipt(group_ref, group, self.actor(), digest)?;
+        match then {
+            AskThen::Now(effect) => effect(txn, group_ref)?,
+            AskThen::Typed(Some(effect)) => self.apply_ask_effect_in(txn, group_ref, &effect)?,
+            AskThen::Typed(None) => {}
+        }
+        receipt.idempotent_replay = false;
+        Ok(receipt)
+    }
+
+    /// An actor that may not ask is refused before any census runs.
+    fn require_ask_ceiling_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
         if super::rate_limit::task_actor_ceiling(
             self.vault(),
             txn,
@@ -70,7 +256,19 @@ impl Memory<'_> {
                 "Propose the ask through the authority surface.",
             ));
         }
-        // Revocation and admission observe the SAME snapshot.
+        Ok(())
+    }
+
+    /// The census of `input` for the group `group_ref`: its recipients and
+    /// class, its effective spec, its rules, and one validated member TASK
+    /// per recipient. It writes nothing but the route vetoes it reads.
+    fn ask_census_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+        group_ref: EntityId,
+        now: u64,
+    ) -> MemoryResult<AskCensus> {
         let holders = self.ask_holders_in_txn(txn, input)?;
         let bound = self.ask_class_in_txn(txn, input.task_ref)?;
         let context_class = bound.as_ref().map(|(_, class)| class.clone());
@@ -82,15 +280,6 @@ impl Memory<'_> {
         // Its rows are measured where the group is kept, once.
         super::ask_limits::check_ask_keys(&self.vault().store, input, &effective)?;
         self.ask_question_in(txn, &effective.what)?;
-        // One ask counts once on the asker's ask window, whatever its
-        // recipients; a replay returned above never counts again.
-        super::rate_limit::record_task_ask(
-            self.vault(),
-            txn,
-            self.actor(),
-            now,
-            super::TaskCreateRateLimit::default(),
-        )?;
         let mut no_live_route = true;
         let mut validated = Vec::with_capacity(holders.len());
         let mut work = Vec::with_capacity(holders.len());
@@ -167,43 +356,46 @@ impl Memory<'_> {
                 reachable,
             ));
         }
-        // Stated after the census and before any grant or member TASK.
-        // An ask holds no spend context, so it states no cap; width is a
-        // check on it, never a hold.
-        let mut statement = AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
-            txn,
-            &FanoutCaller::default(),
-            &work,
+        Ok(AskCensus {
+            holders,
+            governed_task: bound
+                .filter(|_| input.task_ref.is_none())
+                .map(|(task, _)| task),
+            context_class,
+            effective,
+            validated,
+            work,
+            no_live_route,
+        })
+    }
+
+    /// Mints an ask's guest grants, member TASKs and group, and registers
+    /// its human followups, in `txn`.
+    fn mint_ask_in(&self, txn: &mut heed::RwTxn<'_>, mint: AskMint<'_>) -> MemoryResult<AskGroup> {
+        let AskMint {
+            group_ref,
+            request_digest,
+            requested,
+            census,
+            question_digest,
+            statement,
             now,
-        )?;
-        let question = effective.what.reference.short_ref();
-        let (check_scope, check_row) =
-            super::fanout_launch::ask_check_keys(self.actor(), group_ref, &question);
-        let width_asked = super::fanout_check::raise_unheld_width_check(
-            self.vault(),
-            txn,
-            &mut statement,
-            &check_scope,
-            check_row,
-        )?;
-        let question_digest =
-            super::ask_settlement::question_digest(self.vault(), txn, &effective.what)?
-                .ok_or(crate::Error::EntityNotFound)?;
+        } = mint;
         let guest_grants = super::ask_guest::mint_guest_grants(
             self.vault(),
             txn,
             group_ref,
             self.actor(),
-            &effective,
+            &census.effective,
             now,
         )?;
-        let mut members = Vec::with_capacity(holders.len());
-        for (actor, (entry, reachable)) in holders.iter().zip(&validated) {
+        let mut members = Vec::with_capacity(census.holders.len());
+        for (actor, (entry, reachable)) in census.holders.iter().zip(&census.validated) {
             let task_ref = self.mint_task_at_in_txn(
                 txn,
                 (ask_record::member_id(group_ref, *actor)?, self.actor()),
                 entry,
-                effective.what.label.clone(),
+                census.effective.what.label.clone(),
                 &facade_provenance("ask"),
                 now,
             )?;
@@ -218,53 +410,31 @@ impl Memory<'_> {
                 actor: actor.to_hex(),
             });
         }
-        let policy_surface =
-            super::ask_policy::confirmation_surface(self.vault(), txn, &effective, &holders)?;
+        let policy_surface = super::ask_policy::confirmation_surface(
+            self.vault(),
+            txn,
+            &census.effective,
+            &census.holders,
+        )?;
         let group = AskGroup {
             base_policy_version: 1,
             owner: self.actor().to_hex(),
-            request_digest: digest.to_owned(),
-            requested: input.clone(),
-            effective,
-            context_class,
-            governed_task: bound
-                .filter(|_| input.task_ref.is_none())
-                .map(|(task, _)| task),
+            request_digest: request_digest.to_owned(),
+            requested,
+            effective: census.effective,
+            context_class: census.context_class,
+            governed_task: census.governed_task,
             question_digest,
             link_verify_key: ask_record::mint_link_key(self.vault(), txn, group_ref)?,
             members,
-            no_live_route,
+            no_live_route: census.no_live_route,
             created_at: now,
             guest_grants,
             policy_surface,
             statement,
         };
         ask_record::put_group(self.vault(), txn, group_ref, &group)?;
-        // An asked width check names a durable row the owner acknowledges;
-        // it holds nothing and touches no member TASK.
-        if width_asked {
-            super::fanout_launch::record_ask_check_in(
-                self.vault(),
-                txn,
-                super::fanout_launch::AskCheck {
-                    group_ref,
-                    actor: self.actor(),
-                    actor_class: self.actor_class(),
-                    request_digest: digest,
-                    question,
-                    recipients: &holders,
-                    task_refs: group
-                        .members
-                        .iter()
-                        .map(|member| ask_record::entity(&member.task))
-                        .collect::<crate::Result<_>>()?,
-                    statement: &group.statement,
-                    scope: check_scope,
-                    now,
-                },
-            )?;
-        }
-        for (member, (entry, _)) in group.members.iter().zip(&validated) {
+        for (member, (entry, _)) in group.members.iter().zip(&census.validated) {
             if matches!(entry.assignee, Some(TaskAssignee::Human { .. })) {
                 crate::human_task::register_human_followup_in_txn(
                     self.vault(),
@@ -275,10 +445,67 @@ impl Memory<'_> {
                 )?;
             }
         }
-        let mut receipt = replay_receipt(group_ref, group, self.actor(), digest)?;
-        effect(txn, group_ref)?;
-        receipt.idempotent_replay = false;
-        Ok(receipt)
+        Ok(group)
+    }
+
+    /// Releases an ask the owner approved, in the approval's transaction, as
+    /// its asker: the census runs again from the frozen request, and a
+    /// recipient set or class that changed while it was held, a question
+    /// that changed, an expired deadline or a lost ask authority refuses the
+    /// approval rather than silently retargeting it. The ask is not counted
+    /// again, and its statement is the one frozen at the hold. Returns the
+    /// member TASKs it minted.
+    pub(super) fn release_held_ask_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        group_ref: EntityId,
+        held: super::fanout_launch::ReleasedAsk<'_>,
+    ) -> MemoryResult<Vec<EntityId>> {
+        let changed = || {
+            consult_refusal(
+                crate::memory::MEMORY_CODE_INVALID_STATE,
+                "the held ask changed while it waited for approval",
+                "Deny this launch and ask again.",
+            )
+        };
+        if ask_record::read_group(self.vault(), txn, group_ref)?.is_some() {
+            return Err(
+                crate::Error::InvariantViolation("a held ask already has its group").into(),
+            );
+        }
+        self.require_ask_ceiling_in(txn)?;
+        let now = self.vault().store.clock.now_recorded_at();
+        let census = self.ask_census_in(txn, held.requested, group_ref, now)?;
+        let mut current = census.holders.clone();
+        current.sort_unstable();
+        let mut frozen = held.holders.to_vec();
+        frozen.sort_unstable();
+        if current != frozen || &census.context_class != held.context_class {
+            return Err(changed());
+        }
+        let question_digest =
+            super::ask_settlement::question_digest(self.vault(), txn, &census.effective.what)?
+                .ok_or(crate::Error::EntityNotFound)?;
+        if question_digest != held.question_digest {
+            return Err(changed());
+        }
+        let group = self.mint_ask_in(
+            txn,
+            AskMint {
+                group_ref,
+                request_digest: held.request_digest,
+                requested: held.requested.clone(),
+                census,
+                question_digest,
+                statement: held.statement.clone(),
+                now,
+            },
+        )?;
+        Ok(group
+            .members
+            .iter()
+            .map(|member| ask_record::entity(&member.task))
+            .collect::<crate::Result<_>>()?)
     }
 
     pub(super) fn ask_holders_in_txn(
@@ -464,6 +691,8 @@ impl Memory<'_> {
     }
 
     /// Owner and admitted responders see the same winner, including its actor.
+    /// An ask held for launch approval reads, to its asker, as pending on
+    /// that approval.
     pub fn tasks_ask_status(&self, handle: TaskAskHandle) -> MemoryResult<TaskAskStatus> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self
@@ -472,12 +701,32 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let group = self
-            .ask_group_in(&txn, handle.group_ref)?
-            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        let Some(group) = self.ask_group_in(&txn, handle.group_ref)? else {
+            return self.held_ask_status_in(&txn, handle);
+        };
         require_ask_audience(&group, self.actor())?;
         drop(txn);
         self.with_verified_actor_write_txn(|txn| self.tasks_ask_status_in_txn(txn, handle))
+    }
+
+    /// The status of an ask still held for launch approval, for its asker;
+    /// any other handle with no group is unknown.
+    fn held_ask_status_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        handle: TaskAskHandle,
+    ) -> MemoryResult<TaskAskStatus> {
+        match super::fanout_launch::held_ask_owner_in(self.vault(), txn, handle.group_ref)? {
+            Some(owner) if owner == self.actor() => Ok(TaskAskStatus::Pending {
+                hold: Some(TaskAskHoldReason::ApprovalRequired),
+            }),
+            Some(_) => Err(consult_refusal(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "ask handle is not addressed to this actor",
+                "Read an ask you own or answer.",
+            )),
+            None => Err(MemoryError::bad_request("unknown ask handle")),
+        }
     }
 
     /// [`Self::tasks_ask_status`] inside a write transaction the caller
@@ -487,9 +736,9 @@ impl Memory<'_> {
         txn: &mut heed::RwTxn<'_>,
         handle: TaskAskHandle,
     ) -> MemoryResult<TaskAskStatus> {
-        let group = self
-            .ask_group_in(txn, handle.group_ref)?
-            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        let Some(group) = self.ask_group_in(txn, handle.group_ref)? else {
+            return self.held_ask_status_in(txn, handle);
+        };
         require_ask_audience(&group, self.actor())?;
         super::ask_settlement::settle_in(
             self.vault(),
@@ -583,9 +832,25 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
         self.with_verified_actor_write_txn(|txn| {
-            let group = self
-                .ask_group_in(txn, handle.group_ref)?
-                .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+            let Some(group) = self.ask_group_in(txn, handle.group_ref)? else {
+                // A held ask waits on its approval like any pending ask: the
+                // park or the bound wait wakes once it goes out and settles.
+                let status = self.held_ask_status_in(txn, handle).map_err(|error| {
+                    if error.code == crate::memory::MEMORY_CODE_FORBIDDEN {
+                        MemoryError::bad_request("only the asking actor may wait")
+                    } else {
+                        error
+                    }
+                })?;
+                return match step_key {
+                    None => {
+                        let mut wait = peer_result_wait(handle.group_ref);
+                        wait.effect = crate::code_run::SelfEffect::TasksWait;
+                        Ok(TaskAskWait::Park(wait))
+                    }
+                    Some(step_key) => self.bind_external_wait(txn, handle, step_key, status),
+                };
+            };
             if group.owner != self.actor().to_hex() {
                 return Err(MemoryError::bad_request("only the asking actor may wait"));
             }

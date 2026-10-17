@@ -645,7 +645,10 @@ impl Vault {
                 &last,
                 self.store.clock.now_recorded_at(),
             ) {
-                tracing::warn!(?error, "the stopped weave digest's last period did not settle");
+                tracing::warn!(
+                    ?error,
+                    "the stopped weave digest's last period did not settle"
+                );
             }
         }
         Ok(cleared)

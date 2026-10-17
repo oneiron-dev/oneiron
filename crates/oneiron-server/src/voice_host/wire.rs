@@ -113,6 +113,11 @@ impl WireMedia {
         }
     }
 
+    /// The next control already queued, without waiting.
+    pub(super) fn queued_control(&mut self) -> Option<ControlOut> {
+        self.control.try_recv().ok()
+    }
+
     pub(super) fn ended(&mut self, generation: GenerationEpoch) {
         self.ended = Some(generation);
     }

@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 262 facade rows, 840 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 221.
-// WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.embedding_spaces.declare (input and result).
+// UniFFI census: 263 facade rows, 836 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 219.
+// WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
@@ -1125,6 +1125,13 @@ pub enum ShapeTarget {
         #[serde(rename = "name")]
         name: String,
     },
+    #[serde(rename = "facet")]
+    Facet {
+        #[serde(rename = "person")]
+        person: String,
+        #[serde(rename = "name")]
+        name: String,
+    },
     #[serde(rename = "pack")]
     Pack {
         #[serde(rename = "name")]
@@ -1151,6 +1158,11 @@ pub enum ShapeTarget {
     Grant {
         #[serde(rename = "grant_ref")]
         grant_ref: String,
+    },
+    #[serde(rename = "manifest")]
+    Manifest {
+        #[serde(rename = "manifest_ref")]
+        manifest_ref: String,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -1179,6 +1191,13 @@ pub enum ShapeRow {
     },
     #[serde(rename = "world")]
     World {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "facet")]
+    Facet {
+        #[serde(rename = "person")]
+        person: String,
         #[serde(rename = "name")]
         name: String,
     },
@@ -1222,6 +1241,13 @@ pub enum ShapeRow {
         grant_ref: Option<String>,
         #[serde(rename = "bound", default, skip_serializing_if = "Option::is_none")]
         bound: Option<ShapeGrantBound>,
+    },
+    #[serde(rename = "manifest")]
+    Manifest {
+        #[serde(rename = "manifest_ref")]
+        manifest_ref: String,
+        #[serde(rename = "body")]
+        body: String,
     },
     #[serde(rename = "sync")]
     Sync {
@@ -3597,54 +3623,6 @@ pub struct WeaveDigestRequest {
     pub scheduled_for: Option<u64>,
 }
 
-/// `oneiron::lens::generated_ui::genui_envelope::GeneratedLens`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct GeneratedLens {
-    #[serde(rename = "kit_version")]
-    pub kit_version: u16,
-    #[serde(rename = "apps_contract_version")]
-    pub apps_contract_version: u16,
-    #[serde(rename = "root")]
-    pub root: crate::WireJson,
-}
-
-/// `oneiron::claim::scoped_read::weave_lens::WeaveLensRefusal`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WeaveLensRefusal {
-    #[serde(rename = "reason")]
-    pub reason: String,
-    #[serde(rename = "skill_ref")]
-    pub skill_ref: String,
-    #[serde(rename = "skill_version")]
-    pub skill_version: String,
-    #[serde(rename = "model")]
-    pub model: String,
-    #[serde(rename = "refused_at")]
-    pub refused_at: u64,
-}
-
-/// `oneiron::claim::scoped_read::weave_serve::WeaveDigestView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct WeaveDigestView {
-    #[serde(rename = "scheduled_for")]
-    pub scheduled_for: u64,
-    #[serde(rename = "rendered_at")]
-    pub rendered_at: u64,
-    #[serde(rename = "sections")]
-    pub sections: Vec<WeaveSectionView>,
-    #[serde(rename = "narrowing")]
-    pub narrowing: ScopedReadReceipt,
-    #[serde(rename = "lens", default, skip_serializing_if = "Option::is_none")]
-    pub lens: Option<GeneratedLens>,
-    #[serde(
-        rename = "lens_refused",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub lens_refused: Option<WeaveLensRefusal>,
-}
-
 /// `oneiron::claim::scoped_read::weave_serve::WeaveWrongLinkRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -4195,62 +4173,6 @@ pub struct PackSetupReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub store_secret: Option<PackSetupStoreSecret>,
-}
-
-/// `oneiron::skill_hub::pack_catalog::setup_session::PackSetupAnswer`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "answer")]
-#[serde(deny_unknown_fields)]
-pub enum PackSetupAnswer {
-    #[serde(rename = "secret_stored")]
-    SecretStored {
-        #[serde(rename = "connection")]
-        connection: String,
-        #[serde(rename = "secret")]
-        secret: String,
-    },
-    #[serde(rename = "allow")]
-    Allow {
-        #[serde(rename = "connection")]
-        connection: String,
-        #[serde(rename = "permissions")]
-        permissions: Vec<String>,
-    },
-    #[serde(rename = "bind_key")]
-    BindKey {
-        #[serde(rename = "connection")]
-        connection: String,
-        #[serde(rename = "key")]
-        key: String,
-    },
-}
-
-/// `oneiron::task_verb::sdk_host::PackSetupCardActionInput`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct PackSetupCardActionInput {
-    #[serde(rename = "action_id")]
-    pub action_id: String,
-    #[serde(rename = "state", default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<std::collections::HashMap<String, crate::WireJson>>,
-}
-
-/// `oneiron::task_verb::sdk_host::PackSetupAnswerRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct PackSetupAnswerRequest {
-    #[serde(rename = "pack")]
-    pub pack: String,
-    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
-    pub answer: Option<PackSetupAnswer>,
-    #[serde(
-        rename = "card_action",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub card_action: Option<PackSetupCardActionInput>,
 }
 
 /// `oneiron::task_verb::sdk_host::PackSetupVerifyRequest`.
@@ -6373,6 +6295,17 @@ pub enum LensProposalState {
     Active,
 }
 
+/// `oneiron::lens::generated_ui::genui_envelope::GeneratedLens`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GeneratedLens {
+    #[serde(rename = "kit_version")]
+    pub kit_version: u16,
+    #[serde(rename = "apps_contract_version")]
+    pub apps_contract_version: u16,
+    #[serde(rename = "root")]
+    pub root: crate::WireJson,
+}
+
 /// `oneiron::lens::proposal::LensListRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LensListRow {
@@ -8095,6 +8028,21 @@ pub enum TaskAskRequest {
 pub enum TaskAskHoldReason {
     #[serde(rename = "NoLiveRoute")]
     NoLiveRoute,
+    #[serde(rename = "ApprovalRequired")]
+    ApprovalRequired,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskLaunchHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskAskLaunchHold {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+    #[serde(rename = "plan_digest")]
+    pub plan_digest: String,
+    #[serde(rename = "surface_ref")]
+    pub surface_ref: String,
+    #[serde(rename = "denied")]
+    pub denied: bool,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskReceipt`.
@@ -8112,6 +8060,8 @@ pub struct TaskAskReceipt {
     pub statement: Option<FanoutStatement>,
     #[serde(rename = "task_records")]
     pub task_records: Vec<RecordRef>,
+    #[serde(rename = "launch", default, skip_serializing_if = "Option::is_none")]
+    pub launch: Option<TaskAskLaunchHold>,
 }
 
 /// `oneiron::task_verb::sdk::TaskWaitRequest`.
@@ -10678,6 +10628,14 @@ pub struct DecisionReceipt {
     pub time: Option<DecisionTime>,
     #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<ImagePin>>,
+    #[serde(rename = "think_row", default, skip_serializing_if = "Option::is_none")]
+    pub think_row: Option<u32>,
+    #[serde(
+        rename = "person_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_row: Option<u32>,
 }
 
 /// `oneiron::llm::decision::types::HumanAskReason`.

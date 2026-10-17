@@ -1,8 +1,11 @@
 //! Credential-safe, type-preserving MessagePack values for whole-vault JSON.
 //!
-//! No raw/base64 body is shipped beside this tree. Unknown binary and extension
+//! No raw/base64 body is shipped inside this tree. Unknown binary and extension
 //! payloads are nulled: an opaque byte string is not proof that it is public data.
+//! A stored file is no tree: the whole-vault archive carries its bytes beside the
+//! document as they are stored (OF-222), and the tree names them ([`ExportBodyFile`]).
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use rmpv::Value as Mp;
@@ -61,7 +64,62 @@ pub enum ExportBody {
     Utf8(String),
     Pack(Box<super::ExportPackInstance>),
     HubSource(Box<super::ExportHubSource>),
+    /// OF-222: an ASSET's stored file, by digest and length; its bytes are the
+    /// archive's `files/<blake3>`. Only a whole-vault archive writes one.
+    File(ExportBodyFile),
     Nulled,
+}
+
+/// OF-222: the stored file an ASSET body is, by its BLAKE3 (lowercase hex) and
+/// length. Its bytes go out as they are stored: no decode, credential scan,
+/// mask or sealed check reads them, and a sealed or encrypted container goes
+/// as it is (C2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExportBodyFile {
+    blake3: String,
+    bytes: u64,
+}
+
+impl ExportBodyFile {
+    pub(crate) fn of(body: &[u8]) -> Self {
+        Self {
+            blake3: crate::batch::export::blake3_hex(body),
+            bytes: body.len() as u64,
+        }
+    }
+
+    pub(crate) fn blake3(&self) -> &str {
+        &self.blake3
+    }
+
+    /// The archive file this names, at this length. The reader has already
+    /// checked each file against its name, so the bytes are the ones hashed.
+    pub(crate) fn resolve<'a>(&self, files: &'a BTreeMap<String, Vec<u8>>) -> Result<&'a [u8]> {
+        match files.get(&self.blake3) {
+            Some(bytes) if bytes.len() as u64 == self.bytes => Ok(bytes.as_slice()),
+            Some(_) => Err(invalid("file body length disagrees with its archive file")),
+            None => Err(invalid("file body names no archive file")),
+        }
+    }
+}
+
+/// OF-222 (CALLS "OF-222 binary bodies"): whether a whole-vault archive carries
+/// this stored body as a file. An ASSET body that is no UTF-8 text and that no
+/// owning adapter reads goes as it is stored; this is asked before any
+/// MessagePack reading, so an image, PDF or ZIP that happens to decode as
+/// MessagePack is still a file. The hub source carrier and package envelope,
+/// the pack source and the archived receipt source keep their own adapters; a
+/// birth source is JSON, so the text test keeps it. Text keeps the inline path.
+pub(crate) fn attaches_as_file(entity_type: u8, body: &[u8]) -> bool {
+    entity_type == crate::registry::ENTITY_TYPE_ASSET
+        && std::str::from_utf8(body).is_err()
+        && matches!(crate::skill_hub::decode_source_carrier(body), Ok(None))
+        && matches!(
+            crate::skill_hub::pack_catalog::decode_source_body(body),
+            Ok(None)
+        )
+        && !crate::receipt::is_receipt_archive_source(body)
 }
 
 impl ExportBody {
@@ -135,9 +193,18 @@ impl ExportBody {
             Self::Utf8(text) => Ok(text.as_bytes().to_vec()),
             Self::Pack(value) => value.envelope()?.to_bytes(),
             Self::HubSource(value) => value.to_bytes(),
+            Self::File(_) => Err(invalid("a file body is read from its archive file")),
             Self::Nulled => Err(invalid(
                 "nulled opaque body needs its owning import adapter",
             )),
+        }
+    }
+
+    /// The stored bytes, a file body's from the archive's verified files.
+    pub(crate) fn to_bytes_in(&self, files: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>> {
+        match self {
+            Self::File(file) => file.resolve(files).map(<[u8]>::to_vec),
+            body => body.to_bytes(),
         }
     }
 
@@ -164,6 +231,27 @@ impl ExportBody {
             return Err(invalid(
                 "body is not canonical credential-nulled export data",
             ));
+        }
+        Ok(())
+    }
+
+    /// [`Self::validate`] with the archive's verified files (OF-222): a file
+    /// body is an ASSET's, names one of them at its length, and holds bytes
+    /// the serializer attaches ([`attaches_as_file`]), so no owning adapter's
+    /// body or text passes as a file.
+    pub(crate) fn validate_in(
+        &self,
+        entity_type: u8,
+        files: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<()> {
+        let Self::File(file) = self else {
+            return self.validate(entity_type);
+        };
+        if entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            return Err(invalid("file body attached to non-asset kind"));
+        }
+        if !attaches_as_file(entity_type, file.resolve(files)?) {
+            return Err(invalid("file body is not one the serializer attaches"));
         }
         Ok(())
     }
