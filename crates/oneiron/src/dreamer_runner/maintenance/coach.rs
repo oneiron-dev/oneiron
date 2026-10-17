@@ -483,6 +483,19 @@ pub(super) fn run_tradeoff_escalation(vault: &Vault, now: u64) -> Result<()> {
     Ok(())
 }
 
+/// The offer a leased `coach.offer_check` attempt checks, for the host
+/// observer that reads it before it calls [`Vault::run_coach_offer_check`].
+///
+/// # Errors
+///
+/// An attempt of another facet, or a payload that names no offer.
+pub fn coach_offer_check_target(attempt: &DreamerAdmittedAttempt) -> Result<EntityId> {
+    if attempt.status.payload.attempt_type != COACH_OFFER_CHECK_FACET {
+        return Err(invalid());
+    }
+    offer_check_target(&attempt.status.payload.input)
+}
+
 /// The offer a `coach.offer_check` job checks.
 fn offer_check_target(input: &Value) -> Result<EntityId> {
     match input {
@@ -526,13 +539,16 @@ fn notify_offer_in_txn(
 /// The nightly offer pass. Each pending offer reaches every owner's inbox as
 /// one NOTIFICATION keyed by offer and owner, so a replayed night delivers
 /// nothing twice and the owner's seen and acked marks stay theirs. Each
-/// offer whose check date came, and that has no check yet, queues its
-/// promise check for the host; the queue's dedupe keeps one per offer.
+/// approved offer whose check date came, and that has no check yet, queues
+/// its promise check for the host; the queue's dedupe keeps one per offer.
+/// A promise is checked only after a yes: a declined, postponed or
+/// unanswered offer kept the baseline and promised nothing.
 pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
     let pending = crate::skill_optimize::pending_training_offers(vault)?;
     let mut due = Vec::new();
-    for (offer, _) in crate::skill_optimize::training_offers(vault, None)? {
+    for (offer, answer) in crate::skill_optimize::training_offers(vault, None)? {
         if offer.check_at <= now
+            && answer.is_some_and(|answer| answer.intent.is_some())
             && crate::skill_optimize::training_offer_checks(vault, &offer.id)?.is_empty()
         {
             due.push(offer.id);
