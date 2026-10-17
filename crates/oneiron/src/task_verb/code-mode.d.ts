@@ -23,6 +23,10 @@ declare const connector: {
 declare function describe(input: { fold?: string | null; frame_epoch?: number | null; key?: string | null; self?: boolean; session_id?: string | null; task_ref?: string | null }): Promise<unknown>;
 declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
+declare const reveal: ((input: { handle: string; why: string }) => Promise<unknown>) & {
+  describe(input: { handle: string }): Promise<unknown>;
+  wait(input: { reveal: string }): Promise<unknown>;
+};
 declare namespace self {
   const agents: {
     spawn(input: { agent?: string | null; budget?: object | object | null; care?: "light" | "medium" | "high" | "xhigh" | "max" | null; context?: unknown; context_from?: string[] | null; depth?: number | null; intent_key: string; model?: object | object | null; need: string; notes?: string | null; pattern?: object | object | null; project?: string | null; prompt: string; width?: object | object | null }): Promise<unknown>;
@@ -75,6 +79,9 @@ declare namespace self {
   };
   const focus: {
     refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
+    scratchpad: {
+      recall(input: { query: string; session_id: string }): Promise<unknown>;
+    };
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
   };
@@ -156,6 +163,7 @@ declare const vault: {
       acknowledge(input: { signer: string }): Promise<unknown>;
     };
   };
+  batch(input: { entities: { entity_type: number; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }[] }): Promise<unknown>;
   claims: {
     admit(input: { id?: string | null; learned_at?: number | null; occurred_at: number; predicate: string; source_id: string; source_record_id: string; subject_ref: string; value: unknown }): Promise<unknown>;
     history(input: { claim_ref: string }): Promise<unknown>;
@@ -184,9 +192,16 @@ declare const vault: {
     status(input: { job_ref: string }): Promise<unknown>;
   };
   conversations: {
+    create(input: { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }): Promise<unknown>;
+    records: {
+      append(input: { conversation: string; parent?: string | null; reply_to?: string | null; addr?: "broadcast" | "direct" | null; to?: string[] | null; advance: boolean; body: unknown; text?: { field: string; value: string }[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: { message: string; start: number; end: number } | null }): Promise<unknown>;
+    };
     turn: {
       continue(input: { turn_id: string }): Promise<unknown>;
       retry(input: { turn_id: string }): Promise<unknown>;
+    };
+    turns: {
+      create(input: { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: { field: string; value: string }[] | null }): Promise<unknown>;
     };
   };
   decisions: {
@@ -223,7 +238,7 @@ declare const vault: {
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {
-    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
+    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; criteria?: object | null; posture?: string | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
   };
   guests: {
     mint_slip(input: { expires_at: number; grant_ref: string; holder_key: string }): Promise<unknown>;

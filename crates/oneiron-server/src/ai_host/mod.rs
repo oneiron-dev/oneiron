@@ -475,6 +475,7 @@ impl AiHost {
         if let Some(account) = account {
             runtime = runtime.with_host_account(account);
         }
+        runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
