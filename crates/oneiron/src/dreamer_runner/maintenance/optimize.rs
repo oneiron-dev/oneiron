@@ -1,18 +1,24 @@
 //! The Coach's skill-maintenance body on the shared wake runner. Drafting and
 //! admission remain separate: this job asks the independent held-out gate and
 //! never activates or supersedes a skill itself.
+use std::time::{Duration, Instant};
+
+use crate::autoreason_campaign::coverage::CoverageFloorComparison;
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::{
     DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
+use crate::llm::decision::{DecisionQuestion, TypedDecision};
+use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
-    GoalAxisBandits, HeldOutReplayNotes, PROVENANCE_OPTIMIZE_ATTEMPT_KEY,
-    SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition, SkillOptimizeAuthor,
-    measure_skill_edit_goal_axes, run_skill_optimize, run_skill_optimize_for_resident,
-    score_gate_skill_edit_in_cycle, skill_edit_needs_goal_axis_report, skill_edit_verdict,
-    skill_tradeoff_ask,
+    AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
+    HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_ATTEMPT_KEY,
+    SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition, SkillOptimizeAuthor, SkillOptimizeDecisions,
+    SkillReplayPair, measure_skill_edit_goal_axes, run_skill_optimize,
+    run_skill_optimize_for_resident, score_gate_skill_edit_in_cycle,
+    skill_edit_needs_goal_axis_report, skill_edit_verdict, skill_tradeoff_ask,
 };
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use rmpv::Value;
@@ -35,6 +41,87 @@ pub struct CoachLiveSlice<'a> {
     /// Live pulls per online axis, across both arms; also the most live runs
     /// one proposal's exploration trial routes to the proposal.
     pub pulls_per_axis: u32,
+}
+
+/// The lent judge on the wake pass's clock: each judgment it asks stops by
+/// the time the pass has left, never on the host judge's own longer clock.
+struct PassBoundScorer<'a> {
+    inner: &'a (dyn HeldOutReplayNotes + Send + Sync),
+    clock: &'a RetrievalDeadline,
+}
+
+impl HeldOutReplayNotes for PassBoundScorer<'_> {
+    fn judge_revision(&self) -> &str {
+        self.inner.judge_revision()
+    }
+
+    fn decisions(&self) -> SkillOptimizeDecisions<'_> {
+        SkillOptimizeDecisions {
+            deadline: self.clock,
+            ..self.inner.decisions()
+        }
+    }
+
+    fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<serde_json::Value> {
+        self.inner.replay_state(case)
+    }
+
+    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
+        self.inner.blind_pairs(task, receipts)
+    }
+
+    fn record_decision(
+        &self,
+        question: &DecisionQuestion,
+        decision: &TypedDecision,
+        state: &serde_json::Value,
+    ) -> Result<()> {
+        self.inner.record_decision(question, decision, state)
+    }
+
+    fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
+        self.inner.honesty_replays(case)
+    }
+
+    fn human_minutes(&self, case: &HeldOutReplayCase<'_>) -> Result<f64> {
+        self.inner.human_minutes(case)
+    }
+
+    fn coverage_floor(&self) -> Option<&CoverageFloorComparison> {
+        self.inner.coverage_floor()
+    }
+
+    fn goal_axes(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        self.inner.goal_axes(case)
+    }
+}
+
+/// The live slice on the wake pass's clock: no pull starts once the pass's
+/// judgment time is spent. A pull already started judges on the host's clock.
+struct PassBoundBandit<'a> {
+    inner: &'a dyn GoalAxisBandit,
+    clock: &'a RetrievalDeadline,
+}
+
+impl GoalAxisBandit for PassBoundBandit<'_> {
+    fn pull(&self, axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
+        if !self.clock.decision_may_start() {
+            return Err(Error::InvalidConfig(
+                "the wake pass's judgment time is spent".into(),
+            ));
+        }
+        self.inner.pull(axis, arm)
+    }
+
+    fn confidence_interval(
+        &self,
+        axis: &str,
+        arm: AxisArm,
+        wins: u32,
+        pulls: u32,
+    ) -> Result<ConfidenceInterval> {
+        self.inner.confidence_interval(axis, arm, wins, pulls)
+    }
 }
 
 fn invalid() -> Error {
@@ -76,14 +163,28 @@ pub(crate) fn execute(
     }
     // The author's and the judge's model calls block on the host's runtime,
     // which a thread already driving the wake pass cannot enter: the body
-    // runs on its own thread, and the pass waits for it.
+    // runs on its own thread, and the pass waits for it. Its judgments run on
+    // the time the pass has left.
+    let clock = RetrievalDeadline::hard(
+        Instant::now(),
+        Duration::from_millis(ctx.deadline.remaining_ms()),
+    );
     let (vault, now_ms) = (ctx.vault, ctx.now_ms);
-    std::thread::scope(|scope| {
+    let outcome = std::thread::scope(|scope| {
         scope
-            .spawn(|| optimize(attempt, vault, now_ms, optimizer))
+            .spawn(|| optimize(attempt, vault, now_ms, optimizer, &clock))
             .join()
     })
-    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    // A judgment the pass's clock cut parks the attempt; the next pass
+    // resumes its unscored proposal.
+    match outcome {
+        Err(_) if !clock.decision_may_start() => Ok(DreamerAttemptExecution::Park {
+            reason: "Coach skill optimization deadline".into(),
+            cause: DreamerParkCause::Checkpoint,
+        }),
+        outcome => outcome,
+    }
 }
 
 fn optimize(
@@ -91,7 +192,12 @@ fn optimize(
     vault: &Vault,
     now_ms: u64,
     optimizer: &CoachSkillOptimizer<'_>,
+    clock: &RetrievalDeadline,
 ) -> Result<DreamerAttemptExecution> {
+    let scorer = PassBoundScorer {
+        inner: optimizer.scorer,
+        clock,
+    };
     let resident = resident(&attempt.status.payload.input)?;
     let id = attempt.status.attempt.id;
     let at = now_ms / 1000;
@@ -131,23 +237,21 @@ fn optimize(
             && crate::skill::drive_exploration_trial(
                 vault,
                 &proposal,
-                optimizer.scorer,
+                &scorer,
                 live.pulls_per_axis,
                 at,
             )? == crate::skill::ExplorationTrialStatus::Measurable
         {
             let bandit = live.bandits.for_proposal(&proposal)?;
-            measure_skill_edit_goal_axes(
-                vault,
-                &proposal,
-                optimizer.scorer,
-                &*bandit,
-                live.pulls_per_axis,
-            )?;
+            let bandit = PassBoundBandit {
+                inner: &*bandit,
+                clock,
+            };
+            measure_skill_edit_goal_axes(vault, &proposal, &scorer, &bandit, live.pulls_per_axis)?;
         }
         // This gate owns its held-out read and revalidates it at commit. The
         // drafting author never receives the scores or reserved receipts.
-        score_gate_skill_edit_in_cycle(vault, &proposal, optimizer.scorer, id, at)?;
+        score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at)?;
     }
     Ok(DreamerAttemptExecution::Completed {
         // The host meters model calls separately. The wake counter charges
