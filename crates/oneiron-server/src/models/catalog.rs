@@ -18,11 +18,21 @@ pub(super) fn engine_model_id(
     model.engine_id(&provider.revision)
 }
 
+/// The family the provider's config names for a configured model, its own
+/// before the provider's.
+pub(super) fn model_family<'a>(model: &ModelRef, provider: &'a ProviderConfig) -> Option<&'a str> {
+    provider
+        .model_families
+        .get(&model.model)
+        .or(provider.family.as_ref())
+        .map(String::as_str)
+}
+
 pub(super) fn catalog_entry(
     model: &ModelRef,
     provider: &ProviderConfig,
 ) -> anyhow::Result<LlmCatalogEntry> {
-    Ok(LlmCatalogEntry {
+    let entry = LlmCatalogEntry {
         model: engine_model_id(model, provider)?,
         display_name: model.model.clone(),
         locality: provider.locality,
@@ -38,6 +48,10 @@ pub(super) fn catalog_entry(
             "wire_model".to_owned(),
             JsonValue::String(model.model.clone()),
         )]),
+    };
+    Ok(match model_family(model, provider) {
+        Some(family) => entry.with_family(family),
+        None => entry,
     })
 }
 
