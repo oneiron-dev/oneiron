@@ -8,7 +8,9 @@
 //! the caller's own budget line and the egress decision. The engine keeps
 //! the caller's newest live render, and the one before it settles on the
 //! skill's corrections axis; a digest period's render is the Dreamer's
-//! (`dreamer.weave_lens`).
+//! (`dreamer.weave_lens`). The lens answers as a card, lowered once for the
+//! whole atom kit, and its frame is held for the caller's events on it
+//! before the answer leaves (OF-181, [`crate::lens_frames`]).
 use std::sync::Arc;
 
 use oneiron::claim::{CallerLocality, WeaveLiveLens, WeaveReportRequest};
@@ -16,7 +18,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_consolidation::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, live_weave_lens_request,
 };
-use oneiron::lens::GeneratedLens;
+use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory,
@@ -45,16 +47,20 @@ pub(crate) enum WeaveLensCaller {
     /// The owner route reads the owner lens under a live owner proof.
     Owner {
         owner: AuthenticatedOwner,
-        locality: CallerLocality,
+        auth: CoreAuth,
     },
 }
 
 impl WeaveLensCaller {
-    fn locality(&self) -> CallerLocality {
+    /// The credential that asked, under which its card's frame is held.
+    fn auth(&self) -> &CoreAuth {
         match self {
-            Self::Credential { auth, .. } => auth.locality(),
-            Self::Owner { locality, .. } => *locality,
+            Self::Credential { auth, .. } | Self::Owner { auth, .. } => auth,
         }
+    }
+
+    fn locality(&self) -> CallerLocality {
+        self.auth().locality()
     }
 
     /// Runs `read` on the caller's own handle, reading at `reads_at`. The
@@ -121,7 +127,7 @@ pub(crate) async fn render_live_weave_lens(
     server: &Arc<SyncServer>,
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
-) -> MemoryResult<GeneratedLens> {
+) -> MemoryResult<LensFrameCard> {
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
     // An agent that dreams on its own model reads its own lens on that
@@ -233,11 +239,17 @@ pub(crate) async fn render_live_weave_lens(
             _ => None,
         })
         .collect();
-    tokio::task::spawn_blocking(move || {
+    let auth = caller.auth().clone();
+    let hosted = tokio::task::spawn_blocking(move || {
         caller.read(&vault, reads_at, |memory, owner| {
-            memory.weave_lens_finish(owner, &request, live, &answer, model.as_str())
+            memory.weave_lens_finish_framed(owner, &request, live, &answer, model.as_str())
         })
     })
     .await
-    .map_err(|_| joined())?
+    .map_err(|_| joined())??;
+    let (frame, card) = hosted.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+    server
+        .lens_frames
+        .record(&auth, frame, card.render.clone())?;
+    Ok(card)
 }

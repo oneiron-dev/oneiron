@@ -12,7 +12,7 @@ use super::{
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::lens::GeneratedLens;
+use crate::lens::{GeneratedLens, HostedLensRender};
 use crate::memory::{ClaimView, Memory, MemoryError, MemoryResult};
 use crate::provenance::EdgeRef;
 use serde::{Deserialize, Serialize};
@@ -332,17 +332,19 @@ impl Memory<'_> {
 
     /// `vault.weave.lens`, after its generate step: re-reads the live report
     /// under the bound actor's current read and composes `answer`, the
-    /// step's plan, over it. The plan was written over what the first read
-    /// admitted, so a report that changed meanwhile is refused, as is a plan
-    /// that does not cite each of its items exactly once.
-    pub fn weave_lens_finish(
+    /// step's plan, over it, as a card beside the frame that minted its
+    /// backing refs; its host keeps the frame for the card's events. The
+    /// plan was written over what the first read admitted, so a report that
+    /// changed meanwhile is refused, as is a plan that does not cite each of
+    /// its items exactly once.
+    pub fn weave_lens_finish_framed(
         &self,
         owner: Option<&AuthenticatedOwner>,
         request: &WeaveReportRequest,
         live: WeaveLiveLens,
         answer: &str,
         model: &str,
-    ) -> MemoryResult<GeneratedLens> {
+    ) -> MemoryResult<HostedLensRender> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let report = read
@@ -376,7 +378,7 @@ impl Memory<'_> {
             model: model.to_owned(),
             rendered_at: self.vault().store.clock.now_recorded_at(),
         };
-        let lens = super::weave_lens::compose_weave_lens(&read, &report, &render)?;
+        let lens = super::weave_lens::compose_weave_lens_framed(&read, &report, &render)?;
         // The render is kept, and the one before it settles on the skill's
         // corrections axis; neither gates the lens.
         if let Err(error) = self.vault().keep_live_weave_lens(reader, &report, &render) {

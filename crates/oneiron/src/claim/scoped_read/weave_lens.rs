@@ -12,8 +12,9 @@
 //! renders, the previous one settles the skill's two axes as evidence.
 //!
 //! `vault.weave.lens` renders the reader's live report the same way, on
-//! demand: the host asks the model between [`WeaveLiveLens`]'s two reads, and
-//! nothing is saved, so a live render settles no axis.
+//! demand: the host asks the model between [`WeaveLiveLens`]'s two reads. It
+//! answers a card whose manifest declares each wrong control as the tool it
+//! calls, and the host holds its frame for the card's events (OF-181).
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -26,10 +27,11 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
 use crate::lens::{
-    ButtonControl, CollectionAtom, GeneratedLens, LedgerCell, LedgerRowAtom, LensAtom, LensAtomId,
-    LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole, LensNode,
-    LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom, SelfUiAction,
-    SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
+    ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
+    GeneratedUiActionTier, GeneratedUiStateSnapshot, HostedLensRender, LedgerCell, LedgerRowAtom,
+    LensAtom, LensAtomId, LensBackingTarget, LensHandleName, LensHandleRef, LensHandleRole,
+    LensNode, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
+    SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
 };
 use crate::provenance::EdgeRef;
 use crate::{EntityId, Vault};
@@ -368,6 +370,38 @@ fn item_sources(item: &WeaveItem) -> Option<EntityId> {
     }
 }
 
+/// One row's wrong control, calling `verb` with `input` (an SDK verb action
+/// takes the row's whole input as one JSON text, as the action registry
+/// declares it), and its manifest declaration: the deterministic tool the
+/// button names, under the control's own id, so no two buttons share one.
+fn wrong_control(
+    row: &str,
+    label: &str,
+    verb: &str,
+    input: String,
+    actions: &mut Vec<GeneratedUiActionDeclaration>,
+) -> Result<LensNode> {
+    let control = format!("{row}-wrong");
+    let action = SelfUiAction {
+        command: SelfUiActionId::new(verb)?,
+        args: vec![SelfUiValue::Text(LensText::new(input)?)],
+    };
+    actions.push(GeneratedUiActionDeclaration {
+        element_id: LensAtomId::new(control.clone())?,
+        action_id: SelfUiActionId::new(control.clone())?,
+        tier: GeneratedUiActionTier::DeterministicTool,
+        action: action.clone(),
+    });
+    Ok(LensNode::new(
+        LensAtomId::new(control.clone())?,
+        LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
+            id: SelfUiControlId::new(control)?,
+            label: required_text(label, "wrong label")?,
+            action,
+        })),
+    ))
+}
+
 /// Compose a saved render into the lens under `read`, the opener's own read.
 /// Every row binds the source its read admits now; every link row carries
 /// the wrong control over its exact link.
@@ -376,6 +410,18 @@ pub(super) fn compose_weave_lens(
     report: &WeaveReport,
     render: &WeaveLensRender,
 ) -> Result<GeneratedLens> {
+    Ok(compose_weave_lens_framed(read, report, render)?.card.tree)
+}
+
+/// [`compose_weave_lens`] as a card beside the frame that minted its rows'
+/// backing refs (OF-181): each wrong control is declared in the card's
+/// manifest as the deterministic tool it calls, for a host that holds the
+/// frame and takes the card's events.
+pub(super) fn compose_weave_lens_framed(
+    read: &ScopedRead<'_>,
+    report: &WeaveReport,
+    render: &WeaveLensRender,
+) -> Result<HostedLensRender> {
     let plan = &render.plan;
     plan.validate(report)?;
     let items = keyed_items(report);
@@ -407,6 +453,7 @@ pub(super) fn compose_weave_lens(
             handles.insert(row.id, LensHandleRef { name, role });
         }
     }
+    let mut actions = Vec::new();
     let mut root = LensNode::new(
         LensAtomId::new("weave-lens")?,
         LensAtom::Sheet(CollectionAtom {
@@ -449,26 +496,19 @@ pub(super) fn compose_weave_lens(
                 target,
             } = item
             {
-                // An SDK verb action takes the row's whole input as one JSON
-                // text, as the action registry declares it.
                 let input = serde_json::to_string(&super::WeaveWrongLinkRequest {
                     source_ref: source.to_hex(),
                     kind: kind.name().to_owned(),
                     target_ref: target.to_hex(),
                 })
                 .map_err(|_| Error::InvalidConfig("weave wrong link input".into()))?;
-                let control = format!("{id}-wrong");
-                row.children.push(LensNode::new(
-                    LensAtomId::new(control.clone())?,
-                    LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-                        id: SelfUiControlId::new(control)?,
-                        label: required_text(&plan.wrong_label, "wrong label")?,
-                        action: SelfUiAction {
-                            command: SelfUiActionId::new(WRONG_LINK_VERB)?,
-                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
-                        },
-                    })),
-                ));
+                row.children.push(wrong_control(
+                    &id,
+                    &plan.wrong_label,
+                    WRONG_LINK_VERB,
+                    input,
+                    &mut actions,
+                )?);
             }
             // A card's wrong settles it dismissed through the concern door,
             // never as a link correction. The door takes one JSON input.
@@ -481,24 +521,25 @@ pub(super) fn compose_weave_lens(
                     },
                 )
                 .map_err(|_| Error::InvalidConfig("weave card outcome input".into()))?;
-                let control = format!("{id}-wrong");
-                row.children.push(LensNode::new(
-                    LensAtomId::new(control.clone())?,
-                    LensAtom::SelfUi(SelfUiControl::Button(ButtonControl {
-                        id: SelfUiControlId::new(control)?,
-                        label: required_text(&plan.wrong_label, "wrong label")?,
-                        action: SelfUiAction {
-                            command: SelfUiActionId::new(CONCERN_OUTCOME_VERB)?,
-                            args: vec![SelfUiValue::Text(LensText::new(input)?)],
-                        },
-                    })),
-                ));
+                row.children.push(wrong_control(
+                    &id,
+                    &plan.wrong_label,
+                    CONCERN_OUTCOME_VERB,
+                    input,
+                    &mut actions,
+                )?);
             }
             node.children.push(row);
         }
         root.children.push(node);
     }
-    GeneratedLens::new(root)
+    // The lens declares no `$state`: its only controls are the wrong taps.
+    HostedLensRender::interactive(
+        frame,
+        GeneratedLens::new(root)?,
+        actions,
+        GeneratedUiStateSnapshot::default(),
+    )
 }
 
 /// What a live lens render keeps (OF-499): the skill and model that
