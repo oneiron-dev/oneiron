@@ -34,6 +34,12 @@ side_tables! {
     /// Birth-position scope stamp (kind, birth facet, worlds/facets/bands/audience/sensitivity) for
     /// one stored record, used by scoped read/export/delete. Key: id16.
     SCOPE_RECORD: VaultMeta b"scope:record:v2:" LegacyJson;
+    /// Active scope-summary projection and its last observed input hash. Key: hash32.
+    SCOPE_SUMMARY_PROJECTION: VaultMeta b"scope_summary:projection:v1:" Named;
+    /// Owner-approved summary-purpose descriptor. Key: string (descriptor id).
+    SCOPE_SUMMARY_PURPOSE: VaultMeta b"scope_summary:purpose:v1:" Named;
+    /// Atomic summary/landing result of one queued declaration. Key: AttemptId.
+    SCOPE_SUMMARY_RESULT: VaultMeta b"scope_summary:result:v1:" Named;
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw;
@@ -545,6 +551,9 @@ side_tables! {
     /// An entity's typed body: its schema tag, birth and head frontiers and commit count. Key:
     /// id16 (entity).
     TYPED_BODY_HEAD: VaultMeta b"typed_body:head:v1:" Named;
+    /// A standing artifact question's last ask of one artifact: the head versions it read and
+    /// the proposal its answers wait under. Key: id16(question) + id16(artifact).
+    TYPED_QUESTION_ARTIFACT_ASKED: VaultMeta b"typed_question:artifact_asked:v1:" Named;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;

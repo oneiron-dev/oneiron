@@ -145,6 +145,12 @@ pub(super) async fn bind(
         Some((decisions, facet)) => provider.with_model_seat_router(decisions, facet),
         None => provider,
     };
+    // Leased agent runs plan their spawns over the host's seats, if any.
+    let provider = if models.planner.seats.is_empty() {
+        provider
+    } else {
+        provider.with_planner(models.planner.clone())
+    };
     let runs = crate::mcp::CodeRunLimits {
         total: models.code_mode.max_runs,
         wait: server.config.limits.queue_wait(),

@@ -19,6 +19,7 @@ import type {
   CommitReceipt,
   FacadeReceipt,
   MemoryPack,
+  RecallMedia,
   RecallScope,
   WitnessReceipt,
   WitnessTurn,
@@ -50,7 +51,7 @@ tasksCreate(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
-vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined): MemoryPack
+vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined): MemoryPack
 vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
@@ -135,6 +136,8 @@ vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
+vaultCodeDiff(requestJson: string): string
+vaultCodeBlame(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
@@ -177,6 +180,7 @@ vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
+vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown
 vaultRoomsHostHand(input: unknown): unknown
@@ -225,6 +229,7 @@ vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
+vaultArtifactsCreate(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
