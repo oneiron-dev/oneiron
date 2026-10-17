@@ -208,6 +208,12 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn reader_backend(&self, _meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
         None
     }
+    /// The input window, in tokens, of the model reader children and
+    /// summaries run on; `None` when the host knows none, and a seat names
+    /// [`oneiron::code_run::DEFAULT_READER_WINDOW_TOKENS`].
+    fn reader_window_tokens(&self) -> Option<u64> {
+        None
+    }
     /// The executor configuration for this run, in the vault it lives in.
     fn executor_config(
         &self,
@@ -392,8 +398,14 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             // The run's children spend under its launch's root scope, on a
             // clock one window from its first spawn.
             let reader_seat = reader_seats.as_ref().and_then(|lent| {
-                crate::server::run_launch_scope(request.run_id)
-                    .map(|spend| lent.seat(request.run_id, spend, request.actor.locality()))
+                crate::server::run_launch_scope(request.run_id).map(|spend| {
+                    lent.seat(
+                        request.run_id,
+                        spend,
+                        request.actor.locality(),
+                        provider.reader_window_tokens(),
+                    )
+                })
             });
             // Past the bound the run waits its credential's turn. The permit
             // moves into the worker below, so a caller who hangs up frees

@@ -96,6 +96,13 @@ class MemoryItem(TypedDict):
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
+    record: NotRequired[RecordRef]
+
+class RecordRef(TypedDict):
+    kind: str
+    id: str
+    short_id: NotRequired[str]
+    label: str
 
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
@@ -616,7 +623,7 @@ class Oneiron:
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection."""
+            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
         def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.GeneratedLens]:
             """Composes the default vault lens from the named sources, read under the caller's own scope."""
     class _VaultDisclosureVerbs:

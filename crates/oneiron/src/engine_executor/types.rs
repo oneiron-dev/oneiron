@@ -229,9 +229,16 @@ pub enum JsCodeModeStream<'a> {
 /// no bridge row, as a chunk read does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsResultCall {
-    /// `store(value, name?)`: the value just streamed to the store target,
-    /// stored and bound under `name`, or under the next free `r<n>`.
-    Store { name: Option<String> },
+    /// `store(value, name?, {sources?, receipt?})`: the value just streamed
+    /// to the store target, stored and bound under `name`, or under the next
+    /// free `r<n>`. `sources` are the results it was made from, whose taint
+    /// it inherits; `receipt` names a fold's inputs, of which the host
+    /// computes its fold receipt.
+    Store {
+        name: Option<String>,
+        sources: Vec<String>,
+        receipt: Option<StoreReceiptInput>,
+    },
     /// `describe(r)`: the card of one of the run's results.
     Describe(JsResultTarget),
     /// `can({read: r})`: whether this run may read one of its results now,
@@ -246,6 +253,29 @@ pub enum JsResultCall {
         facet: ResultFacet,
         input: serde_json::Value,
     },
+}
+
+/// What a fold's `store` names of its inputs: the source the fold read, the
+/// reader jobs (children and summaries) it read it by, the summary tree it
+/// staged and the recipe it folded by. The host checks each and computes the
+/// receipt; the guest never states coverage.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreReceiptInput {
+    pub source: String,
+    pub tasks: Vec<String>,
+    #[serde(default)]
+    pub tree: Vec<StoreReceiptTree>,
+    #[serde(default)]
+    pub recipe: Option<serde_json::Value>,
+}
+
+/// One summary of a fold's tree, by ref, and the refs it summarized.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreReceiptTree {
+    pub summary: String,
+    pub inputs: Vec<String>,
 }
 
 /// How a program names one of its run's results.

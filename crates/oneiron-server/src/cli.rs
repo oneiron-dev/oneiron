@@ -38,8 +38,8 @@ pub use owner_args::{
 pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
-    LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyArgs, VaultKeyCommand,
-    VaultKeyNamedArgs,
+    LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
+    VaultKeyCommand, VaultKeyNamedArgs,
 };
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
@@ -822,6 +822,14 @@ pub struct InitArgs {
     /// so more candidates can sit beside it.
     #[arg(long)]
     pub oneironer_tier: Option<String>,
+    /// Create the vault at the maximum tier: every page sealed under its
+    /// vault key. Slower: point reads about 20x, scans about 12x.
+    #[arg(long)]
+    pub maximum_tier: bool,
+    /// With `--maximum-tier`: the new vault's password, from this file only
+    /// its owner may read. Without a keystore it is the one way in.
+    #[arg(long, value_name = "FILE", requires = "maximum_tier")]
+    pub secret_file: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]

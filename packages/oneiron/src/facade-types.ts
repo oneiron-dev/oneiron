@@ -229,7 +229,7 @@ export type RecallRequest = { query: string; effort?: RecallEffort | null; scope
 /** `oneiron::memory::recall::MemoryProvenance` */
 export type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] }
 /** `oneiron::memory::recall::CitedMessage` */
-export type CitedMessage = { short_id: string; value_text: string }
+export type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null }
 /** `oneiron::memory::recall::MemoryItem` */
 export type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null }
 /** `oneiron::memory::recall::ScopeHonesty` */
@@ -1021,7 +1021,7 @@ export type TaskAskSettlement = { group_ref: EntityId; reference: EntityId; revi
 /** `oneiron::task_verb::ask_types::TaskAskResult` */
 export type TaskAskResult = { effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback?: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement }
 /** `oneiron::code_run::types::SelfEffect` */
-export type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Leader" | "Team"
+export type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "Team"
 /** `oneiron::code_run::types::SelfDurableWaitReason` */
 export type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult"
 /** `oneiron::code_run::types::SelfDurableWait` */

@@ -125,6 +125,7 @@ declare namespace self {
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
+declare function summarize(input: { ref: string; effort?: "low" | "medium" | "high"; group?: string[]; defer?: true }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;

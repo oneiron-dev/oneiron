@@ -495,6 +495,44 @@ later ones carry only the receipt. The run's record keeps that answer without
 the value, so a resumed step must reveal again. The rows are `reveal`,
 `reveal.wait` and `reveal.describe` on every other door too.
 
+### Reader children, summaries and fold receipts
+
+A run reads a result too big for its window with reader children
+(ARCH-0079 #reader-forks). `can({read})` answers what a child may take: the
+children's cutoff, what the run's spend scope may still spend, the active
+window of the code-mode seat's model in tokens (from the model's described
+context; 32768 when none is described) and the memory one child may hold
+(`[limits] code_result_session_memory_bytes` shared by the children one run
+may have running, at 32 MiB each). `self.spawn` queues one child over one
+range, and `tasks.wait` waits on them. Children run on the vault's reader
+runner, never inside a step, and spend from the run's spend scope. Past
+`[limits] code_reader_backlog` queued children (default 256) the row asks
+once, on its crossing, and keeps queueing; it never refuses.
+
+`summarize(r, {effort, group, defer})` is one model call over a result and
+the results after it, made as a reader job of the run on the same seat and
+spend. It is memoised by its members' occurrences and the recipe, so the same
+call answers the same summary, and it is a result of the run's children,
+read and described as their findings are. A withheld member is refused
+before anything is sent. A group whose text passes half the window settles
+`group_exceeds_window` with its tokens and the window; the caller splits it.
+
+The bundled `readAll(r, {ask})` helper is code over those verbs: chunks of
+half the child window (`chunks(r, {tokens})`), one child each, a wait,
+findings deduped by the ranges they cite, staged summaries, and one stored
+fold. `diff(a, b)` is the other bundled helper. Neither is an engine verb,
+and both state their bounds in their reply.
+
+A fold stored with `store(value, name, {receipt})` keeps a receipt beside its
+binding, written in the same checkpoint transaction: the source and range,
+each child it names with its state, the ranges read and unread, the children
+that stopped short and why, the cutoff, the recipe, the summary tree and every
+occurrence whose taint the folded body inherits. The card says what was read,
+so a partial fold is never presented as complete. A whole-vault export keeps
+each receipt with its run; a withheld folded result exports only the
+receipt's refs. An import restores a receipt only when its folded result came
+back with it.
+
 ### Type check (shadow mode)
 
 Each generated program can be type-checked before it runs, against the same

@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 274 code-mode rows (257 host rows, 17 run rows), 846 declarations.
-// Replies: 222 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 0 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 275 code-mode rows (257 host rows, 18 run rows), 848 declarations.
+// Replies: 222 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 55; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -126,7 +126,7 @@ declare namespace Sdk {
   type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
   type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
-  type CitedMessage = { short_id: string; value_text: string };
+  type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
   type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
   type ScopeHonesty = { out_of_scope_worlds: string[]; census_capped?: boolean };
   type RetrievalQuality = "full" | "degraded" | "passthrough";
@@ -522,7 +522,7 @@ declare namespace Sdk {
   type TaskAskSettlementReason = "first_word" | "all_responded" | "deadline" | "stale";
   type TaskAskSettlement = { group_ref: EntityId; reference: EntityId; revision: number; at: number; cutoff_order: number; reason: TaskAskSettlementReason; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: EntityId[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref?: EntityId | null; policy_surface: TaskAskSurface; link_result_proof?: number[] | null };
   type TaskAskResult = { effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback?: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Leader" | "Team";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "Team";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
@@ -855,6 +855,8 @@ declare namespace Sdk {
   type TaskWaitFinding = { task: EntityId; ref: string; bytes: number; reason?: string | null };
   type TaskWaitFailure = { task: string; reason: string };
   type TaskWaitSetResult = { ready: TaskWaitFinding[]; partial: TaskWaitFinding[]; failed: TaskWaitFailure[]; pending: EntityId[]; done: boolean; reason?: string | null; until: number };
+  type SummarizeInputEffort = "low" | "medium" | "high";
+  type SummarizeInput = { ref: string; effort?: SummarizeInputEffort | null; group?: string[] | null; defer?: boolean | null };
   type BudgetLegibilityEnvelope = { remaining_units: number; limit_units: number; remaining_ms: number; wrap_up: boolean; finalize_by_ms?: number | null };
 }
 declare const ai: {
@@ -1058,6 +1060,7 @@ declare namespace self {
 }
 /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
 declare function steer(input: Sdk.SteerRequest): Promise<Sdk.Reply<Sdk.SteerReceipt>>;
+declare function summarize(input: Sdk.SummarizeInput): Promise<Sdk.Reply<unknown>>;
 declare const tasks: {
   /** Admits one person's word on an ask; the word is evidence, never approval. */
   answer(input: Sdk.TaskAnswerRequest): Promise<Sdk.Reply<Sdk.TaskAskAnswer>>;
@@ -1274,7 +1277,7 @@ declare const vault: {
     deactivate(input: Sdk.LensDeactivateRequest): Promise<Sdk.Reply<Sdk.LensActivationReceipt>>;
     /** Composes the default vault lens from the named sources, read under the caller's own scope. */
     default(input: Sdk.LensDefaultRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.GeneratedLens>>>;
-    /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. */
+    /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
     list(input: Sdk.LensListRequest): Promise<Sdk.Reply<Sdk.LensListPage>>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.Reply<Sdk.LensProposalReceipt>>;

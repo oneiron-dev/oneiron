@@ -42,11 +42,11 @@ side_tables! {
     SCOPE_SUMMARY_RESULT: VaultMeta b"scope_summary:result:v1:" Named;
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
-    SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw;
+    SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw Custody;
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).
-    SECRET_CUSTODY_TRANSITION: VaultMeta b"secret_custody:transition:v1:" Raw;
+    SECRET_CUSTODY_TRANSITION: VaultMeta b"secret_custody:transition:v1:" Raw Custody;
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
@@ -61,11 +61,11 @@ side_tables! {
     SECRET_LOCAL_REGISTRATION: VaultMeta b"secret_local:v1:" Raw;
     /// Where a mask on write found the secret one custody record holds: the record, the field and
     /// the key's kind (OF-560). Key: id16 (custody record id).
-    SECRET_MASK_ORIGIN: VaultMeta b"secret_mask:origin:v1:" Named;
+    SECRET_MASK_ORIGIN: VaultMeta b"secret_mask:origin:v1:" Named Custody;
     /// A file stored with keys in it: each key's span in its bytes and the custody record that
     /// holds it, and its band (OF-560, owner ruling G04 binary = C2). Key: hash32 (blake3 of the
     /// stored bytes).
-    SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named;
+    SECRET_MASK_SPANS: VaultMeta b"secret_mask:spans:v1:" Named Custody;
     /// One reveal of a secret's value by its handle: the agent's ask, the owner's answer and the
     /// lease that delivered it, or the owner's own read with its reason (OF-560). Holds no value.
     /// Key: id16 (reveal id).
@@ -113,11 +113,11 @@ side_tables! {
     /// SESSION to TURN membership index. Key: id16 + id16.
     SESSION_TURNS: VaultMeta b"session_turns:v1:" Raw;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
-    CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named;
+    CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored;
     /// Monotonic sequence counter for customization change-notification events. Key: ().
     CUSTOMIZATION_EVENT_SEQUENCE: VaultMeta b"settings:customization:v1:event_sequence" Raw;
     /// Persisted four-layer (accent/type/mode/world) client customization profile. Key: ().
-    CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named;
+    CUSTOMIZATION_SETTINGS: VaultMeta b"settings:customization:v1:profile" Named Authored;
     /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
     /// auto). Value: the mode's ASCII name. Key: ().
     DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw;
@@ -153,7 +153,7 @@ side_tables! {
     /// The owner's standing quota fallback for one model offer (OF-305): the engine model id its
     /// calls go to while the offer is parked, set by a `use_fallback` answer. Owner policy, kept
     /// apart from the deployment's runtime cooldowns. Key: hex64 (the offer's cooldown key).
-    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw;
+    MODEL_OWNER_FALLBACK: VaultMeta b"settings:models:v1:fallback:" Raw Authored;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().
@@ -686,5 +686,5 @@ side_tables! {
     WORLD_KEY_SEALED_WINDOW: VaultMeta b"world_keys:sealed-window:v1:" Raw;
     /// One sealed packet of a private world's window, kept for a reader by a node that may not
     /// read the world (OF-570). Key: hex64 (tag) ":" hex64 (packet digest).
-    WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw;
+    WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw Ciphertext;
 }
