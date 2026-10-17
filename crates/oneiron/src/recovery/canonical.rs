@@ -284,6 +284,15 @@ pub struct CanonicalShellWorld {
     pub world: [u8; 16],
 }
 
+/// One room turn row a base window carries (OF-522), kept as the window holds
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalRoomTurn {
+    pub id: [u8; 16],
+    pub row: Vec<u8>,
+}
+
 /// One owner-signed custody transition a base window carries (OF-422): opaque
 /// signed and sealed bytes, kept as the window holds them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -341,6 +350,10 @@ pub struct CanonicalSnapshot {
     /// when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custody_transitions: Vec<CanonicalCustodyTransition>,
+    /// The base window's room turn rows (OF-522), by turn id. Absent when
+    /// empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub room_turns: Vec<CanonicalRoomTurn>,
 }
 
 impl CanonicalSnapshot {
@@ -405,6 +418,7 @@ impl CanonicalSnapshot {
             "note_forks",
             "note_proposals",
             "custody",
+            "room_turns",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -531,6 +545,7 @@ pub(crate) fn capture_canonical_window_within(
             "note_forks",
             "note_proposals",
             "custody",
+            "room_turns",
         ]
         .contains(&name.as_str())
     }) {
@@ -565,6 +580,7 @@ pub(crate) fn capture_canonical_window_within(
         },
         suppressed_tasks: Vec::new(),
         custody_transitions: Vec::new(),
+        room_turns: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -587,6 +603,12 @@ pub(crate) fn capture_canonical_window_within(
             return Err(invalid("noncanonical edge key"));
         }
         snapshot.base_edges.push(edge);
+    }
+    for (key, row) in binary_rows_within(doc, "room_turns", budget)? {
+        snapshot.room_turns.push(CanonicalRoomTurn {
+            id: parse_id(&key)?,
+            row,
+        });
     }
     for (key, carrier) in binary_rows_within(doc, "custody", budget)? {
         snapshot
@@ -885,6 +907,9 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     }
     for row in &snapshot.custody_transitions {
         insert(&doc, "custody", &id(row.id)?.to_hex(), &row.carrier)?;
+    }
+    for row in &snapshot.room_turns {
+        insert(&doc, "room_turns", &id(row.id)?.to_hex(), &row.row)?;
     }
     for tombstone in &snapshot.tombstones {
         insert(

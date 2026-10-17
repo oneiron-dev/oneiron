@@ -5,8 +5,9 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::derived_domains::PERSON_SUBSTRATE_FACET;
 use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::ports::EdgeStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET};
-use crate::store::{ManifestDbs, Store};
+use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use crate::{
     EntityId, TimeRange,
@@ -49,11 +50,12 @@ pub(crate) fn default_facet_in(store: &Store, txn: &heed::RoTxn<'_>) -> Result<E
         PREDICATE_VAULT_DEFAULT_FACET,
         usize::MAX,
     )? {
-        let in_edge = Store::encode_edge_key(&owner, EdgeKind::ClaimOf, &claim);
-        let Some(row) = store.edges_in().get(txn, &in_edge)? else {
+        if store
+            .port_edge_get_incoming(txn, &owner, EdgeKind::ClaimOf, &claim)?
+            .is_none()
+        {
             continue;
-        };
-        crate::edge::parse_strict_edge_record(&in_edge, &row)?;
+        }
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &claim)? else {
             continue;
         };
