@@ -548,6 +548,15 @@ impl From<Error> for MemoryError {
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
             ),
+            // The vault holds too little authority history to fold (OF-469):
+            // an import of what it names closes the gap; no request changes.
+            ErrorKind::AuthorityHistoryRequired => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Fetch the authority history this vault names (its history request), import it, then retry.",
+                ],
+            ),
             // The vault no longer holds the bytes a restore needs; the
             // request itself was sound.
             ErrorKind::SkillPackageUnavailable => Self::new(

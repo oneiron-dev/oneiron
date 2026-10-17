@@ -114,6 +114,8 @@ struct DreamerFile {
     resident_prompt_file: Option<PathBuf>,
     task_prompt: Option<String>,
     task_prompt_file: Option<PathBuf>,
+    person_about_prompt: Option<String>,
+    person_about_prompt_file: Option<PathBuf>,
     /// The owner's BYO runner seats (OF-137): ordered named runners, the
     /// official seats registered as named providers, and what a spent seat
     /// does. Labels and custody handles only; no vendor login can be
@@ -257,6 +259,9 @@ pub struct DreamerSettings {
     /// The wording a TASK routed to the Dreamer realizes with. Without one,
     /// the engine's own (`dreamer.task_realize`).
     pub task_instruction: Option<String>,
+    /// The wording a PERSON's `about` lines are written with (ARCH-0067).
+    /// Without one, the engine's own (`PERSON_ABOUT_INSTRUCTION`).
+    pub person_about_instruction: Option<String>,
     /// The owner's BYO runner-seat policy (OF-137), validated at load: the
     /// ordered named runners Dreamer work may be dispatched to and where
     /// the work goes when a seat's quota is spent. Without one, the
@@ -383,6 +388,12 @@ impl ModelsFile {
                 "models.dreamer.task_prompt",
                 self.dreamer.task_prompt,
                 self.dreamer.task_prompt_file,
+                base,
+            )?,
+            person_about_instruction: levels::prompt_text(
+                "models.dreamer.person_about_prompt",
+                self.dreamer.person_about_prompt,
+                self.dreamer.person_about_prompt_file,
                 base,
             )?,
             runner_seats: self.dreamer.runner_seats,

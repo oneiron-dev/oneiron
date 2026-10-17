@@ -232,6 +232,7 @@ async fn supervise(
             egress,
             summary_instruction: settings.summary_instruction.clone(),
             resident_instruction: settings.resident_instruction.clone(),
+            person_about_instruction: settings.person_about_instruction.clone(),
             task_instruction: settings.task_instruction.clone().unwrap_or_else(|| {
                 oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
             }),
@@ -349,6 +350,9 @@ struct ObservedFactory {
     summary_instruction: Option<String>,
     /// Each resident's own dreaming is written with this (OF-490).
     resident_instruction: Option<String>,
+    /// PERSON `about` lines are written with this: the host's wording, else
+    /// the engine's own.
+    person_about_instruction: Option<String>,
     /// A Dreamer-lane TASK realizes with this: the host's wording, else the
     /// catalogue's own.
     task_instruction: String,
@@ -465,6 +469,9 @@ impl ObservedFactory {
         ))?;
         if let Some(instruction) = &self.summary_instruction {
             factory = factory.with_scope_summary_instruction(instruction.clone());
+        }
+        if let Some(instruction) = &self.person_about_instruction {
+            factory = factory.with_person_about_instruction(instruction.clone());
         }
         if let Some(host) = host {
             factory = factory.with_decisions(host.consolidation_decisions()?);
@@ -661,12 +668,13 @@ impl PassExecutorFactory for ObservedFactory {
     }
 }
 
-/// Asks the ladder to settle the parked conflicts the Dreamer's own review
-/// Grant covers (OF-023), on the home node only: `pump_due`'s home gate is
-/// its own. With no Grant the listing is empty and nothing is asked; a
-/// conflict the ladder leaves stays for the owner, and the next pass starts
-/// after the last one asked: the cursor this returns. A failure logs by kind
-/// only, since its text can quote the vault.
+/// Asks the ladder to settle the parked conflicts (OF-023), on the home node
+/// only: `pump_due`'s home gate is its own. The Dreamer's review stands from
+/// birth; each settlement applies at once and the owner reverts it, and a
+/// conflict the owner holds or reverted is left out. A conflict the ladder
+/// leaves stays for the owner, and the next pass starts after the last one
+/// asked: the cursor this returns. A failure logs by kind only, since its
+/// text can quote the vault.
 fn settle_parked(
     server: &crate::server::SyncServer,
     dreamer: WriteActor,
@@ -845,12 +853,22 @@ impl ResidentLend<'_> {
                 .egress
                 .then(|| extraction_egress(BTreeSet::from([model.clone()])));
             let window_tokens = self.windows.get(&model).copied();
+            // Its durable step is metered on a line of its own too, so step
+            // admission charges the resident, not the pass. A separate meter
+            // from the backend's: one meter on both layers would charge twice.
+            let step = self.vault.policy_budget_guard(
+                format!("{DREAMER_PASS_RUN}/resident/{}/step", resident.to_hex()),
+                self.guard.read().limit_units,
+                self.guard.reserve_units(),
+                oneiron::BudgetExhaustionPolicy::Suspend,
+                WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
+            )?;
             return run_resident_dream(
                 attempt,
                 ctx,
                 ResidentDreamModel {
                     backend: &backend,
-                    guard: self.guard,
+                    guard: &step,
                     model: model.clone(),
                     inference: HostInferenceContext {
                         binding: HostInferenceBinding::Advertised { model, locality },
@@ -906,7 +924,8 @@ pub(super) fn own_dreaming_slot(
 }
 
 /// The model a resident's slot names, as this server serves it: a model id
-/// as it stands, else a tier the vault's manifest binds a chat-wire role to,
+/// as it stands, a role on its live route, else a tier the vault's manifest
+/// binds a chat-wire role to,
 /// on the vault's live route for that slot (the first such role this server
 /// serves). None when the slot names nothing served here.
 pub(super) fn served_slot_model(
@@ -924,6 +943,16 @@ pub(super) fn served_slot_model(
     };
     if let Some(own) = ModelId::new(slot.0.clone()).ok().and_then(served) {
         return Ok(Some(own));
+    }
+    // A slot that spells a role (`dreamer_current`) takes that role's live
+    // route, as the role's own work does: None when it has no seat here or
+    // its route refuses.
+    if let Ok(role) = serde_json::from_value::<ModelRole>(serde_json::Value::String(slot.0.clone()))
+    {
+        return Ok(runtime
+            .seat(role)
+            .and_then(|seat| runtime.route_role(vault, role, seat).ok())
+            .map(|route| (route.model, route.locality, route.ladder)));
     }
     let Some(manifest) = vault.model_manifest()? else {
         return Ok(None);
