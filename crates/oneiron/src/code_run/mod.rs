@@ -108,8 +108,7 @@ pub use self::types::{
 pub use run_verbs::{
     JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, MemoryClaimInput, MemoryEdgeInput,
     MemorySearchInput, MemorySupersedeInput, MemoryTimeRange, ReaderSpawnInput, SkillCallInput,
-    SummarizeInput, SummarizeInputEffort,
-    TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
+    SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
