@@ -20,6 +20,7 @@ use std::io::{Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::Path;
+use std::sync::Arc;
 
 use rustix::fs::{
     AtFlags, Dir, Mode, OFlags, fstatvfs, fsync, mkdirat, openat, renameat, unlinkat,
@@ -27,6 +28,7 @@ use rustix::fs::{
 use rustix::io::Errno;
 
 use super::Store;
+use crate::secret_custody::{KnownSweep, KnownValues};
 use crate::{Error, Result};
 
 const BODIES_DIR: &str = "bodies";
@@ -535,6 +537,9 @@ pub(crate) struct BodySink {
     meter: Option<BodyMeter>,
     inline: Vec<u8>,
     spill: Option<(File, String)>,
+    /// A swept body's known values (OF-560 C): each is replaced by its
+    /// custody handle before a byte is measured, kept or spilled.
+    sweep: Option<KnownSweep>,
 }
 
 impl BodySink {
@@ -545,10 +550,25 @@ impl BodySink {
             meter: Some(BodyMeter::new()),
             inline: Vec::new(),
             spill: None,
+            sweep: None,
         }
     }
 
+    /// This sink with each value `known` holds replaced by its handle as it
+    /// streams, a value split across frames included.
+    pub(crate) fn sweeping(mut self, known: Option<Arc<KnownValues>>) -> Self {
+        self.sweep = known.map(KnownSweep::new);
+        self
+    }
+
     pub(crate) fn write(&mut self, frame: &[u8]) -> Result<()> {
+        match self.sweep.as_mut().map(|sweep| sweep.feed(frame)) {
+            Some(swept) => self.write_through(&swept),
+            None => self.write_through(frame),
+        }
+    }
+
+    fn write_through(&mut self, frame: &[u8]) -> Result<()> {
         if let Some(meter) = &mut self.meter {
             meter.feed(frame);
         }
@@ -577,14 +597,25 @@ impl BodySink {
     /// The digest of the bytes written so far, the body's own once it is
     /// finished: a body's name can depend on it before it is published.
     pub(crate) fn digest(&self) -> Result<[u8; 32]> {
-        self.meter
+        let meter = self
+            .meter
             .as_ref()
-            .map(|meter| *meter.hasher.finalize().as_bytes())
-            .ok_or(Error::InvariantViolation("result body sink finished twice"))
+            .ok_or(Error::InvariantViolation("result body sink finished twice"))?;
+        let Some(sweep) = &self.sweep else {
+            return Ok(*meter.hasher.finalize().as_bytes());
+        };
+        // A swept body still holds its tail: the digest is the one its
+        // finish leaves.
+        let mut hasher = meter.hasher.clone();
+        hasher.update(&sweep.tail());
+        Ok(*hasher.finalize().as_bytes())
     }
 
     /// Finishes the body: a spilled one is published under its digest.
     pub(crate) fn finish(mut self, preview_chars: usize) -> Result<(BodyFacts, SunkBody)> {
+        if let Some(sweep) = self.sweep.take() {
+            self.write_through(&sweep.tail())?;
+        }
         let facts = self
             .meter
             .take()
