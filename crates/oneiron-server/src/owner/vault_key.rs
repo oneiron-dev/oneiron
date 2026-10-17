@@ -4,6 +4,8 @@
 //! checkpoint signer pin a host with no vault trusts a backup by. No secret
 //! passes through here.
 
+use std::path::Path;
+
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
 use oneiron::world_keys::{HybridSecretKey, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind};
@@ -221,13 +223,44 @@ pub(crate) struct CapsuleReport {
     pub(crate) capsule: Vec<u8>,
 }
 
-/// The escrow capsule report `text` holds. Refused: an unknown field, another
-/// schema version or report type, a role the registry does not seal for, a
-/// wrap id other than `escrow:<label>`, and a report id other than the
-/// capsule's BLAKE3.
-pub(crate) fn parse_capsule_report(text: &str) -> anyhow::Result<CapsuleReport> {
-    let report: EscrowCapsuleReport = serde_json::from_str(text)
-        .map_err(|error| anyhow::anyhow!("an escrow capsule report is JSON: {error}"))?;
+/// A capsule report file that does not parse as one: the file, and where and
+/// how its parse stopped, never its contents (a secret file named by mistake
+/// stays out of the error).
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "capsule report {path} is not an escrow capsule report: {what} at line {line}, column {column}"
+)]
+pub(crate) struct CapsuleReportMalformed {
+    path: String,
+    what: &'static str,
+    line: usize,
+    column: usize,
+}
+
+/// The escrow capsule report the file at `path` holds, read whole as `bytes`.
+/// Refused: a file that is not one ([`CapsuleReportMalformed`]), an unknown
+/// field, and what [`check_capsule_report`] refuses.
+pub(crate) fn parse_capsule_report(path: &Path, bytes: &[u8]) -> anyhow::Result<CapsuleReport> {
+    let report: EscrowCapsuleReport =
+        serde_json::from_slice(bytes).map_err(|error| CapsuleReportMalformed {
+            path: path.display().to_string(),
+            what: match error.classify() {
+                serde_json::error::Category::Io => "a read error",
+                serde_json::error::Category::Syntax => "not JSON",
+                serde_json::error::Category::Data => "an unknown or ill-typed field",
+                serde_json::error::Category::Eof => "an early end",
+            },
+            line: error.line(),
+            column: error.column(),
+        })?;
+    check_capsule_report(report)
+        .map_err(|error| anyhow::anyhow!("capsule report {}: {error}", path.display()))
+}
+
+/// The parsed report, checked and decoded. Refused: another schema version or
+/// report type, a role the registry does not seal for, a wrap id other than
+/// `escrow:<label>`, and a report id other than the capsule's BLAKE3.
+fn check_capsule_report(report: EscrowCapsuleReport) -> anyhow::Result<CapsuleReport> {
     anyhow::ensure!(
         report.schema_version == ESCROW_REPORT_SCHEMA_VERSION,
         "the escrow capsule report is schema version {}; this host reads {}",

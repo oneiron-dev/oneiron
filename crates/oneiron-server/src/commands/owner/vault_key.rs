@@ -57,10 +57,6 @@ use crate::owner::vault_key::{self as view, SignerPin, hex, secret32};
 /// The most a secret read is: a password is at most 1024 bytes.
 const SECRET_LIMIT: usize = 4096;
 
-/// The most an escrow capsule report read is: a hybrid capsule is under 2
-/// KiB, twice that in hex.
-const CAPSULE_REPORT_LIMIT: u64 = 64 << 10;
-
 /// What a command that runs on a stopped vault does instead while a server
 /// holds it.
 const INSTEAD: &str = "or ask it at `/v1/owner/vault-key`";
@@ -607,19 +603,9 @@ impl HostUnlock {
     /// secret ([`view::escrow_secret`]). A report of another vault or key is
     /// refused before the secret is read.
     fn read_capsule(path: &Path, source: &SecretSourceArgs, backup: &Path) -> anyhow::Result<Self> {
-        let mut text = String::new();
-        std::fs::File::open(path)
-            .and_then(|file| {
-                file.take(CAPSULE_REPORT_LIMIT + 1)
-                    .read_to_string(&mut text)
-            })
+        let bytes = std::fs::read(path)
             .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-        anyhow::ensure!(
-            text.len() as u64 <= CAPSULE_REPORT_LIMIT,
-            "an escrow capsule report is at most 64 KiB"
-        );
-        let report = view::parse_capsule_report(&text)
-            .map_err(|error| anyhow::anyhow!("capsule report {}: {error}", path.display()))?;
+        let report = view::parse_capsule_report(path, &bytes)?;
         check_name(&report.label)?;
         let unlocks = CheckpointKey::unlocks(backup)
             .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
