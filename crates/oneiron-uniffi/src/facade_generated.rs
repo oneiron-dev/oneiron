@@ -1246,7 +1246,7 @@ export_facade! {
     let output = client.connector_schema(&input)?;
     crate::codec::lift_record("connector.schema", &output)
 };
-"vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
+"vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitOutcome> = |client| {
     let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
     let output = client.vault_commit(&input)?;
     Lift::lift(output)
@@ -1481,7 +1481,7 @@ export_facade! {
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
 };
-"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
+"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitOutcome> = |client| {
     let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
     let output = client.vault_claims_seed(&input)?;
     Lift::lift(output)

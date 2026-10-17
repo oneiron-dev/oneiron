@@ -806,7 +806,7 @@ impl OneironClient {
                 "connector.schema" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorSchemaReply,
                 >(client, verb, &input),
-                "vault.commit" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
+                "vault.commit" => remote_agent_verb_output::<Vec<oneiron::memory::CommitOutcome>>(
                     client, verb, &input,
                 ),
                 "vault.remember" => {
@@ -948,7 +948,7 @@ impl OneironClient {
                     Option<oneiron::memory::DreamerAttemptView>,
                 >(client, verb, &input),
                 "vault.claims.seed" => remote_agent_verb_output::<
-                    Vec<oneiron::memory::CommitReceipt>,
+                    Vec<oneiron::memory::CommitOutcome>,
                 >(client, verb, &input),
                 "connector.outbound.schedule" => remote_agent_verb_output::<
                     oneiron::memory::OutboundIntentReceipt,
@@ -4103,7 +4103,7 @@ impl OneironClient {
     pub fn vault_commit(
         &self,
         input: &oneiron::task_verb::sdk::CommitRequest,
-    ) -> Result<Vec<oneiron::memory::CommitReceipt>, MemoryError> {
+    ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
         oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         for claim in &input.claims {
             oneiron::memory::caps::check_claim_input(claim)?;
@@ -4714,7 +4714,7 @@ impl OneironClient {
     pub fn vault_claims_seed(
         &self,
         input: &oneiron::task_verb::sdk::CommitRequest,
-    ) -> Result<Vec<oneiron::memory::CommitReceipt>, MemoryError> {
+    ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
         oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         for claim in &input.claims {
             oneiron::memory::caps::check_claim_input(claim)?;

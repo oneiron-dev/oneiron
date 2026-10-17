@@ -11,10 +11,11 @@ use super::boundary::{
 };
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
-    NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem,
-    NapiMemoryPack, NapiMemoryProvenance, NapiQuoteSpan, NapiReadReceipt, NapiReadScope,
-    NapiRecallScope, NapiRecordRef, NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput,
-    NapiTemporalHint, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiCommitOutcome, NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt,
+    NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiQuoteSpan, NapiReadReceipt,
+    NapiReadScope, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
+    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -168,6 +169,36 @@ pub(super) fn commit_receipt_from_engine(receipt: oneiron::CommitReceipt) -> Nap
         approval: receipt.approval,
         superseded_short_id: receipt.superseded_short_id,
         receipt_ref: receipt.receipt_ref,
+    }
+}
+
+/// One batch element's outcome: its landed receipt, or its typed refusal
+/// with the refusal's own receipt (OF-063).
+pub(super) fn commit_outcome_from_engine(
+    outcome: oneiron::memory::CommitOutcome,
+) -> NapiCommitOutcome {
+    match outcome {
+        oneiron::memory::CommitOutcome::Landed(receipt) => NapiCommitOutcome {
+            outcome: "landed".to_owned(),
+            receipt_ref: Some(receipt.receipt_ref.clone()),
+            receipt: Some(commit_receipt_from_engine(receipt)),
+            refusal: None,
+        },
+        oneiron::memory::CommitOutcome::Refused {
+            refusal,
+            receipt_ref,
+        } => NapiCommitOutcome {
+            outcome: "refused".to_owned(),
+            receipt: None,
+            refusal: Some(NapiRecordRefusal {
+                reason: refusal.reason.as_str().to_owned(),
+                code: refusal.code,
+                message: refusal.message,
+                suggestions: refusal.suggestions,
+                field: refusal.field,
+            }),
+            receipt_ref,
+        },
     }
 }
 

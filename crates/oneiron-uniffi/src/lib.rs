@@ -46,15 +46,15 @@ mod facade_types_generated;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
-    ClaimListFilter, ClaimView, ClaimViews, CommitReceipt, ConsolidationJobInput, DeleteReceipt,
-    DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
-    FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
-    MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
-    OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, QueryAffect,
-    QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallScope, RerankReport, RerankSkip,
-    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
-    StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
-    WitnessMessage, WitnessReceipt, WitnessTurn,
+    ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
+    DeleteReceipt, DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView,
+    EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
+    MemoryItem, MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits,
+    NeighborOpts, OpenOptions, OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite,
+    QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallScope, RecordRefusal,
+    RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
+    SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TemporalHint,
+    TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 #[cfg(feature = "engine")]
 pub use embedded_engine::{

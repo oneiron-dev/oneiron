@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 303 facade rows, 1172 declarations.
+Census: 303 facade rows, 1175 declarations.
 Inputs: 260 of 303 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 261 of 303 fully typed, 42 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
@@ -5169,6 +5169,20 @@ class ConnectorSchemaReply(TypedDict):
     reasons: NotRequired[list[str]]
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
+RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
+class RecordRefusal(TypedDict):
+    reason: RefusalReason
+    code: str
+    message: str
+    suggestions: list[str]
+    field: str
+class CommitOutcomeLanded(CommitReceipt):
+    outcome: Literal["landed"]
+class CommitOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    refusal: RecordRefusal
+    receipt_ref: NotRequired[str | None]
+CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):

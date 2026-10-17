@@ -3821,7 +3821,7 @@ impl AgentVerb {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
             }
             Self::VaultCommit => {
-                "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."
+                "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."
             }
             Self::VaultRemember => {
                 "Commits one claim through the gate, the same as vault.claims.upsert."
@@ -3956,7 +3956,7 @@ impl AgentVerb {
                 "Reads the status of one consolidation attempt by its durable job reference."
             }
             Self::VaultClaimsSeed => {
-                "Seeds claims through their individual gates, forced proposed, returning one receipt per claim."
+                "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."

@@ -562,7 +562,7 @@ export interface FacadeResults {
   "connector.status": Facade.ConnectorView | null;
   "connector.call": Facade.ConnectorCallReply;
   "connector.schema": Facade.ConnectorSchemaReply;
-  "vault.commit": Facade.CommitReceipt[];
+  "vault.commit": Facade.CommitOutcome[];
   "vault.remember": Facade.CommitReceipt;
   "vault.claims.retract": Facade.CommitReceipt;
   "vault.forget": Facade.CommitReceipt[];
@@ -609,7 +609,7 @@ export interface FacadeResults {
   "vault.artifacts.read": Facade.BlobContent | null;
   "vault.consolidation.enqueue": Facade.DreamerAttemptRef;
   "vault.consolidation.status": Facade.DreamerAttemptView | null;
-  "vault.claims.seed": Facade.CommitReceipt[];
+  "vault.claims.seed": Facade.CommitOutcome[];
   "connector.outbound.schedule": Facade.OutboundIntentReceipt;
   "vault.notes.create": Facade.EntityRefReceipt;
   "vault.notes.from_entity": Facade.EntityRefReceipt;
@@ -884,7 +884,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "connector.status": { description: "One catalogued connector by name, removed ones included.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "connector.call": { description: "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "connector.schema": { description: "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.commit": { description: "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist.", scope: "Write", proposes: true, hostDoor: false, section: false },
+  "vault.commit": { description: "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.remember": { description: "Commits one claim through the gate, the same as vault.claims.upsert.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.claims.retract": { description: "Retracts one active claim: a deliberate withdrawal that preserves the record.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.forget": { description: "Retracts claims by exact claim or by subject and predicate; never a hard delete.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -931,7 +931,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.read": { description: "Reads one version of a blob artifact's bytes.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.consolidation.enqueue": { description: "Enqueues one consolidation attempt and returns its durable job reference.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.consolidation.status": { description: "Reads the status of one consolidation attempt by its durable job reference.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.claims.seed": { description: "Seeds claims through their individual gates, forced proposed, returning one receipt per claim.", scope: "Write", proposes: true, hostDoor: false, section: false },
+  "vault.claims.seed": { description: "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "connector.outbound.schedule": { description: "Schedules one send through a granted outbound connector, gated and held for delivery.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.notes.create": { description: "Creates a NOTE of a registered kind, its first authored text as its birth.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.notes.from_entity": { description: "Creates a NOTE of a registered kind from an existing entity.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -1101,7 +1101,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         history: (input: Facade.ClaimRefRequest, options?: O): FacadeReturns<"vault.claims.history">[K] => invoke("vault.claims.history", input, options, newInvocation()),
         /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
         admit: (input: Facade.AdmitImportedClaimInput, options?: O): FacadeReturns<"vault.claims.admit">[K] => invoke("vault.claims.admit", input, options, newInvocation()),
-        /** Seeds claims through their individual gates, forced proposed, returning one receipt per claim. */
+        /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
         seed: (input: Facade.CommitRequest, options?: O): FacadeReturns<"vault.claims.seed">[K] => invoke("vault.claims.seed", input, options, newInvocation()),
       },
       /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
@@ -1645,7 +1645,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           climb: (input: Facade.DecisionAskClimbRequest, options?: O): FacadeReturns<"vault.decisions.asks.climb">[K] => invoke("vault.decisions.asks.climb", input, options, newInvocation()),
         },
       },
-      /** Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist. */
+      /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
       commit: (input: Facade.CommitRequest, options?: O): FacadeReturns<"vault.commit">[K] => invoke("vault.commit", input, options, newInvocation()),
       /** Commits one claim through the gate, the same as vault.claims.upsert. */
       remember: (input: Facade.ClaimInput, options?: O): FacadeReturns<"vault.remember">[K] => invoke("vault.remember", input, options, newInvocation()),
