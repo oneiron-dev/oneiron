@@ -34,6 +34,7 @@ pub enum AgentVerb {
     VaultKvNamespaces,
     VaultWeaveReport,
     VaultWeaveDigest,
+    VaultWeaveLinkWrong,
     VaultPacksPut,
     VaultPacksSetupPrepare,
     VaultPacksSetupGet,
@@ -136,6 +137,7 @@ pub enum AgentVerb {
     SelfBrowserObserve,
     SelfBrowserFind,
     SelfBrowserClick,
+    SelfBrowserClickAt,
     SelfBrowserType,
     SelfBrowserSelect,
     SelfBrowserWaitFor,
@@ -145,6 +147,9 @@ pub enum AgentVerb {
     SelfBrowserCrop,
     SelfBrowserZoom,
     SelfBrowserBatch,
+    SelfBrowserLibraryFind,
+    SelfBrowserLibraryPropose,
+    SelfBrowserLibraryRun,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -205,6 +210,7 @@ impl AgentVerb {
         Self::VaultKvNamespaces,
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
+        Self::VaultWeaveLinkWrong,
         Self::VaultPacksPut,
         Self::VaultPacksSetupPrepare,
         Self::VaultPacksSetupGet,
@@ -307,6 +313,7 @@ impl AgentVerb {
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
         Self::SelfBrowserClick,
+        Self::SelfBrowserClickAt,
         Self::SelfBrowserType,
         Self::SelfBrowserSelect,
         Self::SelfBrowserWaitFor,
@@ -316,6 +323,9 @@ impl AgentVerb {
         Self::SelfBrowserCrop,
         Self::SelfBrowserZoom,
         Self::SelfBrowserBatch,
+        Self::SelfBrowserLibraryFind,
+        Self::SelfBrowserLibraryPropose,
+        Self::SelfBrowserLibraryRun,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -379,6 +389,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
+            Self::VaultWeaveLinkWrong => "vault.weave.link.wrong",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
             Self::VaultPacksSetupGet => "vault.packs.setup.get",
@@ -483,6 +494,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
             Self::SelfBrowserClick => "self.browser.click",
+            Self::SelfBrowserClickAt => "self.browser.click_at",
             Self::SelfBrowserType => "self.browser.type",
             Self::SelfBrowserSelect => "self.browser.select",
             Self::SelfBrowserWaitFor => "self.browser.wait_for",
@@ -492,6 +504,9 @@ impl AgentVerb {
             Self::SelfBrowserCrop => "self.browser.crop",
             Self::SelfBrowserZoom => "self.browser.zoom",
             Self::SelfBrowserBatch => "self.browser.batch",
+            Self::SelfBrowserLibraryFind => "self.browser.library.find",
+            Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
+            Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -551,6 +566,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -682,6 +698,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -691,6 +708,9 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRun
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -729,6 +749,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -947,6 +968,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1049,6 +1071,7 @@ impl AgentVerb {
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserWaitFor
@@ -1058,6 +1081,9 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRun
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1096,6 +1122,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
@@ -1154,9 +1181,12 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRun
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1221,6 +1251,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
+            Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -1323,6 +1354,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],
@@ -1332,6 +1364,9 @@ impl AgentVerb {
             Self::SelfBrowserCrop => &["spec"],
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRun => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -1393,6 +1428,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
+            Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -1495,6 +1531,7 @@ impl AgentVerb {
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
             Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
             Self::SelfBrowserType => &["spec"],
             Self::SelfBrowserSelect => &["spec"],
             Self::SelfBrowserWaitFor => &["spec"],
@@ -1504,6 +1541,9 @@ impl AgentVerb {
             Self::SelfBrowserCrop => &["spec"],
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRun => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],

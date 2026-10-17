@@ -16,7 +16,7 @@
 //! blocking thread.
 use std::sync::Arc;
 
-use oneiron::llm::decision::catalogue::{ASK_UP, THINK_MORE};
+use oneiron::llm::decision::catalogue::{ASK_UP, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadProvider,
@@ -28,6 +28,7 @@ use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
     ModelId, ReasoningEffort,
 };
+use oneiron::task_verb::TaskDecisions;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, HostingPrivacyPosture, Vault};
 
 use crate::config::models::{BigSettings, ModelsConfig, SeatPickSettings, SystemOneSettings};
@@ -38,6 +39,15 @@ use crate::server::SyncServer;
 const RULE_TABLE: &str = "host-rules";
 /// The owner ask queue's identity, the ladder's human pin.
 const OWNER_ASKS: &str = "owner-asks";
+/// The task surface's questions: this host's wording.
+const TASK_TAKE_WORDING: &str = "Should this agent take the proposed task? Yes only when the \
+task fits what the agent's definition says it does and what it may touch.";
+const TASK_DONE_MET_WORDING: &str = "Does this result meet the task's brief? Yes only when the \
+result meets every yes_if_all criterion and no no_if_any criterion holds.";
+const TASK_ASK_UP_WORDING: &str = "Should this task ask its owner now? Yes when the listed \
+escalation trigger needs a person's answer before the work goes on.";
+/// How long one task surface question may take.
+const TASK_DECISION_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -243,6 +253,23 @@ impl DecisionHost {
     #[must_use]
     pub fn auto_checker(&self) -> Option<&BoundedAutoChecker> {
         self.auto_checker.as_ref()
+    }
+
+    /// The task highway's three surface questions through this ladder, up
+    /// to the Big rung: a question no model answers asks up on the TASK.
+    pub(crate) fn task_decisions(&self) -> oneiron::Result<TaskDecisions<'_>> {
+        let question = |which: &[u8], wording: &str| {
+            TASK_SURFACE.question(&[which], wording.to_owned(), AnswerContract::Noul)
+        };
+        Ok(TaskDecisions {
+            ladder: self.ladder.ladder(),
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            take: question(b"take".as_slice(), TASK_TAKE_WORDING)?,
+            done: question(b"done_met".as_slice(), TASK_DONE_MET_WORDING)?,
+            ask_up: question(b"ask_up".as_slice(), TASK_ASK_UP_WORDING)?,
+            budget: TASK_DECISION_BUDGET,
+        })
     }
 
     /// The code-mode seat pick through this ladder, for `principal`.
@@ -453,12 +480,18 @@ impl DecisionProvider for SystemOneRung {
         }
     }
 
+    /// The seat sends each image as a named asset beside the state.
+    fn reads_images(&self) -> bool {
+        true
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
         let request = SeatRequest {
             question: call.question.clone(),
             state: call.state.clone(),
             images: call.images.to_vec(),
+            audio: call.audio.to_vec(),
             score_levels: Vec::new(),
             posture: self.posture,
             remote_opt_in: self.remote_opt_in,

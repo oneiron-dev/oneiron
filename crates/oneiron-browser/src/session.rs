@@ -11,16 +11,26 @@
 //! send, one for a reviewed batch, or none. A payment keeps a person's
 //! press whatever the policy says. Every effect lands a receipt naming the
 //! page it acted on, with a masked screenshot as its evidence when one can
-//! be captured.
+//! be captured. A click at a point takes the press of the row the point
+//! lands on, as a click on that row would.
+//!
+//! A batch's routine steps ask the host's decider, when the host gave the
+//! session one; without one they go up to the planner.
+//!
+//! The host's replay library (OF-598) rides the session too: an `open`
+//! lists the site's library programs, and the library verbs check, replay
+//! and run programs through this session's own gated verbs.
 
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::{
-    BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
-    EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput,
-    FindOutput, ImageOutput, Observation, ObserveInput, OpenInput, PressMode, Row, ScreenshotInput,
-    ScreenshotOutput, ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput,
-    WaitForInput, WaitForOutput, ZoomInput,
+    BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT,
+    EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EffectReceipt, ExpectInput,
+    ExpectOutput, FindInput, FindOutput, ImageOutput, LibraryFindInput, LibraryFindOutput,
+    LibraryRunInput, LibraryRunOutput, NoDecider, Observation, ObserveInput, OpenInput, PointInput,
+    PressMode, ProposeInput, ProposeOutput, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
+    ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -79,6 +89,8 @@ pub struct BrowserSession {
     policy: SendPolicy,
     receipts: Vec<EffectReceipt>,
     receipt_seq: u64,
+    decider: Option<Box<dyn RoutineDecider>>,
+    library: Option<Box<dyn WorkflowLibrary>>,
 }
 
 impl BrowserSession {
@@ -111,7 +123,40 @@ impl BrowserSession {
             policy: config.policy.clone(),
             receipts: Vec::new(),
             receipt_seq: 0,
+            decider: None,
+            library: None,
         })
+    }
+
+    /// Gives the session the host's replay library.
+    pub fn set_library(&mut self, library: Box<dyn WorkflowLibrary>) {
+        self.library = Some(library);
+    }
+
+    /// Runs `act` over the session with its library and decider lent out, so
+    /// a library verb drives the session's own gated verbs.
+    fn with_library<T>(
+        &mut self,
+        act: impl FnOnce(
+            &mut Self,
+            &mut dyn WorkflowLibrary,
+            &mut dyn RoutineDecider,
+        ) -> Result<T, BrowserError>,
+    ) -> Result<T, BrowserError> {
+        let mut library = self.library.take().ok_or_else(no_library)?;
+        let mut decider = self.decider.take();
+        let result = match decider.as_deref_mut() {
+            Some(decider) => act(self, library.as_mut(), decider),
+            None => act(self, library.as_mut(), &mut NoDecider),
+        };
+        self.library = Some(library);
+        self.decider = decider;
+        result
+    }
+
+    /// Gives the session's batches the host's routine decider.
+    pub fn set_decider(&mut self, decider: Box<dyn RoutineDecider>) {
+        self.decider = Some(decider);
     }
 
     /// A browser may only be started through the engine's tier selector.
@@ -228,6 +273,10 @@ impl BrowserSession {
     }
 }
 
+fn no_library() -> BrowserError {
+    BrowserError::Library("this browser host keeps no library".to_owned())
+}
+
 /// The effect class a control's name marks, when it marks one.
 fn effect_class(name: &str) -> Option<&'static str> {
     let words: Vec<String> = name
@@ -254,6 +303,13 @@ impl BrowserDriver for BrowserSession {
         }
         let mut observation = self.live()?.open(input)?;
         self.receipt("open", None, None, PressMode::None, &mut observation);
+        // Repeated work on a site tries the library first. A lookup that
+        // fails leaves the page open without its programs.
+        if let Some(site) = site_of(&observation.url)
+            && let Some(library) = self.library.as_mut()
+        {
+            observation.library = library.find(&site, None).unwrap_or_default();
+        }
         Ok(observation)
     }
 
@@ -274,6 +330,19 @@ impl BrowserDriver for BrowserSession {
         };
         let mut observation = self.driver.click(input)?;
         self.receipt("click", Some(&row), class, press, &mut observation);
+        Ok(observation)
+    }
+
+    fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        let (x, y) = self.live()?.point(&input)?;
+        let row = self.driver.row_at(x, y)?;
+        let class = row.as_ref().and_then(|row| effect_class(&row.name));
+        let press = match (class, &row) {
+            (Some(class), Some(row)) => self.press_for(class, row)?,
+            _ => PressMode::None,
+        };
+        let mut observation = self.driver.click_point(x, y)?;
+        self.receipt("click_at", row.as_ref(), class, press, &mut observation);
         Ok(observation)
     }
 
@@ -319,5 +388,45 @@ impl BrowserDriver for BrowserSession {
 
     fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError> {
         self.live()?.zoom(input)
+    }
+
+    fn image_bytes(&self, image: &str) -> Option<Vec<u8>> {
+        self.driver.image(image).map(<[u8]>::to_vec)
+    }
+
+    fn library_find(&mut self, input: LibraryFindInput) -> Result<LibraryFindOutput, BrowserError> {
+        let site = match input.site {
+            Some(site) => site.trim().to_ascii_lowercase(),
+            None => site_of(&self.live()?.url()?).ok_or_else(|| {
+                BrowserError::Input("the open page has no site; name one".to_owned())
+            })?,
+        };
+        let library = self.library.as_mut().ok_or_else(no_library)?;
+        Ok(LibraryFindOutput {
+            workflows: library.find(&site, input.subgoal.as_deref())?,
+            site,
+        })
+    }
+
+    fn library_propose(&mut self, input: ProposeInput) -> Result<ProposeOutput, BrowserError> {
+        self.with_library(|session, library, decider| {
+            crate::library::propose(session, library, decider, input)
+        })
+    }
+
+    fn library_run(&mut self, input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
+        self.with_library(|session, library, decider| {
+            crate::library::run(session, library, decider, input)
+        })
+    }
+
+    fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
+        let mut decider = self.decider.take();
+        let output = match decider.as_deref_mut() {
+            Some(decider) => self.batch_with(input, decider),
+            None => self.batch_with(input, &mut NoDecider),
+        };
+        self.decider = decider;
+        output
     }
 }

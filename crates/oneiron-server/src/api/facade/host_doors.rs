@@ -33,12 +33,15 @@ use oneiron::task_verb::sdk::{
 };
 
 use crate::auth::CoreAuth;
+use crate::builtin_host::HostConnectionChecks;
 use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::shared_act_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
+// The weave lens's human doors, likewise.
+pub(crate) use super::weave_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -306,22 +309,24 @@ pub(crate) async fn self_memory_diary_query(
 /// decision ladder, asked for the caller: the slip's principal, or the
 /// vault's own owner for an owner-grade credential that names none. Its
 /// evidence is read under the caller's own scoped read
-/// ([`crate::decision_verdict::run_verdict`]).
+/// ([`crate::decision_verdict::run_verdict`]); a screenshot the calling
+/// code run's browser holds comes from that browser.
 pub(crate) async fn ai_verdict(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiVerdictRequest,
 ) -> MemoryResult<AiVerdict> {
     let (principal, class) = asking(auth, server)?;
+    let held = crate::decision_verdict::HeldImage::in_task(input.image.as_deref());
     let server = Arc::clone(server);
     let auth = auth.clone();
     tokio::task::spawn_blocking(move || {
         let reader = crate::api::credential_memory(&server.vault, Some(&auth), principal, class)
             .at(auth.locality());
         // An image is pulled through the caller's own lane before any model
-        // reads it.
-        let lane = match input.image {
-            Some(_) => Some(
+        // reads it, unless it is the run's own held screenshot.
+        let lane = match (&input.image, &held) {
+            (Some(_), None) => Some(
                 crate::api::scoped_read_for_core_auth(&server.vault, &auth).map_err(|_| {
                     MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
@@ -330,7 +335,7 @@ pub(crate) async fn ai_verdict(
                     )
                 })?,
             ),
-            None => None,
+            _ => None,
         };
         crate::decision_verdict::run_verdict(
             &server,
@@ -338,6 +343,7 @@ pub(crate) async fn ai_verdict(
             class,
             &reader,
             lane.as_ref(),
+            held,
             &input,
         )
     })
@@ -638,7 +644,8 @@ pub(crate) async fn vault_packs_setup_answer(
     let owner = lens_owner(auth, server, "vault.packs.setup.answer")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        oneiron::task_verb::sdk::answer_pack_setup_as_owner(server.vault(), &owner, &input)
+        let checks = HostConnectionChecks::new(&server)?;
+        oneiron::task_verb::sdk::answer_pack_setup_as_owner(server.vault(), &owner, &input, &checks)
     })
     .await
     .map_err(|_| internal("vault.packs.setup.answer"))?
@@ -654,7 +661,8 @@ pub(crate) async fn vault_packs_setup_verify(
     let owner = lens_owner(auth, server, "vault.packs.setup.verify")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        oneiron::task_verb::sdk::verify_pack_setup_as_owner(server.vault(), &owner, &input)
+        let checks = HostConnectionChecks::new(&server)?;
+        oneiron::task_verb::sdk::verify_pack_setup_as_owner(server.vault(), &owner, &input, &checks)
     })
     .await
     .map_err(|_| internal("vault.packs.setup.verify"))?

@@ -322,6 +322,7 @@ pub fn schedule_approved_representation(
             trigger_ref: intent.trigger_ref,
             job_ref: None,
             occurred_at: Some(now),
+            mention: intent.mention,
         },
         context,
     )

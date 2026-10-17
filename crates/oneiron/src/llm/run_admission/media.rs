@@ -6,9 +6,12 @@
 //! ([`RunAdmission::admit_media`](super::RunAdmission::admit_media)).
 use std::sync::Arc;
 
-use super::super::media::{MediaBackend, MediaJobState, MediaRequest, MediaResponse};
+use super::super::media::{
+    AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, MediaUsage,
+};
 use super::super::{
-    BudgetLease, BudgetSettlement, DispatchBinding, FatalLlmError, LlmResult, LlmUsage, ModelId,
+    BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, FatalLlmError, LlmResult,
+    LlmUsage, ModelId,
 };
 use super::admission::{RunDenied, RunInner};
 use super::gate::Dispatch;
@@ -121,6 +124,182 @@ impl MediaGate {
             Err(FatalLlmError::InvalidRequest.into())
         }
     }
+}
+
+impl MediaGate {
+    /// Opens one bounded media stream (live `ai.transcribe` partials) on
+    /// `permit`, which this run admitted for it
+    /// ([`RunAdmission::admit_media_stream`](super::RunAdmission::admit_media_stream)).
+    /// The permit starts here, before any audio leaves, under the checks
+    /// one call takes, and the stream holds it to its end. `bound_ms` is the
+    /// most audio the stream carries; `caps` is its rung's row, whose rate
+    /// the admitted audio settles at.
+    pub fn open_stream(
+        &self,
+        request: &MediaRequest,
+        permit: RunPermit,
+        caps: MediaCaps,
+        bound_ms: u64,
+    ) -> LlmResult<MediaStreamLease> {
+        let model = request.model.as_str();
+        let lease = permit.lease().clone();
+        if let Some(key) = request.admission_request().route_selector_override() {
+            let reason = RunDenied::RouteOverride { key };
+            self.run.refuse(Some(model), Some(&lease), reason);
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let digest = request
+            .canonical_hash_hex()
+            .map_err(|_| FatalLlmError::InvalidRequest)?;
+        let call = DispatchBinding {
+            subject: model.to_owned(),
+            request_digest: None,
+            ..self.offer.clone()
+        };
+        // A permit that does not start here is dropped unstarted, which
+        // releases its reservation.
+        self.run.begin_dispatch(&lease, &call)?;
+        Ok(MediaStreamLease {
+            run: Arc::clone(&self.run),
+            route: self.offer.route.clone(),
+            dispatch: Some(Dispatch {
+                lease: lease.clone(),
+                model: request.model.clone(),
+                digest,
+                broker_isolation: None,
+            }),
+            lease,
+            permit: Some(permit),
+            operation: request.operation,
+            caps,
+            bound_ms,
+            admitted_ms: 0,
+        })
+    }
+}
+
+/// One bounded media stream on one permit: live audio to a provider's
+/// streaming wire, metered as it is admitted. Each chunk is admitted here
+/// before it leaves, and none past the stream's bound, the audio its
+/// permit reserved for; a longer stream ends this one and opens the next on
+/// a fresh permit. It settles once, in its rung's native units (seconds
+/// heard): on [`Self::end`], on [`Self::cancel`], or when dropped, which is
+/// a cancel. Audio admitted before a cancel went out, so it is paid for; a
+/// stream that admitted none pays nothing.
+pub struct MediaStreamLease {
+    run: Arc<RunInner>,
+    route: String,
+    dispatch: Option<Dispatch>,
+    lease: BudgetLease,
+    permit: Option<RunPermit>,
+    operation: AiOperation,
+    caps: MediaCaps,
+    bound_ms: u64,
+    admitted_ms: u64,
+}
+
+impl MediaStreamLease {
+    /// What a stream of up to `bound_ms` of audio reserves, in token units
+    /// at `caps`' rate for `operation`: its permit's reservation.
+    #[must_use]
+    pub fn reserve_units(operation: AiOperation, caps: &MediaCaps, bound_ms: u64) -> u64 {
+        stream_units(operation, caps, bound_ms)
+    }
+
+    /// The lease the stream's wire carries.
+    #[must_use]
+    pub fn lease(&self) -> &BudgetLease {
+        &self.lease
+    }
+
+    /// The audio admitted so far, in milliseconds.
+    #[must_use]
+    pub fn admitted_ms(&self) -> u64 {
+        self.admitted_ms
+    }
+
+    /// The audio the stream may still admit, in milliseconds.
+    #[must_use]
+    pub fn remaining_ms(&self) -> u64 {
+        self.bound_ms.saturating_sub(self.admitted_ms)
+    }
+
+    /// Admits `ms` more audio before it leaves. Audio past the stream's
+    /// bound, or on a lease no longer open, admits nothing.
+    pub fn admit_audio(&mut self, ms: u64) -> LlmResult<()> {
+        let admitted = self
+            .admitted_ms
+            .checked_add(ms)
+            .filter(|admitted| *admitted <= self.bound_ms)
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        if self.permit.is_none() || self.run.guard.lease_open(&self.lease) != Some(true) {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        self.admitted_ms = admitted;
+        Ok(())
+    }
+
+    /// Ends the stream answered: it pays for the audio it admitted.
+    /// `served_model` is the model the provider said it served, for the
+    /// dispatch receipt.
+    pub fn end(mut self, served_model: Option<String>) -> Result<BudgetSettlement, RunDenied> {
+        self.settle(served_model, true).unwrap_or(Err(RunDenied::Dispatch {
+            refused: DispatchRefused::Closed,
+        }))
+    }
+
+    /// Cancels the stream: it pays for the audio it already sent.
+    pub fn cancel(mut self) -> Result<BudgetSettlement, RunDenied> {
+        self.settle(None, false).unwrap_or(Err(RunDenied::Dispatch {
+            refused: DispatchRefused::Closed,
+        }))
+    }
+
+    /// Writes the dispatch receipt and settles the permit, once; `None`
+    /// once settled.
+    fn settle(
+        &mut self,
+        served_model: Option<String>,
+        answered: bool,
+    ) -> Option<Result<BudgetSettlement, RunDenied>> {
+        let permit = self.permit.take()?;
+        if let Some(dispatch) = self.dispatch.take() {
+            self.run
+                .dispatched(dispatch, &self.route, served_model, answered);
+        }
+        let units = stream_units(self.operation, &self.caps, self.admitted_ms);
+        Some(permit.settle(CallOutcome::Used(units)))
+    }
+}
+
+impl Drop for MediaStreamLease {
+    fn drop(&mut self) {
+        // The refusal, if any, is on the Settled receipt.
+        if let Some(settled) = self.settle(None, false) {
+            settled.ok();
+        }
+    }
+}
+
+impl std::fmt::Debug for MediaStreamLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MediaStreamLease")
+            .field("lease", &self.lease.id())
+            .field("bound_ms", &self.bound_ms)
+            .field("admitted_ms", &self.admitted_ms)
+            .field("settled", &self.permit.is_none())
+            .finish_non_exhaustive()
+    }
+}
+
+/// `audio_ms` of audio in token units at `caps`' rate for `operation`.
+fn stream_units(operation: AiOperation, caps: &MediaCaps, audio_ms: u64) -> u64 {
+    MediaUsage {
+        audio_ms,
+        ..MediaUsage::default()
+    }
+    .token_units(operation, caps)
+    .unwrap_or(0)
 }
 
 /// A started media call's dispatch receipt, written once: when the call
