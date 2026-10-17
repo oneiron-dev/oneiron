@@ -401,6 +401,8 @@ export class Oneiron {
     packs: {
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
+      /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
+      remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
       setup: {
         /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
         prepare: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as Facade.PackSetupReceipt),
@@ -410,6 +412,16 @@ export class Oneiron {
         answer: (input: Facade.PackSetupAnswerRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as Facade.PackSetupReceipt),
         /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),
+      },
+    },
+    connectors: {
+      subscriptions: {
+        /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
+        put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
+        /** An agent's connector event subscriptions, standing and revoked, for the owner. */
+        list: (input: Facade.ChannelSubscriptionsRequest): Facade.ChannelSubscriptions => this.#call(() => this.#client.vaultConnectorsSubscriptionsList(input) as Facade.ChannelSubscriptions),
+        /** The owner stops one connector event subscription; the agent's key for the channel stays. */
+        revoke: (input: Facade.ChannelSubscriptionRevokeRequest): Facade.ChannelSubscriptionRevoked => this.#call(() => this.#client.vaultConnectorsSubscriptionsRevoke(input) as Facade.ChannelSubscriptionRevoked),
       },
     },
     authority: {

@@ -1341,6 +1341,100 @@ async fn vault_packs_put(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_packs_remove(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.packs.remove")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.packs.remove", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.packs.remove", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_packs_remove(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_connectors_subscriptions_put(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.subscriptions.put")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.subscriptions.put", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.connectors.subscriptions.put", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_connectors_subscriptions_put(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_connectors_subscriptions_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.subscriptions.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.subscriptions.list", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.connectors.subscriptions.list", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_connectors_subscriptions_list(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_connectors_subscriptions_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.subscriptions.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.subscriptions.revoke", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.connectors.subscriptions.revoke", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_connectors_subscriptions_revoke(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_packs_setup_prepare(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6457,6 +6551,16 @@ pub(crate) async fn call_verb(
         "vault.weave.item.wrong" => vault_weave_item_wrong(server, call, input).await,
         "vault.weave.owner.item.wrong" => vault_weave_owner_item_wrong(server, call, input).await,
         "vault.packs.put" => vault_packs_put(server, call, input).await,
+        "vault.packs.remove" => vault_packs_remove(server, call, input).await,
+        "vault.connectors.subscriptions.put" => {
+            vault_connectors_subscriptions_put(server, call, input).await
+        }
+        "vault.connectors.subscriptions.list" => {
+            vault_connectors_subscriptions_list(server, call, input).await
+        }
+        "vault.connectors.subscriptions.revoke" => {
+            vault_connectors_subscriptions_revoke(server, call, input).await
+        }
         "vault.packs.setup.prepare" => vault_packs_setup_prepare(server, call, input).await,
         "vault.packs.setup.get" => vault_packs_setup_get(server, call, input).await,
         "vault.packs.setup.answer" => vault_packs_setup_answer(server, call, input).await,
