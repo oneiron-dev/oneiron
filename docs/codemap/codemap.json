@@ -2090,6 +2090,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/guest_revoke.rs",
+     "purpose": "OF-232: the owner withdraws one ask guest's access at this host",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12286,7 +12296,7 @@
       "enum": 1,
       "fn": 10,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 3
      }
     },
@@ -12408,6 +12418,20 @@
       "enum": 3,
       "fn": 8,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactHooks"
+     ],
+     "path": "src/compaction/hooks.rs",
+     "purpose": "`host.compact` (ARCH-0080 §5) around one compaction pass",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -18035,6 +18059,16 @@
      "purpose": "Poll disjoint MACRO buckets together, with one wake snapshot and meter",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/hooks.rs",
+     "purpose": "`host.wake` (ARCH-0080 §5) around one wake pass",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -26925,7 +26959,7 @@
       "const": 1,
       "crate-vis": 8,
       "enum": 2,
-      "fn": 18,
+      "fn": 19,
       "struct": 2
      }
     },
@@ -26943,7 +26977,7 @@
      "path": "src/llm/run_admission/declaration.rs",
      "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 15,
       "struct": 4
@@ -27014,17 +27048,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "MediaGate"
+      "MediaGate",
+      "MediaStreamLease"
      ],
      "path": "src/llm/run_admission/media.rs",
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
-      "struct": 1
+      "fn": 13,
+      "struct": 2
      }
     },
     {
@@ -34562,6 +34597,7 @@
      "notable": [
       "CanonicalBaseEdge",
       "CanonicalContainerManifest",
+      "CanonicalCustodyTransition",
       "CanonicalDocumentFork",
       "CanonicalDocumentPin",
       "CanonicalDocumentPurge",
@@ -34584,7 +34620,7 @@
       "crate-vis": 18,
       "enum": 2,
       "fn": 8,
-      "struct": 14
+      "struct": 15
      }
     },
     {
@@ -35911,6 +35947,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BudgetHit"
+     ],
+     "path": "src/runtime_hooks/host.rs",
+     "purpose": "`host.budget.hit` (ARCH-0080 §5): a budget line spent under its exhaustion policy",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HookCheck",
       "HookCheckReason",
       "LineageLink"
@@ -35931,9 +35981,9 @@
      "path": "src/runtime_hooks/mod.rs",
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 2,
-      "re-export": 9
+      "re-export": 11
      }
     },
     {
@@ -35968,6 +36018,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HookContractStamp",
+      "HookGoldenDiff",
+      "HookGoldenFingerprint",
+      "HookRegenFailure",
+      "HookRegenFailurePhase",
+      "HookRegenOutcome",
+      "HookRegenRecord",
+      "HookRegenRequest",
+      "HookRegenerator"
+     ],
+     "path": "src/runtime_hooks/regen.rs",
+     "purpose": "Hook regen (ARCH-0080 §8, slice 3): the shape of lens regen (OF-321), with records typed for hooks",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 7,
+      "struct": 6,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -35977,6 +36051,7 @@
      "path": "src/runtime_hooks/replay.rs",
      "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -36422,7 +36497,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 4
      }
     },
@@ -36458,7 +36533,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 4
      }
     },
@@ -36493,6 +36568,16 @@
      "path": "src/secret_custody/tests.rs",
      "purpose": "SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/transition.rs",
+     "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as an…",
+     "surface": {
+      "crate-vis": 15
+     }
     },
     {
      "bucket": "m",
@@ -36641,7 +36726,7 @@
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…",
      "surface": {
       "const": 5,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 10,
       "struct": 1
@@ -36655,7 +36740,7 @@
      "purpose": "The owner's rotation door and the one transaction body every rotation shares",
      "surface": {
       "crate-vis": 4,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -41123,7 +41208,7 @@
      "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 13,
       "struct": 5,
       "trait": 1
@@ -41553,6 +41638,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/custody.rs",
+     "purpose": "OF-422: owner-signed custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/documents/destination.rs",
      "purpose": "Destination policy for text-plane admission and release",
      "surface": {
@@ -41865,7 +41960,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 21,
       "re-export": 16
      }
@@ -44147,6 +44242,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/subproject.rs",
+     "purpose": "A TASK that wraps a subproject (OF-389, ARCH-0079 \"three kinds of work\")",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SymbolLease",
       "SymbolLeaseOutcome"
@@ -45612,6 +45717,7 @@
      "notable": [
       "BankBound",
       "BankVoiceBinding",
+      "LeasedAsrStream",
       "MediaAsrAdapter",
       "MediaTtsAdapter",
       "MediaVoiceRoute",
@@ -45620,16 +45726,17 @@
       "VoiceMediaSender",
       "VoiceMediaWork",
       "VoiceMediaWorker",
-      "VoiceRender"
+      "VoiceRender",
+      "VoiceStreamDoor"
      ],
      "path": "src/voice_cascade/media.rs",
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
-      "const": 2,
+      "const": 3,
       "enum": 4,
-      "fn": 11,
-      "struct": 6,
-      "trait": 1
+      "fn": 17,
+      "struct": 7,
+      "trait": 2
      }
     },
     {
@@ -46628,7 +46735,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 43,
+      "crate-vis": 44,
       "enum": 3,
       "fn": 17,
       "re-export": 14,
@@ -48448,7 +48555,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 125,
+     "files": 126,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -48700,8 +48807,8 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 15,
-     "impl_vault": false,
+     "files": 16,
+     "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
@@ -48896,7 +49003,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49470,7 +49577,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 20,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49498,7 +49605,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -49680,7 +49787,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 150,
+     "files": 151,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49708,7 +49815,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 107,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -49864,7 +49971,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3010,
+   "source_files": 3018,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65280,7 +65387,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7,
       "struct": 1
      }
@@ -65297,7 +65404,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 7,
-      "fn": 13,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -66423,13 +66530,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/connection.rs",
      "purpose": "One private, pre-admitted UDS connection on the existing Tokio runtime",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -66440,6 +66547,22 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MediaTts",
+      "VoiceMediaBindings",
+      "VoiceMediaIn"
+     ],
+     "path": "src/voice_host/media_bridge.rs",
+     "purpose": "The host's own speech and hearing on the media seats (OF-410)",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 1,
+      "struct": 2
      }
     },
     {
@@ -66458,7 +66581,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 5
      }
     },
@@ -66472,7 +66595,7 @@
      "path": "src/voice_host/serve_bindings.rs",
      "purpose": "One-shot bindings supplied by the existing private-connection owner",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -67182,7 +67305,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67219,7 +67342,7 @@
    },
    "over_bar": 28,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 478,
+   "source_files": 479,
    "test_files": 182
   },
   "oneiron-spawn": {

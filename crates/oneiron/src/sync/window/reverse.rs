@@ -504,6 +504,10 @@ pub(in crate::sync) fn reverse_rematerialize_with(
     // every revision learned since (Astra #1434 F2).
     wrote_any |= super::project_history::carry_project_history(vault, doc)?;
 
+    // OF-422: the owner-signed custody transitions this vault wrote that ride
+    // this window, never a custody row.
+    wrote_any |= crate::sync::custody::mirror_custody_transitions(vault, doc, window_key)?;
+
     // Commit all bridge writes with origin tag
     if wrote_any {
         let origin = bridge::origin_for_mirrors(&mirror_sources)?;
