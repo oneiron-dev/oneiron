@@ -133,6 +133,12 @@ pub enum AgentVerb {
     AiVideoPoll,
     AiVideoCancel,
     AiVerdict,
+    VaultGraphAsk,
+    VaultQuestionsCreate,
+    VaultQuestionsEdit,
+    VaultQuestionsPause,
+    VaultQuestionsRead,
+    VaultQuestionsAnswers,
     ConnectorList,
     ConnectorStatus,
     SelfBrowserOpen,
@@ -149,6 +155,9 @@ pub enum AgentVerb {
     SelfBrowserCrop,
     SelfBrowserZoom,
     SelfBrowserBatch,
+    SelfBrowserLibraryFind,
+    SelfBrowserLibraryPropose,
+    SelfBrowserLibraryRun,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -308,6 +317,12 @@ impl AgentVerb {
         Self::AiVideoPoll,
         Self::AiVideoCancel,
         Self::AiVerdict,
+        Self::VaultGraphAsk,
+        Self::VaultQuestionsCreate,
+        Self::VaultQuestionsEdit,
+        Self::VaultQuestionsPause,
+        Self::VaultQuestionsRead,
+        Self::VaultQuestionsAnswers,
         Self::ConnectorList,
         Self::ConnectorStatus,
         Self::SelfBrowserOpen,
@@ -324,6 +339,9 @@ impl AgentVerb {
         Self::SelfBrowserCrop,
         Self::SelfBrowserZoom,
         Self::SelfBrowserBatch,
+        Self::SelfBrowserLibraryFind,
+        Self::SelfBrowserLibraryPropose,
+        Self::SelfBrowserLibraryRun,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -488,6 +506,12 @@ impl AgentVerb {
             Self::AiVideoPoll => "ai.video.poll",
             Self::AiVideoCancel => "ai.video.cancel",
             Self::AiVerdict => "ai.verdict",
+            Self::VaultGraphAsk => "vault.graph.ask",
+            Self::VaultQuestionsCreate => "vault.questions.create",
+            Self::VaultQuestionsEdit => "vault.questions.edit",
+            Self::VaultQuestionsPause => "vault.questions.pause",
+            Self::VaultQuestionsRead => "vault.questions.read",
+            Self::VaultQuestionsAnswers => "vault.questions.answers",
             Self::ConnectorList => "connector.list",
             Self::ConnectorStatus => "connector.status",
             Self::SelfBrowserOpen => "self.browser.open",
@@ -504,6 +528,9 @@ impl AgentVerb {
             Self::SelfBrowserCrop => "self.browser.crop",
             Self::SelfBrowserZoom => "self.browser.zoom",
             Self::SelfBrowserBatch => "self.browser.batch",
+            Self::SelfBrowserLibraryFind => "self.browser.library.find",
+            Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
+            Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -662,6 +689,12 @@ impl AgentVerb {
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
                 | Self::AiVerdict
+                | Self::VaultGraphAsk
+                | Self::VaultQuestionsCreate
+                | Self::VaultQuestionsEdit
+                | Self::VaultQuestionsPause
+                | Self::VaultQuestionsRead
+                | Self::VaultQuestionsAnswers
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -707,6 +740,9 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRun
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -844,6 +880,12 @@ impl AgentVerb {
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
                 | Self::AiVerdict
+                | Self::VaultGraphAsk
+                | Self::VaultQuestionsCreate
+                | Self::VaultQuestionsEdit
+                | Self::VaultQuestionsPause
+                | Self::VaultQuestionsRead
+                | Self::VaultQuestionsAnswers
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::VaultCommit
@@ -914,6 +956,7 @@ impl AgentVerb {
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::SelfSkillsCallables
+                | Self::VaultQuestionsAnswers
                 | Self::ConnectorList
                 | Self::VaultCommit
                 | Self::VaultForget
@@ -1065,6 +1108,12 @@ impl AgentVerb {
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
                 | Self::AiVerdict
+                | Self::VaultGraphAsk
+                | Self::VaultQuestionsCreate
+                | Self::VaultQuestionsEdit
+                | Self::VaultQuestionsPause
+                | Self::VaultQuestionsRead
+                | Self::VaultQuestionsAnswers
                 | Self::ConnectorList
                 | Self::ConnectorStatus
                 | Self::SelfBrowserOpen
@@ -1081,6 +1130,9 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRun
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1177,12 +1229,18 @@ impl AgentVerb {
                 | Self::AiEmbed
                 | Self::AiVideo
                 | Self::AiVideoCancel
+                | Self::VaultGraphAsk
+                | Self::VaultQuestionsCreate
+                | Self::VaultQuestionsEdit
+                | Self::VaultQuestionsPause
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRun
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -1207,6 +1265,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
+                | Self::VaultGraphAsk
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
@@ -1346,6 +1405,12 @@ impl AgentVerb {
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
             Self::AiVerdict => &["spec"],
+            Self::VaultGraphAsk => &["spec"],
+            Self::VaultQuestionsCreate => &["spec"],
+            Self::VaultQuestionsEdit => &["spec"],
+            Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsRead => &["spec"],
+            Self::VaultQuestionsAnswers => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -1362,6 +1427,9 @@ impl AgentVerb {
             Self::SelfBrowserCrop => &["spec"],
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRun => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -1522,6 +1590,12 @@ impl AgentVerb {
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
             Self::AiVerdict => &["spec"],
+            Self::VaultGraphAsk => &["spec"],
+            Self::VaultQuestionsCreate => &["spec"],
+            Self::VaultQuestionsEdit => &["spec"],
+            Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsRead => &["spec"],
+            Self::VaultQuestionsAnswers => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
@@ -1538,6 +1612,9 @@ impl AgentVerb {
             Self::SelfBrowserCrop => &["spec"],
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRun => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],

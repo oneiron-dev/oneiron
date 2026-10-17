@@ -19,12 +19,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::claim::ScopedRead;
-use oneiron::llm::image::ImageBytes;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
     MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineTrail, routine_choice,
 };
+use oneiron::llm::image::ImageBytes;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{ImageViewRequest, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
 use oneiron::retrieval_depth::RetrievalDeadline;
@@ -193,7 +193,13 @@ pub(crate) fn run_verdict(
             ));
         }
         dial.first = DecisionRung::Local;
-        Some(vision_rung(server, principal, class, &images, "ai.verdict")?)
+        Some(vision_rung(
+            server,
+            principal,
+            class,
+            &images,
+            "ai.verdict",
+        )?)
     };
     let mut ladder = host.ladder().ladder();
     if let Some(rung) = &local {

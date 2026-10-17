@@ -54,6 +54,7 @@ mod peer_confidence_routes;
 mod proactivity_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
+mod vault_key_routes;
 mod weave_routes;
 mod wire_health_routes;
 
@@ -110,6 +111,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(wire_health_routes::routes())
         .merge(handoff_alarm_routes::routes())
         .merge(space_posting_routes::routes())
+        .merge(vault_key_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }

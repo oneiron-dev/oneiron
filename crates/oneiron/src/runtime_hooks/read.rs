@@ -156,9 +156,7 @@ fn read_claim(
         && let Some(body) = row.body.as_deref()
     {
         let claim = crate::claim::decode_claim_body(body, true)?;
-        if grant.admits(&claim)
-            && visible_to(cap, &reads)?.is_none_or(|seen| seen.contains(&id))
-        {
+        if grant.admits(&claim) && visible_to(cap, &reads)?.is_none_or(|seen| seen.contains(&id)) {
             value = claim_json(id, &claim);
             served.push(HookReadRow {
                 id,

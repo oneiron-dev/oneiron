@@ -1276,6 +1276,57 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_graph_ask(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.graph.ask", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_edit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.edit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_pause(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.pause", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_answers(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.answers", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn connector_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("connector.list", input)

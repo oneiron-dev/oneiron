@@ -64,6 +64,19 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<Vec<HookReplayEntry>> {
+        self.hooks_replay_body(runtime, binding, None, since, limit)
+    }
+
+    /// [`Self::hooks_replay`] with `body` run in place of the bound one: a
+    /// regen candidate over the hook's golden set (ARCH-0080 §8).
+    pub(super) fn hooks_replay_body(
+        &self,
+        runtime: &dyn HookBodyRuntime,
+        binding: EntityId,
+        body: Option<String>,
+        since: Option<FactPositionHex>,
+        limit: usize,
+    ) -> Result<Vec<HookReplayEntry>> {
         let (binding_id, row) = self
             .pack_hook_bindings()?
             .into_iter()
@@ -85,12 +98,15 @@ impl Vault {
             binding_id,
             binding: &row,
             grant: &grant,
-            body: self
-                .pack_hook_body(&row)
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| {
-                    String::from_utf8(bytes).map_err(|_| "hook body is not UTF-8".to_owned())
-                }),
+            body: match body {
+                Some(body) => Ok(body),
+                None => self
+                    .pack_hook_body(&row)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|_| "hook body is not UTF-8".to_owned())
+                    }),
+            },
         };
         let starts: Vec<_> = match since {
             Some(position) => vec![(position.source(), Some(position))],

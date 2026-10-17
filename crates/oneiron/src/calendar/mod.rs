@@ -159,7 +159,9 @@ pub enum CalendarError {
     },
     /// The recipient came from a mention that is not settled yet (OF-123):
     /// the agent settles it with `self.identity.settle`, then invites.
-    #[error("which person \"{name}\" names is not settled; settle it with self.identity.settle first")]
+    #[error(
+        "which person \"{name}\" names is not settled; settle it with self.identity.settle first"
+    )]
     IdentityUnsettled {
         /// The mention's text.
         name: String,
