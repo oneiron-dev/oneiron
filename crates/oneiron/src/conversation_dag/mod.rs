@@ -43,7 +43,8 @@ pub(crate) use graph::{
     actor_in_txn, conversation_of, edge_ids, is_sub_session_record, is_thread_record,
     keeps_dag_topology, parent as retained_parent, record_has_dag_topology, require_type,
 };
-pub(crate) use quote::{QuotedReply, carries_quote};
+pub(crate) use quote::{ProvenRoomQuote, QuotedReply, carries_quote};
+pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };

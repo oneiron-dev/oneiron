@@ -134,6 +134,9 @@ pub struct RoomTurn {
     pub task_ids: Vec<String>,
     #[serde(default)]
     pub converted_project: Option<String>,
+    /// A trunk turn's quote (OF-460). A thread reply's quote stays in its
+    /// TURN's reply pointer, never here.
+    pub quote: Option<crate::conversation_dag::RoomQuote>,
 }
 /// The first trunk entry is the origin card when this room came from a thread.
 /// It points to that thread without copying any of its messages.
