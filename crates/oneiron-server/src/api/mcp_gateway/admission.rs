@@ -149,6 +149,11 @@ fn mcp_admit_verb_scope(
         // no world/facet projection, so a narrowed connector cannot read it.
         mcp_admit_unscoped_execution(actor, tool.name, "arguments.self")?;
     }
+    if arguments.vault == Some(true) {
+        // `describe(vault)` joins the whole vault's send paths: a narrowed
+        // connector cannot read it.
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.vault")?;
+    }
     if let Some(scopes) = arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }
