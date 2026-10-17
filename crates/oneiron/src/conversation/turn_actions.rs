@@ -10,11 +10,18 @@
 //! the agent is the MESSAGE's author, the source is the latest user turn
 //! before it, and the history is the transcript before that. No model call
 //! and no prompt text live here.
+//!
+//! An action stands while its requester does. One asked through a transport
+//! carries the capability slip its request was admitted on, and runs only
+//! while that slip verifies and still binds the requester: revoking it stops
+//! the queued action. Only the in-process host queues one without a slip.
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome};
+use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::claim::CallerLocality;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Result;
 use crate::memory::{
@@ -70,6 +77,14 @@ pub struct TurnActionAttempt {
     /// the reply's turn is a run on this actor's budget line.
     pub actor: EntityId,
     pub actor_class: u8,
+    /// The slip the request was admitted on, verified again whenever the
+    /// action's standing is judged. `None` only on a native attempt.
+    pub invocation_slip: Option<InvocationSlipBinding>,
+    /// The in-process host asked, with no transport and no slip: the
+    /// actor's binding alone is its standing.
+    pub native: bool,
+    /// The requester read from off this device; the run reads there too.
+    pub off_device: bool,
 }
 
 /// One earlier line of the conversation, as a chat request carries it.
@@ -117,13 +132,44 @@ impl TurnActionAttempt {
         Ok((self.actor, class))
     }
 
-    /// Whether the requester's actor binding still holds, in `txn`: the
-    /// action's standing, as a credential's liveness is a request's.
+    /// Whether the action still stands, in `txn`: the requester's actor
+    /// binding holds and, unless the attempt is native, the slip it was
+    /// asked with does too. The action's standing, as a credential's
+    /// liveness is a request's.
     #[must_use]
     pub fn requester_live_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
-        self.requester().is_ok_and(|(actor, class)| {
-            crate::memory::verify_actor_binding_in_txn(vault, txn, actor, class).is_ok()
-        })
+        self.requester_proof_in(vault, txn).is_ok()
+    }
+
+    /// The requester's standing in `txn`, and the slip's proof as it stands
+    /// there: verified at this snapshot's fold and clock, every caveat
+    /// included, still held by the requester at its class and granting a
+    /// write. A native attempt stands on the actor binding, with no proof.
+    fn requester_proof_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<Option<VerifiedSlip>> {
+        let (actor, class) = self.requester()?;
+        crate::memory::verify_actor_binding_in_txn(vault, txn, actor, class)?;
+        let binding = match (&self.invocation_slip, self.native) {
+            (None, true) => return Ok(None),
+            (Some(binding), false) => binding,
+            // No attempt is queued native with a slip, or slip-less without
+            // being native.
+            _ => return Err(standing_lost()),
+        };
+        let proof = vault
+            .invocation_slip_in_txn(txn, binding)
+            .map_err(|_| standing_lost())?;
+        let claims = proof.claims();
+        if claims.holder_ref != actor.to_hex()
+            || claims.actor_class.as_deref() != Some(class.gate_actor_class())
+            || !(proof.allows_verb("write") || proof.allows_verb("core:write"))
+        {
+            return Err(standing_lost());
+        }
+        Ok(Some(proof))
     }
 
     /// [`Self::requester_live_in`] in a snapshot of its own.
@@ -153,6 +199,15 @@ fn invalid_state(message: &str) -> MemoryError {
     )
 }
 
+/// The slip a turn action was asked with no longer stands for its requester.
+fn standing_lost() -> MemoryError {
+    MemoryError::new(
+        crate::memory::MEMORY_CODE_FORBIDDEN,
+        "the slip this turn action was asked with no longer stands for its requester",
+        &["Ask for the action again with a live credential."],
+    )
+}
+
 impl Memory<'_> {
     /// `vault.conversations.turn.continue`: queues generation that resumes
     /// an incomplete reply on its own MESSAGE, from exactly its saved text.
@@ -174,8 +229,10 @@ impl Memory<'_> {
     }
 
     /// The context a queued `attempt` runs with, resolved and checked again
-    /// as its requester: this handle must be bound to that actor. `history`
-    /// caps the earlier lines it carries.
+    /// as its requester: this handle must be bound to that actor. The
+    /// attempt's standing is judged first, so a revoked slip reads nothing;
+    /// the reads then run where the requester sat, under the slip's current
+    /// proof. `history` caps the earlier lines it carries.
     pub fn turn_action_context(
         &self,
         attempt: &TurnActionAttempt,
@@ -186,7 +243,21 @@ impl Memory<'_> {
                 "a turn action runs as the actor that asked for it",
             ));
         }
-        let resolved = self.resolve_turn_action(attempt.action, attempt.assistant_turn, history)?;
+        let proof = {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            attempt.requester_proof_in(self.vault(), &txn)?
+        };
+        let reader = self.clone().at(if attempt.off_device {
+            CallerLocality::OffDevice
+        } else {
+            CallerLocality::OnDevice
+        });
+        let reader = match &proof {
+            Some(proof) => reader.with_read_proof(proof),
+            None => reader,
+        };
+        let resolved =
+            reader.resolve_turn_action(attempt.action, attempt.assistant_turn, history)?;
         if resolved.conversation != attempt.conversation
             || resolved.user_turn != attempt.user_turn
             || resolved.message != attempt.message
@@ -203,6 +274,16 @@ impl Memory<'_> {
         action: TurnAction,
         request: &TurnActionRequest,
     ) -> MemoryResult<TurnActionReceipt> {
+        // A transport's caller acts on the slip its request was admitted
+        // on; only the in-process host acts with none.
+        let native = self.native_invocation();
+        if !native && self.invocation_slip().is_none() {
+            return Err(MemoryError::new(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "a turn action over a transport needs the slip its request was admitted on",
+                &["Present a capability slip with its holder proof."],
+            ));
+        }
         let assistant_turn = resolve_entity_ref(self.vault(), &request.turn_id)?;
         // The history is read again when the action runs; none is kept here.
         let resolved = self.resolve_turn_action(action, assistant_turn, 0)?;
@@ -214,7 +295,15 @@ impl Memory<'_> {
             message: resolved.message,
             actor: self.actor(),
             actor_class: self.actor_class() as u8,
+            invocation_slip: self.invocation_slip().cloned(),
+            native,
+            off_device: self.locality() == CallerLocality::OffDevice,
         };
+        // Queued only while the slip it carries stands for this actor.
+        {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            payload.requester_proof_in(self.vault(), &txn)?;
+        }
         // One live action per MESSAGE: a second while one is queued or
         // running returns that one.
         let outcome = AttemptQueue::new(self.vault()).enqueue(EnqueueAttempt {

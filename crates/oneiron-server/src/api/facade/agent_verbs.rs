@@ -96,6 +96,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.settings.learning", post(facade_route))
         .route("/vault.settings.learning.put", post(facade_route))
         .route("/vault.settings.learning.clear", post(facade_route))
+        .route("/vault.settings.wake_policy.set", post(facade_route))
+        .route("/vault.settings.inference_defaults", post(facade_route))
+        .route(
+            "/vault.settings.inference_defaults.replace",
+            post(facade_route),
+        )
         .route("/vault.lenses.propose", post(facade_route))
         .route("/vault.lenses.activate", post(facade_route))
         .route("/vault.lenses.deactivate", post(facade_route))

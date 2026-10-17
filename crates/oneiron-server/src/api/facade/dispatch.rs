@@ -2087,6 +2087,84 @@ async fn vault_settings_learning_clear(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_settings_wake_policy_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.wake_policy.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.wake_policy.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.settings.wake_policy.set", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_wake_policy_set(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_settings_inference_defaults(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.inference_defaults")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.inference_defaults", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.settings.inference_defaults", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_inference_defaults(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_settings_inference_defaults_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.inference_defaults.replace")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.inference_defaults.replace", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.settings.inference_defaults.replace",
+        value,
+    )
+    .await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_inference_defaults_replace(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_lenses_propose(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4603,6 +4681,15 @@ pub(crate) async fn call_verb(
         "vault.settings.learning" => vault_settings_learning(server, call, input).await,
         "vault.settings.learning.put" => vault_settings_learning_put(server, call, input).await,
         "vault.settings.learning.clear" => vault_settings_learning_clear(server, call, input).await,
+        "vault.settings.wake_policy.set" => {
+            vault_settings_wake_policy_set(server, call, input).await
+        }
+        "vault.settings.inference_defaults" => {
+            vault_settings_inference_defaults(server, call, input).await
+        }
+        "vault.settings.inference_defaults.replace" => {
+            vault_settings_inference_defaults_replace(server, call, input).await
+        }
         "vault.lenses.propose" => vault_lenses_propose(server, call, input).await,
         "vault.lenses.activate" => vault_lenses_activate(server, call, input).await,
         "vault.lenses.deactivate" => vault_lenses_deactivate(server, call, input).await,
