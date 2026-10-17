@@ -38,9 +38,10 @@ const DAY_SECS: f64 = 86_400.0;
 /// The longest chain of judge conversions a score follows.
 const MAX_CONVERSION_HOPS: usize = 8;
 
-/// The fitted value of a vault-scope setting cell, cached beside its claim so
-/// the hot readers of [`learning_setting::setting_value`] pay one row read.
-/// Key: setting key.
+/// The fitted value of a setting cell, cached beside its claim so the hot
+/// readers of [`learning_setting::setting_value`] pay one row read per scope.
+/// Key: `learning_setting::setting_fit_key` (the setting key alone for the
+/// vault fit).
 pub(crate) const SETTING_FIT: SideTable<String, SettingFit, Named> =
     SideTable::new(&side_table::LEARNING_SETTING_FIT);
 
@@ -471,11 +472,12 @@ fn retract_heads_in_txn(
     Ok(())
 }
 
-/// Keeps the vault-scope fit cache in step with the claim: only a root-typed
-/// setting cell on its knob's global subject
+/// Keeps the fit cache in step with the claim, one row per scope: only a
+/// root-typed setting cell on its knob's global subject
 /// (`learning_setting::global_setting_subject`), with no executor, axis or
-/// consent scope, is the vault's fit. A project's or a skill's root-typed
-/// cell never writes or clears it (OF-542).
+/// consent scope, is the vault's fit. A project's or a skill's cell, or a
+/// non-root type's, caches under its own subject and type, so it never writes
+/// or clears the vault's (OF-542).
 fn cache_setting_fit_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -487,19 +489,17 @@ fn cache_setting_fit_in_txn(
         || cell.executor.is_some()
         || cell.axis.is_some()
         || cell.consent_scope.is_some()
-        || !cell
-            .type_ref
-            .as_ref()
-            .is_some_and(super::cell::TypeRef::is_root)
     {
         return Ok(());
     }
-    let Some(key) = cell.setting_key.clone() else {
+    let (Some(setting_key), Some(type_ref)) = (cell.setting_key.as_deref(), &cell.type_ref) else {
         return Ok(());
     };
-    if crate::learning_setting::global_setting_subject(&key).ok() != Some(cell.subject) {
-        return Ok(());
-    }
+    let subject = (crate::learning_setting::global_setting_subject(setting_key).ok()
+        != Some(cell.subject))
+    .then_some(cell.subject);
+    let type_node = (!type_ref.is_root()).then_some(type_ref.node_id.as_str());
+    let key = crate::learning_setting::setting_fit_key(setting_key, subject, type_node);
     match estimate {
         Some(estimate) => SETTING_FIT.put(
             &vault.store,
