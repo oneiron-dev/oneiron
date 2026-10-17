@@ -6,7 +6,9 @@
 //! it loaded; the person-threshold tune reads each case where a person changed
 //! the ladder's answer and files a proposed row; the training offer prices
 //! each busy seat's options and asks whether one is worth raising, and the
-//! offer check reads the meter against an approved offer's promise.
+//! offer check reads the meter against an approved offer's promise. The
+//! seal's checks put each pending confession recheck and random audit to a
+//! judge that did not produce the result ([`seal_checks`]).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,8 +19,8 @@ use oneiron::actor_claims::{
 };
 use oneiron::dreamer_runner::maintenance::coach::{
     COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
-    COACH_TRAINING_OFFER_FACET, PersonThresholdPolicy,
+    COACH_SEAL_CHECKS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -31,6 +33,8 @@ use super::coach_heal::{LEASE_OWNER, settle};
 use super::coach_health::coach_role;
 use super::code_fix::{HostModels, clip, message};
 use crate::server::SyncServer;
+
+mod seal_checks;
 
 /// The jobs are nightly, so a minute's wait costs nothing.
 const TICK: Duration = Duration::from_secs(60);
@@ -139,6 +143,7 @@ fn run_one(
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
+        COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),
         COACH_TRADEOFF_ROUTE_FACET => {
             let report = vault.run_coach_tradeoff_route(admitted, now)?;
             tracing::debug!(?report, "the Coach's tradeoff routes");
