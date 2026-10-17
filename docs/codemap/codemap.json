@@ -4790,7 +4790,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/mask.rs",
@@ -11339,7 +11339,7 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 11,
       "struct": 2
      }
@@ -11351,7 +11351,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -21218,7 +21218,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -38406,6 +38406,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/known_values.rs",
+     "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 11
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -38426,8 +38437,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 16,
-      "re-export": 7
+      "crate-vis": 17,
+      "re-export": 8
      }
     },
     {
@@ -38473,8 +38484,8 @@
      "path": "src/secret_custody/reveal.rs",
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
-      "const": 6,
-      "crate-vis": 15,
+      "const": 7,
+      "crate-vis": 16,
       "enum": 5,
       "fn": 3,
       "struct": 6
@@ -42204,7 +42215,7 @@
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -52448,7 +52459,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52819,9 +52830,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 157,
+   "over_bar": 158,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3197,
+   "source_files": 3198,
    "test_files": 903
   },
   "oneiron-android": {
