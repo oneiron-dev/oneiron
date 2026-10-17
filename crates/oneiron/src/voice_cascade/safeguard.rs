@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::llm::{BudgetLease, LlmBackend};
+use crate::llm::{BudgetGuard, BudgetLease, LlmBackend};
 use crate::policy_model::{PolicyClassifyRequest, PolicyModelConfig, PolicyModelEnforcement};
 
 use super::{GenerationEpoch, Safeguard, TtsCommand, TtsSeamClient};
@@ -64,6 +64,25 @@ impl SafeguardRequest {
         let enforcement = self
             .vault
             .enforce_policy_model_with_backend(self.request, config, backend, lease)
+            .await?;
+        Ok(SentenceEnforcement {
+            generation: self.generation,
+            sentence: self.sentence,
+            enforcement,
+        })
+    }
+
+    /// [`Self::enforce_with_backend`] on a meter: the owner's safeguard model
+    /// is admitted on `budget` only when the pass calls it.
+    pub async fn enforce_with_budget(
+        self,
+        config: &PolicyModelConfig,
+        backend: &dyn LlmBackend,
+        budget: &BudgetGuard,
+    ) -> Result<SentenceEnforcement> {
+        let enforcement = self
+            .vault
+            .enforce_policy_model_with_budget(self.request, config, backend, budget)
             .await?;
         Ok(SentenceEnforcement {
             generation: self.generation,
