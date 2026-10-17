@@ -118,13 +118,14 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// A spawn's admission at `now_ms` with nothing written: the children's
-    /// cutoff and what their scope may still spend, or why a spawn would be
-    /// refused (`spawn_unbound`, `past_cutoff`, `unmetered`).
+    /// cutoff and what their scope may still spend (`None` when they spend
+    /// on the host's meter, which is never looked up here), or why a spawn
+    /// would be refused (`spawn_unbound`, `past_cutoff`, `unmetered`).
     pub(crate) fn preflight_reader_spawn(
         &self,
         parent_run: EntityId,
         now_ms: u64,
-    ) -> Result<std::result::Result<(u64, u64), &'static str>> {
+    ) -> Result<std::result::Result<(u64, Option<u64>), &'static str>> {
         let Some(seat) = &self.reader_spawn else {
             return Ok(Err("spawn_unbound"));
         };
@@ -136,8 +137,11 @@ impl HostSelfDispatcher<'_> {
         if now_ms >= cutoff {
             return Ok(Err("past_cutoff"));
         }
-        Ok(match self.storage.spend_book().open_scope(&spend)? {
-            Some((_, available)) => Ok((cutoff, available)),
+        let Some(scope) = spend.scope() else {
+            return Ok(Ok((cutoff, None)));
+        };
+        Ok(match self.storage.spend_book().open_scope(scope)? {
+            Some((_, available)) => Ok((cutoff, Some(available))),
             None => Err("unmetered"),
         })
     }

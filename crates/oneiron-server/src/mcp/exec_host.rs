@@ -203,9 +203,17 @@ pub trait McpCodeModeProvider: Send + Sync {
         self.runtime()
     }
     /// The backend one reader child's model calls go through, each spent on
-    /// `meter`, its own child scope's guard. `None`: the provider has no
-    /// metered backend to give, and the child does not run.
+    /// `meter`: its own child scope's guard, or [`Self::host_meter`]. `None`:
+    /// the provider has no metered backend to give, and the child does not
+    /// run.
     fn reader_backend(&self, _meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
+    /// The meter the host runs a run's own model calls on when the run
+    /// spends under no scope (served code mode's shared guard): the reader
+    /// children of such a run spend on it too. `None`: the provider has none
+    /// to lend, and such a child does not run.
+    fn host_meter(&self) -> Option<BudgetGuard> {
         None
     }
     /// The input window, in tokens, of the model reader children and
@@ -395,17 +403,16 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 return Err(changed());
             }
             let guard = ActiveRun::acquire(active, request.run_id)?;
-            // The run's children spend under its launch's root scope, on a
-            // clock one window from its first spawn.
-            let reader_seat = reader_seats.as_ref().and_then(|lent| {
-                crate::server::run_launch_scope(request.run_id).map(|spend| {
-                    lent.seat(
-                        request.run_id,
-                        spend,
-                        request.actor.locality(),
-                        provider.reader_window_tokens(),
-                    )
-                })
+            // The run spends under no scope, so its children spend on the
+            // host's meter, as its own calls do, on a clock one window from
+            // its first spawn.
+            let reader_seat = reader_seats.as_ref().map(|lent| {
+                lent.seat(
+                    request.run_id,
+                    None,
+                    request.actor.locality(),
+                    provider.reader_window_tokens(),
+                )
             });
             // Past the bound the run waits its credential's turn. The permit
             // moves into the worker below, so a caller who hangs up frees

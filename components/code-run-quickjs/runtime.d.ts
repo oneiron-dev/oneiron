@@ -264,10 +264,11 @@ declare function chunks(r: ResultRef, by: ChunkBy): ResultChunks;
 declare function can(input: { read: ResultRef; child?: {} }): Promise<CanReadReply>;
 /** `can({read})`'s answer: the result's ref, size, kind and taint, or why
  * not, with the detail a read of it would refuse with. With `child`, the
- * children's cutoff, what their scope may still spend, the window of the
- * model they run on, in tokens, and the memory one child may hold. */
+ * children's cutoff, the meter they spend on (`scope`, with what it may
+ * still spend, or `host`, the host's own meter, with no figure), the window
+ * of the model they run on, in tokens, and the memory one child may hold. */
 type CanReadReply =
-  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; spend_available_units: number; window_tokens: number; memory_bytes: number } }
+  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; meter: "scope" | "host"; spend_available_units?: number; window_tokens: number; memory_bytes: number } }
   | { can: false; reason: "unknown_handle" | "withheld_rows" | "tainted" | "outside_delegated_range" | "reader_task_settled" | "spawn_unbound" | "past_cutoff" | "unmetered" | "denied"; [detail: string]: unknown };
 /** Foreign tier only. Proposals are data; they never commit host writes. */
 declare const propose: {

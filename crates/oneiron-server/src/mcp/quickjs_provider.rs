@@ -80,6 +80,10 @@ pub struct McpQuickJsProvider {
     /// Builds each reader child's backend on its own meter; none runs no
     /// child.
     reader_meter: Option<ReaderMeter>,
+    /// The meter the host runs this provider's own model calls on, lent to
+    /// the reader children of a run that spends under no scope; none runs
+    /// no such child.
+    host_meter: Option<BudgetGuard>,
     /// The runtime reader children are made fresh from, compiled once at
     /// the first child.
     reader_template: Mutex<Option<WasmtimeComponentRuntime>>,
@@ -125,6 +129,7 @@ impl McpQuickJsProvider {
             Arc::clone(&backend),
             Arc::new(LoggedReceipts),
         ));
+        provider.host_meter = Some(meter.clone());
         provider.injected = Some((backend, meter));
         Ok(provider)
     }
@@ -151,6 +156,7 @@ impl McpQuickJsProvider {
             injected: None,
             code_check: None,
             reader_meter: None,
+            host_meter: None,
             reader_template: Mutex::new(None),
             reader_window_tokens: None,
         })
@@ -174,6 +180,14 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_reader_meter(mut self, meter: ReaderMeter) -> Self {
         self.reader_meter = Some(meter);
+        self
+    }
+
+    /// The reader children of a run that spends under no scope spend on
+    /// `meter`, the one the host runs this provider's own calls on.
+    #[must_use]
+    pub(crate) fn with_host_meter(mut self, meter: BudgetGuard) -> Self {
+        self.host_meter = Some(meter);
         self
     }
 
@@ -284,6 +298,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn reader_backend(&self, meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter.as_ref().map(|build| build(meter))
+    }
+    fn host_meter(&self) -> Option<BudgetGuard> {
+        self.host_meter.clone()
     }
     fn reader_window_tokens(&self) -> Option<u64> {
         self.reader_window_tokens

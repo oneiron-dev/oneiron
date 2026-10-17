@@ -382,18 +382,14 @@ fn run_bound(
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
-    // it names the scope it would spend under, which is not open, so its
-    // spawns answer `reader_spawn_unmetered`. Its door withholds nothing, so
-    // its children's reads withhold nothing, as its own do.
+    // so do its children's. Its door withholds nothing, so its children's
+    // reads withhold nothing, as its own do.
     let metered = AgentDispatcher::new(vault)
         .spend_scope_for_attempt(status.attempt.id)
         .map_err(text)?;
-    let spend = metered
-        .clone()
-        .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
     let seat = seats.seat(
         run_id,
-        spend,
+        metered.clone(),
         CallerLocality::OnDevice,
         provider.reader_window_tokens(),
     );

@@ -57,14 +57,51 @@ impl RunDeadline {
     }
 }
 
-/// What the host lends a run that may spawn readers: the scope its children
-/// spend under, its clock, what each child holds at its claim, the window of
+/// What a run's reader children spend on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReaderSpend {
+    /// Under this scope: each child holds a child scope of it from its
+    /// claim, spends on that scope's guard and records what it used there
+    /// once its run ends. A scope that is not open refuses every spawn as
+    /// unmetered.
+    Scope(SpendScopeId),
+    /// On the meter the host runs the parent's own model calls on: served
+    /// code mode's shared guard (`models.code_mode.budget_units`). No ledger
+    /// scope and no hold at the claim; the guard settles each call itself,
+    /// as it does the parent's, and its exhaustion suspends them all alike.
+    Host,
+}
+
+impl ReaderSpend {
+    /// The one choice of what a run's children spend on, from the scope the
+    /// run's own model calls spend under: that scope when it has one, else
+    /// the host's meter its own calls run on (`execute_code` runs and
+    /// unmetered resident attempts). There is no per-run cap on the host's
+    /// meter until a run carries a shown maximum.
+    #[must_use]
+    pub fn for_run_scope(scope: Option<SpendScopeId>) -> Self {
+        scope.map_or(Self::Host, Self::Scope)
+    }
+
+    /// The scope the children spend under, when they spend under one.
+    #[must_use]
+    pub const fn scope(&self) -> Option<&SpendScopeId> {
+        match self {
+            Self::Scope(scope) => Some(scope),
+            Self::Host => None,
+        }
+    }
+}
+
+/// What the host lends a run that may spawn readers: what its children
+/// spend on, its clock, what each child holds at its claim, the window of
 /// the model its children and summaries run on, in tokens, and the memory one
 /// child may hold, in bytes. The run's actor and route are its dispatcher's
 /// own; the parent run is the bridge call's, never guest text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnHostSeat {
-    pub spend: SpendScopeId,
+    pub spend: ReaderSpend,
     pub deadline: RunDeadline,
     pub hold_units: u64,
     pub window_tokens: u64,
@@ -396,12 +433,12 @@ pub struct TaskWaitSet {
     pub settled: Option<TaskWaitSetResult>,
 }
 
-/// A parent run's reader row: its clock, fixed at its first spawn, the scope
-/// its children spend under, what each holds at its claim, and its counts.
+/// A parent run's reader row: its clock, fixed at its first spawn, what its
+/// children spend on, what each holds at its claim, and its counts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReaderParent {
     pub deadline: RunDeadline,
-    pub spend: SpendScopeId,
+    pub spend: ReaderSpend,
     pub hold_units: u64,
     pub next_ordinal: u64,
     pub queued: u64,
@@ -447,15 +484,15 @@ pub struct ReaderRoute {
 }
 
 /// What a child is bound to: its parent run, actor and route, the source it
-/// reads, the scope it spends under and the clock it stops on. Never the
-/// parent's door, credential or body bytes.
+/// reads, what it spends on and the clock it stops on. Never the parent's
+/// door, credential or body bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnParentBinding {
     pub parent_run: EntityId,
     pub actor: ReaderActor,
     pub source: DelegatedSource,
     pub route: ReaderRoute,
-    pub spend: SpendScopeId,
+    pub spend: ReaderSpend,
     pub deadline: RunDeadline,
     pub child_cutoff_unix_ms: u64,
 }
