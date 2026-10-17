@@ -35,7 +35,7 @@ pub use owner_args::{
     EmbeddingSpaceProbePutArgs, EmbeddingSpaceProbesCommand, EmbeddingSpacesCommand,
     SecretAnchorSignArgs,
 };
-pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevokeArgs};
+pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
@@ -199,6 +199,22 @@ pub enum SeatCommand {
     /// Print the sign-in plan for one seat: placement verdict, the login you
     /// run yourself, and what the seat does when its plan window is dry.
     LoginPlan(Box<SeatLoginPlanArgs>),
+    /// List every named Dreamer runner a seat policy may name — the CLI
+    /// runners and the official seat adapters — with where a login seat on
+    /// each may run (no vendor approvals assumed).
+    Runners,
+    /// Validate an owner runner-seat policy (JSON settings) and print the
+    /// effective order: which runner takes Dreamer work, and where the work
+    /// goes when a seat's quota is spent.
+    RunnerPolicy(Box<SeatRunnerPolicyArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct SeatRunnerPolicyArgs {
+    /// Runner-seat policy settings as JSON (`seats`, `on_spent`, optional
+    /// `official` seat registrations). `-` reads stdin.
+    #[arg(long)]
+    pub settings: PathBuf,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -675,6 +691,13 @@ pub struct McpArgs {
     #[arg(long, value_enum)]
     pub surface: Option<McpSurface>,
 
+    /// The one connection the bridge holds. `socket` opens the server's
+    /// app-tier socket and sends every message over it, falling back to one
+    /// pooled HTTP client when the server offers no MCP carrier; `http` holds
+    /// that HTTP client from the start.
+    #[arg(long, value_enum, default_value_t = McpTransport::Socket)]
+    pub transport: McpTransport,
+
     /// File holding the paired credential, as `token agent --out` writes it.
     /// Only its owner may be able to read it. Without this flag the slip and
     /// its seed come from the two environment variables below.
@@ -704,6 +727,16 @@ pub struct McpArgs {
     /// request fails as `server_unreachable`.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
     pub idle_timeout_secs: u64,
+}
+
+/// The connection `oneiron mcp` holds to its server.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum McpTransport {
+    /// The app-tier socket, or one pooled HTTP client when the server offers
+    /// no MCP carrier there.
+    Socket,
+    /// One pooled HTTP client.
+    Http,
 }
 
 /// The two MCP endpoints a server registers.
@@ -935,8 +968,9 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::RecoverClock(args) => commands::recover_clock(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
-        // Revoke reads no value, so it never reaches the stdin read.
+        // Revoke and reveal read no value, so they never reach the stdin read.
         Command::Secrets(SecretsCommand::Revoke(args)) => commands::revoke_secret(*args),
+        Command::Secrets(SecretsCommand::Reveal(args)) => commands::reveal_secret(*args),
         Command::Secrets(command) => commands::secrets(command),
         Command::VaultKey(command) => commands::vault_key(command),
         Command::RecoveryKit(command) => commands::recovery_kit(command),
@@ -990,5 +1024,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Oneironer(command) => commands::oneironer(command),
         Command::Seat(SeatCommand::Routes) => commands::seat_routes(),
         Command::Seat(SeatCommand::LoginPlan(args)) => commands::seat_login_plan(*args),
+        Command::Seat(SeatCommand::Runners) => commands::seat_runners(),
+        Command::Seat(SeatCommand::RunnerPolicy(args)) => commands::seat_runner_policy(*args),
     }
 }

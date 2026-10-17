@@ -345,6 +345,46 @@ fn refused() -> TransportError {
     TransportError::InvalidPayload("opened-item RPC unavailable")
 }
 
+/// Sync-state prefix of a window this machine holds in full whose retain the
+/// home refused ([`SyncClient::retain_window`]). The residence upkeep asks
+/// again, so a grant that changed since lets the window sync without waiting
+/// for a first edit to promote it.
+const RETAIN_REFUSED_PREFIX: &str = "rr:w:";
+
+/// Asks the home again to retain each window it refused, on an opened
+/// machine; returns how many it retains now. Off the live sync loop, on the
+/// window manager and a client config alone, like [`relay_sealed_windows`].
+pub(crate) async fn retry_refused_retains(
+    manager: &std::sync::Arc<crate::sync::manager::WindowManager>,
+    config: &SyncClientConfig,
+) -> Result<usize, TransportError> {
+    if config.residence_mode != SyncResidenceMode::Opened || config.federation_peer.is_some() {
+        return Ok(0);
+    }
+    let refused = manager
+        .vault()
+        .sync_state_keys_with_prefix(RETAIN_REFUSED_PREFIX)
+        .map_err(|e| TransportError::Storage(e.to_string()))?;
+    if refused.is_empty() {
+        return Ok(0);
+    }
+    let (mut client, _events) = SyncClient::new(std::sync::Arc::clone(manager), config.clone())
+        .map_err(|e| TransportError::Storage(e.to_string()))?;
+    let mut retained = 0;
+    for marker in refused {
+        let Some(window) = marker
+            .strip_prefix(RETAIN_REFUSED_PREFIX)
+            .and_then(WindowKey::try_new)
+        else {
+            continue;
+        };
+        if client.retain_window(&window).await? {
+            retained += 1;
+        }
+    }
+    Ok(retained)
+}
+
 impl SyncClient {
     /// Resolve and import one grant-selected ledger item on first touch.
     pub async fn fetch_item(
@@ -445,14 +485,11 @@ impl SyncClient {
                     .get(txn, &format!("rp:w:{window}"))?
                     .is_some()
                 {
-                    if crate::ports::EntityStoreRead::port_entity_with_raw(
+                    if !crate::ports::EntityStoreRead::port_entity_present(
                         &self.vault.store,
                         txn,
                         &item,
-                        |_| Ok(()),
-                    )?
-                    .is_none()
-                    {
+                    )? {
                         return Err(crate::Error::InvalidKey);
                     }
                     return Ok(());
@@ -583,7 +620,8 @@ impl SyncClient {
     /// first, exactly as for a first-edit promotion, and only then is the
     /// window marked promoted. Its snapshot merges into the held copy: the
     /// two are the same canonical CRDT, never an independently authored one.
-    /// A refused window stays on disk but no longer syncs.
+    /// A refused window stays on disk but no longer syncs, and is marked so the
+    /// residence upkeep asks again ([`retry_refused_retains`]).
     pub async fn retain_window(&mut self, window: &WindowKey) -> Result<bool, TransportError> {
         if self.config.residence_mode != SyncResidenceMode::Opened {
             return Err(refused());
@@ -631,7 +669,10 @@ impl SyncClient {
             .await
         {
             Ok(reply) => reply,
-            Err(TransportError::InvalidPayload(_)) => return Ok(false),
+            Err(TransportError::InvalidPayload(_)) => {
+                self.mark_retain_refused(window)?;
+                return Ok(false);
+            }
             Err(error) => return Err(error),
         };
         let reply: PromotionReply = serde_json::from_value(reply).map_err(|_| refused())?;
@@ -644,6 +685,7 @@ impl SyncClient {
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
             || !import_promotion_snapshot_with(&self.vault, &loaded.doc, &snapshot)
         {
+            self.mark_retain_refused(window)?;
             return Ok(false);
         }
         loaded
@@ -654,11 +696,29 @@ impl SyncClient {
                 self.vault
                     .store
                     .sync_state
+                    .delete(txn, &format!("{RETAIN_REFUSED_PREFIX}{window}"))?;
+                self.vault
+                    .store
+                    .sync_state
                     .put(txn, &format!("rp:w:{window}"), &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         self.manager.notify_promotion(window);
         Ok(true)
+    }
+
+    /// Marks `window` as one whose retain the home refused, for
+    /// [`retry_refused_retains`].
+    fn mark_retain_refused(&self, window: &WindowKey) -> Result<(), TransportError> {
+        self.vault
+            .with_write_txn_grouped(|txn| {
+                self.vault.store.sync_state.put(
+                    txn,
+                    &format!("{RETAIN_REFUSED_PREFIX}{window}"),
+                    &[1],
+                )
+            })
+            .map_err(|e| TransportError::Storage(e.to_string()))
     }
 
     /// Demote a promoted window back to thin (OF-534). The home's version

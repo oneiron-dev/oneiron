@@ -149,7 +149,8 @@ differs between them, an injected invocation transport
 options and the call's invocation id), and every consumer gets the same
 typed tree and the same `FACADE_CATALOG`. `K` says what a call answers: `"response"` (the original
 `Response`), `"result"` (a promise of the typed result) or `"sync"` (the typed
-result itself).
+result itself). Each kind may answer a `FacadePending` instead, for a call a
+verb hook stopped on an ask; `facadeRetry` resends it under its invocation.
 
 1. **npm-capable external agent (BYOA)** — `npm i @oneiron/client`, then
    `new HttpBaseClient(...)`: its `facade` is

@@ -401,7 +401,10 @@ impl Store {
     }
 
     /// [`Self::group_write`] for a write of either kind: a
-    /// [`Callback::Opaque`] write runs as a group of its own.
+    /// [`Callback::Opaque`] write runs as a group of its own. Once its group
+    /// settled, the legal-hold refusals queued so far reach their logs before
+    /// it answers ([`Self::flush_legal_hold_refusals_settled`]); a write nested
+    /// in a held writer leaves them to its outer write.
     pub(crate) fn group_write_as<T, E>(
         &self,
         callback: Callback,
@@ -430,12 +433,16 @@ impl Store {
         };
         drop(announced);
         let Some(ticket) = ticket else {
-            return self.lead(callback, write);
+            let answer = self.lead(callback, write);
+            self.flush_legal_hold_refusals_settled();
+            return answer;
         };
-        match ticket.wait_for_turn() {
+        let answer = match ticket.wait_for_turn() {
             Assigned::Lead => self.lead(callback, write),
             Assigned::Run(shared) => self.join(&ticket, shared, write),
-        }
+        };
+        self.flush_legal_hold_refusals_settled();
+        answer
     }
 
     /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
