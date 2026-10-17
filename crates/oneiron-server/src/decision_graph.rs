@@ -13,7 +13,8 @@ use oneiron::llm::decision::questions::{
 };
 use oneiron::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
-    DecisionProvider, DecisionQuestion, DecisionRung, Reversibility, TypedDecision,
+    DecisionProvider, DecisionQuestion, DecisionRung, LocatedDecision, Reversibility,
+    TypedDecision,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
@@ -222,6 +223,46 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
     ladder.run_images(
+        call.question,
+        call.principal,
+        call.evidence,
+        images,
+        call.state,
+        dial,
+        call.policy,
+        call.reversibility,
+        call.deadline,
+    )
+}
+
+/// A Box or Point call through the host's ladder, seated as [`ladder_decide`]
+/// seats it: the host's presence question first, then the coordinates
+/// ([`oneiron::llm::decision::DecisionLadder::run_located`]).
+pub(crate) fn ladder_located(
+    server: &SyncServer,
+    call: LadderCall<'_>,
+) -> Result<LocatedDecision> {
+    let host = server.decision_host();
+    let mut dial = call.dial;
+    let sees = !call.images.is_empty()
+        && LocalVisionModel::bound(&server.ai)
+        && dial.first <= DecisionRung::Local
+        && DecisionRung::Local <= dial.ceiling;
+    let local = if sees {
+        dial.first = DecisionRung::Local;
+        Some(
+            vision_rung(server, call.principal, call.class, call.images, call.label)
+                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let images = if sees { call.images } else { &[] };
+    let mut ladder = host.ladder().ladder();
+    if let Some(rung) = &local {
+        ladder.local = Some(rung as &dyn DecisionProvider);
+    }
+    ladder.run_located(
         call.question,
         call.principal,
         call.evidence,
