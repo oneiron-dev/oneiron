@@ -3,3 +3,5 @@
 exllamav3==1.6.0
 jinja2
 llguidance
+# zstd request bodies on Python before 3.14 (body_codec.py)
+zstandard
