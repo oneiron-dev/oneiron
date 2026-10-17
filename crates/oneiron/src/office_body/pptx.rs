@@ -11,9 +11,12 @@
 //! valid deck. Machine work goes through a `DeckFork`, reviewed by the merge
 //! preflight and landed by someone other than its proposer. Until the deck
 //! export gate opens for its profile, blob versions stay authoritative: an
-//! export is a proposal artifact, not a version. Once it opens,
-//! [`Vault::land_pptx_export`] lands the bytes as the next blob version and
-//! rebinds the deck to them, and later exports project over them.
+//! export is a proposal artifact, not a version. The gate opens on the deck
+//! oracle's receipt for the profile ([`Vault::record_pptx_oracle_receipt`]),
+//! all eight steps passed on a clean opening against the current projector.
+//! Once it opens, [`Vault::land_pptx_export`] lands the bytes as the next blob
+//! version, records the frontier it projects, and rebinds the deck to them,
+//! and later exports project over them.
 //!
 //! Every creation names its node identity before it is logged, so a fork's
 //! operations replay onto the head as the same nodes.
@@ -23,8 +26,9 @@ mod doc;
 pub(super) use doc::{birth, validate};
 
 use super::{
-    COMMITS, DOCS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyFork, OfficeBodyHead,
-    OfficeBodyKind, bounded_ops, check_made_by, invalid, writer,
+    COMMITS, DOCS, EXPORTS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyExportRecord,
+    OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, bounded_ops, check_made_by, invalid, source,
+    version_key, writer,
 };
 use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
@@ -32,22 +36,46 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::provenance::text_commit::TextCommitReceipt;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::typed_body::{TypedBodyHead, edit_typed_body_in_txn};
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
+use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate, Landing,
-    LandingReceipt, LiveDeck, LiveError, NodeId, PreflightReport, StampedOp, attach_evidence, land,
-    preflight, project,
+    LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt, PreflightReport, StampedOp,
+    attach_evidence, land, preflight, project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
+use serde::{Deserialize, Serialize};
+
+/// The deck oracle's latest receipt per export profile, by profile name.
+const ORACLE: SideTable<String, OracleRecord, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_ORACLE);
+
+/// The longest export profile name a receipt may carry.
+const MAX_PROFILE_LEN: usize = 128;
+
+/// One profile's oracle receipt as recorded: the eight-step check's outcome
+/// and the projector it checked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OracleRecord {
+    receipt: OracleReceipt,
+    /// The projector the oracle checked (`PROJECTOR_VERSION` when it was
+    /// recorded); a receipt for another projector opens nothing.
+    projector: String,
+    recorded_by: EntityId,
+    recorded_at: u64,
+}
 
 /// A typed read of the deck body at one frontier.
 #[derive(Debug, Clone)]
 pub struct PptxBody {
     pub deck: LiveDeck,
+    /// Every stamped operation the body holds, in log order.
+    pub log: Vec<StampedOp>,
     /// Who made each visible thing; imported content has no maker.
     pub attribution: AttributionIndex,
     pub frontier: Vec<u8>,
@@ -94,6 +122,7 @@ impl Vault {
             attribution: AttributionIndex::build(&body.deck, &body.log),
             frontier: at.map_or(head.frontier, <[u8]>::to_vec),
             deck: body.deck,
+            log: body.log,
         })
     }
 
@@ -312,6 +341,33 @@ impl Vault {
         })
     }
 
+    /// Record the deck oracle's receipt for its profile, checked against the
+    /// current projector. It replaces the profile's earlier receipt, so a
+    /// later failed run closes the gate a pass opened.
+    pub fn record_pptx_oracle_receipt(
+        &self,
+        receipt: &OracleReceipt,
+        actor: WriteActor,
+    ) -> Result<()> {
+        if receipt.profile.is_empty() || receipt.profile.len() > MAX_PROFILE_LEN {
+            return Err(invalid("an oracle receipt names its export profile"));
+        }
+        let record = OracleRecord {
+            receipt: receipt.clone(),
+            projector: PROJECTOR_VERSION.to_owned(),
+            recorded_by: actor.entity_ref(),
+            recorded_at: self.now_recorded_at(),
+        };
+        self.with_write_txn_grouped(|wtxn| ORACLE.put(&self.store, wtxn, &receipt.profile, &record))
+    }
+
+    /// The deck export gate for `profile`: its recorded oracle receipt, when
+    /// that receipt checked the current projector.
+    pub fn pptx_export_gate(&self, profile: &str) -> Result<Gate> {
+        let txn = self.store.env.read_txn()?;
+        export_gate(&self.store, &txn, profile)
+    }
+
     /// Project the deck at its head over its retained package (the imported
     /// source, or the version the last landed export made). Until the
     /// profile's export gate opens the result is a proposal artifact: nothing
@@ -320,11 +376,12 @@ impl Vault {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let (head, body) = {
-            let txn = self.store.env.read_txn()?;
-            self.deck_head(&txn, artifact)?
-        };
         let profile = ExportProfile::default();
+        let (head, body, gate) = {
+            let txn = self.store.env.read_txn()?;
+            let (head, body) = self.deck_head(&txn, artifact)?;
+            (head, body, export_gate(&self.store, &txn, &profile.name)?)
+        };
         let package = Package::open(
             &self.deck_source(artifact, &source, body.retained)?,
             self.docedit_package_limits()?,
@@ -333,16 +390,18 @@ impl Vault {
         let outcome = project(&body.deck, &package, &artifact.to_hex(), &profile).map_err(live)?;
         Ok(PptxExport {
             frontier: head.frontier,
-            authoritative: Gate::closed(&profile.name).is_open(),
+            authoritative: gate.is_open(),
             outcome,
         })
     }
 
     /// Land an authoritative export: its bytes become the artifact's next blob
-    /// version, and the deck rebinds to them (the same node identities, the
-    /// exported native ids and fingerprints, the joined allocation history) in
-    /// the lander's commit; the next export projects over them. A proposal
-    /// export, or a head that moved since the export, refuses.
+    /// version, recorded with the frontier it projects, and the deck rebinds to
+    /// them (the same node identities, the exported native ids and
+    /// fingerprints, the joined allocation history) in the lander's commit; the
+    /// next export projects over them. A proposal export, an export whose
+    /// profile's gate is closed now or whose projector is not the current one,
+    /// or a head that moved since the export, refuses.
     pub fn land_pptx_export(
         &self,
         artifact: &EntityId,
@@ -358,6 +417,14 @@ impl Vault {
         }
         let at = self.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
+            let key = &export.outcome.key;
+            if key.projector != PROJECTOR_VERSION
+                || !export_gate(&self.store, wtxn, &key.profile)?.is_open()
+            {
+                return Err(invalid(
+                    "the deck export gate is closed for its profile; the export is a proposal",
+                ));
+            }
             let (head, mut body) = self.deck_head(wtxn, artifact)?;
             if head.frontier != export.frontier {
                 return Err(invalid("the deck moved since the export; export again"));
@@ -381,6 +448,23 @@ impl Vault {
                 doc::sync_to(doc, &body.deck)?;
                 doc::push_landed(doc, &retained)
             })?;
+            let record = OfficeBodyExportRecord {
+                artifact: *artifact,
+                version: version.version,
+                frontier: export.frontier.clone(),
+                source_version: source(&self.store, wtxn, artifact)?.source_version,
+                actor: actor.entity_ref(),
+                author: actor.entity_ref().to_hex(),
+                at,
+                changes: export.outcome.changed_parts.len() as u64,
+                recalc: None,
+            };
+            EXPORTS.put(
+                &self.store,
+                wtxn,
+                &version_key(artifact, version.version),
+                &record,
+            )?;
             Ok(version)
         })
     }
@@ -435,16 +519,6 @@ impl Vault {
 
     /// Open a deck fork at the live head for `actor`'s machine work in the run
     /// `run_root`, so that run's approve-all scope covers it.
-    pub fn open_pptx_body_fork(
-        &self,
-        artifact: &EntityId,
-        actor: WriteActor,
-        run_root: Option<&EntityId>,
-    ) -> Result<OfficeBodyFork> {
-        self.with_write_txn_grouped(|wtxn| self.open_deck_fork(wtxn, artifact, actor, run_root))
-    }
-
-    /// Open a deck fork at the live head for `actor`'s machine work.
     pub(super) fn open_deck_fork(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -489,6 +563,17 @@ impl Vault {
         DOCS.delete(&self.store, wtxn, fork)?;
         Ok(())
     }
+}
+
+fn export_gate(store: &Store, txn: &RoTxn<'_>, profile: &str) -> Result<Gate> {
+    let receipt = ORACLE
+        .get(store, txn, &profile.to_owned())?
+        .filter(|record| record.projector == PROJECTOR_VERSION)
+        .map(|record| record.receipt);
+    Ok(Gate {
+        profile: profile.to_owned(),
+        receipt,
+    })
 }
 
 fn open_record(

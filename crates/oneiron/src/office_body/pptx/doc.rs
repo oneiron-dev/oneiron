@@ -1,8 +1,12 @@
 //! The PPTX body inside its Loro document, schema 1 (ARCH-0077, "One deck,
 //! one document").
 //!
-//! Root `office` holds the kind and schema, the import's sequential identity
-//! floor (`next_node`) and the native-id allocation history (`id_marks`).
+//! Root `office` holds the kind and schema. Root `alloc` holds the import's
+//! sequential identity floor (`next/<peer>`) and the native-id allocation
+//! history (`slide/<peer>`, `shape/<part>/<peer>`) as max registers: each
+//! group reads as the largest of its entries, a writer that raises a group
+//! adds its own commit peer's entry and deletes the entries it read, so two
+//! peers' concurrent raises join as their maximum, part by part.
 //! Root `tree`, one LoroTree, holds the slides as its roots and their groups
 //! and shapes below them; sibling position is the only order, and the model
 //! root is implicit. Each tree node's meta map holds its model identity (`id`,
@@ -10,7 +14,8 @@
 //! placeholder, and one key per geometry field, so concurrent writes of
 //! different fields merge. Root `texts` maps a text shape's identity to its
 //! body: `order`, a movable list of paragraph identities, and `paras`, each
-//! paragraph's level and one rich text whose run formatting rides as marks.
+//! paragraph's level and one rich text whose run formatting rides as marks,
+//! one mark key per run property, each written only where it changed.
 //! Root `opaque` maps each opaque part to its BLAKE3. Root `log` is the
 //! append-only stamped operation log, so concurrent calls' operations both
 //! survive, and root `landed` lists every landed export's version and hash,
@@ -27,6 +32,7 @@ use loro::{
     LoroValue, StyleConfig, StyleConfigMap, TextDelta, TreeParentId, UpdateOptions,
     ValueOrContainer,
 };
+use oneiron_docedit::edit::transaction::IdMarks;
 use oneiron_docedit::live::{
     DeckNode, DeckOp, GeometryProps, LiveDeck, LiveError, NodeId, NodeKind, Paragraph, Run,
     StampedOp, TextBody,
@@ -36,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const OFFICE: &str = "office";
+const ALLOC: &str = "alloc";
 const TREE: &str = "tree";
 const TEXTS: &str = "texts";
 const OPAQUE: &str = "opaque";
@@ -44,8 +51,11 @@ const LANDED: &str = "landed";
 const KIND: &str = "kind";
 const SCHEMA_KEY: &str = "schema";
 const SCHEMA: i64 = 1;
-const NEXT_NODE: &str = "next_node";
-const ID_MARKS: &str = "id_marks";
+/// The `alloc` groups: the identity floor, the slide-id mark, and each slide
+/// part's shape-id mark (`shape/<part>`).
+const NEXT_NODE: &str = "next";
+const SLIDE_MARK: &str = "slide";
+const SHAPE_MARK: &str = "shape/";
 const ID: &str = "id";
 const NAME: &str = "name";
 const BINDING: &str = "binding";
@@ -109,10 +119,23 @@ pub(super) fn read(doc: &LoroDoc) -> Result<Body> {
     {
         return Err(invalid("not a schema-1 PPTX body"));
     }
-    let next_node = string(&office, NEXT_NODE)
-        .and_then(|floor| floor.parse().ok())
+    let alloc = allocation(&doc.get_map(ALLOC))?;
+    let next_node = alloc
+        .get(NEXT_NODE)
+        .map(|group| group.max)
         .ok_or_else(|| invalid("deck body identity floor"))?;
-    let id_marks = json(&office, ID_MARKS)?;
+    let mark = |max: u64| u32::try_from(max).map_err(|_| invalid("deck body id mark"));
+    let mut id_marks = IdMarks {
+        slide: alloc
+            .get(SLIDE_MARK)
+            .map_or(Ok(0), |group| mark(group.max))?,
+        shapes: BTreeMap::new(),
+    };
+    for (group, held) in &alloc {
+        if let Some(part) = group.strip_prefix(SHAPE_MARK) {
+            id_marks.shapes.insert(part.to_owned(), mark(held.max)?);
+        }
+    }
 
     let mut nodes = BTreeMap::from([(NodeId(0), root())]);
     let tree = doc.get_tree(TREE);
@@ -184,9 +207,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<Body> {
 /// the landed exports are appended apart.
 pub(super) fn sync_to(doc: &LoroDoc, target: &LiveDeck) -> Result<()> {
     configure(doc);
-    let office = doc.get_map(OFFICE);
-    put(&office, NEXT_NODE, target.next_node.to_string())?;
-    put_json(&office, ID_MARKS, &target.id_marks)?;
+    sync_alloc(doc, target)?;
     sync_tree(&doc.get_tree(TREE), target)?;
     sync_texts(&doc.get_map(TEXTS), target)?;
     let opaque = doc.get_map(OPAQUE);
@@ -237,6 +258,63 @@ pub(super) fn admit(base: &LoroDoc, head: &LoroDoc, ops: &[DeckOp]) -> Result<()
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+/// One `alloc` group as read: its largest entry and every entry's key.
+struct Held {
+    max: u64,
+    keys: Vec<String>,
+}
+
+/// Each `alloc` group's maximum, by group (`next`, `slide`, `shape/<part>`).
+fn allocation(alloc: &LoroMap) -> Result<BTreeMap<String, Held>> {
+    let mut groups: BTreeMap<String, Held> = BTreeMap::new();
+    for key in keys(alloc) {
+        let value = string(alloc, &key)
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| invalid("deck body allocation entry"))?;
+        let (group, _peer) = key
+            .rsplit_once('/')
+            .ok_or_else(|| invalid("deck body allocation entry"))?;
+        let held = groups.entry(group.to_owned()).or_insert(Held {
+            max: value,
+            keys: Vec::new(),
+        });
+        held.max = held.max.max(value);
+        held.keys.push(key);
+    }
+    Ok(groups)
+}
+
+/// Raise each `alloc` group to the target's value where the document holds
+/// less: the commit peer's own entry takes the value and the entries read
+/// are deleted, so an entry another peer adds concurrently survives and the
+/// group still reads as the maximum of both. A group never lowers.
+fn sync_alloc(doc: &LoroDoc, target: &LiveDeck) -> Result<()> {
+    let alloc = doc.get_map(ALLOC);
+    let held = allocation(&alloc)?;
+    let peer = doc.peer_id();
+    let mut wanted = vec![
+        (NEXT_NODE.to_owned(), target.next_node),
+        (SLIDE_MARK.to_owned(), u64::from(target.id_marks.slide)),
+    ];
+    for (part, mark) in &target.id_marks.shapes {
+        wanted.push((format!("{SHAPE_MARK}{part}"), u64::from(*mark)));
+    }
+    for (group, value) in wanted {
+        let read = held.get(&group);
+        if read.is_some_and(|read| read.max >= value) {
+            continue;
+        }
+        let own = format!("{group}/{peer}");
+        for key in read.map(|read| read.keys.as_slice()).unwrap_or_default() {
+            if *key != own {
+                alloc.delete(key).map_err(loro)?;
+            }
+        }
+        alloc.insert(&own, value.to_string()).map_err(loro)?;
     }
     Ok(())
 }
@@ -380,9 +458,10 @@ fn sync_texts(map: &LoroMap, target: &LiveDeck) -> Result<()> {
     Ok(())
 }
 
-/// One paragraph: its level, its text by diff, then its run marks wherever the
-/// runs the text reads as differ from the target's. A run holds at least one
-/// character.
+/// One paragraph: its level, its text by diff, then each run property's mark
+/// only over the characters whose held value differs from the target's, so
+/// two writers' formatting of different properties or characters of one
+/// paragraph both survive. A run holds at least one character.
 fn sync_paragraph(para: &LoroMap, paragraph: &Paragraph) -> Result<()> {
     let level = i64::from(paragraph.level);
     if int(para, LEVEL) != Some(level) {
@@ -399,37 +478,73 @@ fn sync_paragraph(para: &LoroMap, paragraph: &Paragraph) -> Result<()> {
         text.update(&plain, UpdateOptions::default())
             .map_err(|_| invalid("deck paragraph text update"))?;
     }
-    let held = runs_of(&text)?;
-    if held.len() == runs.len() && held.iter().zip(&runs).all(|(a, b)| a == *b) {
+    let mut wanted = Vec::new();
+    for (ordinal, run) in runs.iter().enumerate() {
+        let marks = RunMarks::of(
+            Some(i64::try_from(ordinal).map_err(|_| invalid("deck paragraph runs"))?),
+            run,
+        );
+        wanted.extend(std::iter::repeat_n(marks, run.text.chars().count()));
+    }
+    let mut held = Vec::new();
+    for (len, marks) in marked(&text)? {
+        held.extend(std::iter::repeat_n(marks, len));
+    }
+    if held == wanted {
         return Ok(());
     }
-    let mut at = 0;
-    for (ordinal, run) in runs.iter().enumerate() {
-        let range = at..at + run.text.chars().count();
-        at = range.end;
-        let ordinal = i64::try_from(ordinal).map_err(|_| invalid("deck paragraph runs"))?;
-        text.mark(range.clone(), RUN, ordinal).map_err(loro)?;
-        mark(&text, range.clone(), BOLD, run.bold.map(LoroValue::from))?;
-        mark(
-            &text,
-            range.clone(),
-            ITALIC,
-            run.italic.map(LoroValue::from),
-        )?;
-        mark(
-            &text,
-            range.clone(),
-            SIZE,
-            run.size.map(|size| i64::from(size).into()),
-        )?;
-        mark(
-            &text,
-            range,
-            LATIN,
-            run.latin.as_deref().map(LoroValue::from),
-        )?;
+    for key in [RUN, BOLD, ITALIC, SIZE, LATIN] {
+        let mut at = 0;
+        while at < wanted.len() {
+            let value = wanted[at].value(key);
+            if held.get(at).map(|held| held.value(key)) == Some(value.clone()) {
+                at += 1;
+                continue;
+            }
+            let start = at;
+            while at < wanted.len()
+                && wanted[at].value(key) == value
+                && held.get(at).map(|held| held.value(key)) != Some(value.clone())
+            {
+                at += 1;
+            }
+            mark(&text, start..at, key, value)?;
+        }
     }
     Ok(())
+}
+
+/// One character's run marks: its run ordinal and formatting.
+#[derive(Clone, PartialEq)]
+struct RunMarks {
+    ordinal: Option<i64>,
+    bold: Option<bool>,
+    italic: Option<bool>,
+    size: Option<u32>,
+    latin: Option<String>,
+}
+
+impl RunMarks {
+    fn of(ordinal: Option<i64>, run: &Run) -> Self {
+        Self {
+            ordinal,
+            bold: run.bold,
+            italic: run.italic,
+            size: run.size,
+            latin: run.latin.clone(),
+        }
+    }
+
+    /// The mark value `key` takes; `None` is no mark.
+    fn value(&self, key: &str) -> Option<LoroValue> {
+        match key {
+            RUN => self.ordinal.map(LoroValue::from),
+            BOLD => self.bold.map(LoroValue::from),
+            ITALIC => self.italic.map(LoroValue::from),
+            SIZE => self.size.map(|size| i64::from(size).into()),
+            _ => self.latin.as_deref().map(LoroValue::from),
+        }
+    }
 }
 
 fn mark(
@@ -533,45 +648,66 @@ fn text_body(entry: &LoroMap) -> Result<TextBody> {
 /// The runs a paragraph's text reads as: one per stretch of one run ordinal
 /// and one formatting.
 fn runs_of(text: &LoroText) -> Result<Vec<Run>> {
-    let mut runs: Vec<(Option<i64>, Run)> = Vec::new();
+    let mut runs: Vec<(RunMarks, Run)> = Vec::new();
+    for (insert, marks) in stretches(text)? {
+        match runs.last_mut() {
+            Some((last, held)) if *last == marks => held.text.push_str(&insert),
+            _ => runs.push((
+                marks.clone(),
+                Run {
+                    text: insert,
+                    bold: marks.bold,
+                    italic: marks.italic,
+                    size: marks.size,
+                    latin: marks.latin,
+                },
+            )),
+        }
+    }
+    Ok(runs.into_iter().map(|(_, run)| run).collect())
+}
+
+/// The text's marked stretches, each with its length in characters.
+fn marked(text: &LoroText) -> Result<Vec<(usize, RunMarks)>> {
+    Ok(stretches(text)?
+        .into_iter()
+        .map(|(insert, marks)| (insert.chars().count(), marks))
+        .collect())
+}
+
+/// The text's delta stretches with the run marks each carries.
+fn stretches(text: &LoroText) -> Result<Vec<(String, RunMarks)>> {
+    let mut out = Vec::new();
     for delta in text.to_delta() {
         let TextDelta::Insert { insert, attributes } = delta else {
             continue;
         };
         let marks = attributes.unwrap_or_default();
-        let ordinal = match marks.get(RUN) {
-            Some(LoroValue::I64(ordinal)) => Some(*ordinal),
-            _ => None,
-        };
-        let run = Run {
-            text: insert,
-            bold: flag(marks.get(BOLD))?,
-            italic: flag(marks.get(ITALIC))?,
-            size: match marks.get(SIZE) {
-                None | Some(LoroValue::Null) => None,
-                Some(LoroValue::I64(size)) => {
-                    Some(u32::try_from(*size).map_err(|_| invalid("deck run size mark"))?)
-                }
-                Some(_) => return Err(invalid("deck run size mark")),
+        out.push((
+            insert,
+            RunMarks {
+                ordinal: match marks.get(RUN) {
+                    Some(LoroValue::I64(ordinal)) => Some(*ordinal),
+                    _ => None,
+                },
+                bold: flag(marks.get(BOLD))?,
+                italic: flag(marks.get(ITALIC))?,
+                size: match marks.get(SIZE) {
+                    None | Some(LoroValue::Null) => None,
+                    Some(LoroValue::I64(size)) => {
+                        Some(u32::try_from(*size).map_err(|_| invalid("deck run size mark"))?)
+                    }
+                    Some(_) => return Err(invalid("deck run size mark")),
+                },
+                latin: match marks.get(LATIN) {
+                    None | Some(LoroValue::Null) => None,
+                    Some(LoroValue::String(font)) => Some(font.to_string()),
+                    Some(_) => return Err(invalid("deck run font mark")),
+                },
             },
-            latin: match marks.get(LATIN) {
-                None | Some(LoroValue::Null) => None,
-                Some(LoroValue::String(font)) => Some(font.to_string()),
-                Some(_) => return Err(invalid("deck run font mark")),
-            },
-        };
-        match runs.last_mut() {
-            Some((last, held))
-                if *last == ordinal
-                    && (held.bold, held.italic, held.size, &held.latin)
-                        == (run.bold, run.italic, run.size, &run.latin) =>
-            {
-                held.text.push_str(&run.text);
-            }
-            _ => runs.push((ordinal, run)),
-        }
+        ));
     }
-    Ok(runs.into_iter().map(|(_, run)| run).collect())
+    Ok(out)
 }
 
 fn flag(value: Option<&LoroValue>) -> Result<Option<bool>> {

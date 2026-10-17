@@ -85,6 +85,9 @@ side_tables! {
     /// A live office body's head: kind, imported source version and frontiers. Key: id16
     /// (artifact).
     OFFICE_BODY_HEAD: VaultMeta b"office_body:head:v1:" Named;
+    /// The deck oracle's latest eight-step receipt per export profile and the projector it
+    /// checked; the deck export gate reads it. Key: the profile name.
+    OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named;
     /// Durable receipt that a later save copied one off-record message into a turn its stretch had
     /// already promoted. Key: id16 (the message).
     OFF_RECORD_COPY_RECEIPT: VaultMeta b"offrecord_copy:v0:" Named;
