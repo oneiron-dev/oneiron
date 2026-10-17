@@ -144,15 +144,15 @@ pub(super) fn ask_value(result: &TaskAskReceipt) -> Value {
 }
 pub(super) fn decode_ask(value: &Value) -> Result<TaskAskReceipt> {
     let m = expect_map(value, "ask outcome map")?;
-    Ok(TaskAskReceipt {
-        handle: TaskAskHandle {
+    Ok(TaskAskReceipt::new(
+        TaskAskHandle {
             group_ref: entity_value(map_get(m, "group")?)?,
         },
-        task_refs: decode_array(map_get(m, "tasks")?, entity_value)?,
-        hold: hold_decode(map_get(m, "hold")?)?,
-        idempotent_replay: bool_value(map_get(m, "replay")?)?,
-        statement: None,
-    })
+        decode_array(map_get(m, "tasks")?, entity_value)?,
+        hold_decode(map_get(m, "hold")?)?,
+        bool_value(map_get(m, "replay")?)?,
+        None,
+    ))
 }
 pub(super) fn status_value(result: &TaskAskStatus) -> Result<Value> {
     let bytes = rmp_serde::to_vec_named(result)
