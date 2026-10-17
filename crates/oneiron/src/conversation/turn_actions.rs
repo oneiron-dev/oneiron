@@ -11,6 +11,10 @@
 //! before it, and the history is the transcript before that. No model call
 //! and no prompt text live here.
 //!
+//! On a conversation that adopted the DAG the transcript is the branch that
+//! leads to the turn, and Retry's TURN is a sibling of the old one at its
+//! parent, never moving HEAD; a thread's Retry stays in its thread.
+//!
 //! An action stands while its requester does. One asked through a transport
 //! carries the capability slip its request was admitted on, and runs only
 //! while that slip verifies and still binds the requester: revoking it stops
@@ -269,6 +273,85 @@ impl Memory<'_> {
         Ok(resolved.context)
     }
 
+    /// The new assistant TURN a Retry `action` answers in on a DAG
+    /// conversation, appended as the answering agent: a sibling of the old
+    /// turn at its parent, replying to the user turn, with HEAD left where it
+    /// is. A thread's Retry is a reply in that thread. `None` on a
+    /// conversation that has not adopted the DAG, where the reply's stream
+    /// mints its own TURN. The action is resolved and checked again as its
+    /// requester first, so this handle must be bound to that actor.
+    pub fn turn_action_retry_turn(
+        &self,
+        action: &TurnActionAttempt,
+    ) -> MemoryResult<Option<EntityId>> {
+        if action.action != TurnAction::Retry {
+            return Err(MemoryError::bad_request(
+                "only Retry appends a new assistant turn",
+            ));
+        }
+        let context = self.turn_action_context(action, 0)?;
+        let vault = self.vault();
+        let (parent, session, thread) = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            if !crate::conversation_dag::keeps_dag_topology(
+                &vault.store,
+                &txn,
+                &action.conversation,
+            )? {
+                return Ok(None);
+            }
+            (
+                crate::conversation_dag::retained_parent(
+                    &vault.store,
+                    &txn,
+                    &action.assistant_turn,
+                )?,
+                crate::compaction::turn_session_membership_in_txn(
+                    &vault.store,
+                    &txn,
+                    &action.assistant_turn,
+                )?,
+                crate::conversation_dag::is_thread_record(
+                    &vault.store,
+                    &txn,
+                    &action.assistant_turn,
+                )?,
+            )
+        };
+        let now = vault.now_recorded_at();
+        let writer = vault.memory(context.agent, EdgeActorClass::Agent);
+        // The TURN carries only its speaker: the reply's words are its
+        // MESSAGE's, added under it by the reply's stream.
+        let body = rmp_serde::to_vec_named(&serde_json::json!({ "speaker": "assistant" }))
+            .map_err(|_| Error::InvariantViolation("retry turn body encode failed"))?;
+        let input = crate::conversation_dag::AppendRecord {
+            conversation: action.conversation,
+            parent,
+            reply_to: Some(action.user_turn),
+            quote: None,
+            address: crate::conversation_dag::AddressMode::Broadcast,
+            recipients: Vec::new(),
+            advance: false,
+            kind: crate::registry::ENTITY_TYPE_TURN,
+            occurred: crate::TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            body,
+            text: Vec::new(),
+            session,
+            thread_audience: None,
+            actor: crate::WriteActor::new(context.agent, EdgeActorClass::Agent),
+        };
+        let appended = if thread {
+            vault.reply_in_thread(&writer, action.assistant_turn, &input)?
+        } else {
+            vault.append_dag_record(&writer, &input)?
+        };
+        Ok(Some(appended.id))
+    }
+
     fn queue_turn_action(
         &self,
         action: TurnAction,
@@ -327,8 +410,8 @@ impl Memory<'_> {
     /// assistant TURN of a conversation the actor may write, holding one
     /// MESSAGE a stream generated, authored by a readable agent, with a user
     /// turn before it. No stream may be open on the MESSAGE, and Continue
-    /// needs it incomplete. A DAG conversation is refused, as chat's append
-    /// is there.
+    /// needs it incomplete. Retry on a project room's indexed turn is
+    /// refused: a second answer there needs the room's regeneration door.
     fn resolve_turn_action(
         &self,
         action: TurnAction,
@@ -352,11 +435,6 @@ impl Memory<'_> {
                 "turn",
             )?
             .ok_or_else(|| MemoryError::not_found("turn not found"))?;
-            if crate::conversation_dag::keeps_dag_topology(&vault.store, &txn, &conversation)? {
-                return Err(invalid_state(
-                    "the conversation adopted the DAG; Continue and Retry are not served on it",
-                ));
-            }
             // A person erased from a room writes nothing more there.
             let person = vault
                 .get_raw_in(&txn, &self.actor())?
@@ -374,6 +452,16 @@ impl Memory<'_> {
                     crate::memory::MEMORY_CODE_FORBIDDEN,
                     "an erased person cannot act on a turn in this room",
                     &[],
+                ));
+            }
+            // A room answers a claimed turn once; its second answer waits on
+            // the room's own regeneration door, so none is queued here.
+            if action == TurnAction::Retry
+                && crate::workspace_roster::replicated_turn_in(vault, &txn, assistant_turn)?
+                    .is_some()
+            {
+                return Err(invalid_state(
+                    "indexed-room Retry requires the room regeneration door",
                 ));
             }
             conversation
@@ -454,6 +542,9 @@ impl Memory<'_> {
         target: &EntityId,
         history: usize,
     ) -> MemoryResult<Walk> {
+        // A DAG conversation's history is the branch that leads to the turn,
+        // read on one page; any other's is its time order.
+        let mut branch = self.turn_action_branch_transcript(conversation, target)?;
         let target = target.to_hex();
         let mut walk = Walk {
             turn: None,
@@ -465,9 +556,17 @@ impl Memory<'_> {
         let mut since: Vec<TurnActionLine> = Vec::new();
         let mut after = None;
         loop {
-            let page = self
-                .conversation_transcript(conversation, after.as_deref(), MAX_TRANSCRIPT_PAGE_TURNS)?
-                .value;
+            let page = match branch.take() {
+                Some(page) => page,
+                None => {
+                    self.conversation_transcript(
+                        conversation,
+                        after.as_deref(),
+                        MAX_TRANSCRIPT_PAGE_TURNS,
+                    )?
+                    .value
+                }
+            };
             for turn in page.turns {
                 if turn.id == target {
                     walk.turn = Some(turn);

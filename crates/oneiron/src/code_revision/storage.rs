@@ -144,6 +144,16 @@ impl Vault {
         get_code_revision_in_txn(&self.store, &rtxn, revision_id)
     }
 
+    /// [`Vault::get_code_revision`] in the caller's snapshot: the finalized
+    /// record, verified against its integrity record before it is answered.
+    pub(crate) fn get_code_revision_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        revision_id: &EntityId,
+    ) -> Result<Option<CodeRevision>> {
+        get_code_revision_in_txn(&self.store, rtxn, revision_id)
+    }
+
     pub fn code_revisions_for_session(&self, session_id: &EntityId) -> Result<Vec<CodeRevision>> {
         let rtxn = self.store.env.read_txn()?;
         let revisions =
