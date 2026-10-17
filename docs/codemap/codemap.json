@@ -9235,7 +9235,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityProviderAdapter",
@@ -9243,20 +9243,23 @@
       "ChannelIdentityProviderProvision",
       "EmailProviderInbound",
       "EmailThreadHeaders",
+      "LineChat",
+      "LineChatKind",
       "LineOfficialAccountInbound",
       "SlackProviderInbound"
      ],
      "path": "src/channel_identity_provider/inbound_types.rs",
      "purpose": "Shared provider envelope: inbound payload structs, provision result, and the adapter trait",
      "surface": {
-      "enum": 1,
-      "fn": 12,
-      "struct": 5,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 17,
+      "struct": 6,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LineOfficialAccountAdapter",
@@ -9267,7 +9270,7 @@
      "purpose": "LINE Official Account adapter: plan tier, config, and trait impl",
      "surface": {
       "enum": 1,
-      "fn": 10,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -9372,7 +9375,7 @@
      "purpose": "Cross-channel provision guards, email/LINE normalizers, and blank/bytes primitives",
      "surface": {
       "const": 9,
-      "crate-vis": 37
+      "crate-vis": 39
      }
     },
     {
