@@ -2,7 +2,8 @@
 //! chain a socket keeps, and event decoding.
 //!
 //! A Responses session sends the whole conversation once, then only the items
-//! past the last response it chained (`previous_response_id`, `store=false`).
+//! past the last response it chained (`previous_response_id`; `store=false`
+//! unless the owner turned it on).
 //! The host holds the socket; this module says what each turn sends and how
 //! its events read.
 
@@ -57,6 +58,12 @@ impl OpenAiResponsesTurn {
         }
         frame.insert("input".into(), JsonValue::Array(input.to_vec()));
         JsonValue::Object(frame)
+    }
+
+    /// Whether this turn asks the provider to keep its response (`store`).
+    #[must_use]
+    pub fn stored(&self) -> bool {
+        self.head.get("store") == Some(&JsonValue::Bool(true))
     }
 }
 
@@ -136,6 +143,7 @@ pub fn build_openai_responses_turn(
         ),
     );
     // The chain lives on the socket alone; the vault keeps the transcript.
+    // The host sets `store` when its owner turned it on (OF-602).
     head.insert("store".into(), JsonValue::Bool(false));
     for key in [
         "stream",
@@ -309,6 +317,24 @@ impl OpenAiResponsesChain {
     pub fn clear(&mut self) {
         self.response_id = None;
         self.digests.clear();
+    }
+
+    /// The response this chain ends at.
+    #[must_use]
+    pub fn response_id(&self) -> Option<&str> {
+        self.response_id.as_deref()
+    }
+
+    /// How many items the chain covers.
+    #[must_use]
+    pub fn covered(&self) -> usize {
+        self.digests.len()
+    }
+
+    /// Whether `other` is this conversation at this response or a later one.
+    #[must_use]
+    pub fn continued_by(&self, other: &Self) -> bool {
+        other.digests.starts_with(&self.digests)
     }
 }
 

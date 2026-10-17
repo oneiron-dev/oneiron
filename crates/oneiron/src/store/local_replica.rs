@@ -4,7 +4,8 @@
 //! retirement markers, withdrawal stamps), so this door does not call it. It
 //! runs the tear's pure local leaves for each removable member, then drops
 //! the window's persisted document rows. Nothing replicated is written: no
-//! tombstone, deletion marker, audit row, Loro op, outbox row or receipt.
+//! tombstone, deletion marker, audit row, Loro op, outbox row or receipt. An
+//! epoch summary's session floor is the one local row it raises.
 //! [`purge_left_shared_env_in_txn`] empties a left shared vault's whole
 //! environment the same way (OF-158).
 
@@ -420,6 +421,9 @@ fn remove_member(
     crate::ports::reindex_named_entities(store, txn, id, None)?;
     crate::ingest::invalidate_blob_fingerprint(store, txn, id)?;
     crate::claim::remove_claim_projection_index(store, txn, *id)?;
+    // A demoted epoch summary keeps its place in its session's count, so a
+    // local mint never numbers under it (OF-013).
+    crate::compaction::raise_epoch_floor_in_txn(store, txn, &raw)?;
     store.port_remove_entity_row(txn, id)?;
     store
         .l2_base_cache

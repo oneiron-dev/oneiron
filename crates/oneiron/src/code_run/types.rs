@@ -85,6 +85,9 @@ pub enum SelfCall {
     /// `self.team.start` and `self.team.record` (OF-540): a pattern-skill
     /// run's own team. The leader is the bound attempt.
     Team(crate::team::SelfTeamCall),
+    /// `self.team.submit` (OF-540): the bound leader submits one pinned
+    /// output of its team for the owner's acceptance review.
+    TeamSubmit(super::TeamSubmitInput),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
     /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's
@@ -131,7 +134,7 @@ impl SelfCall {
             Self::TasksWaitSet(_) => SelfEffect::TasksWaitSet,
             Self::Summarize(_) => SelfEffect::Summarize,
             Self::Leader(_) => SelfEffect::Leader,
-            Self::Team(_) => SelfEffect::Team,
+            Self::Team(_) | Self::TeamSubmit(_) => SelfEffect::Team,
         }
     }
 
@@ -532,6 +535,16 @@ pub struct AgentVerbRefusal {
     pub code: String,
 }
 
+/// A verb-table row's refusal as its own route worded it (OF-181): the code,
+/// the message and the suggestions a host caller of its action is answered
+/// with. The guest still sees only the code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentVerbRefusalWords {
+    pub code: String,
+    pub message: String,
+    pub suggestions: Vec<String>,
+}
+
 /// The refusal a verb call gets from a run whose host binds no verb door.
 pub const AGENT_VERB_DOOR_UNBOUND: &str = "agent_verb_door_unbound";
 
@@ -584,6 +597,14 @@ pub trait AgentVerbDoor: Send + Sync {
         _rows: Option<&[EntityId]>,
     ) -> std::result::Result<bool, AgentVerbRefusal> {
         Ok(false)
+    }
+
+    /// The words the door's route refused its newest call with, when it
+    /// worded one. An action keeps them on its replay record, so a retry
+    /// under the same key answers as the first try did. A door that words
+    /// no refusal keeps none.
+    fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
+        None
     }
 }
 
@@ -644,6 +665,8 @@ pub enum SelfDispatchOutcome {
     Leader(String),
     /// A team run's start or receipt (OF-540).
     Team(crate::team::TeamRunAnswer),
+    /// A team output submitted for the owner's review (OF-540).
+    TeamSubmitted(super::TeamSubmitAnswer),
 }
 
 /// `self.skills.call(...)`: the skill and the arguments its call contract

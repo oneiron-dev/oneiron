@@ -52,7 +52,9 @@ pub enum MachineOwnership {
 }
 
 /// What a machine is to the vault's owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum MachineRole {
     /// A machine the owner added at the pairing ceremony.
     Owned(MachineOwnership),
@@ -90,7 +92,9 @@ impl MachineRole {
 }
 
 /// A machine's public encryption key; P6 wraps world keys to it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct MachineEncryptionKey {
     pub suite: u16,
     pub key: Vec<u8>,
@@ -110,7 +114,7 @@ impl MachineEncryptionKey {
 }
 
 /// One revision of a machine's standing, signed by an owner roster key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct MachineProfile {
     /// The MACHINE row.
     pub machine: EntityId,
@@ -124,6 +128,7 @@ pub struct MachineProfile {
     /// Strictly above the folded revision for this machine.
     pub revision: u64,
     /// `machine_key`'s signature over [`machine_profile_proof_transcript`].
+    #[serde(with = "machine_proof_bytes")]
     pub machine_proof: [u8; 64],
     /// The world edits this machine signed that the revision's author had
     /// seen. When the revision takes the machine's "yours" away, those edits
@@ -286,4 +291,39 @@ pub(super) fn decode_canonical_id(value: &Value) -> Result<EntityId> {
         return Err(invalid_authority());
     }
     Ok(id)
+}
+
+/// `machine_proof` in a serde image (OF-469 checkpoint v2) as one byte string
+/// of exactly 64 bytes: serde's own arrays stop at 32. The signed wire codec
+/// above is unchanged.
+mod machine_proof_bytes {
+    use serde::de::{Error, Visitor};
+    use serde::{Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        proof: &[u8; 64],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(proof)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<[u8; 64], D::Error> {
+        deserializer.deserialize_bytes(Proof)
+    }
+
+    struct Proof;
+
+    impl Visitor<'_> for Proof {
+        type Value = [u8; 64];
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("64 machine proof bytes")
+        }
+
+        fn visit_bytes<E: Error>(self, bytes: &[u8]) -> Result<Self::Value, E> {
+            <[u8; 64]>::try_from(bytes).map_err(|_| E::invalid_length(bytes.len(), &self))
+        }
+    }
 }

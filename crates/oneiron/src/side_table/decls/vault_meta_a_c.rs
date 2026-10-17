@@ -84,11 +84,11 @@ side_tables! {
     /// Pointer to the current default (winning) authoring strategy pin and its promotion receipt.
     /// Key: ().
     AUTOREASON_BEAM_DEFAULT: VaultMeta b"authoring/default-beam-winner" LegacyJson;
-    /// Content hash of the current head of the local authority-checkpoint chain. Key: ().
-    AUTHORITY_CHECKPOINT_HEAD: VaultMeta b"authority.checkpoint.head.v1" Raw;
-    /// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map), keyed by its
-    /// content hash. Key: hash32.
-    AUTHORITY_CHECKPOINT_ROW: VaultMeta b"authority.checkpoint.v1." Raw;
+    /// The id of the newest checkpoint v2 image of this vault's local chain (OF-469). Key: ().
+    AUTHORITY_CHECKPOINT_V2_HEAD: VaultMeta b"authority.checkpoint.head.v2" Raw;
+    /// One checkpoint v2 image's canonical bytes (domain, then named MessagePack), keyed by its
+    /// unsigned id (OF-469). Key: hash32.
+    AUTHORITY_CHECKPOINT_V2_IMAGE: VaultMeta b"authority.checkpoint.v2." Raw;
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
@@ -191,6 +191,8 @@ side_tables! {
     EMERGENCY_REQUEST_PLAN_INDEX: VaultMeta b"booking:emergency_request_plan:v1:" Raw;
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
+    /// A replay library program a retire took out, with whose word, when and why. Key: id16.
+    BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored;
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
@@ -463,6 +465,9 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// The place a removed epoch summary held in its session's count: the highest removed epoch
+    /// and the turn it ended at, no words (OF-013). Key: id16(session).
+    COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;
     /// The connector key a stamped slate is bound to (16-byte key id). Key: id16(slate).
     CONNECTOR_GRANT_SLATE_BINDING: VaultMeta b"connector.grant_slate.binding.v1/" Raw;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.

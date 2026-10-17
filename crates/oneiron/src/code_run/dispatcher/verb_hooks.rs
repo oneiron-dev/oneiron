@@ -40,7 +40,7 @@ use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
 };
 use crate::task_type::TaskTypeRef;
-use crate::task_verb::TaskAskStatus;
+use crate::task_verb::{TaskAskStatus, TaskAskWait};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, TimeRange, Vault};
 
 /// The refusal a guest reads when a pre-hook skipped its call. Its reason
@@ -93,7 +93,9 @@ impl HostSelfDispatcher<'_> {
     /// rewritten when a hook rewrote it, and what its post chain picks up;
     /// `Err` the answer a stop gives in its place. A run bound to an
     /// off-record session runs no hook: its receipts would land on record.
-    /// A call no binding can take passes before its args are built. A hook
+    /// A call no binding can take passes before its args are built, unless
+    /// an earlier try of its invocation is parked on a hook's ask or settled
+    /// there: that one always meets its saved continuation. A hook
     /// reads under `read_as`, the key the run's door admitted the call with,
     /// and as the run's actor when its host binds no door. The call's scope
     /// is the room that key reads inside, if any. Each rewrite is decoded as
@@ -111,7 +113,10 @@ impl HostSelfDispatcher<'_> {
             return Ok(Ok((call, HookedCall(None))));
         }
         let effect = call.effect();
-        if !vault.verb_hooks_may_run(effect.as_str()) {
+        let invocation = self.verb_invocation(&call, site)?;
+        if !vault.verb_hooks_may_run(effect.as_str())
+            && !vault.verb_hook_invocation_saved(invocation)?
+        {
             return Ok(Ok((call, HookedCall(None))));
         }
         let args = hook_args(&call)?;
@@ -121,7 +126,7 @@ impl HostSelfDispatcher<'_> {
             .map(|turn| format!("room:{}", turn.room.to_hex()));
         let hook_call = VerbCall {
             verb: effect.as_str().to_owned(),
-            invocation: self.verb_invocation(&call, site)?,
+            invocation,
             actor: self.actor.entity_ref(),
             class: hook_class(self.actor.actor_class()),
             scope,
@@ -200,7 +205,10 @@ impl HostSelfDispatcher<'_> {
         ) {
             return Ok(outcome);
         }
-        let view = outcome_view(&outcome);
+        // A wait still pending parks rather than answers: no result to show.
+        let Some(view) = outcome_view(&outcome) else {
+            return Ok(outcome);
+        };
         let seen = match vault.post_verb_hooks(pre, view.clone())? {
             Ok(seen) => seen,
             Err(stop) => stopped_view(&stop),
@@ -370,9 +378,10 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
 }
 
 /// The guest's view of `outcome`, framed as the code-mode bridge frames its
-/// reply.
-fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
-    match outcome {
+/// reply. `None` for a wait still pending, which the bridge parks rather than
+/// answers.
+fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
+    Some(match outcome {
         SelfDispatchOutcome::MemoryWrite(value) => json!({"output": {"id": value.id.to_hex()}}),
         SelfDispatchOutcome::MemoryEdgeWrite(value) => json!({"output": {
             "src": value.src.to_hex(),
@@ -411,28 +420,19 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
             proposal_ref,
             ..
         }) => json!({"kind": "agent_spawn", "state": "proposed_widen", "proposal": proposal_ref}),
-        SelfDispatchOutcome::TaskAsk(value) => json!({
-            "kind": "task_ask",
-            "group": value.handle.group_ref.to_hex(),
-            "tasks": value.task_refs.iter().map(EntityId::to_hex).collect::<Vec<_>>(),
-            "hold": value.hold.as_ref().map(|_| "no_live_route"),
-            "replay": value.idempotent_replay,
-        }),
-        SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Pending { hold }) => json!({
-            "kind": "task_ask_status",
-            "state": "pending",
-            "hold": hold.as_ref().map(|_| "no_live_route"),
-        }),
+        // The bare `ask` and `wait` answer their rows' outputs.
+        SelfDispatchOutcome::TaskAsk(receipt) => json!({"output": receipt}),
+        SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Pending { .. }) => return None,
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) => {
-            json!({
-                "kind": "task_ask_status",
-                "state": "changed",
-                "voided": voided.iter().map(EntityId::to_hex).collect::<Vec<_>>(),
-                "generation": generation,
-            })
+            let wait = TaskAskWait::Changed {
+                voided: voided.clone(),
+                generation: *generation,
+            };
+            json!({"output": wait})
         }
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Settled(result)) => {
-            json!({"kind": "task_ask_status", "state": "settled", "result": result})
+            let wait = TaskAskWait::Ready(result.clone());
+            json!({"output": wait})
         }
         SelfDispatchOutcome::Speech(value) => {
             json!({"order": value.order, "isVisible": value.is_visible})
@@ -450,7 +450,8 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
         SelfDispatchOutcome::Leader(text) => json!({"output": serde_json::from_str::<Value>(text)
             .unwrap_or_else(|_| Value::String(text.clone()))}),
         SelfDispatchOutcome::Team(answer) => json!({"output": answer}),
-    }
+        SelfDispatchOutcome::TeamSubmitted(answer) => json!({"output": answer}),
+    })
 }
 
 /// A call's input as a hook reads it: the shape the guest wrote, ids in hex.
@@ -551,6 +552,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::Leader(SelfLeaderCall::Advice { top }) => json!({"top": top}),
         SelfCall::Leader(SelfLeaderCall::Pattern { skill }) => json!({"skill": skill.to_hex()}),
         SelfCall::Team(team) => to_json(team)?,
+        SelfCall::TeamSubmit(submit) => to_json(submit)?,
     })
 }
 
@@ -969,7 +971,8 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         | SelfCall::ReaderReport(_)
         | SelfCall::Summarize(_)
         | SelfCall::Leader(_)
-        | SelfCall::Team(_) => {
+        | SelfCall::Team(_)
+        | SelfCall::TeamSubmit(_) => {
             return Err(format!("{} takes no rewrite", call.effect().as_str()));
         }
     })

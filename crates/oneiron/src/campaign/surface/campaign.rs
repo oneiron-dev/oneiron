@@ -14,12 +14,6 @@ use crate::{EntityId, Vault};
 /// CAMPAIGN definition schema version.
 pub const CAMPAIGN_SCHEMA_VERSION: u32 = 1;
 
-/// Longest accepted campaign name, in bytes.
-///
-/// Names are stored in the entity body and echoed by every read, so an
-/// unbounded one is an unbounded row.
-pub const CAMPAIGN_NAME_MAX_BYTES: usize = 200;
-
 /// Lifecycle state of a campaign.
 ///
 /// Mirrors [`SavedQueryLifecycle`](crate::saved_query::SavedQueryLifecycle)'s archive-is-a-transition rule; a campaign
@@ -233,9 +227,6 @@ fn validate_campaign_definition(definition: &CampaignDefinition) -> Result<()> {
     if name.is_empty() {
         return Err(invalid("campaign name must not be blank"));
     }
-    if definition.name.len() > CAMPAIGN_NAME_MAX_BYTES {
-        return Err(invalid("campaign name exceeds the maximum length"));
-    }
     if definition.name.chars().any(char::is_control) {
         return Err(invalid("campaign name must not contain control characters"));
     }
@@ -244,7 +235,7 @@ fn validate_campaign_definition(definition: &CampaignDefinition) -> Result<()> {
 
 /// Loads a campaign the principal owns THROUGH the caller's transaction, or
 /// reports it as absent. Ownership is part of the read, not a post-filter.
-fn owned_campaign_in_txn(
+pub(crate) fn owned_campaign_in_txn(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     authenticated_principal: EntityId,
@@ -272,7 +263,7 @@ fn next_campaign_version(current: u64) -> Result<u64> {
 }
 
 /// The vault-scoped CAMPAIGN type byte, assigned at pack registration.
-fn campaign_type_byte(vault: &Vault) -> Result<u8> {
+pub(crate) fn campaign_type_byte(vault: &Vault) -> Result<u8> {
     vault
         .structural_kind_registrations()
         .into_iter()
@@ -290,7 +281,7 @@ fn load_campaign(vault: &Vault, campaign_ref: EntityId) -> Result<Option<Campaig
     load_campaign_in_txn(vault, &rtxn, campaign_ref, kind)
 }
 
-fn load_campaign_in_txn(
+pub(crate) fn load_campaign_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     campaign_ref: EntityId,

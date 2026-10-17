@@ -37,10 +37,11 @@ pub use self::codec::{
     encode_connector_key_body,
 };
 pub use self::lifecycle::{
-    CONNECTOR_CONSENT_ORIGIN_ACTION_ID, CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute,
-    ConnectorConsentRowView, ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription,
-    ConnectorManifestQualifier, ConnectorQualificationError, ConnectorToolConsent,
-    ConnectorToolConsentRow, ConnectorToolGrant, ProbeManifestQualifier,
+    ActorConnectorRegistration, CONNECTOR_CONSENT_ORIGIN_ACTION_ID,
+    CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID, ConnectorCallRoute, ConnectorConsentRowView,
+    ConnectorConsentTarget, ConnectorConsentView, ConnectorDescription, ConnectorManifestQualifier,
+    ConnectorQualificationError, ConnectorToolConsent, ConnectorToolConsentRow, ConnectorToolGrant,
+    ProbeManifestQualifier,
 };
 pub use self::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
@@ -70,7 +71,7 @@ pub(crate) use self::charter::{
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     EffectorBudgetChargeOutcome, budget_exhausted_reason, charge_effector_budgets,
-    preflight_effector_budgets,
+    charge_effector_budgets_pooled, preflight_effector_budgets_pooled, shares_budget_pool,
 };
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,

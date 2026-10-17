@@ -427,11 +427,23 @@ impl WorkflowLibrary for VaultLibrary {
         .map_err(library_failed)
     }
 
-    fn retire(&mut self, workflow: &str) -> Result<Option<LibraryCard>, BrowserError> {
+    fn retire(
+        &mut self,
+        workflow: &str,
+        reason: Option<&str>,
+    ) -> Result<Option<LibraryCard>, BrowserError> {
         let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
             return Ok(None);
         };
-        match retire_workflow(&self.server.vault, id, self.by).map_err(library_failed)? {
+        let retired = retire_workflow(
+            &self.server.vault,
+            id,
+            self.by,
+            reason,
+            self.server.vault.now_recorded_at(),
+        )
+        .map_err(library_failed)?;
+        match retired {
             Retired::Taken(record) => Ok(Some(record.card())),
             Retired::NotFiled => Ok(None),
             Retired::NotFiler => Err(BrowserError::Library(format!(
@@ -722,6 +734,7 @@ impl McpCodeModeVerbs {
             self.actor.actor_ref,
             self.actor.actor_class,
         )
+        .at(self.actor.locality())
         .with_invocation(invocation);
         // Each routine decision is a verb call of its own, under a fresh
         // invocation.

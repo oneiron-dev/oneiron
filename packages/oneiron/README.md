@@ -245,10 +245,17 @@ you want to act as instead.
 | `handle.inRoomTurn(roomRef)` | a new handle whose every verb runs as a turn in that room |
 | `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
+| `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotencyKey }` on a lens card the connected server rendered; answers `{ $state }` or `{ outcome, readReceipt }` |
+| `handle.closeLensFrame(cardId)` | closes that card and frees its frame; answers `{ closed }` |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
-| `handle.vault.receipts(limit?)` | `FacadeReceipt[]` |
+| `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
+
+`lensFrameEvent` and `closeLensFrame` are the two lens-card routes outside the
+facade (OF-181), not verbs. A card's frame lives only on the server that
+rendered it (`vault.lenses.default`), so they need a connected handle: an
+embedded one throws `BAD_REQUEST`. Their keys keep the wire's camelCase.
 
 Every other verb in the SDK verb table sits at its SDK path on the handle
 (`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).

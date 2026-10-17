@@ -584,6 +584,12 @@ const GUEST_FAILURE_CODES: &[&str] = &[
     "team_record_no_models",
     "team_record_roles",
     "team_record_decider",
+    "team_submit_invalid_output",
+    "team_submit_unrecorded",
+    "team_submit_not_led",
+    "team_submit_output_missing",
+    "team_submit_id_occupied",
+    "team_submit_unreviewed",
     // the bridge
     "host_bridge_halted",
     "task_declined",
@@ -707,6 +713,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({ "output": output })
         }
         SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
+        SelfDispatchOutcome::TeamSubmitted(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }

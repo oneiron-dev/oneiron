@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 263 facade rows, 993 declarations.
-Inputs: 219 of 263 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
-Results: 212 of 263 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
+Census: 269 facade rows, 1013 declarations.
+Inputs: 225 of 269 fully typed, 42 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
+Results: 218 of 269 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 67; unread shapes: 2.
 """
 
@@ -1341,6 +1341,7 @@ class CallReceipt(TypedDict):
     outcome: CallOutcome
     request_digest: str
     result_digest: NotRequired[str | None]
+    action_digest: NotRequired[str | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
 class KeyValueAddress(TypedDict):
@@ -1377,6 +1378,59 @@ class KeyValueNamespaces(TypedDict):
     max_depth: NotRequired[int | None]
     limit: NotRequired[int]
     offset: NotRequired[int]
+class CampaignProgramOutboundSpec(TypedDict):
+    call_seq: int
+    verb: str
+    payload: str
+    idempotency_supported: bool
+class CampaignProgramStepSpec(TypedDict):
+    step_ref: str
+    channel: str
+    sender_ref: str
+    basis_evidence: str
+    outbound: NotRequired[CampaignProgramOutboundSpec | None]
+class CampaignProgramAudienceSpec(TypedDict):
+    query_ref: str
+    entry_step_ref: str
+class CreateCampaignProgramRequest(TypedDict):
+    schema_version: NotRequired[int]
+    campaign_ref: str
+    name: str
+    steps: NotRequired[list[CampaignProgramStepSpec]]
+    audience: NotRequired[CampaignProgramAudienceSpec | None]
+CampaignProgramLifecycle = Literal["active", "archived"]
+class CampaignProgramDefinitionView(TypedDict):
+    schema_version: int
+    owner_actor: str
+    campaign_ref: str
+    name: str
+    definition_version: int
+    lifecycle: CampaignProgramLifecycle
+    steps: list[CampaignProgramStepSpec]
+    audience: NotRequired[CampaignProgramAudienceSpec | None]
+class CampaignProgramRecord(TypedDict):
+    program_ref: str
+    definition: CampaignProgramDefinitionView
+    automatic_intake: bool
+    created_at: int
+    updated_at: int
+class CampaignProgramReadRequest(TypedDict):
+    campaign_ref: str
+    program_ref: str
+class CampaignProgramReadResult(TypedDict):
+    found: bool
+    record: NotRequired[CampaignProgramRecord | None]
+class UpdateCampaignProgramRequest(TypedDict):
+    campaign_ref: str
+    program_ref: str
+    expected_definition_version: int
+    name: str
+    steps: list[CampaignProgramStepSpec]
+    audience: NotRequired[CampaignProgramAudienceSpec | None]
+class ArchiveCampaignProgramRequest(TypedDict):
+    campaign_ref: str
+    program_ref: str
+    expected_definition_version: int
 WeaveSectionKind = Literal["changes", "projects", "open_asks", "links", "conflicts", "exceptions", "admissions", "budgets", "sieve_score", "digest"]
 class WeaveSectionInput(TypedDict):
     kind: WeaveSectionKind
@@ -1761,6 +1815,17 @@ class WeaveLinkCorrectionView(TypedDict):
     source_ref: str
     kind: str
     target_ref: str
+    actor_ref: str
+    recorded_at: int
+class WeaveWrongItemRequest(TypedDict):
+    item: str
+    item_ref: str
+    project_ref: NotRequired[str | None]
+class WeaveItemCorrectionView(TypedDict):
+    label_ref: str
+    item: str
+    item_ref: str
+    project_ref: NotRequired[str | None]
     actor_ref: str
     recorded_at: int
 class PackFileInput(TypedDict):
@@ -3841,12 +3906,21 @@ class AiPartEmbedding(TypedDict):
     kind: Literal["embedding"]
     vector: list[float]
 AiPart = AiPartText | AiPartImage | AiPartAudio | AiPartVideo | AiPartEmbedding
+class AiVoiceStock(TypedDict):
+    kind: Literal["stock"]
+    name: str
+class AiVoiceBank(TypedDict):
+    kind: Literal["bank"]
+    voice_id: str
+    include_generated: NotRequired[bool]
+AiVoice = AiVoiceStock | AiVoiceBank
 class AiCallRequest(TypedDict):
     model: NotRequired[str | None]
     prompt: NotRequired[str | None]
     input: NotRequired[list[AiPart]]
     references: NotRequired[list[AiPart]]
     params: NotRequired[dict[str, Any]]
+    voice: NotRequired[AiVoice | None]
 class MediaUsage(TypedDict):
     input_tokens: NotRequired[int]
     output_tokens: NotRequired[int]
@@ -4661,12 +4735,20 @@ class OfficeBodyViewPptx(TypedDict):
     format: Literal["pptx"]
     body: DeckBodyView
 OfficeBodyView = OfficeBodyViewDocx | OfficeBodyViewXlsx | OfficeBodyViewPptx
+class OfficeBodyCommitsRequest(TypedDict):
+    artifact_ref: str
+    actor_ref: NotRequired[str | None]
 class TextCommitReceipt(TypedDict):
     document: str
     peer: int
     start: int
     end: int
     made_by: MadeBy
+OfficeBodyCommitGap = Literal["receipt_missing"]
+class OfficeBodyCommitView(TypedDict):
+    actor: NotRequired[str | None]
+    receipt: NotRequired[TextCommitReceipt | None]
+    reason: NotRequired[OfficeBodyCommitGap | None]
 class DocxBodyOpSetText(TypedDict):
     op: Literal["set_text"]
     block: str
@@ -5240,3 +5322,34 @@ NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
     status: NoteLifecycleStatus
     seal: NotRequired[NoteSeal | None]
+class SelfUiStateValueBool(TypedDict):
+    type: Literal["bool"]
+    value: bool
+class SelfUiStateValueNumber(TypedDict):
+    type: Literal["number"]
+    value: FiniteF64
+class SelfUiStateValueText(TypedDict):
+    type: Literal["text"]
+    value: LensText
+class SelfUiStateValueToken(TypedDict):
+    type: Literal["token"]
+    value: str
+SelfUiStateValue = SelfUiStateValueBool | SelfUiStateValueNumber | SelfUiStateValueText | SelfUiStateValueToken
+class GeneratedUiStatePatchAdd(TypedDict):
+    op: Literal["add"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchReplace(TypedDict):
+    op: Literal["replace"]
+    path: str
+    value: SelfUiStateValue
+class GeneratedUiStatePatchRemove(TypedDict):
+    op: Literal["remove"]
+    path: str
+GeneratedUiStatePatch = GeneratedUiStatePatchAdd | GeneratedUiStatePatchReplace | GeneratedUiStatePatchRemove
+class GeneratedUiActionEvent(TypedDict):
+    cardId: str
+    elementId: str
+    actionId: str
+    patch: NotRequired[list[GeneratedUiStatePatch]]
+    occurredAt: int
