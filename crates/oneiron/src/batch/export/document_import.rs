@@ -27,13 +27,14 @@ impl Vault {
     /// untrusted. A manifest is not an approval grant.
     pub fn read_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultDocument> {
         let archive = super::read_vault_archive(bytes)?;
-        archive.document.validate(self)?;
+        archive.document.validate(self, &archive.files)?;
         Ok(archive.document)
     }
 
     /// Reimports a whole-vault archive atomically, into a fresh vault or
     /// beside rows it already holds. IDs, times, ordinary body fields and
-    /// public edges survive. Ordinary claims become Imported + Proposed (Rejected
+    /// public edges survive, and an ASSET's stored file comes back byte for
+    /// byte (OF-222). Ordinary claims become Imported + Proposed (Rejected
     /// stays Rejected); lifecycle and scope are retained. Expression histories
     /// require [`Self::import_whole_vault_archive_with_actor`] and a local Auto grant.
     /// Skills return as candidates;
@@ -73,9 +74,9 @@ impl Vault {
         let super::VaultArchive {
             mut document,
             secrets,
-            result_files,
+            files,
         } = super::read_vault_archive(bytes)?;
-        document.validate(self)?;
+        document.validate(self, &files)?;
         if actor.is_none()
             && document
                 .entities()
@@ -97,7 +98,7 @@ impl Vault {
             .collect::<Result<_>>()?;
         // Run result bodies are written whole before any row names them; the
         // rows commit with the rest below, or not at all.
-        let staged_results = stage_run_results(self, &document.run_results, &result_files)?;
+        let staged_results = stage_run_results(self, &document.run_results, &files)?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -148,7 +149,7 @@ impl Vault {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
                 }
-                if matches_row(row, &existing, &row.body) {
+                if matches_archived_row(row, &existing, &files)? {
                     validate_existing_source(
                         self,
                         &wtxn,
@@ -158,7 +159,7 @@ impl Vault {
                     unchanged_entities += 1;
                     continue;
                 }
-                let body = imported_body(row, models)?;
+                let body = imported_body(row, models, &files)?;
                 if matches_row(
                     row,
                     &existing,
@@ -176,7 +177,7 @@ impl Vault {
                 return Err(invalid("import ID collides with different entity data"));
             }
             self.store.validate_public_entity_type(row.entity_type)?;
-            pending.insert(id, (row, imported_body(row, models)?));
+            pending.insert(id, (row, imported_body(row, models, &files)?));
         }
         let mut inserted_ids: BTreeSet<_> = pending.keys().copied().collect();
         let mut inserted_entities = pending.len() + model_imports.inserted;
@@ -378,12 +379,19 @@ impl Vault {
 /// Writes each run result body the archive carries once, checked against
 /// its digest and length, so the manifests and line indexes are rebuilt
 /// from the bytes; the secret scan reads them again as they go in. No row
-/// names a body yet.
+/// names a body yet. Only a body the export did not withhold is staged: the
+/// same bytes attached for an ASSET (OF-222) bring back no withheld result.
 fn stage_run_results(
     vault: &Vault,
     results: &ExportRunResults,
     files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<BTreeMap<[u8; 32], crate::code_run::FinishedOutput>> {
+    let released: BTreeSet<&str> = results
+        .bodies
+        .iter()
+        .filter(|body| body.withheld.is_none())
+        .map(|body| body.blake3.as_str())
+        .collect();
     let mut staged = BTreeMap::new();
     for output in results.runs.iter().flat_map(|run| &run.outputs) {
         let Some(blake3) = &output.blake3 else {
@@ -391,6 +399,9 @@ fn stage_run_results(
         };
         let digest = parse_digest(blake3)?;
         if staged.contains_key(&digest) {
+            continue;
+        }
+        if !released.contains(blake3.as_str()) {
             continue;
         }
         let Some(body) = files.get(blake3.as_str()) else {
@@ -738,18 +749,47 @@ pub(super) fn parse_id(text: &str) -> Result<EntityId> {
 }
 
 pub(super) fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody) -> bool {
-    let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return false;
-    };
-    header.entity_type == row.entity_type
-        && header.occurred_start == row.occurred_start
-        && header.occurred_end == row.occurred_end
-        && header.learned_at == row.learned_at
+    matches_header(row, raw)
         && ExportBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..], row.entity_type) == *expected
 }
 
-fn imported_body(row: &ExportEntity, models: &BTreeMap<EntityId, EntityId>) -> Result<Vec<u8>> {
-    let bytes = row.body.to_bytes()?;
+/// [`matches_row`] for the row as the archive carries it. A file body
+/// (OF-222) matches only the very bytes it names; any other stored row under
+/// its id is a collision, never read through a lossy form.
+fn matches_archived_row(
+    row: &ExportEntity,
+    raw: &[u8],
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<bool> {
+    let ExportBody::File(file) = &row.body else {
+        return Ok(matches_row(row, raw, &row.body));
+    };
+    if matches_header(row, raw)
+        && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(file.resolve(files)?)
+    {
+        return Ok(true);
+    }
+    Err(invalid("import ID collides with different entity data"))
+}
+
+/// The stored row's type and times are the archived row's.
+fn matches_header(row: &ExportEntity, raw: &[u8]) -> bool {
+    EntityMetadataHeader::parse(raw).is_some_and(|header| {
+        header.entity_type == row.entity_type
+            && header.occurred_start == row.occurred_start
+            && header.occurred_end == row.occurred_end
+            && header.learned_at == row.learned_at
+    })
+}
+
+/// The body the import writes; an ASSET's file body is its archive file's
+/// bytes, as they were stored (OF-222).
+fn imported_body(
+    row: &ExportEntity,
+    models: &BTreeMap<EntityId, EntityId>,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let bytes = row.body.to_bytes_in(files)?;
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let mut body = decode_import_claim(&bytes)?;

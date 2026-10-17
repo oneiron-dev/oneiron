@@ -1,11 +1,13 @@
 //! Writes the whole-vault archive (OF-222) from the credential-nulled document
-//! value: every JSONL row and every attached file is cut from that value, so
-//! nothing reaches the archive around the serializer's nulling pass.
+//! value: every JSONL row is cut from that value, and every attached file is
+//! named by a descriptor in it, so nothing reaches the archive around the
+//! serializer's nulling pass. A stored file's bytes go beside it as they are.
 use std::collections::BTreeMap;
 use std::io::Write as _;
 
 use serde_json::Value;
 
+use super::export_value::{ExportBody, ExportBodyFile};
 use crate::batch::export::{
     ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ArchiveSecretCustody,
     VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path, archive_slot_rows,
@@ -15,13 +17,18 @@ use crate::error::{Error, Result};
 
 /// The archive bytes and the manifest they carry. `secrets` are the owner's
 /// custody records; they are written as they are, never through nulling.
+/// `entity_files` are the ASSET file bodies by entity id, and `file_bodies`
+/// their stored bytes by digest (OF-222).
 pub(super) fn write_vault_archive(
     mut document: Value,
     secrets: &[ArchiveSecretCustody],
     mut binary_bodies: BTreeMap<String, Vec<u8>>,
+    entity_files: &BTreeMap<String, ExportBodyFile>,
+    file_bodies: BTreeMap<String, Vec<u8>>,
 ) -> Result<(Vec<u8>, WholeVaultDocumentManifest)> {
     let mut files = BTreeMap::new();
     detach_result_bodies(&mut document, &mut files, &mut binary_bodies);
+    detach_entity_bodies(&document, entity_files, file_bodies, &mut files)?;
     for tree in source_trees(&mut document) {
         detach_tree(tree, &mut files);
     }
@@ -177,6 +184,38 @@ fn detach_result_bodies(
             }
         }
     }
+}
+
+/// OF-222: each ASSET file body becomes the file its descriptor names, once,
+/// whatever else cites the same bytes. The nulling pass read every descriptor;
+/// one it changed refuses the export, naming its entity, so no bytes go under
+/// a reference that no longer names them.
+fn detach_entity_bodies(
+    document: &Value,
+    entity_files: &BTreeMap<String, ExportBodyFile>,
+    mut file_bodies: BTreeMap<String, Vec<u8>>,
+    files: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let rows: BTreeMap<&str, &Value> = document
+        .pointer("/evidence_ledger/entities")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row.get("body")?)))
+        .collect();
+    for (id, file) in entity_files {
+        let descriptor =
+            serde_json::to_value(ExportBody::File(file.clone())).map_err(|_| encode_failed())?;
+        if rows.get(id.as_str()).copied() != Some(&descriptor) {
+            return Err(Error::InvalidConfig(format!(
+                "whole-vault export: the credential pass changed entity {id}'s file reference"
+            )));
+        }
+        if let Some(bytes) = file_bodies.remove(file.blake3()) {
+            files.insert(file.blake3().to_owned(), bytes);
+        }
+    }
+    Ok(())
 }
 
 /// The source trees the document carries: skill packages, pack sources and

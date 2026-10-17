@@ -2,7 +2,7 @@
 //! passes the credential-nulling transform, and the nulled value is cut into
 //! the archive (OF-222). No retrieval projection, truncation or token budget.
 use super::credential_nulling::null_document_credentials;
-use super::export_value::{ExportBody, ExportValue};
+use super::export_value::{ExportBody, ExportBodyFile, ExportValue, attaches_as_file};
 use crate::batch::export::{
     EmbeddingSetupWithheld, ExportDerivationEnvelope, ExportEntity, ExportLedger, ExportReaderFold,
     ExportResultBody, ExportRun, ExportRunOutput, ExportRunResults, ExportSourceVault,
@@ -76,9 +76,20 @@ pub(crate) fn serialize_vault_snapshot(
         embedding_spaces,
         slot_bindings,
     };
+    // OF-222: a stored file an ASSET body is goes beside the document once, by
+    // digest, as it is stored; its row carries the descriptor naming it.
+    let mut entity_files = std::collections::BTreeMap::new();
+    let mut file_bodies = std::collections::BTreeMap::new();
     for raw in snapshot.entities {
         let body = if raw.tainted {
             ExportBody::Nulled
+        } else if snapshot.attaches_files && attaches_as_file(raw.header.entity_type, &raw.body) {
+            let file = ExportBodyFile::of(&raw.body);
+            entity_files.insert(raw.id.to_hex(), file.clone());
+            file_bodies
+                .entry(file.blake3().to_owned())
+                .or_insert(raw.body);
+            ExportBody::File(file)
         } else {
             ExportBody::from_bytes(&raw.body, raw.header.entity_type)
         };
@@ -166,11 +177,16 @@ pub(crate) fn serialize_vault_snapshot(
         .map_err(|_| Error::InvariantViolation("whole-vault document serialization failed"))?;
     // This second pass covers descriptors and manifest strings too. Body keys
     // and binary values were already inspected before the typed-tree encoding.
+    // A file body's descriptor is read here; its stored bytes are not.
     let value = null_document_credentials(&value);
     let (bytes, manifest) = match cut {
-        ExportCut::Archive => {
-            super::vault_archive::write_vault_archive(value, &snapshot.secrets, binary_bodies)?
-        }
+        ExportCut::Archive => super::vault_archive::write_vault_archive(
+            value,
+            &snapshot.secrets,
+            binary_bodies,
+            &entity_files,
+            file_bodies,
+        )?,
         ExportCut::Okf => (
             super::okf_bundle::write_okf_bundle(&value, snapshot.exported_at)?,
             document.manifest,
