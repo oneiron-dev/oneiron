@@ -748,6 +748,15 @@ async fn start_dreamer(
     if !models.dreamer.enabled {
         return Err(IdleReason::Disabled);
     }
+    if models.dreamer.runner_seats.is_some() {
+        // The policy is validated and registered at config load (OF-137),
+        // but this host has no BYOA endpoint factory, egress port, or
+        // checkout service to execute runner seats with yet. Say so rather
+        // than silently pretend the BYO runner took the work.
+        tracing::warn!(
+            "models.dreamer.runner_seats is configured; this host cannot execute BYO runner seats yet, so Dreamer work stays on the internal model roles"
+        );
+    }
     let seat = runtime
         .seat(DREAMER_ROLE)
         .ok_or(IdleReason::NoModelConfigured)?

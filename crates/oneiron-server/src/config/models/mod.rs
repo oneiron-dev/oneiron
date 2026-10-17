@@ -109,6 +109,11 @@ struct DreamerFile {
     resident_prompt_file: Option<PathBuf>,
     task_prompt: Option<String>,
     task_prompt_file: Option<PathBuf>,
+    /// The owner's BYO runner seats (OF-137): ordered named runners, the
+    /// official seats registered as named providers, and what a spent seat
+    /// does. Labels and custody handles only; no vendor login can be
+    /// written here.
+    runner_seats: Option<crate::runtime::seat_login::RunnerSeatPolicySettings>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -243,6 +248,11 @@ pub struct DreamerSettings {
     /// The wording a TASK routed to the Dreamer realizes with. Without one,
     /// the engine's own (`dreamer.task_realize`).
     pub task_instruction: Option<String>,
+    /// The owner's BYO runner-seat policy (OF-137), validated at load: the
+    /// ordered named runners Dreamer work may be dispatched to and where
+    /// the work goes when a seat's quota is spent. Without one, the
+    /// Dreamer runs only on its internal model roles.
+    pub runner_seats: Option<crate::runtime::seat_login::RunnerSeatPolicySettings>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -365,7 +375,13 @@ impl ModelsFile {
                 self.dreamer.task_prompt_file,
                 base,
             )?,
+            runner_seats: self.dreamer.runner_seats,
         };
+        if let Some(runner_seats) = &dreamer.runner_seats {
+            runner_seats
+                .policy()
+                .map_err(|error| anyhow::anyhow!("models.dreamer.runner_seats: {error}"))?;
+        }
         if dreamer.idle_floor_secs == 0 || dreamer.session_ceiling_secs <= dreamer.idle_floor_secs {
             anyhow::bail!(
                 "models.dreamer: idle_floor_secs must be > 0 and session_ceiling_secs must exceed it"
