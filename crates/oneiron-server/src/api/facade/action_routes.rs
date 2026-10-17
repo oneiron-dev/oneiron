@@ -232,6 +232,7 @@ async fn execute(
             verb_door: Some(door),
             owner: owner.as_ref(),
             live_run: None,
+            planner: None,
         };
         executor.execute_call(
             &vault,

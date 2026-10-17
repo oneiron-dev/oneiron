@@ -40,9 +40,10 @@ use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::secret_custody::{
-    CustodyClass, CustodyWrite, KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys,
-    MemberStep, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
-    SecretCustodyStatus, masked_file_in_txn, put_masked_file_in_txn, register_custody_in_txn,
+    CustodyClass, CustodyWrite, FoundNote, KeptValues, KeyPlaces, KeySpan, MASKED_FILE_BAND,
+    MaskedFile, MemberKeys, MemberStep, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor,
+    SecretCustodyRecord, SecretCustodyStatus, masked_file_in_txn, note_found_keys_in_txn,
+    put_masked_file_in_txn, register_custody_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -103,10 +104,16 @@ pub(in crate::batch) fn mask_batch_ops(
         Ok(()) => return Ok(MaskedFiles::default()),
         Err(refusal) => refusal,
     };
+    // A value the owner ruled no secret in a record is no hit there.
+    let kept = KeptValues::for_records_in_txn(store, &*wtxn, ops.iter().filter_map(op_record))?;
+    if !kept.is_empty() && scan_batch_ops(store, &*wtxn, &screened(&kept, ops)).is_ok() {
+        return Ok(MaskedFiles::default());
+    }
     let mut planned = ops.to_vec();
     let mut plan = Masker {
         marked: marked_files(store, &*wtxn, ops)?,
         mints: masks,
+        kept,
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;
@@ -114,8 +121,9 @@ pub(in crate::batch) fn mask_batch_ops(
         return Err(refusal);
     }
     // A hit no span places is still in the copy, and refuses as before.
-    scan_batch_ops(store, &*wtxn, &planned)?;
+    scan_batch_ops(store, &*wtxn, &screened(&plan.kept, &planned))?;
     drop(planned);
+    let kept = std::mem::take(&mut plan.kept);
     let files = std::mem::take(&mut plan.files);
     let masked = MaskedFiles(std::mem::take(&mut plan.file_ids));
     if !masks {
@@ -168,10 +176,51 @@ pub(in crate::batch) fn mask_batch_ops(
             .map(|(value, (handle, _))| (value, handle))
             .collect(),
         minted: true,
+        kept,
         ..Masker::default()
     }
     .mask_ops(ops)?;
     Ok(masked)
+}
+
+/// The record a batch op writes, as the mask's places name it.
+fn op_record(op: &BatchOp) -> Option<EntityId> {
+    match op {
+        BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } | BatchOp::Text { id, .. } => {
+            Some(*id)
+        }
+        _ => None,
+    }
+}
+
+/// `ops` as the door scans them where the owner ruled a value no secret: each
+/// such value in its record's body or text overwritten by the mask's filler.
+fn screened<'a>(kept: &KeptValues, ops: &'a [BatchOp]) -> std::borrow::Cow<'a, [BatchOp]> {
+    if kept.is_empty() {
+        return std::borrow::Cow::Borrowed(ops);
+    }
+    let mut copy = ops.to_vec();
+    for op in &mut copy {
+        match op {
+            BatchOp::Put { id, data, .. } => {
+                if let Some(filled) = kept.screened(id, data) {
+                    *data = filled;
+                }
+            }
+            BatchOp::Text { id, fields } => {
+                for (_, value) in fields.iter_mut() {
+                    if let Some(filled) = kept
+                        .screened(id, value.as_bytes())
+                        .and_then(|filled| String::from_utf8(filled).ok())
+                    {
+                        *value = filled;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    std::borrow::Cow::Owned(copy)
 }
 
 /// The files a batch stored with keys in them. Once the batch has stamped
@@ -275,6 +324,8 @@ struct Masker {
     file_ids: Vec<EntityId>,
     /// The record and place the pass reads now.
     at: Option<(EntityId, String)>,
+    /// The values the owner ruled no secret, by record: left as written.
+    kept: KeptValues,
 }
 
 impl Masker {
@@ -492,6 +543,9 @@ impl Masker {
                             bytes
                         }
                     };
+                    if self.is_kept(&secret) {
+                        continue;
+                    }
                     *member = Value::from(self.handle(&secret, REASON_SENSITIVE_ENV)?);
                     changed = true;
                 }
@@ -510,7 +564,12 @@ impl Masker {
         }
         let mut out = String::with_capacity(text.len());
         let mut from = 0;
+        let mut placed = false;
         for (span, reason) in spans {
+            if self.is_kept(text[span.clone()].as_bytes()) {
+                continue;
+            }
+            placed = true;
             out.push_str(&text[from..span.start]);
             let handle = self.handle(text[span.clone()].as_bytes(), reason)?;
             out.push_str(HANDLE_OPEN);
@@ -518,8 +577,19 @@ impl Masker {
             out.push(']');
             from = span.end;
         }
+        if !placed {
+            return Ok(None);
+        }
         out.push_str(&text[from..]);
         Ok(Some(out))
+    }
+
+    /// Whether the owner ruled `value` no secret in the record the pass
+    /// reads now.
+    fn is_kept(&self, value: &[u8]) -> bool {
+        self.at
+            .as_ref()
+            .is_some_and(|(record, _)| self.kept.holds(record, value))
     }
 
     /// The handle `value` takes: one per distinct value in a batch.
@@ -558,6 +628,7 @@ impl Masker {
     ) -> Result<HashMap<Vec<u8>, (String, EntityId)>> {
         let floor = SecretCustodyFloor::resolve(write.store, &*wtxn)?;
         let mut handles = HashMap::with_capacity(self.found.len());
+        let mut notes = Vec::with_capacity(self.found.len());
         for found in self.found {
             let id = write.store.clock.entity_id()?;
             let mut rec = SecretCustodyRecord {
@@ -590,12 +661,21 @@ impl Masker {
                 &MaskOrigin {
                     record: found.record,
                     reason: found.reason.to_owned(),
-                    place: found.place,
+                    place: found.place.clone(),
                     masked_at: at,
                 },
             )?;
+            notes.push(FoundNote {
+                record: found.record,
+                custody: id,
+                handle: handle.clone(),
+                reason: found.reason,
+                place: found.place,
+            });
             handles.insert(std::mem::take(&mut rec.value_bytes), (handle, id));
         }
+        // The owner hears of what was lifted, once per record.
+        note_found_keys_in_txn(write.store, wtxn, &notes, at)?;
         Ok(handles)
     }
 }

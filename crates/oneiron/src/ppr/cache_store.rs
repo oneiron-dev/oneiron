@@ -8,6 +8,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
+use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Rows, Store};
 
@@ -733,10 +734,11 @@ pub(super) fn encode_cache_value_with_state(
     Ok(value)
 }
 pub(crate) fn read_graph_version(store: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<u64> {
-    let Some(raw) = store.hnsw_meta().get(txn, GRAPH_VERSION_KEY)? else {
-        return Ok(0);
-    };
-    decode_u64(&raw, "ppr graph version")
+    Ok(store
+        .port_index_meta_with_raw(txn, IndexMetaKey::GraphVersion, |raw| {
+            decode_u64(raw, "ppr graph version")
+        })?
+        .unwrap_or(0))
 }
 fn decode_u64(raw: &[u8], context: &'static str) -> Result<u64> {
     let bytes: [u8; 8] = raw.try_into().map_err(|_| Error::CorruptedIndex(context))?;

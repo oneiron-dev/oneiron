@@ -1,14 +1,13 @@
 //! Builder flags, run() dispatch, and the aggregate maintenance report.
 
 use crate::error::Result;
-use crate::hnsw::COUNT_KEY;
 use crate::{EntityId, Vault};
 
 use super::attempt_lease;
 use super::hnsw_rebuild::{decode_u64_opt, rebuild_hnsw};
 use super::rebuild_hnsw_if_dropped;
 use super::text_ops::{cleanup_ppr_cache, clear_text_index, compact_postings};
-use crate::ports::ShortIdStoreMaintenance;
+use crate::ports::{IndexMetaKey, IndexRows, RetrievalIndexInventory, ShortIdStoreMaintenance};
 
 /// Builder for running maintenance operations against a vault.
 #[must_use = "MaintenanceBuilder performs no work until `.run()` is called"]
@@ -265,14 +264,18 @@ impl<'a> MaintenanceBuilder<'a> {
                 // A shed graph carries no committed `COUNT_KEY`, so there are
                 // no dead nodes to remove; report the rehydrated live count.
                 let rtxn = self.vault.store.env.read_txn()?;
-                report.hnsw_live_nodes =
-                    decode_u64_opt(self.vault.store.hnsw_meta.get(&rtxn, COUNT_KEY)?.as_deref())?
-                        .unwrap_or(0);
+                report.hnsw_live_nodes = self
+                    .vault
+                    .store
+                    .port_index_meta_with_raw(&rtxn, IndexMetaKey::Count, |raw| {
+                        decode_u64_opt(Some(raw))
+                    })?
+                    .flatten()
+                    .unwrap_or(0);
                 report.hnsw_invalid_vectors_skipped = self
                     .vault
                     .store
-                    .vectors
-                    .len(&rtxn)?
+                    .port_index_row_count(&rtxn, IndexRows::Vectors)?
                     .saturating_sub(report.hnsw_live_nodes);
             } else {
                 let (dead_removed, live_nodes, invalid_vectors_skipped) =
