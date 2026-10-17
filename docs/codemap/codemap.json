@@ -1193,6 +1193,7 @@
       "const": 1,
       "enum": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 5
      }
     },
@@ -1221,6 +1222,21 @@
      "path": "src/agent_inbox_lens/tests/inbound.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InboxTextSource",
+      "ResolvedInboxText"
+     ],
+     "path": "src/agent_inbox_lens/text.rs",
+     "purpose": "An INBOX row's words, resolved inside the reader's scope (OF-490, OF-519)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -41508,7 +41524,7 @@
      "purpose": "Custody of a verified provider event's body (OF-519)",
      "surface": {
       "const": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -49022,7 +49038,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate"
     },
     "agent_inbox_lens": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -50480,7 +50496,7 @@
    },
    "over_bar": 130,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3048,
+   "source_files": 3049,
    "test_files": 903
   },
   "oneiron-android": {
