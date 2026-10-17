@@ -147,6 +147,9 @@ pub struct SyncServer {
     /// once it loads; `vault.hooks.replay` replays on the same one. Empty
     /// under `--no-hooks`, or when the sandbox did not load.
     pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
+    /// The checked built-in channels this host serves (OF-519), kept by
+    /// `builtin_host::spawn` and read by their provider webhooks.
+    pub(crate) builtin_handles: Arc<crate::builtin_host::BuiltinHandles>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -381,6 +384,7 @@ impl SyncServer {
             decision_reads,
             decisions,
             hook_runtime: std::sync::OnceLock::new(),
+            builtin_handles: Arc::default(),
             run_receipts: Arc::default(),
             ai: crate::ai_host::AiHandle::inert(),
             rerank_runtime: Default::default(),
