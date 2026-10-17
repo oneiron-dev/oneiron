@@ -66,8 +66,6 @@ pub struct RoleRoute {
     pub model: ModelId,
     pub locality: ModelLocality,
     pub ladder: Arc<OfferLadder>,
-    /// No manifest binds the role, so the seat is the binding.
-    seat_bound: bool,
 }
 
 impl ModelRuntime {
@@ -94,7 +92,6 @@ impl ModelRuntime {
                 model: seat.model.clone(),
                 locality: seat.locality,
                 ladder: Arc::clone(&seat.ladder),
-                seat_bound: true,
             });
         };
         let binding = manifest.binding(role).map_err(RoleRefusal::refused)?;
@@ -142,7 +139,6 @@ impl ModelRuntime {
                     ladder: rung.unwrap_or(ladder),
                     model,
                     locality: served,
-                    seat_bound: false,
                 })
             }
             _ => Err(RoleRefusal::RouteNotServed { model, route }),
@@ -158,11 +154,13 @@ impl ModelRuntime {
     ) -> Result<RoleCall, RoleRefusal> {
         let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
         let route = self.route_role(vault, role, seat)?;
-        if route.seat_bound {
-            // The seat is this call's binding, as a routed seat's is: a
-            // purpose default only places a call nothing binds.
-            request.envelope.tier.per_seat = Some(ModelTierRef(role_key(role)));
-        }
+        // Every call of a role carries the role's seat, so its usage event
+        // names the seat it ran on, manifest or not. Without a manifest the
+        // seat is the binding, as a routed seat's is: a purpose default only
+        // places a call nothing binds. With one, the manifest still binds:
+        // the route above and the admission below set the model, its route
+        // and the vault-policy tier, and nothing picks a model by tier.
+        request.envelope.tier.per_seat = Some(ModelTierRef(role_key(role)));
         request.model = route.model.clone();
         request.envelope.locality = route.locality;
         let request = vault
