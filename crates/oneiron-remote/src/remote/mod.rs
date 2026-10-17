@@ -166,6 +166,7 @@ impl RemoteClient {
             },
             export_limit: MAX_REMOTE_EXPORT_BYTES,
             room_turn: None,
+            off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
         })
     }
