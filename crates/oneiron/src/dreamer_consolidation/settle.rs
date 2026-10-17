@@ -75,6 +75,14 @@ impl ConflictSettlement {
     }
 }
 
+/// Which open conflicts an owner lets a delegate settle: one subject's, or
+/// every subject's in the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictReviewScope {
+    Subject(EntityId),
+    Vault,
+}
+
 /// One unanswered `conflict.open` marker and the claims it names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenConflict {
@@ -416,12 +424,16 @@ pub(crate) fn apply_settlement_in_txn(
             now,
         )
     };
+    // A MACHINE's answer (the Dreamer's) carries its retained signature, or
+    // put admission refuses it; a person's and an agent's pass unchanged.
+    let mut envelope = envelope.clone();
+    vault.sign_retained_machine_claim_in_txn(&*txn, &resolved, &candidate, &mut envelope)?;
     vault
         .batch_in()
         .claim_candidate(
             &resolved,
             candidate,
-            envelope,
+            &envelope,
             TimeRange {
                 start: now,
                 end: now,

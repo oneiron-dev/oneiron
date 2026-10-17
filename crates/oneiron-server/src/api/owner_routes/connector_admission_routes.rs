@@ -20,6 +20,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -29,10 +30,12 @@ use axum::routing::{get, post};
 use oneiron::connector_key::qualification::ConnectorQualificationReceipt;
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
-    ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ProbeManifestQualifier,
-    SlateDisposition, SlateOwnerOverride, SlateRow, SlateToolManifest,
+    ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
+    ProbeManifestQualifier, SlateDisposition, SlateOwnerOverride, SlateRow, SlateToolManifest,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::llm::decision::DecisionRung;
+use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{EntityId, Vault};
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
@@ -306,6 +309,36 @@ fn slate_of(
     Ok((id, slate))
 }
 
+/// Drafts with the model drafter `[models.decisions.connector_slate]` binds,
+/// asked up to the Big rung within the row's budget. Without that row, the
+/// rule rung drafts every row from the owner's past rulings.
+fn with_slate_drafter<T>(
+    server: &SyncServer,
+    draft: impl FnOnce(Option<&ConnectorSlateDrafter<'_>>) -> T,
+) -> T {
+    let decisions = server.decision_host();
+    let Some(settings) = decisions.connector_slate() else {
+        return draft(None);
+    };
+    let principal = match server.vault().ensure_embedded_owner_actor() {
+        Ok(principal) => principal,
+        Err(error) => {
+            tracing::warn!(%error, "no owner principal; the rule rung drafts the slate");
+            return draft(None);
+        }
+    };
+    let deadline = RetrievalDeadline::hard(Instant::now(), settings.budget);
+    let drafter = ConnectorSlateDrafter {
+        ladder: decisions.ladder().ladder(),
+        principal,
+        dial: decisions.dial(DecisionRung::Big),
+        bands: decisions.bands(),
+        deadline: &deadline,
+        wording: &settings.wording,
+    };
+    draft(Some(&drafter))
+}
+
 fn unresolvable() -> OwnerError {
     OwnerError::Invalid(
         "the connector's input schemas use a form this host cannot resolve".to_owned(),
@@ -360,11 +393,10 @@ fn register_connector(server: &SyncServer, request: RegisterRequest) -> OwnerRes
     }
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let manifest = host::slate_manifest(&resolved, &discovery.tools, &request.tools);
-    // No model drafter is bound on this host: the rule rung drafts every
-    // row from the owner's past rulings.
-    let slate_id = vault
-        .draft_connector_admission_slate(&manifest, None)
-        .map_err(engine)?;
+    let slate_id = with_slate_drafter(server, |drafter| {
+        vault.draft_connector_admission_slate(&manifest, drafter)
+    })
+    .map_err(engine)?;
     let now = unix_seconds_now();
     let (key, record) = vault
         .register_connector(
@@ -700,9 +732,10 @@ fn refresh_connector(server: &SyncServer, request: RefreshRequest) -> OwnerResul
             dropped: Vec::new(),
         });
     }
-    let delta = vault
-        .draft_connector_delta_slate(slate_id, &listed, None)
-        .map_err(engine)?;
+    let delta = with_slate_drafter(server, |drafter| {
+        vault.draft_connector_delta_slate(slate_id, &listed, drafter)
+    })
+    .map_err(engine)?;
     let now = unix_seconds_now();
     let record = if discovery.revision == pinned {
         vault.revise_connector_slate(&catalog.key, delta.slate_id, now)
