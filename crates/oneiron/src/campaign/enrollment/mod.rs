@@ -30,6 +30,7 @@
 //! key. CA-03 keeps its own `campaign:home_node_macro:v1` row and never touches
 //! the Dreamer's.
 
+mod audience;
 mod detection;
 mod home_node;
 mod outbound_leg;
@@ -37,6 +38,7 @@ mod program;
 mod runner;
 mod storage;
 
+pub use self::audience::{AudienceWakeReport, audience_program, enroll_audience_wake};
 pub use self::detection::{
     CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection, accept_enrollment_baseline,
     campaign_enrollment_event, detect_enrollment,
@@ -50,6 +52,9 @@ pub use self::home_node::{
 pub use self::program::{
     CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, campaign_program,
     campaign_program_step, put_campaign_program, put_campaign_program_step,
+};
+pub use self::program::{
+    CampaignProgramAudience, MAX_CAMPAIGN_PROGRAMS_PER_AUDIENCE_QUERY, campaign_programs_for_query,
 };
 pub use self::runner::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner,

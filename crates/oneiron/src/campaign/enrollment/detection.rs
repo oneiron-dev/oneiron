@@ -9,7 +9,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::saved_query::{
     EVIDENCE_HASH_LEN, EvaluationRequest, MatchVerdict, MembershipCause, MembershipEvent,
-    MembershipTransition, QueryScope, SavedQueryEvaluator, membership_events,
+    MembershipTransition, QueryScope, SavedQueryEvaluator, WakeVisit, membership_events,
     next_membership_epoch, read_saved_query,
 };
 use crate::side_table::{self, LegacyJson, SideTable};
@@ -145,14 +145,26 @@ pub async fn detect_enrollment(
     owner_actor: EntityId,
     input: &DetectEnrollment,
 ) -> Result<EnrollmentDetection> {
+    detect_enrollment_visit(evaluator, owner_actor, input)
+        .await
+        .map(|(detection, _)| detection)
+}
+
+/// [`detect_enrollment`], plus what its evaluation cost a wake: the audience
+/// wake counts its bounds from this.
+pub(super) async fn detect_enrollment_visit(
+    evaluator: &SavedQueryEvaluator<'_>,
+    owner_actor: EntityId,
+    input: &DetectEnrollment,
+) -> Result<(EnrollmentDetection, WakeVisit)> {
     let vault = evaluator.vault;
     let record =
         read_saved_query(vault, owner_actor, input.query_ref)?.ok_or(Error::EntityNotFound)?;
     let scope_digest = effective_scope_digest(&record.definition.scope, evaluator.owner_grants);
     let definition_version = record.definition.definition_version;
     let cause = derive_cause(vault, input.query_ref, definition_version, &scope_digest)?;
-    let outcome = evaluator
-        .evaluate_entity(&EvaluationRequest {
+    let (outcome, visit) = evaluator
+        .evaluate_entity_visit(&EvaluationRequest {
             query_ref: input.query_ref,
             campaign_ref: input.campaign_ref,
             entity_ref: input.entity_ref,
@@ -163,7 +175,7 @@ pub async fn detect_enrollment(
         })
         .await?;
     if outcome.decision.verdict != MatchVerdict::Match {
-        return Ok(EnrollmentDetection::NoTransition);
+        return Ok((EnrollmentDetection::NoTransition, visit));
     }
     // A transition is a CHANGE. An entity already entered on exactly this
     // evidence has nothing to transition into, and minting an epoch for it
@@ -175,7 +187,7 @@ pub async fn detect_enrollment(
                 && last.evidence_hash == outcome.evidence_hash
         })
     {
-        return Ok(EnrollmentDetection::NoTransition);
+        return Ok((EnrollmentDetection::NoTransition, visit));
     }
     let event = CampaignEnrollmentEvent {
         event_ref: vault.store.clock.entity_id()?,
@@ -193,7 +205,7 @@ pub async fn detect_enrollment(
         scope_digest,
     };
     put_event(vault, &event)?;
-    Ok(EnrollmentDetection::Recorded(Box::new(event)))
+    Ok((EnrollmentDetection::Recorded(Box::new(event)), visit))
 }
 
 /// Routes the transition onto ONE of the three closed causes.
