@@ -483,6 +483,9 @@ impl OneironClient {
                 "vault.artifacts.review_slides" => remote_agent_verb_output::<
                     oneiron::blob_artifact::SlideReviewOutcome,
                 >(client, verb, &input),
+                "vault.critic.review" => remote_agent_verb_output::<
+                    oneiron::critic::review::CriticReviewOutcome,
+                >(client, verb, &input),
                 "vault.artifacts.propose_deck" => remote_agent_verb_output::<
                     oneiron::blob_artifact::DeckProposeOutcome,
                 >(client, verb, &input),
@@ -2705,6 +2708,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.review_slides", value)
+    }
+    pub fn vault_critic_review(
+        &self,
+        input: &oneiron::critic::review::CriticReviewSubmit,
+    ) -> Result<oneiron::critic::review::CriticReviewOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.critic.review", value)
     }
     /// Runs one native deck transaction over the head and holds the proposal for Keep.
     pub fn vault_artifacts_propose_deck(
