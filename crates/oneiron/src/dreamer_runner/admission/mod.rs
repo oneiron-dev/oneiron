@@ -320,72 +320,71 @@ impl DreamerRunnerStore<'_> {
             ));
         }
 
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        if input.scope == DreamerConsolidationScope::Macro {
-            let local_node_id =
-                crate::identity::load_or_mint_client_id_in_txn(self.vault, &mut wtxn)?;
-            if input.local_node_id != local_node_id {
-                return Err(invalid_dreamer_runner(
-                    "dreamer local node_id does not match vault identity",
-                ));
-            }
+        // One grouped write, so what admission writes (a highway Accept's
+        // TASK update among it) is announced at its commit.
+        let outcome = self.vault.with_write_txn_grouped(
+            |wtxn| -> Result<DreamerConsolidationAdmissionOutcome> {
+                if input.scope == DreamerConsolidationScope::Macro {
+                    let local_node_id =
+                        crate::identity::load_or_mint_client_id_in_txn(self.vault, wtxn)?;
+                    if input.local_node_id != local_node_id {
+                        return Err(invalid_dreamer_runner(
+                            "dreamer local node_id does not match vault identity",
+                        ));
+                    }
 
-            let Some(designation) = home_node_designation_in_txn(self.vault, &wtxn)? else {
-                wtxn.commit()?;
-                return Ok(DreamerConsolidationAdmissionOutcome::NoHomeNode);
-            };
-            if designation.node_id != local_node_id {
-                wtxn.commit()?;
-                return Ok(DreamerConsolidationAdmissionOutcome::NotHomeNode(
-                    designation,
-                ));
-            }
-        }
+                    let Some(designation) = home_node_designation_in_txn(self.vault, &*wtxn)?
+                    else {
+                        return Ok(DreamerConsolidationAdmissionOutcome::NoHomeNode);
+                    };
+                    if designation.node_id != local_node_id {
+                        return Ok(DreamerConsolidationAdmissionOutcome::NotHomeNode(
+                            designation,
+                        ));
+                    }
+                }
 
-        let budget_trap_budget_id = input.admission.budget_id.clone();
-        let budget_trap_now = input.admission.now;
-        let result =
-            self.admit_next_kind_in_txn(&mut wtxn, input.scope.attempt_kind(), input.admission)?;
-        match (tournament_grant, result.outcome) {
-            (Some(grant), DreamerAdmissionOutcome::BudgetExhausted(budget)) => {
-                let Some(attempt_id) = result.budget_exhausted_candidate else {
-                    wtxn.commit()?;
-                    return Ok(DreamerConsolidationAdmissionOutcome::Admission(
-                        DreamerAdmissionOutcome::BudgetExhausted(budget),
-                    ));
-                };
-                let intervention = self.attempts.intervene_in_txn(
-                    &mut wtxn,
-                    InterveneAttempt {
-                        id: attempt_id,
-                        kind: AttemptInterventionKind::Pause,
-                        actor: DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR.to_owned(),
-                        note: Some(DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE.to_owned()),
-                        now: budget_trap_now,
-                    },
-                )?;
-                wtxn.commit()?;
-                self.vault.store.notify_attempt_observers();
-                Ok(
-                    DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(
-                        DreamerClaimAuthoringBudgetTrap {
-                            attempt_id,
-                            budget_id: budget_trap_budget_id,
-                            budget,
-                            required_units: grant.reserve_units,
-                            fanout_m: grant.fanout_m,
-                            depth_k: grant.depth_k,
-                            intervention_effect: intervention.effect,
-                        },
-                    ),
-                )
-            }
-            (_, outcome) => {
-                wtxn.commit()?;
-                self.vault.store.notify_attempt_observers();
-                Ok(DreamerConsolidationAdmissionOutcome::Admission(outcome))
-            }
-        }
+                let budget_trap_budget_id = input.admission.budget_id.clone();
+                let budget_trap_now = input.admission.now;
+                let result =
+                    self.admit_next_kind_in_txn(wtxn, input.scope.attempt_kind(), input.admission)?;
+                match (tournament_grant, result.outcome) {
+                    (Some(grant), DreamerAdmissionOutcome::BudgetExhausted(budget)) => {
+                        let Some(attempt_id) = result.budget_exhausted_candidate else {
+                            return Ok(DreamerConsolidationAdmissionOutcome::Admission(
+                                DreamerAdmissionOutcome::BudgetExhausted(budget),
+                            ));
+                        };
+                        let intervention = self.attempts.intervene_in_txn(
+                            wtxn,
+                            InterveneAttempt {
+                                id: attempt_id,
+                                kind: AttemptInterventionKind::Pause,
+                                actor: DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR.to_owned(),
+                                note: Some(DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE.to_owned()),
+                                now: budget_trap_now,
+                            },
+                        )?;
+                        Ok(
+                            DreamerConsolidationAdmissionOutcome::ClaimAuthoringBudgetTrap(
+                                DreamerClaimAuthoringBudgetTrap {
+                                    attempt_id,
+                                    budget_id: budget_trap_budget_id,
+                                    budget,
+                                    required_units: grant.reserve_units,
+                                    fanout_m: grant.fanout_m,
+                                    depth_k: grant.depth_k,
+                                    intervention_effect: intervention.effect,
+                                },
+                            ),
+                        )
+                    }
+                    (_, outcome) => Ok(DreamerConsolidationAdmissionOutcome::Admission(outcome)),
+                }
+            },
+        )?;
+        self.vault.store.notify_attempt_observers();
+        Ok(outcome)
     }
 
     pub(super) fn admit_next_kind(
@@ -394,9 +393,9 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         validate_admission_input(&input)?;
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        let result = self.admit_next_kind_in_txn(&mut wtxn, queue_kind, input)?;
-        wtxn.commit()?;
+        let result = self
+            .vault
+            .with_write_txn_grouped(|wtxn| self.admit_next_kind_in_txn(wtxn, queue_kind, input))?;
         self.vault.store.notify_attempt_observers();
         Ok(result.outcome)
     }
