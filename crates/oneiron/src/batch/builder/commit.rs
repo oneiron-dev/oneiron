@@ -282,6 +282,7 @@ fn apply_admitted(
     Vec<crate::entity_id::EntityId>,
     Vec<crate::entity_id::EntityId>,
 )> {
+    let rekeys = crate::channel_identity::AssignmentRekeys::begin(&vault.store);
     let pending_vad_ids =
         super::vad_postcommit::pending_dreamer_vad_approvals(vault, wtxn, &batch.ops)?;
     // ONE-1741: batch deletes no longer pre-scan for scan-verdict
@@ -306,6 +307,7 @@ fn apply_admitted(
     for task in &tasks {
         crate::task_verb::deliver_task_result_in_txn(vault, wtxn, *task)?;
     }
+    rekeys.finish(&vault.store, wtxn)?;
     crate::scope_summary::rederive_changed_in_txn(vault, wtxn)?;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;

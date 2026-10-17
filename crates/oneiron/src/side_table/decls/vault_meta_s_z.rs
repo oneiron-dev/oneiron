@@ -518,6 +518,9 @@ side_tables! {
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// Registered external ask wait. Key: id16 + bytes32.
     TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named;
+    /// Fan-out launch held for, or launched past, the approval mode: its frozen payload, plan,
+    /// statement, pause or width-check row and ruling (OF-393). Key: hex32 (launch ref).
+    TASK_FANOUT_LAUNCH: VaultMeta b"tasks/fanout/launch.v1/" Named;
     /// Consult fan-out plan. Key: hex32.
     TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named;
     /// Retired consult fan-out policy carrier; the policy manifest now governs.

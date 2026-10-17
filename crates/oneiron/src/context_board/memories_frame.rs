@@ -29,6 +29,12 @@ pub(super) fn memory_row_text(row: &MemoryRow, foreign: bool) -> String {
     text
 }
 
+/// The board section a MEMORIES row in `world` renders in, one per world;
+/// a row with no world renders in `unscoped`.
+pub(super) fn memories_section_name(world: Option<&str>) -> String {
+    format!("MEMORIES world={}", world.unwrap_or("unscoped"))
+}
+
 pub fn assemble_memories_sections(
     section: &MemoriesSection,
 ) -> Result<Vec<BoardSection>, BoardFrameError> {
@@ -52,7 +58,7 @@ pub fn assemble_memories_sections(
             }
         }
         let mut board = BoardSection::new(
-            format!("MEMORIES world={}", world.unwrap_or("unscoped")),
+            memories_section_name(world),
             pinned,
             details,
             vec![format!("count: {}", rows.len())],

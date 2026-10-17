@@ -234,6 +234,14 @@ export class Oneiron {
       /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
+    fanout: {
+      /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none. */
+      launch: (input: Facade.FanoutLaunchRequest): Facade.FanoutLaunchView | null => this.#call(() => this.#client.vaultFanoutLaunch(input) as Facade.FanoutLaunchView | null),
+      /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
+      resume: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResume(input) as Facade.FanoutLaunchView),
+      /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
+      ack: (input: Facade.FanoutAckRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.FanoutLaunchView),
+    },
     /**
    * Witnesses one conversational turn.
    *
@@ -760,7 +768,7 @@ export class Oneiron {
     create: (input: Facade.TaskCreateRequest): Facade.TaskCreateReceipt => this.#call(() => this.#client.tasksCreate(input) as Facade.TaskCreateReceipt),
     /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
     wave: (input: Facade.TaskWaveRequest): Facade.TaskWaveReceipt => this.#call(() => this.#client.tasksWave(input) as Facade.TaskWaveReceipt),
-    /** Records the owner's acknowledgement of a failed TASK; any other task stays as it was. */
+    /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
