@@ -652,6 +652,23 @@ archived until you accept, and the engine refuses the automatic posture.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
 
+## Review NOTE tombstones
+
+Once a month the Dreamer's NOTE review proposes a tombstone for each archived note that has
+stayed archived past twice its kind's retention (a handoff's 60 days makes 120), that nothing
+links to (no edge into it, no note citing it, nothing derived from it), and that nobody has read
+since it was archived. A kind with no fixed retention is never proposed. Nothing is tombstoned
+until you accept, and a tombstone cannot be undone: the note's words are scrubbed and every
+device drops them.
+
+- `GET /v1/owner/notes/tombstones`: the open proposals, oldest first, each with its note id,
+  kind, retention days, and when it was archived and proposed.
+- `POST /v1/owner/notes/tombstones/accept` with `{"note": "<id>"}` tombstones the note. The
+  engine checks again that the note is still in the same archive and still qualifies. If it
+  does not, or the proposal is gone, the call is a 409.
+- `POST /v1/owner/notes/tombstones/decline` with `{"note": "<id>"}` leaves the note archived. It
+  is not proposed again unless it is restored and archived anew.
+
 ## Export a persona card
 
 A persona card (OF-325, mode A) is a shareable summary of one person: an identity line, key
