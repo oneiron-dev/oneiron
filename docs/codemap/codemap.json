@@ -4624,8 +4624,48 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container.rs",
+     "purpose": "Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/archive.rs",
+     "purpose": "A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/gzip.rs",
+     "purpose": "A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/pdf.rs",
+     "purpose": "A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -5144,6 +5184,7 @@
      "path": "src/blob_artifact/esign/render.rs",
      "purpose": "Lossless bounded PDF preparation and shared field presentation",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -10599,7 +10640,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 15,
+      "fn": 16,
       "struct": 6,
       "type": 1
      }
@@ -10723,7 +10764,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 5
      }
     },
@@ -10923,7 +10964,7 @@
       "const": 6,
       "crate-vis": 12,
       "enum": 8,
-      "fn": 18,
+      "fn": 19,
       "struct": 21,
       "trait": 1
      }
@@ -11036,9 +11077,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_run/run_verb_call.rs",
-     "purpose": "The four memory run rows as typed calls, outside the sandbox (OF-181)",
+     "purpose": "The run rows as typed calls (OF-181)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -11122,13 +11163,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -11142,7 +11183,7 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "enum": 1,
       "fn": 11,
       "struct": 2
@@ -14231,7 +14272,7 @@
      "path": "src/context_board/hook_pins.rs",
      "purpose": "Hook blocks on the board (ARCH-0080 §11, OI-1 = A)",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -30786,7 +30827,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 11,
       "struct": 2
      }
@@ -32003,7 +32044,7 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -32014,6 +32055,20 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorReplyBody"
+     ],
+     "path": "src/outbound/reply_content.rs",
+     "purpose": "The body of an agent's reply to a connector event (OF-519)",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -32030,13 +32085,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "OwnedServedChannelSink",
       "ServedChannelSink"
      ],
      "path": "src/outbound/served_sink.rs",
      "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -32288,13 +32344,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConnectorCallHost",
       "ConnectorCallInvocation",
       "ConnectorCallOutcome",
       "ConnectorCallRequest",
+      "ConnectorToolSchema",
+      "PendingConnectorCallRef",
       "UntrustedToolResult"
      ],
      "path": "src/outbound_consent/connector_call.rs",
@@ -32302,9 +32360,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 2,
-      "struct": 3,
+      "enum": 2,
+      "fn": 5,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -37862,7 +37920,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 3
      }
@@ -38260,7 +38318,7 @@
      "purpose": "The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded…",
      "surface": {
       "const": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -38292,6 +38350,8 @@
      "notable": [
       "ClosedFormPredicate",
       "GraduatedT1",
+      "MintedExample",
+      "MintedRegistration",
       "MintedT2",
       "ReviewedFinding"
      ],
@@ -38300,8 +38360,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
-      "struct": 3
+      "fn": 8,
+      "struct": 5
      }
     },
     {
@@ -45317,7 +45377,7 @@
      "path": "src/task_verb/highway_types.rs",
      "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 6,
       "fn": 1,
       "struct": 10
@@ -45642,7 +45702,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 35
      }
     },
@@ -45674,6 +45734,24 @@
      "surface": {
       "fn": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorCallReply",
+      "ConnectorSchemaReply",
+      "ConnectorSchemaRequest",
+      "ConnectorToolResult"
+     ],
+     "path": "src/task_verb/sdk_connector_call.rs",
+     "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -45740,7 +45818,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 276
+      "fn": 278
      }
     },
     {
@@ -50521,7 +50599,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 108,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51326,7 +51404,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -51342,7 +51420,7 @@
     "outbound_consent": {
      "files": 11,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
@@ -51788,7 +51866,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 120,
+     "files": 121,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51949,9 +52027,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 148,
+   "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3140,
+   "source_files": 3146,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54817,7 +54895,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 43,
+      "const": 44,
       "crate-vis": 1
      }
     },
@@ -59824,7 +59902,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 231
+      "fn": 233
      }
     },
     {
@@ -60840,7 +60918,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 232
+      "fn": 234
      }
     },
     {
@@ -62259,6 +62337,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/connector_event.rs",
+     "purpose": "The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -62345,7 +62433,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/self_heal_detectors.rs",
@@ -63417,7 +63505,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -63448,6 +63536,16 @@
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/connector_call_doors.rs",
+     "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -63527,7 +63625,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 39
      }
     },
     {
@@ -66582,6 +66680,16 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_settle.rs",
+     "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -70089,14 +70197,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 283,
+     "files": 284,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -70164,6 +70272,13 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply…"
+    },
+    "connector_call_settle": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…"
     },
     "control_keys": {
      "files": 3,
@@ -70441,7 +70556,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 557,
+   "source_files": 560,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70712,11 +70827,16 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConnectorCallReply",
+      "ConnectorCallRequest",
       "ConnectorEntry",
       "ConnectorListRequest",
       "ConnectorNameRequest",
       "ConnectorQualificationReceipt",
+      "ConnectorSchemaReply",
+      "ConnectorSchemaRequest",
       "ConnectorSendTaskOutcome",
+      "ConnectorToolResult",
       "ConnectorView",
       "ConsentAnswer",
       "ConsentDenial",
@@ -70920,6 +71040,7 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MutationIntent",
       "NativeOutputRequest",
       "NotWorse",
       "NoteAnchor",
@@ -71281,8 +71402,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 188,
-      "struct": 479
+      "enum": 190,
+      "struct": 483
      }
     },
     {
