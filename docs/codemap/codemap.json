@@ -37591,6 +37591,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "T3Finding"
+     ],
+     "path": "src/self_heal/detector_pass.rs",
+     "purpose": "The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded…",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/self_heal/detector_runner.rs",
      "purpose": "Deterministic detector execution: working-set validation, run loop, event ids, Vault entry points",
@@ -37622,7 +37636,7 @@
      "path": "src/self_heal/distillation.rs",
      "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -37700,7 +37714,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
       "crate-vis": 6,
-      "mod": 6,
+      "mod": 7,
       "re-export": 9
      }
     },
@@ -37863,7 +37877,7 @@
      "purpose": "Model-graded detection over ARCH-0037 runs",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -50662,7 +50676,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50993,7 +51007,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3080,
+   "source_files": 3081,
    "test_files": 903
   },
   "oneiron-android": {
@@ -61334,7 +61348,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -61348,6 +61362,16 @@
      "purpose": "The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/self_heal_detectors.rs",
+     "purpose": "The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -65037,7 +65061,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 12,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -65267,6 +65291,23 @@
      "purpose": "Host-configured remote rung and cached per-entity egress decisions",
      "surface": {
       "crate-vis": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DetectorConfig",
+      "DetectorTier",
+      "SelfHealConfig"
+     ],
+     "path": "src/config/self_heal.rs",
+     "purpose": "The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -68776,7 +68817,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68839,7 +68880,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -69100,7 +69141,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 528,
+   "source_files": 530,
    "test_files": 182
   },
   "oneiron-spawn": {
