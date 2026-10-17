@@ -692,7 +692,7 @@
      "purpose": "The graceful stop (ARCH-0079 #budget, OF-541): a run near the end of its lease gets the wrap-up warning…",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -848,7 +848,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 20
      }
     },
@@ -1010,7 +1010,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/task_type_tree.rs",
@@ -1109,7 +1109,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContextWidenProposal"
@@ -1117,7 +1117,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "struct": 1
      }
     },
@@ -1193,6 +1193,7 @@
       "const": 1,
       "enum": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 5
      }
     },
@@ -1221,6 +1222,21 @@
      "path": "src/agent_inbox_lens/tests/inbound.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InboxTextSource",
+      "ResolvedInboxText"
+     ],
+     "path": "src/agent_inbox_lens/text.rs",
+     "purpose": "An INBOX row's words, resolved inside the reader's scope (OF-490, OF-519)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -17712,7 +17728,33 @@
       "crate-vis": 2,
       "enum": 6,
       "fn": 12,
+      "re-export": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentHealthCoachAnswer",
+      "AgentHealthCoachAsk",
+      "AgentHealthCoachDraft",
+      "AgentHealthCoachRoute",
+      "AgentHealthPadRead",
+      "CoachHealthBrief",
+      "CoachHealthHost",
+      "ConcernMove",
+      "ConcernMoveOutcome",
+      "ConcernMoveRequest"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/ask.rs",
+     "purpose": "Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach` move, and a `coach.agent_health_ask`…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 3,
+      "struct": 6,
+      "trait": 1
      }
     },
     {
@@ -22425,13 +22467,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -25876,9 +25918,9 @@
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 4,
+      "const": 5,
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 6
      }
     },
@@ -26699,9 +26741,9 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 7,
       "trait": 1
      }
@@ -26776,7 +26818,10 @@
       "OutcomeLabel",
       "OutcomeSource",
       "QuestionActivation",
+      "QuestionAudience",
+      "QuestionCriteria",
       "QuestionDefinition",
+      "QuestionMedia",
       "QuestionRecord",
       "RefreshPolicy",
       "RefreshTrigger"
@@ -26784,14 +26829,15 @@
      "path": "src/llm/decision/questions/records.rs",
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
+      "const": 2,
       "crate-vis": 1,
-      "enum": 3,
-      "fn": 2,
-      "struct": 8
+      "enum": 4,
+      "fn": 5,
+      "struct": 10
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RefreshBatch",
@@ -26800,7 +26846,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -26835,7 +26881,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/store.rs",
@@ -28556,7 +28602,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 11,
       "struct": 5
      }
@@ -28787,8 +28833,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 38,
-      "fn": 17,
+      "crate-vis": 39,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -30098,7 +30144,7 @@
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
       "crate-vis": 4,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -34879,7 +34925,7 @@
      "path": "src/receipt/reference_refusal.rs",
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -38321,7 +38367,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill/exploration_trial.rs",
@@ -41504,7 +41550,7 @@
      "purpose": "Custody of a verified provider event's body (OF-519)",
      "surface": {
       "const": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -41619,7 +41665,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/edges.rs",
@@ -43549,27 +43595,25 @@
       "const": 9,
       "crate-vis": 1,
       "enum": 5,
-      "fn": 52,
+      "fn": 54,
       "re-export": 2,
       "struct": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "HeuristicPlacer",
+      "PlacementDecisions",
       "PlacementOutcome",
-      "PlacementRequest",
-      "TaskTypePlacer"
+      "PlacementRequest"
      ],
      "path": "src/task_type/placement.rs",
-     "purpose": "Routed placement (OF-543): a task is placed once, at spawn",
+     "purpose": "Routed placement (OF-543, OF-541): a task is placed once, at spawn",
      "surface": {
-      "const": 3,
+      "const": 4,
       "fn": 7,
-      "struct": 3,
-      "trait": 1
+      "struct": 3
      }
     },
     {
@@ -44575,7 +44619,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 210
+      "fn": 211
      }
     },
     {
@@ -44983,7 +45027,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -49018,7 +49062,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate"
     },
     "agent_inbox_lens": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -49494,7 +49538,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50203,7 +50247,7 @@
     "skill": {
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
@@ -50474,9 +50518,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 128,
+   "over_bar": 132,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3048,
+   "source_files": 3050,
    "test_files": 903
   },
   "oneiron-android": {
@@ -56947,8 +56991,27 @@
      "purpose": "Gemini wire adapter",
      "surface": {
       "fn": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GeminiMediaBackend",
+      "GeminiMediaHttpRequest",
+      "GeminiMediaHttpResponse",
+      "GeminiMediaTransport"
+     ],
+     "path": "src/media.rs",
+     "purpose": "Gemini API media wires for the `ai.*` calls past text",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -56994,11 +57057,18 @@
      "path": "src/wire.rs",
      "purpose": "Gemini generateContent request and response mapping plus status taxonomy",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     }
    ],
    "modules": {
+    "media": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Gemini API media wires for the `ai.*` calls past text"
+    },
     "stream": {
      "files": 1,
      "impl_vault": false,
@@ -57030,7 +57100,7 @@
    },
    "over_bar": 0,
    "purpose": "Gemini wire adapter",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 1
   },
   "oneiron-llm-local": {
@@ -58263,7 +58333,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 165
+      "fn": 166
      }
     },
     {
@@ -59238,7 +59308,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
@@ -59250,7 +59320,7 @@
     "lib": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)"
     }
@@ -59277,7 +59347,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 166
+      "fn": 167
      }
     },
     {
@@ -60621,6 +60691,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_health.rs",
+     "purpose": "The host Coach's answer to an agent-health ask (agent-mind §3.5, OF-568)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
@@ -60744,13 +60824,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -61230,7 +61310,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -64322,7 +64402,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -64516,13 +64596,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/decision_graph.rs",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -66092,6 +66172,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/models/gemini_media.rs",
+     "purpose": "The Gemini API's media leg: one request per call over [`ProviderHttp`], the key in `x-goog-api-key`",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "HostedCloner"
      ],
@@ -66110,7 +66200,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -67302,7 +67392,7 @@
      "path": "src/voice_host/connection.rs",
      "purpose": "One private, pre-admitted UDS connection on the existing Tokio runtime",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -67346,7 +67436,7 @@
      "surface": {
       "enum": 1,
       "fn": 7,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -67360,7 +67450,7 @@
      "path": "src/voice_host/serve_bindings.rs",
      "purpose": "One-shot bindings supplied by the existing private-connection owner",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -67404,6 +67494,19 @@
      "path": "src/voice_host/tests/wire.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceWireBindings"
+     ],
+     "path": "src/voice_host/wire.rs",
+     "purpose": "The voice wire's media ops (OF-410)",
+     "surface": {
+      "crate-vis": 11,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -67814,7 +67917,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67900,7 +68003,7 @@
     "decision_graph": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question"
     },
@@ -68017,7 +68120,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68101,7 +68204,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68138,7 +68241,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 497,
+   "source_files": 500,
    "test_files": 182
   },
   "oneiron-spawn": {
