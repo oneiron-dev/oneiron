@@ -64813,6 +64813,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/budget_hold_routes.rs",
+     "purpose": "`/v1/owner/runs/hold`: the owner reads a run its budget held (OF-541, ARCH-0079 #budget) and resumes it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/commitment_routes.rs",
      "purpose": "Owner doors for where commitment reminders go (OF-187)",
      "surface": {
@@ -70753,7 +70763,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 286,
+     "files": 287,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71112,7 +71122,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 567,
+   "source_files": 568,
    "test_files": 182
   },
   "oneiron-spawn": {
