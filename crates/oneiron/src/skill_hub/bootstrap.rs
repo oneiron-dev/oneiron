@@ -36,7 +36,7 @@ impl Vault {
 /// Marker (engine version string) that the built-in bootstrap skill set has
 /// been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
-const FILES: [(&str, &str); 13] = [
+const FILES: [(&str, &str); 14] = [
     (
         "skill-optimize",
         include_str!("../../../../skills/skill-optimize/SKILL.md"),
@@ -82,6 +82,10 @@ const FILES: [(&str, &str); 13] = [
     (
         "team-rotation",
         include_str!("../../../../skills/team-rotation/SKILL.md"),
+    ),
+    (
+        "training-offer",
+        include_str!("../../../../skills/training-offer/SKILL.md"),
     ),
 ];
 
