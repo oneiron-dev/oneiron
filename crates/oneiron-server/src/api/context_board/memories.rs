@@ -412,12 +412,7 @@ pub(crate) fn board_pins_projection<'a>(
     if section.rows.is_empty() {
         return Ok(None);
     }
-    let delivered = section
-        .rows
-        .iter()
-        .map(|row| oneiron::EntityId::from_hex(&row.id))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| core_engine_error("memory delivery id failed", error))?;
+    let delivered = pinned_row_ids(&section)?;
     let channels = room_id
         .map(|room| oneiron::consent::contact_disclosure_room_channel(&room))
         .into_iter()
@@ -432,10 +427,56 @@ pub(crate) fn board_pins_projection<'a>(
     }))
 }
 
+/// The hook rows a board read under one lane pins into MEMORIES, for a reader that speaks to
+/// no contact and holds no [`CoreAuth`]: a pumped run's agent on its own board (OF-579). The
+/// lane is the clamp, no contact's clearance applies, and the receipt names no party. `None`
+/// when no row is admitted.
+pub(crate) fn lane_hook_pins_projection(
+    read: &oneiron::claim::ScopedRead<'_>,
+    hooks: &[oneiron::context_board::HookPin],
+) -> Result<Option<BoardPins>, ApiError> {
+    if hooks.is_empty() {
+        return Ok(None);
+    }
+    let mut section = oneiron::MemoriesSection::pins_only(None);
+    section
+        .include_hook_pins(read, hooks, None)
+        .map_err(|error| core_engine_error("hook pin read failed", error))?;
+    if section.rows.is_empty() {
+        return Ok(None);
+    }
+    let delivered = pinned_row_ids(&section)?;
+    Ok(Some(BoardPins {
+        section,
+        receipt: PinsReceipt {
+            delivered,
+            interlocutors: None,
+            channels: std::collections::BTreeSet::new(),
+        },
+    }))
+}
+
+/// The ids of the rows a pins-only MEMORIES section delivers.
+fn pinned_row_ids(section: &oneiron::MemoriesSection) -> Result<Vec<oneiron::EntityId>, ApiError> {
+    section
+        .rows
+        .iter()
+        .map(|row| oneiron::EntityId::from_hex(&row.id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| core_engine_error("memory delivery id failed", error))
+}
+
 impl PinsReceipt {
     /// The rows this receipt covers.
     pub(crate) fn delivered(&self) -> &[oneiron::EntityId] {
         &self.delivered
+    }
+
+    /// This receipt kept to the rows in `shown`: what one section of the board, delivered
+    /// alone, owes.
+    pub(crate) fn only(mut self, shown: &std::collections::BTreeSet<oneiron::EntityId>) -> Self {
+        self.delivered.retain(|id| shown.contains(id));
+        self
     }
 
     /// Records the receipt: call it once the rows are going out, never for a board only read.

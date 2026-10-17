@@ -55,7 +55,9 @@ use oneiron::{EntityId, WriteActor};
 use serde_json::Value;
 
 use super::{SyncServer, wave_plan, wave_receipt};
-use crate::api::{RunGuests, VerdictAsker, drop_run_board, execute_run_board_verb};
+use crate::api::{
+    RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
+};
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
 use crate::decision_verdict::{HELD_IMAGE, HeldImage, run_verdict};
@@ -192,7 +194,8 @@ fn is_board_row(verb: AgentVerb, input: &Value) -> bool {
 
 /// Answers one board row for `actor` over the run's own board connection,
 /// with its verb hooks once around it; the rows it answers with are every
-/// row the board was derived from. Blocking: call it on a blocking thread of
+/// row the board was derived from. The hook rows it shows are delivered once
+/// the answer clears those hooks. Blocking: call it on a blocking thread of
 /// the server's runtime.
 fn board_as_agent(
     server: &Arc<SyncServer>,
@@ -206,6 +209,7 @@ fn board_as_agent(
     let memory = agent_memory(server, actor, origin, invocation);
     let name = verb.as_str();
     let mut rows = Vec::new();
+    let mut hooks = None;
     let output = verb_hook_boundary::row(&memory, name, input, |input| {
         sdk::validate_input(name, &input)?;
         let call = match verb {
@@ -228,11 +232,15 @@ fn board_as_agent(
                 }
             }
         };
-        let (output, served) = tokio::runtime::Handle::current()
-            .block_on(execute_run_board_verb(server, actor, board, call))?;
+        let (output, served) = tokio::runtime::Handle::current().block_on(
+            execute_run_board_verb(server, actor, board, call, &mut hooks),
+        )?;
         rows = served;
         Ok(output)
     })?;
+    if let Some(hooks) = hooks {
+        tokio::runtime::Handle::current().block_on(deliver_run_board_hooks(server, hooks))?;
+    }
     Ok((output, rows))
 }
 
