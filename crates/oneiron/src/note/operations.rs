@@ -435,5 +435,7 @@ fn propose_claim(
         approval: "proposed".into(),
         superseded_short_id: None,
         receipt_ref: format!("gate:{}", decision.decision_id.to_hex()),
+        claim: None,
+        superseded: None,
     })
 }

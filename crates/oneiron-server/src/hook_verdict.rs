@@ -37,8 +37,12 @@ impl HookVerdict for ServerHookVerdict {
         let mut request: AiVerdictRequest = serde_json::from_str(request_json)
             .map_err(|error| format!("invalid ai.verdict request: {error}"))?;
         // The verdict answers inside the hook's own budget.
-        let left = u64::try_from(deadline.saturating_duration_since(Instant::now()).as_millis())
-            .unwrap_or(u64::MAX);
+        let left = u64::try_from(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX);
         if left == 0 {
             return Err("hook deadline exceeded".to_owned());
         }

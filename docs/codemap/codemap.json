@@ -692,7 +692,7 @@
      "purpose": "The graceful stop (ARCH-0079 #budget, OF-541): a run near the end of its lease gets the wrap-up warning…",
      "surface": {
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -1193,6 +1193,7 @@
       "const": 1,
       "enum": 1,
       "fn": 4,
+      "re-export": 1,
       "struct": 5
      }
     },
@@ -1221,6 +1222,21 @@
      "path": "src/agent_inbox_lens/tests/inbound.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InboxTextSource",
+      "ResolvedInboxText"
+     ],
+     "path": "src/agent_inbox_lens/text.rs",
+     "purpose": "An INBOX row's words, resolved inside the reader's scope (OF-490, OF-519)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -22425,13 +22441,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -25876,9 +25892,9 @@
      "path": "src/lens/record_ref.rs",
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
-      "const": 4,
+      "const": 5,
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 6
      }
     },
@@ -26699,9 +26715,9 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 7,
       "trait": 1
      }
@@ -26776,7 +26792,10 @@
       "OutcomeLabel",
       "OutcomeSource",
       "QuestionActivation",
+      "QuestionAudience",
+      "QuestionCriteria",
       "QuestionDefinition",
+      "QuestionMedia",
       "QuestionRecord",
       "RefreshPolicy",
       "RefreshTrigger"
@@ -26784,14 +26803,15 @@
      "path": "src/llm/decision/questions/records.rs",
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
+      "const": 2,
       "crate-vis": 1,
-      "enum": 3,
-      "fn": 2,
-      "struct": 8
+      "enum": 4,
+      "fn": 5,
+      "struct": 10
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RefreshBatch",
@@ -26800,7 +26820,7 @@
      "path": "src/llm/decision/questions/refresh.rs",
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -26835,7 +26855,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/store.rs",
@@ -28556,7 +28576,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 11,
       "struct": 5
      }
@@ -28787,8 +28807,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 38,
-      "fn": 17,
+      "crate-vis": 39,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -30098,7 +30118,7 @@
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
       "crate-vis": 4,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -34879,7 +34899,7 @@
      "path": "src/receipt/reference_refusal.rs",
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -38321,7 +38341,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/skill/exploration_trial.rs",
@@ -41504,7 +41524,7 @@
      "purpose": "Custody of a verified provider event's body (OF-519)",
      "surface": {
       "const": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -41619,7 +41639,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/edges.rs",
@@ -49018,7 +49038,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate"
     },
     "agent_inbox_lens": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -50203,7 +50223,7 @@
     "skill": {
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
@@ -50474,9 +50494,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 128,
+   "over_bar": 132,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3048,
+   "source_files": 3049,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60744,13 +60764,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -61230,7 +61250,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -64516,13 +64536,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/decision_graph.rs",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -67913,7 +67933,7 @@
     "decision_graph": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question"
     },
