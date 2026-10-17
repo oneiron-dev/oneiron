@@ -18,6 +18,7 @@ use serde::Deserialize;
 
 use super::EmbedderDevice;
 use super::lookup::lookup_parse;
+use super::models::RequestCodec;
 
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const DEFAULT_BATCH_SIZE: usize = 16;
@@ -199,6 +200,10 @@ pub struct OneironerConfig {
     /// Base URL of the tagger server; the slot appends `/v1/model` and
     /// `/v1/extract`. Loopback only in this build.
     pub url: Option<String>,
+    /// The codec the tagger decodes request bodies in (`"zstd"` or
+    /// `"gzip"`): an extract body of 16 KiB or more goes in it when that is
+    /// smaller (OF-604). Unset sends plain.
+    pub request_compression: Option<RequestCodec>,
     /// The checkpoint the tagger must report: 16 lowercase hex digits of the
     /// SHA-256 of its weights. Also half of every marker's dedupe key.
     pub checkpoint_sha16: Option<String>,
@@ -250,6 +255,7 @@ impl Default for OneironerConfig {
             tier: None,
             tiers: BTreeMap::new(),
             url: None,
+            request_compression: None,
             checkpoint_sha16: None,
             stack_sha16: None,
             label_count: None,
@@ -339,6 +345,9 @@ impl OneironerConfig {
         }
         if over.url.is_some() {
             self.url = over.url;
+        }
+        if over.request_compression.is_some() {
+            self.request_compression = over.request_compression;
         }
         if over.checkpoint_sha16.is_some() {
             self.checkpoint_sha16 = over.checkpoint_sha16;
@@ -540,6 +549,7 @@ pub struct OneironerConfigOverride {
     pub tier: Option<String>,
     pub tiers: Option<BTreeMap<String, OneironerTier>>,
     pub url: Option<String>,
+    pub request_compression: Option<RequestCodec>,
     pub checkpoint_sha16: Option<String>,
     pub stack_sha16: Option<String>,
     pub label_count: Option<u32>,
@@ -658,6 +668,7 @@ pub(super) fn lookup_oneironer_override(
         tier: lookup("ONEIRON_ONEIRONER_TIER"),
         tiers: None,
         url: lookup("ONEIRON_ONEIRONER_URL"),
+        request_compression: None,
         checkpoint_sha16: lookup("ONEIRON_ONEIRONER_CHECKPOINT_SHA16"),
         stack_sha16: lookup("ONEIRON_ONEIRONER_STACK_SHA16"),
         label_count: lookup_parse(lookup, "ONEIRON_ONEIRONER_LABEL_COUNT")?,

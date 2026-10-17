@@ -42,6 +42,30 @@ import type {
   WitnessTurn,
 } from "./types.js"
 
+/**
+ * One lens-card event's body (OF-181): the client's event, and the key a
+ * deterministic action's dispatch replays under. Keys keep the wire's
+ * camelCase spelling.
+ */
+export interface LensFrameEventRequest {
+  readonly event: Facade.GeneratedUiActionEvent
+  readonly idempotencyKey: string
+}
+
+/**
+ * What a lens-card event answers. There is no discriminator: a local action
+ * answers the card's new `$state`, a deterministic tool its outcome and the
+ * scoped read of its entity arguments.
+ */
+export type LensFrameEventReply =
+  | { readonly $state: Facade.GeneratedUiStateSnapshot }
+  | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
+
+/** What a lens-card close answers: whether the server held its frame. */
+export interface CloseLensFrameReply {
+  readonly closed: boolean
+}
+
 /** A handle on one Oneiron memory, embedded or remote. */
 export class Oneiron {
   readonly #client: NativeClient
@@ -162,6 +186,28 @@ export class Oneiron {
     return this.#call(() => this.#client.retry(refusal, verb, input))
   }
 
+  /**
+   * Sends one event on a lens card the connected server rendered (OF-181):
+   * `POST /v1/core/lens-frames/{cardId}/events` under this handle's
+   * credential. `request.event.cardId` must name the same card. A card the
+   * server no longer holds throws `NOT_FOUND`: render the lens again. An
+   * embedded handle throws `BAD_REQUEST`: lens frames live on the server
+   * that rendered the card.
+   */
+  lensFrameEvent(cardId: string, request: LensFrameEventRequest): LensFrameEventReply {
+    return this.#call(() => this.#client.lensFrameEvent(cardId, request) as LensFrameEventReply)
+  }
+
+  /**
+   * Closes a lens card the connected server rendered and frees its frame
+   * (OF-181): `DELETE /v1/core/lens-frames/{cardId}`. A card the server does
+   * not hold answers `{ closed: false }`. An embedded handle throws
+   * `BAD_REQUEST`.
+   */
+  closeLensFrame(cardId: string): CloseLensFrameReply {
+    return this.#call(() => this.#client.closeLensFrame(cardId) as CloseLensFrameReply)
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
@@ -235,10 +281,12 @@ export class Oneiron {
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     fanout: {
-      /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none. */
+      /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none. */
       launch: (input: Facade.FanoutLaunchRequest): Facade.FanoutLaunchView | null => this.#call(() => this.#client.vaultFanoutLaunch(input) as Facade.FanoutLaunchView | null),
       /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
       resume: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResume(input) as Facade.FanoutLaunchView),
+      /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
+      resume_as: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResumeAs(input) as Facade.FanoutLaunchView),
       /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
       ack: (input: Facade.FanoutAckRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.FanoutLaunchView),
     },
@@ -561,8 +609,8 @@ export class Oneiron {
         head: (request: Facade.OfficeBodyArtifactRequest): Facade.OfficeBodyHead | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyHead(keyedJson(request))) as Facade.OfficeBodyHead | null; return result === null ? null : result }),
         /** Reads a DOCX or XLSX live body, at its head or an earlier frontier. */
         read: (request: Facade.OfficeBodyReadRequest): Facade.OfficeBodyView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyRead(keyedJson(request))) as Facade.OfficeBodyView; return result }),
-        /** Every commit receipt of a live body, in commit order. */
-        commits: (request: Facade.OfficeBodyArtifactRequest): Facade.TextCommitReceipt[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.TextCommitReceipt[]; return result.map(item => item) }),
+        /** Every commit receipt of a live body, in commit order, or one actor's. */
+        commits: (request: Facade.OfficeBodyCommitsRequest): Facade.OfficeBodyCommitView[] => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyCommits(keyedJson(request))) as Facade.OfficeBodyCommitView[]; return result.map(item => item) }),
         /** A person's typed operations on the live body. */
         edit: (request: Facade.OfficeBodyEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
         fork: {
@@ -586,7 +634,7 @@ export class Oneiron {
         /** Exports the live body as the artifact's next version. */
         export: (request: Facade.OfficeBodyExportVerbRequest): Facade.OfficeBodyExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyExport(keyedJson(request))) as Facade.OfficeBodyExportView; return result }),
         /** The workbook an XLSX export would land now, recalculated. */
-        preview: (request: Facade.OfficeBodyArtifactRequest): Facade.XlsxPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyPreview(keyedJson(request))) as Facade.XlsxPreview; return result }),
+        preview: (request: Facade.OfficeBodyPreviewRequest): Facade.XlsxPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyPreview(keyedJson(request))) as Facade.XlsxPreview; return result }),
         deck: {
           /** A deck fork's merge preflight against the live head. */
           review: (request: Facade.OfficeBodyForkRequest): Facade.DeckReviewView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckReview(keyedJson(request))) as Facade.DeckReviewView; return result }),

@@ -510,9 +510,28 @@ impl SyncClient {
                 };
                 let packet = crate::world_keys::SealedResidenceContent::from_bytes(payload)
                     .map_err(|_| TransportError::InvalidPayload("malformed sealed packet"))?;
-                self.manager
-                    .take_sealed_residence_content(world, &key, &packet)
-                    .map_err(|_| TransportError::InvalidPayload("sealed packet refused"))?;
+                // An opened-item machine materializes a packet only for a
+                // window it holds promoted, judged again once the handle is
+                // held: a demotion that ended since the request leaves the
+                // window emptied, and the held handle defers a later one. Any
+                // other window's packet waits in its mirror for a promotion.
+                let opened = self.config.residence_mode == SyncResidenceMode::Opened;
+                let held = if opened && self.full_window_exchange_allowed(window_key)? {
+                    Some(self.ensure_window(window_key)?)
+                } else {
+                    None
+                };
+                let materialize =
+                    !opened || (held.is_some() && self.full_window_exchange_allowed(window_key)?);
+                let taken = if materialize {
+                    self.manager
+                        .take_sealed_residence_content(world, &key, &packet)
+                } else {
+                    self.manager
+                        .take_sealed_residence_mirror(world, &key, &packet)
+                };
+                drop(held);
+                taken.map_err(|_| TransportError::InvalidPayload("sealed packet refused"))?;
                 Ok(Vec::new())
             }
             window_sub_tags::SEALED_REQUEST => {
@@ -1118,12 +1137,23 @@ impl SyncClient {
     /// VV-equal against a fresh local doc — and the queue would be cleared
     /// with the ops lost in flight (for a delete-bearing update, a vanished
     /// GDPR tombstone).
+    ///
+    /// An opened-item machine mirrors queued bytes only into a window it
+    /// still holds promoted, judged again once the handle is held: a copy
+    /// that outlived its queue row does not reopen a window a demotion
+    /// emptied. An ungranted window's rows stay queued, unsent.
     pub fn import_queued_update(
         &mut self,
         window_key: &str,
         update: &[u8],
     ) -> std::result::Result<(), TransportError> {
+        if !self.full_window_exchange_allowed(window_key)? {
+            return Ok(());
+        }
         let window = self.ensure_window(window_key)?;
+        if !self.full_window_exchange_allowed(window_key)? {
+            return Ok(());
+        }
         window
             .doc
             .import(update)

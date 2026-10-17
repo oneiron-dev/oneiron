@@ -52,6 +52,7 @@ pub mod calc;
 mod clock;
 mod context;
 mod contract_port;
+pub mod display;
 pub mod engine;
 pub mod error;
 mod links;
@@ -62,6 +63,7 @@ pub mod workbook;
 mod xml;
 
 pub use clock::RecalcClock;
+pub use display::cell_display_text;
 pub use engine::{CellValue, EngineId, RecalcEngine, RecalcReport};
 pub use error::{FormulaError, Result};
 pub use location::DocumentLocation;
