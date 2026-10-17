@@ -53,6 +53,9 @@ steer(input: unknown): unknown
 describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
+vaultFanoutLaunch(input: unknown): unknown
+vaultFanoutResume(input: unknown): unknown
+vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
@@ -142,6 +145,7 @@ vaultDisclosureOffer(input: unknown): unknown
 reveal(input: unknown): unknown
 revealWait(input: unknown): unknown
 revealDescribe(input: unknown): unknown
+selfUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown

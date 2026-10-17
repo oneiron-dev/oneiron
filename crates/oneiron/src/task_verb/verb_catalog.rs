@@ -29,6 +29,9 @@ pub enum AgentVerb {
     Describe,
     TasksCreate,
     TasksWave,
+    VaultFanoutLaunch,
+    VaultFanoutResume,
+    VaultFanoutAck,
     TasksUpdate,
     VaultWitness,
     VaultClaimsUpsert,
@@ -118,6 +121,7 @@ pub enum AgentVerb {
     Reveal,
     RevealWait,
     RevealDescribe,
+    SelfUse,
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
@@ -326,6 +330,9 @@ impl AgentVerb {
         Self::Describe,
         Self::TasksCreate,
         Self::TasksWave,
+        Self::VaultFanoutLaunch,
+        Self::VaultFanoutResume,
+        Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
@@ -415,6 +422,7 @@ impl AgentVerb {
         Self::Reveal,
         Self::RevealWait,
         Self::RevealDescribe,
+        Self::SelfUse,
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
@@ -626,6 +634,9 @@ impl AgentVerb {
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
+            Self::VaultFanoutLaunch => "vault.fanout.launch",
+            Self::VaultFanoutResume => "vault.fanout.resume",
+            Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
@@ -719,6 +730,7 @@ impl AgentVerb {
             Self::Reveal => "reveal",
             Self::RevealWait => "reveal.wait",
             Self::RevealDescribe => "reveal.describe",
+            Self::SelfUse => "self.use",
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
@@ -926,6 +938,9 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1015,6 +1030,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1230,6 +1246,9 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1319,6 +1338,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1560,6 +1580,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -1648,6 +1671,7 @@ impl AgentVerb {
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
@@ -1839,6 +1863,8 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1895,6 +1921,7 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
+                | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
@@ -2044,7 +2071,10 @@ impl AgentVerb {
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
             Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::VaultFanoutLaunch => &["spec"],
+            Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutAck => &["spec"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2133,6 +2163,7 @@ impl AgentVerb {
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
+            Self::SelfUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2342,7 +2373,10 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
-            Self::TasksUpdate => &["task_ref"],
+            Self::VaultFanoutLaunch => &["spec"],
+            Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutAck => &["spec"],
+            Self::TasksUpdate => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2431,6 +2465,7 @@ impl AgentVerb {
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
+            Self::SelfUse => &["spec"],
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
@@ -2685,8 +2720,17 @@ impl AgentVerb {
             Self::TasksWave => {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
             }
+            Self::VaultFanoutLaunch => {
+                "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."
+            }
+            Self::VaultFanoutResume => {
+                "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
+            }
+            Self::VaultFanoutAck => {
+                "The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."
+            }
             Self::TasksUpdate => {
-                "Records the owner's acknowledgement of a failed TASK; any other task stays as it was."
+                "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."
             }
             Self::VaultWitness => {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
@@ -2933,6 +2977,9 @@ impl AgentVerb {
             }
             Self::RevealDescribe => {
                 "What a secret handle names, where it was found and what a reveal of it would do now; never the value."
+            }
+            Self::SelfUse => {
+                "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."
             }
             Self::VaultSharesCreate => {
                 "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."
