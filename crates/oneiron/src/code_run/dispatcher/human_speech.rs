@@ -141,9 +141,14 @@ impl HostSelfDispatcher<'_> {
         call: crate::code_run::blocked::SelfReportBlockedCall,
         run_id: Option<EntityId>,
     ) -> Result<SelfDispatchOutcome> {
-        let receipt =
-            self.storage
-                .witness_blocked_report(&self.run_ref, run_id, &call, self.actor)?;
+        // The host's own agent attempt binds the report, never guest text.
+        let receipt = self.storage.witness_blocked_report(
+            &self.run_ref,
+            run_id,
+            &call,
+            self.actor,
+            self.agent_parent,
+        )?;
         Ok(SelfDispatchOutcome::ReportBlocked { receipt })
     }
 

@@ -26,7 +26,8 @@ use crate::memory::MemoryResult;
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result, Vault};
 
-pub(crate) use ask::{HOOK_RESULT_NOT_RETAINED, VERB_HOOK_INTENT};
+pub use ask::HOOK_RESULT_NOT_RETAINED;
+pub(crate) use ask::VERB_HOOK_INTENT;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
     VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument, VerbAskRefusal,
@@ -146,12 +147,14 @@ impl VerbCall {
     /// The key a call of `verb` on `memory` carries: the handle's read key,
     /// built on every call, so a hook bound after the door looked still
     /// reads under the caller's key. A handle whose key does not build (a
-    /// credential that carries no read) carries none while no hook may run
-    /// on `verb`.
+    /// credential that carries no read) carries one that reads nothing
+    /// ([`ScopedReadActorKey::read_nothing`]) while no hook may run on
+    /// `verb`, so a hook bound meanwhile never reads on the actor's own lane.
     ///
     /// # Errors
     ///
-    /// When a hook may run and the handle's read key does not build.
+    /// When the handle's read key does not build and a hook may run, or no
+    /// read-nothing key names the handle's actor.
     pub fn reader_of(
         memory: &crate::Memory<'_>,
         verb: &str,
@@ -159,7 +162,12 @@ impl VerbCall {
         match memory.read_key() {
             Ok(key) => Ok(Some(key)),
             Err(error) if Self::may_run(memory.vault(), verb) => Err(error),
-            Err(_) => Ok(None),
+            Err(error) => ScopedReadActorKey::read_nothing(
+                memory.actor().to_hex(),
+                memory.actor_class().gate_actor_class(),
+            )
+            .map(|key| Some(key.at(memory.locality())))
+            .ok_or(error),
         }
     }
 }
