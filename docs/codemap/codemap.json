@@ -55014,7 +55014,7 @@
      "path": "src/desktop.rs",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -55083,7 +55083,7 @@
       "const": 11,
       "enum": 7,
       "fn": 9,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 35,
       "trait": 2
      }
@@ -55138,6 +55138,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReceiptEvidence",
+      "ReceiptEvidenceSink"
+     ],
+     "path": "src/receipt_evidence.rs",
+     "purpose": "An effect receipt's screenshot kept past its session (FIX 2150)",
+     "surface": {
+      "enum": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -55148,7 +55162,7 @@
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     }
@@ -55196,6 +55210,13 @@
      "layout": "file",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…"
     },
+    "receipt_evidence": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "An effect receipt's screenshot kept past its session (FIX 2150)"
+    },
     "session": {
      "files": 1,
      "impl_vault": false,
@@ -55206,7 +55227,7 @@
    },
    "over_bar": 2,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -65031,6 +65052,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs",
+     "purpose": "A run's receipt screenshots kept for the caller its guest call came from (FIX 2150)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/mcp_gateway/device_release.rs",
      "purpose": "What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a…",
      "surface": {
@@ -67850,7 +67881,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -71350,7 +71381,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 293,
+     "files": 294,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71737,7 +71768,7 @@
    },
    "over_bar": 44,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 581,
+   "source_files": 582,
    "test_files": 182
   },
   "oneiron-spawn": {
