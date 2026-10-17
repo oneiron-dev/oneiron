@@ -493,8 +493,13 @@ fn put_run_results_in_txn(
             vault.put_code_run_output_in_txn(wtxn, finished, &occurrence, Some(run_id))?;
             imported += 1;
         }
-        // A receipt comes back with the occurrence it describes, and only
-        // whole: a withheld one's refs stay in the archive.
+    }
+    // A receipt comes back with the occurrence it describes, and only whole:
+    // a withheld one's refs stay in the archive. Every run's outputs are in
+    // first, so a ref to another run's output resolves; one that resolves to
+    // nothing (not in the archive, nor in this vault) is named unresolved.
+    for run in &results.runs {
+        let run_id = parse_id(&run.run_id)?;
         for fold in run.receipts.iter().filter(|fold| fold.withheld.is_none()) {
             let came_back = run.outputs.iter().any(|output| {
                 output.path == fold.path
@@ -507,12 +512,22 @@ fn put_run_results_in_txn(
             if !came_back {
                 continue;
             }
-            let receipt: crate::code_run::ReaderFoldReceipt =
+            let mut receipt: crate::code_run::ReaderFoldReceipt =
                 serde_json::from_value(fold.receipt.clone())
                     .map_err(|_| invalid("run fold receipt"))?;
             if receipt.folded.owner != run_id || receipt.folded.path != fold.path {
                 return Err(invalid("run fold receipt names another occurrence"));
             }
+            let rtxn: &heed::RoTxn<'_> = wtxn;
+            receipt.mark_unresolved(|named| {
+                Ok(crate::provenance::body::owned_body_in_txn(
+                    &vault.store,
+                    rtxn,
+                    &named.owner,
+                    &named.occurrence,
+                )?
+                .is_some())
+            })?;
             vault.put_code_run_reader_fold_in_txn(wtxn, &receipt)?;
         }
     }

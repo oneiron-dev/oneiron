@@ -93,7 +93,8 @@ pub(crate) struct ReaderSubstrateRef {
 /// A fold's receipt: the folded result, the source and range it read, each
 /// job it named, the byte ranges read, unread and read short, the children's
 /// cutoff, the recipe it folded by, its summary tree, every occurrence whose
-/// taint the folded body inherits, and what it rests on.
+/// taint the folded body inherits, what it rests on, and, once a document
+/// import restored it, which occurrences it names did not come back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ReaderFoldReceipt {
     pub(crate) folded: OccurrenceRef,
@@ -107,18 +108,53 @@ pub(crate) struct ReaderFoldReceipt {
     pub(crate) tree: Vec<ReceiptTree>,
     pub(crate) taint: Vec<OccurrenceRef>,
     pub(crate) substrate_ref: ReaderSubstrateRef,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unresolved: Vec<OccurrenceRef>,
 }
 
 impl ReaderFoldReceipt {
     /// What the folded result's card says of it: the ranges read, unread
-    /// and read short, and how many jobs it named.
+    /// and read short, how many jobs it named, and, for an imported receipt
+    /// some of whose occurrences did not come back, how many.
     pub(crate) fn card(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut card = serde_json::json!({
             "read": self.read,
             "unread": self.unread,
             "partial": self.partial,
             "children": self.findings.len(),
-        })
+        });
+        if !self.unresolved.is_empty() {
+            card["unresolved"] = self.unresolved.len().into();
+        }
+        card
+    }
+
+    /// An imported receipt: it keeps every occurrence it names, and names
+    /// as `unresolved` each one `resolves` finds nothing for (its source,
+    /// findings, summary tree, taint and what it rests on), once each.
+    pub(crate) fn mark_unresolved(
+        &mut self,
+        mut resolves: impl FnMut(&OccurrenceRef) -> Result<bool>,
+    ) -> Result<()> {
+        let named = std::iter::once(&self.source.occurrence)
+            .chain(self.findings.iter().filter_map(|f| f.occurrence.as_ref()))
+            .chain(
+                self.tree
+                    .iter()
+                    .flat_map(|t| std::iter::once(&t.summary).chain(&t.inputs)),
+            )
+            .chain(&self.taint)
+            .chain(std::iter::once(&self.substrate_ref.source))
+            .chain(&self.substrate_ref.findings);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut unresolved = Vec::new();
+        for item in named {
+            if seen.insert((item.owner, item.occurrence)) && !resolves(item)? {
+                unresolved.push(item.clone());
+            }
+        }
+        self.unresolved = unresolved;
+        Ok(())
     }
 
     /// The receipt of a withheld folded occurrence as an export carries it:

@@ -768,6 +768,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             tree,
             taint,
             substrate_ref,
+            unresolved: Vec::new(),
         };
         Ok(Ok((receipt, named)))
     }
