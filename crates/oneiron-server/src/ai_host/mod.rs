@@ -624,10 +624,10 @@ fn recover_dead_leases(vault: &Vault) {
 }
 
 /// After each stable recovery of a provider that was down (OF-305), the
-/// attempts this server's Dreamer parked on an executor error are requeued,
-/// as a restart requeues them: the outage that failed their step is over.
-/// One parked on a signal (a budget or consent trap, a wait) or by a hard
-/// cut is not this resume's. The task holds the vault weakly and ends with
+/// attempts this server's Dreamer parked because a provider was unavailable
+/// are requeued, as a restart requeues them: the outage that failed their
+/// step is over. One parked on a signal (a budget or consent trap, a wait),
+/// by a hard cut or on any other error is not this resume's. The task holds the vault weakly and ends with
 /// the runtime.
 fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
     let vault = Arc::downgrade(vault);
@@ -648,7 +648,8 @@ fn resume_on_recovery(vault: &Arc<Vault>, runtime: &ModelRuntime) {
     });
 }
 
-/// Requeues every attempt this server's Dreamer parked on an executor error.
+/// Requeues every attempt this server's Dreamer parked on an unavailable
+/// provider.
 fn resume_outage_parks(vault: &Vault) {
     let rows = match AttemptQueue::new(vault).list() {
         Ok(rows) => rows,
@@ -667,9 +668,7 @@ fn resume_outage_parks(vault: &Vault) {
             continue;
         };
         if park.park_owner != dreamer::LEASE_OWNER
-            || !park
-                .reason
-                .starts_with(oneiron::DREAMER_EXECUTOR_ERROR_PARK_REASON)
+            || park.cause != oneiron::DreamerParkCause::ProviderUnavailable
         {
             continue;
         }
