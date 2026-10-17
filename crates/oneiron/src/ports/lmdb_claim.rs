@@ -2,11 +2,13 @@
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
+use crate::context_pack::source_ranking::{SourceRankingPolicy, source_outranks};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
+use std::collections::BTreeSet;
 /// The most claims one predicate's list holds before it refuses. A reader
 /// that must see every such claim, however many a vault holds, walks them
 /// with `Vault::for_each_readable_claim_with_predicate_in_txn` instead.
@@ -153,16 +155,17 @@ impl ClaimStore for Vault {
         predicate: &str,
     ) -> Result<Option<(EntityId, ClaimBody)>> {
         let mut rows = self.port_claim_predicate_history(txn, subject, predicate)?;
+        let mut heads = Vec::new();
         while let Some((id, body)) = rows.pop() {
             if body.lifecycle == ClaimLifecycleStatus::Active
                 && !body.stale
                 && !stale_in_txn(&self.store, txn, &id)?
                 && !self.port_tombstone_is_deleted(txn, &id)?
             {
-                return Ok(Some((id, body)));
+                heads.push((id, body));
             }
         }
-        Ok(None)
+        Ok(current_claim_head(heads))
     }
     fn port_claim_supersede_chain(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
         let mut result = Vec::new();
@@ -220,4 +223,18 @@ impl ClaimStore for Vault {
         // Never filter by candidate value: a changed value must find the prior head.
         self.port_claim_get_active(txn, subject, predicate)
     }
+}
+
+/// The current value among one subject and predicate's eligible heads, given
+/// newest first: the newest head no other eligible head outranks (OF-023). An
+/// observed head held beside a stated one never takes the current value from
+/// it, however new; recency decides among the rest. Some head always wins
+/// when any is eligible, so a conflicting head is found whenever one exists.
+pub(super) fn current_claim_head(
+    heads: Vec<(EntityId, ClaimBody)>,
+) -> Option<(EntityId, ClaimBody)> {
+    let policy = SourceRankingPolicy::default();
+    let sources: BTreeSet<_> = heads.iter().map(|(_, body)| body.source).collect();
+    let outranked = |held| sources.iter().any(|&a| source_outranks(&policy, a, held));
+    heads.into_iter().find(|(_, body)| !outranked(body.source))
 }
