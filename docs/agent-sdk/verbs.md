@@ -8,6 +8,8 @@ both bindings and their export-census tests in one change.
 
 - `report`
 - `self.focus.scratchpad.recall`
+- `self.focus.scratchpad.append`
+- `self.focus.scratchpad.seal`
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
@@ -43,6 +45,8 @@ both bindings and their export-census tests in one change.
 - `vault.receipts`
 - `vault.images.view`
 - `vault.receipts.get`
+- `vault.explain.memory`
+- `vault.explain.gate`
 - `vault.kv.get`
 - `vault.kv.put`
 - `vault.kv.delete`
@@ -65,6 +69,7 @@ both bindings and their export-census tests in one change.
 - `vault.packs.setup.answer`
 - `vault.packs.setup.verify`
 - `vault.authority.audit`
+- `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
@@ -152,6 +157,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.waits`
 - `vault.artifacts.release_wait`
 - `vault.artifacts.review_slides`
+- `vault.artifacts.ask`
 - `vault.critic.review`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`
@@ -220,6 +226,7 @@ both bindings and their export-census tests in one change.
 - `vault.questions.backfill`
 - `vault.questions.read`
 - `vault.questions.answers`
+- `vault.questions.refresh`
 - `vault.decisions.asks.answer`
 - `vault.decisions.asks.climb`
 - `self.decisions.asks`

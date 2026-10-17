@@ -46,6 +46,7 @@ mod http;
 #[cfg(test)]
 mod kept_on_device_tests;
 mod ladder;
+pub(crate) mod launch_price;
 mod media;
 mod offer;
 mod openai;
@@ -83,7 +84,7 @@ pub(crate) use raw::{InjectedRuns, RawInference};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{rerank_request, rerank_scores};
-pub(crate) use responses_socket::set_responses_store;
+pub(crate) use responses_socket::{set_responses_chain_vault, set_responses_store};
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;

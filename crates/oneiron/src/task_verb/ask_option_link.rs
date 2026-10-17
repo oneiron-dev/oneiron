@@ -425,10 +425,6 @@ impl Vault {
     }
 }
 
-/// Leads a verb hook's ask intent key; the hook runner parses the rest
-/// (`crate::runtime_hooks::verb_ask_settled_in_txn`).
-const VERB_HOOK_INTENT: &str = "hook.verb/";
-
 /// The ask's Changed status for the code runs parked on its wait, in the
 /// caller's transaction (OF-533): its current void generation and voided
 /// friends, delivered to each waiter that has not seen that generation and
@@ -443,7 +439,11 @@ pub(crate) fn deliver_ask_change_in_txn(
     let Some(group) = ask_record::read_group(vault, txn, group_ref)? else {
         return Ok(());
     };
-    if group.requested.intent_key.starts_with(VERB_HOOK_INTENT) {
+    if group
+        .requested
+        .intent_key
+        .starts_with(crate::runtime_hooks::verb::VERB_HOOK_INTENT)
+    {
         return Ok(());
     }
     let generation = option_void_generation_in(vault, txn, group_ref)?;
