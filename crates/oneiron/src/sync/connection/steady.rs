@@ -304,6 +304,16 @@ impl SyncConnection {
                                     )));
                                 }
                             }
+                            // A window the home refused to retain is asked for
+                            // again: a grant may have changed since (OF-534).
+                            match crate::sync::client::retry_refused_retains(&manager, &config).await {
+                                Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                Err(error) => {
+                                    let _ = events.send(SyncEvent::Error(format!(
+                                        "Window retain retry failed: {error}"
+                                    )));
+                                }
+                            }
                         }));
                     }
                 }
