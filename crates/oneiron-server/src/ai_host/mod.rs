@@ -38,6 +38,7 @@ mod connector_event;
 mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;
+pub(crate) mod home_digests;
 pub(crate) mod identity;
 mod judge_swap;
 mod local_vision;

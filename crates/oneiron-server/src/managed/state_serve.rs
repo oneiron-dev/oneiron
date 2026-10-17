@@ -889,6 +889,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
+        // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
+        ladder_workers.push(crate::ai_host::home_digests::spawn(
+            &sync_server,
+            admitted(),
+        ));
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     ladder_workers.push(crate::saved_query_sweep::spawn(&sync_server, admitted()));
