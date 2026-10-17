@@ -2,7 +2,7 @@
 import type * as Facade from "./facade-types.js";
 
 /** Every facade verb, in table order. */
-export const FACADE_VERBS = ["report", "self.focus.scratchpad.recall", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.identity.answer", "self.identity.settle", "self.inbox.list", "self.inbox.mark", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "vault.shape.read", "vault.shape.plan", "vault.shape.apply", "self.message", "self.grants.ask", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.wave", "tasks.update", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.export", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.packs.put", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.invitation_slip", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.shared.object", "vault.shared.withdraw_objection", "vault.shared.started", "vault.shared.matured", "vault.shared.erase_ask", "vault.shared.erase_asks", "vault.shared.close_erase_ask", "vault.guests.revoke", "vault.guests.mint_slip", "vault.records.erase_preview", "vault.records.erase_confirm", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.embedding_spaces.list", "vault.embedding_spaces.declare", "vault.embedding_spaces.bind", "vault.embedding_spaces.one_space", "vault.embedding_spaces.retire", "vault.embedding_spaces.move", "vault.embedding_spaces.move_check", "vault.embedding_spaces.move_approve", "vault.embedding_spaces.move_undo", "vault.embedding_spaces.move_abandon", "vault.embedding_spaces.probes.list", "vault.embedding_spaces.probes.put", "vault.embedding_spaces.probes.delete", "vault.settings.learning", "vault.settings.learning.put", "vault.settings.learning.clear", "vault.widen_proposals", "vault.widen_proposals.approve", "vault.widen_proposals.decline", "vault.settings.wake_policy.set", "vault.settings.inference_defaults", "vault.settings.inference_defaults.replace", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "reveal", "reveal.wait", "reveal.describe", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.artifacts.view", "vault.code.diff", "vault.code.blame", "vault.code.proposal_view", "vault.code.repo_diff", "vault.artifacts.export", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offer.vote", "vault.rooms.offer.reopen", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.messages.react", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "ai.options", "ai.image", "ai.speech", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.read", "vault.questions.answers", "vault.decisions.asks.answer", "vault.decisions.asks.climb", "self.decisions.asks", "connector.list", "connector.status", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.claims.list", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.claims.admit", "vault.artifacts.create", "vault.conversations.create", "vault.conversations.turns.create", "vault.conversations.records.append", "vault.batch", "vault.artifacts.put", "vault.artifacts.append", "vault.artifacts.read", "vault.consolidation.enqueue", "vault.consolidation.status", "vault.claims.seed", "connector.outbound.schedule", "vault.notes.create", "vault.notes.from_entity", "vault.notes.edit"] as const;
+export const FACADE_VERBS = ["report", "self.focus.scratchpad.recall", "self.memory.diary", "self.memory.diary.reads", "self.memory.diary.review", "self.identity.answer", "self.identity.settle", "self.inbox.list", "self.inbox.mark", "self.inbox.concern", "self.inbox.concern.outcome", "self.inbox.concern.move", "vault.people.list", "vault.people.get", "vault.shape.read", "vault.shape.plan", "vault.shape.apply", "self.message", "self.grants.ask", "self.memory.diary.query", "cancel", "steer", "describe", "tasks.create", "tasks.wave", "tasks.update", "vault.witness", "vault.claims.upsert", "vault.recall", "vault.export", "vault.receipts", "vault.images.view", "vault.receipts.get", "vault.kv.get", "vault.kv.put", "vault.kv.delete", "vault.kv.search", "vault.kv.namespaces", "vault.weave.report", "vault.weave.digest", "vault.weave.lens", "vault.weave.link.wrong", "vault.packs.put", "vault.packs.setup.prepare", "vault.packs.setup.get", "vault.packs.setup.answer", "vault.packs.setup.verify", "vault.authority.audit", "vault.inspection.resolve", "vault.shared.propose_delete", "vault.shared.propose_transfer", "vault.shared.propose_remove_owner", "vault.shared.execute", "vault.shared.receipt", "vault.shared.outcomes", "vault.shared.deletion", "vault.members.add", "vault.members.invitation_slip", "vault.members.change", "vault.members.remove", "vault.members.leave", "vault.members.invitations", "vault.members.accept", "vault.members.decline", "vault.members.withdraw_invitation", "vault.shared.object", "vault.shared.withdraw_objection", "vault.shared.started", "vault.shared.matured", "vault.shared.erase_ask", "vault.shared.erase_asks", "vault.shared.close_erase_ask", "vault.guests.revoke", "vault.guests.mint_slip", "vault.records.erase_preview", "vault.records.erase_confirm", "vault.authority.handoff_alarms", "vault.authority.handoff_alarms.acknowledge", "vault.legal_holds.place", "vault.legal_holds.widen", "vault.legal_holds.list", "vault.legal_holds.log", "vault.legal_holds.lift_and_erase", "vault.embedding_spaces.list", "vault.embedding_spaces.declare", "vault.embedding_spaces.bind", "vault.embedding_spaces.one_space", "vault.embedding_spaces.retire", "vault.embedding_spaces.move", "vault.embedding_spaces.move_check", "vault.embedding_spaces.move_approve", "vault.embedding_spaces.move_undo", "vault.embedding_spaces.move_abandon", "vault.embedding_spaces.probes.list", "vault.embedding_spaces.probes.put", "vault.embedding_spaces.probes.delete", "vault.settings.learning", "vault.settings.learning.put", "vault.settings.learning.clear", "vault.widen_proposals", "vault.widen_proposals.approve", "vault.widen_proposals.decline", "vault.settings.wake_policy.set", "vault.settings.inference_defaults", "vault.settings.inference_defaults.replace", "vault.lenses.propose", "vault.lenses.activate", "vault.lenses.deactivate", "vault.lenses.list", "vault.lenses.default", "vault.disclosure.offer", "reveal", "reveal.wait", "reveal.describe", "vault.shares.create", "vault.shares.revoke", "vault.shares.view", "vault.hooks.replay", "vault.artifacts.view", "vault.code.diff", "vault.code.blame", "vault.code.proposal_view", "vault.code.repo_diff", "vault.artifacts.export", "vault.artifacts.born_from", "vault.artifacts.proposals", "vault.artifacts.waits", "vault.artifacts.release_wait", "vault.artifacts.review_slides", "vault.artifacts.propose_deck", "vault.artifacts.propose_output", "vault.artifacts.keep", "vault.artifacts.discard", "vault.artifacts.undo", "can", "peek", "ask", "wait", "tasks.answer", "tasks.outcomes", "vault.rooms.list", "vault.rooms.messages", "vault.rooms.participants", "vault.rooms.render", "vault.rooms.find", "vault.rooms.get", "vault.rooms.trunk", "vault.rooms.reply_strips", "vault.rooms.claim", "vault.rooms.speak", "vault.projects.propose", "vault.projects.proposals", "vault.projects.dismiss_card", "vault.projects.confirm", "vault.projects.goal.intake", "vault.rooms.join", "vault.rooms.consent", "vault.rooms.offer", "vault.rooms.offer.answer", "vault.rooms.offer.vote", "vault.rooms.offer.reopen", "vault.rooms.offers", "vault.projects.goal.revisions", "vault.projects.goal.dismiss", "vault.projects.route_tradeoff", "vault.conversations.turn.continue", "vault.conversations.turn.retry", "vault.messages.react", "vault.rooms.host", "vault.rooms.host.pin", "vault.rooms.host.hand", "vault.rooms.sharing", "vault.companions.sharing.get", "vault.companions.sharing.set", "vault.workspace.work_companion.get", "vault.workspace.work_companion.set", "self.skills.save", "self.skills.fork", "self.skills.callables", "ai.options", "ai.image", "ai.speech", "ai.transcribe", "ai.embed", "ai.video", "ai.video.poll", "ai.video.cancel", "ai.verdict", "vault.graph.ask", "vault.questions.create", "vault.questions.edit", "vault.questions.pause", "vault.questions.read", "vault.questions.answers", "vault.decisions.asks.answer", "vault.decisions.asks.climb", "self.decisions.asks", "connector.list", "connector.status", "connector.call", "connector.schema", "vault.commit", "vault.remember", "vault.claims.retract", "vault.forget", "vault.claims.list", "vault.claims.history", "vault.delete", "vault.writes.pending", "vault.hydrate", "vault.get", "vault.refs.resolve", "vault.refs.links", "vault.search.bm25", "vault.neighbors", "vault.structural.put", "vault.habits.checkin", "vault.claims.admit", "vault.artifacts.create", "vault.conversations.create", "vault.conversations.turns.create", "vault.conversations.records.append", "vault.batch", "vault.artifacts.put", "vault.artifacts.body.import", "vault.artifacts.body.head", "vault.artifacts.body.read", "vault.artifacts.body.commits", "vault.artifacts.body.edit", "vault.artifacts.body.fork.open", "vault.artifacts.body.fork.edit", "vault.artifacts.body.fork.diff", "vault.artifacts.body.fork.merge", "vault.artifacts.body.fork.discard", "vault.artifacts.body.export", "vault.artifacts.body.preview", "vault.artifacts.append", "vault.artifacts.read", "vault.consolidation.enqueue", "vault.consolidation.status", "vault.claims.seed", "connector.outbound.schedule", "vault.notes.create", "vault.notes.from_entity", "vault.notes.edit", "vault.notes.seal", "vault.notes.lifecycle"] as const;
 export type FacadeVerb = typeof FACADE_VERBS[number];
 
 /** Each verb's request body, as its Rust input type reads it. */
@@ -206,6 +206,8 @@ export interface FacadeInputs {
   "self.decisions.asks": Facade.EmptyRequest;
   "connector.list": Facade.ConnectorListRequest;
   "connector.status": Facade.ConnectorNameRequest;
+  "connector.call": Facade.ConnectorCallRequest;
+  "connector.schema": Facade.ConnectorSchemaRequest;
   "vault.commit": Facade.CommitRequest;
   "vault.remember": Facade.ClaimInput;
   "vault.claims.retract": Facade.ClaimRefRequest;
@@ -229,6 +231,18 @@ export interface FacadeInputs {
   "vault.conversations.records.append": Facade.DagRecordAppendInput;
   "vault.batch": Facade.CoreBatchWriteInput;
   "vault.artifacts.put": Facade.BlobArtifactInput;
+  "vault.artifacts.body.import": Facade.OfficeBodyImportRequest;
+  "vault.artifacts.body.head": Facade.OfficeBodyArtifactRequest;
+  "vault.artifacts.body.read": Facade.OfficeBodyReadRequest;
+  "vault.artifacts.body.commits": Facade.OfficeBodyArtifactRequest;
+  "vault.artifacts.body.edit": Facade.OfficeBodyEditRequest;
+  "vault.artifacts.body.fork.open": Facade.OfficeBodyForkOpenRequest;
+  "vault.artifacts.body.fork.edit": Facade.OfficeBodyForkEditRequest;
+  "vault.artifacts.body.fork.diff": Facade.OfficeBodyForkRequest;
+  "vault.artifacts.body.fork.merge": Facade.OfficeBodyForkMergeRequest;
+  "vault.artifacts.body.fork.discard": Facade.OfficeBodyForkRequest;
+  "vault.artifacts.body.export": Facade.OfficeBodyExportVerbRequest;
+  "vault.artifacts.body.preview": Facade.OfficeBodyArtifactRequest;
   "vault.artifacts.append": Facade.AppendBlobVersionRequest;
   "vault.artifacts.read": Facade.ReadBlobVersionRequest;
   "vault.consolidation.enqueue": Facade.ConsolidationEnqueueRequest;
@@ -238,6 +252,8 @@ export interface FacadeInputs {
   "vault.notes.create": Facade.CreateNoteRequest;
   "vault.notes.from_entity": Facade.CreateNoteFromEntityRequest;
   "vault.notes.edit": Facade.EditNoteRequest;
+  "vault.notes.seal": Facade.NoteRefRequest;
+  "vault.notes.lifecycle": Facade.NoteRefRequest;
 }
 /** Each verb's result: the JSON body of its 2xx response, as its Rust output type writes it. */
 export interface FacadeResults {
@@ -440,6 +456,8 @@ export interface FacadeResults {
   "self.decisions.asks": Facade.DecisionAsk[];
   "connector.list": Facade.ConnectorEntry[];
   "connector.status": Facade.ConnectorView | null;
+  "connector.call": Facade.ConnectorCallReply;
+  "connector.schema": Facade.ConnectorSchemaReply;
   "vault.commit": Facade.CommitReceipt[];
   "vault.remember": Facade.CommitReceipt;
   "vault.claims.retract": Facade.CommitReceipt;
@@ -463,6 +481,18 @@ export interface FacadeResults {
   "vault.conversations.records.append": Facade.DagRecordAppendReceipt;
   "vault.batch": Facade.CoreBatchWriteReceipt;
   "vault.artifacts.put": Facade.EntityRefReceipt;
+  "vault.artifacts.body.import": Facade.OfficeBodyHead;
+  "vault.artifacts.body.head": Facade.OfficeBodyHead | null;
+  "vault.artifacts.body.read": Facade.OfficeBodyView;
+  "vault.artifacts.body.commits": Facade.TextCommitReceipt[];
+  "vault.artifacts.body.edit": Facade.OfficeBodyEdit;
+  "vault.artifacts.body.fork.open": Facade.OfficeBodyFork;
+  "vault.artifacts.body.fork.edit": Facade.OfficeBodyEdit;
+  "vault.artifacts.body.fork.diff": Facade.OfficeBodyDiff;
+  "vault.artifacts.body.fork.merge": Facade.OfficeBodyDiff;
+  "vault.artifacts.body.fork.discard": Facade.OfficeBodyFork;
+  "vault.artifacts.body.export": Facade.OfficeBodyExportView;
+  "vault.artifacts.body.preview": Facade.XlsxPreview;
   "vault.artifacts.append": Facade.BlobVersionView;
   "vault.artifacts.read": Facade.BlobContent | null;
   "vault.consolidation.enqueue": Facade.DreamerAttemptRef;
@@ -472,6 +502,8 @@ export interface FacadeResults {
   "vault.notes.create": Facade.EntityRefReceipt;
   "vault.notes.from_entity": Facade.EntityRefReceipt;
   "vault.notes.edit": Facade.NoteEditOutcome;
+  "vault.notes.seal": Facade.NoteSeal;
+  "vault.notes.lifecycle": Facade.NoteLifecycleView;
 }
 export type FacadeInput<V extends FacadeVerb> = FacadeInputs[V];
 export type FacadeResult<V extends FacadeVerb> = FacadeResults[V];
@@ -690,6 +722,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.decisions.asks": { description: "", scope: "Read", proposes: false, hostDoor: true, section: false },
   "connector.list": { description: "Every live catalogued connector whose name or summary matches the query.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "connector.status": { description: "One catalogued connector by name, removed ones included.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "connector.call": { description: "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "connector.schema": { description: "One catalogued connector tool's approved input schema, as the caller's own grant resolves it.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.commit": { description: "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.remember": { description: "Commits one claim through the gate, the same as vault.claims.upsert.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.claims.retract": { description: "Retracts one active claim: a deliberate withdrawal that preserves the record.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -713,6 +747,18 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.conversations.records.append": { description: "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.batch": { description: "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.put": { description: "Registers one blob artifact; its bytes ride vault.artifacts.append.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.import": { description: "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.head": { description: "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.read": { description: "Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.commits": { description: "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.edit": { description: "A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.fork.open": { description: "Opens a fork of the live body at its head for machine work, in an optional run.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.fork.edit": { description: "The opener's typed DOCX or XLSX operations on its open fork of a live body.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.fork.diff": { description: "A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.fork.merge": { description: "A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.fork.discard": { description: "Abandons an open fork's unlanded work and returns its record.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.export": { description: "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.preview": { description: "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.append": { description: "Appends one version of bytes to a blob artifact's append-only chain.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.read": { description: "Reads one version of a blob artifact's bytes.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.consolidation.enqueue": { description: "Enqueues one consolidation attempt and returns its durable job reference.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -722,6 +768,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.notes.create": { description: "Creates a NOTE of a registered kind, its first authored text as its birth.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.notes.from_entity": { description: "Creates a NOTE of a registered kind from an existing entity.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.notes.edit": { description: "Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.notes.seal": { description: "Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "vault.notes.lifecycle": { description: "Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one.", scope: "Read", proposes: false, hostDoor: false, section: false },
 };
 
 /**
@@ -1117,6 +1165,34 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         create: (input: Facade.ArtifactCreateRequest, options?: O): FacadeReturns<"vault.artifacts.create">[K] => invoke("vault.artifacts.create", input, options, newInvocation()),
         /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
         put: (input: Facade.BlobArtifactInput, options?: O): FacadeReturns<"vault.artifacts.put">[K] => invoke("vault.artifacts.put", input, options, newInvocation()),
+        body: {
+          /** Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document. */
+          import: (input: Facade.OfficeBodyImportRequest, options?: O): FacadeReturns<"vault.artifacts.body.import">[K] => invoke("vault.artifacts.body.import", input, options, newInvocation()),
+          /** An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none. */
+          head: (input: Facade.OfficeBodyArtifactRequest, options?: O): FacadeReturns<"vault.artifacts.body.head">[K] => invoke("vault.artifacts.body.head", input, options, newInvocation()),
+          /** Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history. */
+          read: (input: Facade.OfficeBodyReadRequest, options?: O): FacadeReturns<"vault.artifacts.body.read">[K] => invoke("vault.artifacts.body.read", input, options, newInvocation()),
+          /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
+          commits: (input: Facade.OfficeBodyArtifactRequest, options?: O): FacadeReturns<"vault.artifacts.body.commits">[K] => invoke("vault.artifacts.body.commits", input, options, newInvocation()),
+          /** A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head. */
+          edit: (input: Facade.OfficeBodyEditRequest, options?: O): FacadeReturns<"vault.artifacts.body.edit">[K] => invoke("vault.artifacts.body.edit", input, options, newInvocation()),
+          fork: {
+            /** Opens a fork of the live body at its head for machine work, in an optional run. */
+            open: (input: Facade.OfficeBodyForkOpenRequest, options?: O): FacadeReturns<"vault.artifacts.body.fork.open">[K] => invoke("vault.artifacts.body.fork.open", input, options, newInvocation()),
+            /** The opener's typed DOCX or XLSX operations on its open fork of a live body. */
+            edit: (input: Facade.OfficeBodyForkEditRequest, options?: O): FacadeReturns<"vault.artifacts.body.fork.edit">[K] => invoke("vault.artifacts.body.fork.edit", input, options, newInvocation()),
+            /** A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show. */
+            diff: (input: Facade.OfficeBodyForkRequest, options?: O): FacadeReturns<"vault.artifacts.body.fork.diff">[K] => invoke("vault.artifacts.body.fork.diff", input, options, newInvocation()),
+            /** A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses. */
+            merge: (input: Facade.OfficeBodyForkMergeRequest, options?: O): FacadeReturns<"vault.artifacts.body.fork.merge">[K] => invoke("vault.artifacts.body.fork.merge", input, options, newInvocation()),
+            /** Abandons an open fork's unlanded work and returns its record. */
+            discard: (input: Facade.OfficeBodyForkRequest, options?: O): FacadeReturns<"vault.artifacts.body.fork.discard">[K] => invoke("vault.artifacts.body.fork.discard", input, options, newInvocation()),
+          },
+          /** Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator. */
+          export: (input: Facade.OfficeBodyExportVerbRequest, options?: O): FacadeReturns<"vault.artifacts.body.export">[K] => invoke("vault.artifacts.body.export", input, options, newInvocation()),
+          /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
+          preview: (input: Facade.OfficeBodyArtifactRequest, options?: O): FacadeReturns<"vault.artifacts.body.preview">[K] => invoke("vault.artifacts.body.preview", input, options, newInvocation()),
+        },
         /** Appends one version of bytes to a blob artifact's append-only chain. */
         append: (input: Facade.AppendBlobVersionRequest, options?: O): FacadeReturns<"vault.artifacts.append">[K] => invoke("vault.artifacts.append", input, options, newInvocation()),
         /** Reads one version of a blob artifact's bytes. */
@@ -1303,6 +1379,10 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         from_entity: (input: Facade.CreateNoteFromEntityRequest, options?: O): FacadeReturns<"vault.notes.from_entity">[K] => invoke("vault.notes.from_entity", input, options, newInvocation()),
         /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
         edit: (input: Facade.EditNoteRequest, options?: O): FacadeReturns<"vault.notes.edit">[K] => invoke("vault.notes.edit", input, options, newInvocation()),
+        /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
+        seal: (input: Facade.NoteRefRequest, options?: O): FacadeReturns<"vault.notes.seal">[K] => invoke("vault.notes.seal", input, options, newInvocation()),
+        /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
+        lifecycle: (input: Facade.NoteRefRequest, options?: O): FacadeReturns<"vault.notes.lifecycle">[K] => invoke("vault.notes.lifecycle", input, options, newInvocation()),
       },
     },
     /** Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work. */
@@ -1364,6 +1444,10 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       list: (input: Facade.ConnectorListRequest, options?: O): FacadeReturns<"connector.list">[K] => invoke("connector.list", input, options, newInvocation()),
       /** One catalogued connector by name, removed ones included. */
       status: (input: Facade.ConnectorNameRequest, options?: O): FacadeReturns<"connector.status">[K] => invoke("connector.status", input, options, newInvocation()),
+      /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
+      call: (input: Facade.ConnectorCallRequest, options?: O): FacadeReturns<"connector.call">[K] => invoke("connector.call", input, options, newInvocation()),
+      /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
+      schema: (input: Facade.ConnectorSchemaRequest, options?: O): FacadeReturns<"connector.schema">[K] => invoke("connector.schema", input, options, newInvocation()),
       outbound: {
         /** Schedules one send through a granted outbound connector, gated and held for delivery. */
         schedule: (input: Facade.OutboundScheduleRequest, options?: O): FacadeReturns<"connector.outbound.schedule">[K] => invoke("connector.outbound.schedule", input, options, newInvocation()),
