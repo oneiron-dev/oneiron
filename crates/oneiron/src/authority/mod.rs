@@ -32,6 +32,7 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
 mod ancestor_index;
@@ -145,6 +146,10 @@ pub use federation_activation::federation_grant_activation;
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
 pub use causal_write::CausalWriteDisposition;
+pub use checkpoint::{
+    AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,
+    AUTHORITY_CHECKPOINT_NEW_ENTRIES, AuthorityCheckpointUpkeep,
+};
 pub use checkpoint_adopt::{
     AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint,
 };
@@ -198,6 +203,7 @@ pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
 pub(crate) use adopted_evidence::adopted_evidence_in_txn;
+pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };

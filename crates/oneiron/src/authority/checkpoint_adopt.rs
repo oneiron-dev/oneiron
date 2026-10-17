@@ -256,6 +256,9 @@ impl Vault {
             return Err(Error::CorruptedIndex("verified authority checkpoint"));
         }
         super::checkpoint::keep_checkpoint_head_in_txn(store, wtxn, &id, bytes)?;
+        // OF-469 cutoffs: the adopted head's accounting, and the covered rows
+        // whose later arrival is hydration rather than growth.
+        super::checkpoint::note_adopted_checkpoint_in_txn(store, wtxn, &id, image)?;
         ADOPTED.put(
             store,
             wtxn,
