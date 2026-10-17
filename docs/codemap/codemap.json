@@ -10838,6 +10838,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/action_inputs.rs",
+     "purpose": "OF-568: the input versions a `self.*` call reads, captured before the host dispatches it, for its bridge…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -11150,7 +11160,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 5,
       "re-export": 14
      }
@@ -11162,7 +11172,7 @@
      "path": "src/code_run/payload.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -11245,7 +11255,7 @@
       "const": 8,
       "crate-vis": 12,
       "enum": 1,
-      "fn": 23,
+      "fn": 24,
       "struct": 12
      }
     },
@@ -11539,6 +11549,7 @@
       "AgentVerbAnswer",
       "AgentVerbDoor",
       "AgentVerbRefusal",
+      "AgentVerbRefusalWords",
       "RunCall",
       "SelfAgentDefinitionPutCall",
       "SelfAgentDefinitionPutResult",
@@ -11581,7 +11592,7 @@
       "const": 2,
       "enum": 7,
       "fn": 20,
-      "struct": 29,
+      "struct": 30,
       "trait": 2
      }
     },
@@ -18551,9 +18562,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/agent_health/check_repeat.rs",
-     "purpose": "`failed_check_repeat` (agent-mind §3.4): the same tool run fails the same way again",
+     "purpose": "`failed_check_repeat` (agent-mind §3.4): the same check fails again on the same inputs",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/duplicate.rs",
+     "purpose": "`duplicate_work` on action digests (agent-mind §3.4, OF-568): two attempts ran the same action on the same…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -31535,6 +31556,9 @@
       "DocxBodyView",
       "DocxCellView",
       "OfficeBodyArtifactRequest",
+      "OfficeBodyCommitGap",
+      "OfficeBodyCommitView",
+      "OfficeBodyCommitsRequest",
       "OfficeBodyEditRequest",
       "OfficeBodyExportVerbRequest",
       "OfficeBodyExportView",
@@ -31555,10 +31579,10 @@
      "path": "src/office_body/verbs.rs",
      "purpose": "`vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, \"An agent authors through…",
      "surface": {
-      "crate-vis": 3,
-      "enum": 2,
+      "crate-vis": 4,
+      "enum": 3,
       "fn": 14,
-      "struct": 18
+      "struct": 20
      }
     },
     {
@@ -36118,6 +36142,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ActionInputs",
       "CallOutcome",
       "CallReceipt",
       "CallReceiptInput",
@@ -36127,11 +36152,11 @@
      "path": "src/receipt/call.rs",
      "purpose": "OF-538: one lasting receipt per wire call, reads included",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 5,
-      "struct": 3
+      "fn": 11,
+      "struct": 4
      }
     },
     {
@@ -51784,7 +51809,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52050,7 +52075,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53053,7 +53078,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3213,
+   "source_files": 3215,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64157,7 +64182,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -68734,7 +68759,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -72586,6 +72611,9 @@
       "OffersPage",
       "OffersRequest",
       "OfficeBodyArtifactRequest",
+      "OfficeBodyCommitGap",
+      "OfficeBodyCommitView",
+      "OfficeBodyCommitsRequest",
       "OfficeBodyDiff",
       "OfficeBodyEdit",
       "OfficeBodyEditRequest",
@@ -73015,8 +73043,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 243,
-      "struct": 604
+      "enum": 244,
+      "struct": 606
      }
     },
     {
