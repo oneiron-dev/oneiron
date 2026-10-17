@@ -2923,7 +2923,7 @@ async fn vault_graph_ask(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_unnarrowed_facets()?;
     facade_outside_room_turn(&headers, "vault.graph.ask")?;
     let value = facade_json(payload)?;
     oneiron::task_verb::sdk::validate_input("vault.graph.ask", &value)?;

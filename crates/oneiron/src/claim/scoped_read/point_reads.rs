@@ -26,18 +26,29 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<EntityParts>> {
-        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
-        let Some(raw) = self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
-        else {
+        let Some(raw) = self.graph_ask_raw_in_txn(txn, id)? else {
             return Ok(None);
         };
-        let header = EntityMetadataHeader::parse(&raw.raw)
+        let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("graph ask entity header"))?;
         Ok(Some((
             header.entity_type,
             header.learned_at,
-            raw.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+            raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
         )))
+    }
+
+    /// [`Self::graph_ask_parts_in_txn`]'s whole row, header included, for a
+    /// caller that judges the record's Scope as well.
+    pub(crate) fn graph_ask_raw_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        Ok(self
+            .entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+            .map(|revision| revision.raw))
     }
 
     /// Whether this reader may read each of `ids` now, as

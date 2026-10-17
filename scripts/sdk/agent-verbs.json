@@ -2069,7 +2069,6 @@
       "scope": "Write",
       "proposes": true,
       "admission": {
-        "unrestricted_record_scope": true,
         "validate": "input.validate()?;"
       },
       "section": false
