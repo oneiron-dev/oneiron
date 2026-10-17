@@ -11,6 +11,9 @@
 //! `/v1/owner/self-heal/findings` (OF-418) lists one detector's raised T3
 //! findings with the owner's labels and takes the owner's one label on each,
 //! which a `t2` detector of the same family learns from.
+//! `/v1/owner/coach/code-fixes` (OF-380) is the Coach's code-fix work on each
+//! failure case: the class, the invented example's verdict and each
+//! candidate's fixed or not-fixed result, with no text of the failure.
 //! Approving a draft approves its exact content, then schedules it through
 //! the ordinary outbound gate as the Dreamer on the owner's behalf; the
 //! gate's grants, consent and windows still decide the send.
@@ -23,6 +26,7 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
+use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixSettled, MAX_CODE_FIX_WORK};
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigest;
 use oneiron::dreamer_runner::maintenance::identity::{
     IdentityAskView, IdentityCardCopy, IdentitySettled,
@@ -31,6 +35,7 @@ use oneiron::dreamer_runner::maintenance::representation::{
     RepresentationCitation, RepresentationRequest, schedule_approved_representation,
 };
 use oneiron::dreamer_runner::maintenance::stewardship::{StewardshipRule, StewardshipRules};
+use oneiron::failure_signals::CodeFixSource;
 use oneiron::memory::OutboundScheduleContext;
 use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
 use oneiron::self_heal::distillation::ReviewedFinding;
@@ -57,6 +62,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/representation/decline", post(decline_representation))
         .route("/coach/training-offers", get(training_offers))
         .route("/coach/training-offers/answer", post(answer_training_offer))
+        .route("/coach/code-fixes", get(code_fixes))
         .route("/identity/asks", get(identity_asks))
         .route("/identity/asks/answer", post(answer_identity_ask))
         .route("/self-heal/findings", get(self_heal_findings))
@@ -514,6 +520,64 @@ struct LabelFinding {
     event: String,
     /// Whether the finding names a real problem.
     positive: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeFixQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// One failure's code-fix work as the owner sees it: a case's, or a blocked
+/// report's whose run has no failed case.
+#[derive(Debug, Serialize)]
+struct CodeFixView {
+    /// The failure case, as 32 hex; absent for a blocked report's work.
+    case: Option<String>,
+    /// The blocked report's receipt, as 32 hex; absent for a case's work.
+    blocked_report: Option<String>,
+    /// The proposed heal the work follows, as 32 hex.
+    proposal: String,
+    route: String,
+    queued_at: u64,
+    /// Absent until the run settles.
+    settled: Option<CodeFixSettled>,
+}
+
+/// `GET /v1/owner/coach/code-fixes?limit=<n>`: the Coach's code-fix work,
+/// newest first (at most 256).
+async fn code_fixes(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<CodeFixQuery>, QueryRejection>,
+) -> OwnerReply<Vec<CodeFixView>> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let work = blocking(move || {
+        Ok(server
+            .vault()
+            .code_fix_work(query.limit.unwrap_or(MAX_CODE_FIX_WORK))?)
+    })
+    .await?;
+    Ok(Json(
+        work.into_iter()
+            .map(|work| {
+                let (case, blocked_report) = match work.source {
+                    CodeFixSource::Case { case_ref } => (Some(case_ref), None),
+                    CodeFixSource::Blocked { receipt, .. } => (None, Some(receipt.to_hex())),
+                };
+                CodeFixView {
+                    case,
+                    blocked_report,
+                    proposal: work.proposal.to_hex(),
+                    route: work.route,
+                    queued_at: work.queued_at,
+                    settled: work.settled,
+                }
+            })
+            .collect(),
+    ))
 }
 
 /// `POST /v1/owner/self-heal/findings/label`: the owner's one label on a

@@ -1,5 +1,6 @@
 //! The Coach's code fixes (DEC-0005 FIX6, OF-380). Once the Coach files a
-//! heal for a failure case on a deployment that exports, a `coach.code_fix`
+//! heal for a failure case, or for a blocked report whose run has no failed
+//! case, on a deployment that exports, a `coach.code_fix`
 //! attempt on the `coach.heal` queue asks it for two things, both made and
 //! checked inside the vault: an invented example of the failure (a short
 //! general note and a made-up conversation that fails the same way), and,
@@ -10,8 +11,8 @@
 //! replays with no tools; every judgment (the failure's class, does a replay
 //! fail the same way, did the candidate fix it, may the example leave) is a
 //! typed question on the host's decision ladder. The export doors in
-//! `failure_signals` decide what leaves, and the case's work row keeps each
-//! verdict here after the export queue drains.
+//! `failure_signals` decide what leaves, and the failure's work row keeps
+//! each verdict here after the export queue drains.
 use std::cell::OnceCell;
 use std::time::{Duration, Instant};
 
@@ -25,11 +26,10 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     COACH_HEAL_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
 };
-use crate::failure_ladder::HealerCase;
 use crate::failure_signals::{
-    CandidateFix, CodeFixReplay, CodeFixVerdict, CodeFixWithheld, ExportScrubber, FailureClassV1,
-    FailureSource, FixOutcome, InventedExampleDraft, InventedMessage, InventedRole, ReplayRun,
-    ScrubRun, ShadowRun, failed_case_in, failure_source_in,
+    CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber,
+    FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage, InventedRole,
+    ReplayRun, ScrubRun, ShadowRun, code_fix_subject_in, failed_case_in,
 };
 use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
 use crate::llm::decision::{
@@ -40,11 +40,15 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// Key: id16(case key).
+/// Key: [`work_key`].
 const WORK: SideTable<EntityId, CodeFixWork, Named> =
     SideTable::new(&side_table::FAILURE_SIGNALS_CODE_FIX_WORK);
+/// Domain separator for a blocked report's work key.
+const BLOCKED_WORK_DOMAIN: &[u8] = b"oneiron.code-fix.blocked.v1\0";
 /// Blocked reports one job carries.
 const JOB_REPORTS: usize = 8;
+/// Most work rows one owner read returns.
+pub const MAX_CODE_FIX_WORK: usize = 256;
 /// Most bytes of one report's detail, one message, or one other text a
 /// question's state carries.
 const DETAIL_BYTES: usize = 1024;
@@ -75,10 +79,11 @@ const FIXED_WORDING: &str = "The reply before failed the way the failure describ
 const SAFE_WORDING: &str = "Is this text plainly made up, with no real person's name, contact \
     detail, account, address, private fact or secret in it?";
 
-/// One case's code-fix work and its local verdicts.
+/// One failure's code-fix work and its local verdicts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeFixWork {
-    pub case_ref: String,
+    /// The case, or the blocked report.
+    pub source: CodeFixSource,
     /// The proposed heal the work follows.
     pub proposal: EntityId,
     /// The heal's route.
@@ -108,16 +113,16 @@ pub struct CandidateRun {
     pub export: CodeFixVerdict,
 }
 
-/// What the Coach drafts for: the case, its class and the real failure. It
-/// stays inside the vault's boundary.
+/// What the Coach drafts for: the case or blocked report, its class and the
+/// real failure. It stays inside the vault's boundary.
 #[derive(Debug, Clone)]
 pub struct CodeFixJob {
-    pub case_ref: String,
+    pub origin: CodeFixSource,
     pub route: HealRoute,
     pub failure_class: FailureClassV1,
     pub source: FailureSource,
-    /// The case's blocked reports: each one's category and the agent's own
-    /// words, data and never an instruction.
+    /// The failure's blocked reports: each one's category and the agent's
+    /// own words, data and never an instruction.
     pub reports: Vec<serde_json::Value>,
 }
 
@@ -308,7 +313,11 @@ impl CoachReplay<'_> {
 }
 
 impl CodeFixReplay for CoachReplay<'_> {
-    fn reproduces(&self, _case: &HealerCase, example: &InventedExampleDraft) -> Result<ReplayRun> {
+    fn reproduces(
+        &self,
+        _failure: &FailureSource,
+        example: &InventedExampleDraft,
+    ) -> Result<ReplayRun> {
         // The live agent answers in place of the invented failing turn.
         let Some(last) = example
             .conversation
@@ -333,7 +342,7 @@ impl CodeFixReplay for CoachReplay<'_> {
         )
     }
 
-    fn shadow_replay(&self, _case: &HealerCase, candidate_id: &str) -> Result<ShadowRun> {
+    fn shadow_replay(&self, _failure: &FailureSource, candidate_id: &str) -> Result<ShadowRun> {
         let Some((_, fix)) = self.candidates.iter().find(|(id, _)| id == candidate_id) else {
             return Ok(ShadowRun::Unavailable);
         };
@@ -396,30 +405,52 @@ impl ExportScrubber for CoachScrubber<'_> {
 struct Ran(ShadowRun);
 
 impl CodeFixReplay for Ran {
-    fn reproduces(&self, _case: &HealerCase, _example: &InventedExampleDraft) -> Result<ReplayRun> {
+    fn reproduces(
+        &self,
+        _failure: &FailureSource,
+        _example: &InventedExampleDraft,
+    ) -> Result<ReplayRun> {
         Ok(ReplayRun::Unavailable)
     }
 
-    fn shadow_replay(&self, _case: &HealerCase, _candidate_id: &str) -> Result<ShadowRun> {
+    fn shadow_replay(&self, _failure: &FailureSource, _candidate_id: &str) -> Result<ShadowRun> {
         Ok(self.0)
     }
 }
 
-/// Queues the Coach's code-fix run for a case it just filed a heal for,
-/// when this deployment exports. The case's work row makes it one run per
-/// case.
-#[allow(clippy::too_many_arguments)]
+/// The work row's key: a case's own key, or one derived from a blocked
+/// report's receipt, so a case and a report never share a row.
+fn work_key(source: &CodeFixSource) -> Result<EntityId> {
+    match source {
+        CodeFixSource::Case { case_ref } => Ok(EntityId::from_hex(case_ref)?),
+        CodeFixSource::Blocked { receipt, .. } => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(BLOCKED_WORK_DOMAIN);
+            hasher.update(receipt.as_bytes());
+            let mut key = [0; 16];
+            key.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+            Ok(EntityId::from_bytes(key)?)
+        }
+    }
+}
+
+/// Queues the Coach's code-fix run for a failure it just filed a heal for,
+/// when this deployment exports. The failure's work row makes it one run per
+/// case or report; the attempt's input is that row's key.
 pub(super) fn wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    case_ref: &str,
-    key: EntityId,
+    source: CodeFixSource,
     proposal: EntityId,
     route: HealRoute,
     parent: AttemptId,
     now: u64,
 ) -> Result<()> {
-    if !vault.config.failure_signals.exports() || WORK.get(&vault.store, &*txn, &key)?.is_some() {
+    if !vault.config.failure_signals.exports() {
+        return Ok(());
+    }
+    let key = work_key(&source)?;
+    if WORK.get(&vault.store, &*txn, &key)?.is_some() {
         return Ok(());
     }
     WORK.put(
@@ -427,30 +458,84 @@ pub(super) fn wake_in_txn(
         txn,
         &key,
         &CodeFixWork {
-            case_ref: case_ref.to_owned(),
+            source,
             proposal,
             route: route.as_str().to_owned(),
             queued_at: now,
             settled: None,
         },
     )?;
+    let input = key.to_hex();
     DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
         txn,
         COACH_HEAL_ATTEMPT_KIND,
         DreamerAttemptPayload {
             attempt_type: COACH_CODE_FIX_FACET.into(),
-            input: Value::from(case_ref),
+            input: Value::from(input.as_str()),
             parent_attempt: Some(parent),
         },
-        Some(format!("{COACH_CODE_FIX_FACET}:{case_ref}")),
+        Some(format!("{COACH_CODE_FIX_FACET}:{input}")),
         None,
         now,
     )?;
     Ok(())
 }
 
+/// Queues the Coach's code-fix run for a blocked report it just filed a heal
+/// for (OF-380). A report with no durable run names no failure to replay. A
+/// report whose run's attempt has a failed case gets none of its own: that
+/// case's heal queues the run for the same failure.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn wake_blocked_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: EntityId,
+    run: Option<EntityId>,
+    proposal: EntityId,
+    route: HealRoute,
+    parent: AttemptId,
+    now: u64,
+) -> Result<()> {
+    let Some(run) = run else {
+        return Ok(());
+    };
+    let case_ref = crate::failure_ladder::failure_case_ref(AttemptId::from_bytes(run.as_bytes())?);
+    if failed_case_in(vault, txn, &case_ref)?.is_some() {
+        return Ok(());
+    }
+    wake_in_txn(
+        vault,
+        txn,
+        CodeFixSource::Blocked { receipt, run },
+        proposal,
+        route,
+        parent,
+        now,
+    )
+}
+
 impl Vault {
-    /// The Coach's code-fix run for one case, under its leased
+    /// The Coach's code-fix work for the owner, newest queued first, at most
+    /// `limit` (capped at [`MAX_CODE_FIX_WORK`]): each case's or blocked
+    /// report's heal and, once
+    /// its run settled, the failure's class, the invented example's verdict
+    /// and each candidate's shadow result. No text of the failure is in it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn code_fix_work(&self, limit: usize) -> Result<Vec<CodeFixWork>> {
+        let txn = self.store.env.read_txn()?;
+        let mut rows: Vec<CodeFixWork> = WORK
+            .iter_from(&self.store, &txn, &[])?
+            .map(|row| row.map(|(_, work)| work))
+            .collect::<Result<_>>()?;
+        rows.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
+        rows.truncate(limit.min(MAX_CODE_FIX_WORK));
+        Ok(rows)
+    }
+
+    /// The Coach's code-fix run for one case or blocked report, under its leased
     /// `coach.code_fix` attempt: the failure's class, the Coach's draft, the
     /// invented example through its export door, and the candidate's shadow
     /// replay, kept here and sent through its own door. A replay returns what
@@ -463,14 +548,14 @@ impl Vault {
         now: u64,
     ) -> Result<CodeFixSettled> {
         self.require_coach_attempt(attempt, COACH_CODE_FIX_FACET)?;
-        let case_ref = attempt
-            .status
-            .payload
-            .input
-            .as_str()
-            .ok_or_else(super::invalid)?
-            .to_owned();
-        let key = EntityId::from_hex(&case_ref)?;
+        let key = EntityId::from_hex(
+            attempt
+                .status
+                .payload
+                .input
+                .as_str()
+                .ok_or_else(super::invalid)?,
+        )?;
         let work = {
             let txn = self.store.env.read_txn()?;
             WORK.get(&self.store, &txn, &key)?
@@ -480,7 +565,7 @@ impl Vault {
             return Ok(settled);
         }
         let route = HealRoute::parse(&work.route).ok_or_else(super::invalid)?;
-        let settled = self.code_fix_run(&case_ref, route, decisions, host, now)?;
+        let settled = self.code_fix_run(&work.source, route, decisions, host, now)?;
         self.with_write_txn_grouped(|txn| {
             let mut work = WORK
                 .get(&self.store, &*txn, &key)?
@@ -496,7 +581,7 @@ impl Vault {
 
     fn code_fix_run(
         &self,
-        case_ref: &str,
+        source: &CodeFixSource,
         route: HealRoute,
         decisions: &CodeFixDecisions<'_>,
         host: &dyn CodeFixHost,
@@ -516,29 +601,24 @@ impl Vault {
         }
         let found = {
             let txn = self.store.env.read_txn()?;
-            match failed_case_in(self, &txn, case_ref)? {
-                Some((case, attempt)) => Some((
-                    failure_source_in(self, &txn, &case, &attempt)?.map(|(source, _)| source),
-                    case,
-                )),
-                None => None,
-            }
+            code_fix_subject_in(self, &txn, source)?
         };
-        let Some((source, case)) = found else {
+        let Some(subject) = found else {
             return Ok(withheld(
                 FailureClassV1::Other,
                 CodeFixWithheld::UnknownCase,
             ));
         };
-        let Some(source) = source else {
+        let Some((failure, _)) = subject.failure else {
             return Ok(withheld(
                 FailureClassV1::Other,
                 CodeFixWithheld::PrivateWorld,
             ));
         };
-        let reports = case_reports(self, &case.blocked_reports)?;
-        let mut evidence: Vec<EntityId> = EntityId::from_hex(&case.evidence_ref)
-            .ok()
+        let case = subject.case.as_ref();
+        let reports = case_reports(self, &subject.reports)?;
+        let mut evidence: Vec<EntityId> = case
+            .and_then(|case| EntityId::from_hex(&case.evidence_ref).ok())
             .into_iter()
             .chain(reports.iter().map(|(receipt, _)| *receipt))
             .collect();
@@ -554,19 +634,27 @@ impl Vault {
                 })
             })
             .collect();
+        // A blocked report with no case has no ladder class and names no
+        // skill the ladder saw.
+        let about = if case.is_some() {
+            "failure_case"
+        } else {
+            "blocked_report"
+        };
         let class_state = json!({
-            "failure_ladder_class": case.failure_class,
-            "names_skill": case.scope.skill_ref.is_some(),
+            "about": about,
+            "failure_ladder_class": case.map(|case| &case.failure_class),
+            "names_skill": case.map(|case| case.scope.skill_ref.is_some()),
             "reports": reports,
-            "briefing": source.briefing.as_deref().map(|text| clip(text, TEXT_BYTES)),
-            "task": source.task.as_deref().map(|text| clip(text, TEXT_BYTES)),
+            "briefing": failure.briefing.as_deref().map(|text| clip(text, TEXT_BYTES)),
+            "task": failure.task.as_deref().map(|text| clip(text, TEXT_BYTES)),
         });
         let failure_class = decisions.class(&evidence, &class_state)?;
         let job = CodeFixJob {
-            case_ref: case_ref.to_owned(),
+            origin: source.clone(),
             route,
             failure_class,
-            source,
+            source: failure,
             reports,
         };
         let draft = host.draft(&job)?;
@@ -605,7 +693,7 @@ impl Vault {
         };
         let example = match draft {
             Some(draft) => self.prepare_invented_example(
-                case_ref,
+                source,
                 InventedExampleDraft {
                     failure_class,
                     note: draft.note,
@@ -624,14 +712,14 @@ impl Vault {
         };
         let mut candidates = Vec::with_capacity(replay.candidates.len());
         for (candidate_id, _) in &replay.candidates {
-            let shadow = replay.shadow_replay(&case, candidate_id)?;
+            let shadow = replay.shadow_replay(&job.source, candidate_id)?;
             let outcome = match shadow {
                 ShadowRun::Fixed => Some(FixOutcome::Fixed),
                 ShadowRun::NotFixed => Some(FixOutcome::NotFixed),
                 ShadowRun::Unavailable => None,
             };
             let export = self.record_candidate_fix_result(
-                case_ref,
+                source,
                 CandidateFix {
                     candidate_id: candidate_id.clone(),
                     example_id: example_id.clone(),

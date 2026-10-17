@@ -13,7 +13,7 @@ use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
     NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem,
     NapiMemoryPack, NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope,
-    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiRecordRef, NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
     NapiWitnessReceipt, NapiWitnessTurn,
 };
 
@@ -317,6 +317,12 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
             .map(|cited| NapiCitedMessage {
                 short_id: cited.short_id,
                 value_text: cited.value_text,
+                record: cited.record.map(|record| NapiRecordRef {
+                    kind: record.kind,
+                    id: record.id,
+                    short_id: record.short_id,
+                    label: record.label,
+                }),
             })
             .collect(),
         conversation_id: item.conversation_id,
@@ -413,6 +419,33 @@ pub(super) fn memory_pack_from_engine(
         pack_version: pack.pack_version,
         rendered: pack.rendered,
         narrowing: read_receipt_from_engine(*pack.narrowing)?,
+    })
+}
+
+/// Lowers the boundary media query onto the engine's wire type; an unknown
+/// kind is the caller's `BAD_REQUEST`.
+pub(super) fn recall_media_to_engine(
+    media: super::dtos::NapiRecallMedia,
+) -> Result<oneiron::code_run::vault_read::ContextPackMediaQuery, oneiron::memory::MemoryError> {
+    use oneiron::code_run::vault_read::MediaQueryKind;
+    let kinds = media
+        .kinds
+        .unwrap_or_default()
+        .into_iter()
+        .map(|kind| match kind.as_str() {
+            "text" => Ok(MediaQueryKind::Text),
+            "image" => Ok(MediaQueryKind::Image),
+            "audio" => Ok(MediaQueryKind::Audio),
+            _ => Err(oneiron::memory::MemoryError::bad_request(format!(
+                "media.kinds: unknown kind {kind:?}; use text, image or audio"
+            ))),
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(oneiron::code_run::vault_read::ContextPackMediaQuery {
+        space: media.space,
+        mime: media.mime,
+        bytes_b64: media.bytes_b64,
+        kinds,
     })
 }
 

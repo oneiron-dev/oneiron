@@ -587,6 +587,20 @@ pub struct RecallScope {
     pub kinds: Option<Vec<String>>,
 }
 
+/// A recall's media query (OF-370): bytes the server embeds into one
+/// declared space, searched as that space's list beside the query's.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RecallMedia {
+    /// Declared embedding space id (an `ai.embed` rung id, then `@where`).
+    pub space: String,
+    /// Media type of the bytes: `image/*`, `audio/*` or `text/*`.
+    pub mime: String,
+    /// The bytes, standard base64.
+    pub bytes_b64: String,
+    /// The kinds of item the space's list keeps; every kind when empty.
+    pub kinds: Vec<crate::InputKind>,
+}
+
 /// Item provenance; default-on, never stripped.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MemoryProvenance {
@@ -637,12 +651,16 @@ pub struct MemoryItem {
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct CitedMessage {
     /// The message's short ref, the one its witness receipt returned.
     pub short_id: String,
     /// The message's text (capped), as the turn's text revision pins it.
     pub value_text: String,
+    /// The message as a typed record ref, the one the reader's read of it
+    /// admitted (OF-063): the generated facade record. It carries no
+    /// revision pin.
+    pub record: Option<crate::RecordRef>,
 }
 
 /// What the requested scope excluded.

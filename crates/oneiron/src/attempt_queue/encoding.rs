@@ -4,7 +4,11 @@
 //! [`super::types`], whose ABI-pin rule governs any change here); the field
 //! validators [`decode_record`] fails closed on live in [`super::validate`].
 
+use rmpv::Value;
+
+use crate::batch::secret_scan::{SidePart, admit_side_parts, from_named_tree, named_tree};
 use crate::error::{Error, Result};
+use crate::side_table::SideTableDbs;
 
 use super::types::{ATTEMPT_RECORD_VERSION, AttemptId, AttemptRecord, AttemptState};
 use super::validate::{
@@ -29,6 +33,12 @@ pub(super) const DEDUPE_INDEX_KEY_LEN: usize = 32;
 pub(super) const MAX_DEDUPE_ACTOR_REF_LEN: usize = 128;
 pub(super) const READY_KEY_LEN: usize = 24;
 const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different attempt kind";
+const ERR_RECORD_UNENCODABLE: &str = "failed to encode attempt record";
+/// The members of a row a caller authored, which the side-row wall reads beside
+/// the payload (OF-067): the failure text and the intervention, signal, ask and
+/// cancel notes. The queue's own ids, keys, states and times index the row and
+/// are never rewritten.
+const AUTHORED_MEMBERS: [&str; 5] = ["last_error", "events", "signals", "asks", "cancel_state"];
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 
 /// Checks the two axes every dedupe hit shares, on every key family.
@@ -175,11 +185,77 @@ pub(super) fn encode_record(record: &AttemptRecord) -> Result<Vec<u8>> {
     let mut encoded = vec![ATTEMPT_RECORD_VERSION];
     let mut body = rmp_serde::to_vec_named(record).map_err(|_| {
         Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            "failed to encode attempt record",
+            ERR_RECORD_UNENCODABLE,
         ))
     })?;
     encoded.append(&mut body);
     Ok(encoded)
+}
+
+/// [`encode_record`] once the side-row wall has read the row, in the writer's
+/// transaction (OF-067; ARCH-0069 #mask-on-write): each secret the payload or
+/// an authored member holds goes to custody, and `record` keeps the handles
+/// the stored row keeps. A hit the mask cannot place, or a masked row that no
+/// longer reads back as a row, refuses the write.
+pub(super) fn encode_admitted_record(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &mut AttemptRecord,
+) -> Result<Vec<u8>> {
+    let Value::Map(members) = named_tree(record)? else {
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RECORD_UNENCODABLE,
+        )));
+    };
+    let authored = members
+        .iter()
+        .filter(|(name, _)| {
+            name.as_str()
+                .is_some_and(|name| AUTHORED_MEMBERS.contains(&name))
+        })
+        .cloned()
+        .collect();
+    let rebuilt = |parts: &[SidePart]| -> Option<AttemptRecord> {
+        let [
+            SidePart::Body(payload),
+            SidePart::Value(Value::Map(authored)),
+        ] = parts
+        else {
+            return None;
+        };
+        let mut members = members.clone();
+        for (name, value) in authored {
+            if let Some((_, member)) = members.iter_mut().find(|(held, _)| held == name) {
+                member.clone_from(value);
+            }
+        }
+        let mut rebuilt: AttemptRecord = from_named_tree(&Value::Map(members))?;
+        rebuilt.payload.clone_from(payload);
+        Some(rebuilt)
+    };
+    let reads_back = |parts: &[SidePart]| {
+        rebuilt(parts).is_some_and(|row| {
+            encode_record(&row)
+                .and_then(|raw| decode_record(&raw, row.id))
+                .is_ok()
+        })
+    };
+    let mut parts = [
+        SidePart::Body(record.payload.clone()),
+        SidePart::Value(Value::Map(authored)),
+    ];
+    if admit_side_parts(
+        dbs,
+        wtxn,
+        ("attempt", record.id.as_bytes().as_slice()),
+        &mut parts,
+        reads_back,
+    )? {
+        *record = rebuilt(&parts).ok_or(Error::InvariantViolation(
+            "a masked attempt record no longer decodes",
+        ))?;
+    }
+    encode_record(record)
 }
 
 pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<AttemptRecord> {

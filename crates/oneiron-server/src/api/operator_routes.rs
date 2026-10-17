@@ -94,11 +94,19 @@ async fn recover_shared_owner(
     }
     // Logs never carry text a person wrote (owner ruling 2026-10-14): the
     // note's digest ties it to this recovery, and the operator keeps the note.
-    let note = blake3::hash(request.proof_note.as_bytes()).to_hex();
+    // The signed OwnerHandover keeps the same digest (OF-163); a blank note
+    // was refused above, so there is always one.
+    let digest = blake3::hash(request.proof_note.as_bytes());
+    let note = digest.to_hex();
     let vault_id = request.vault_id;
-    let recovered =
-        super::facade::host_doors::operator_recover_shared_owner(&server, vault_id, from, claimant)
-            .await;
+    let recovered = super::facade::host_doors::operator_recover_shared_owner(
+        &server,
+        vault_id,
+        from,
+        claimant,
+        Some(*digest.as_bytes()),
+    )
+    .await;
     match &recovered {
         Ok(receipt) => tracing::info!(
             vault_id,

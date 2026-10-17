@@ -199,6 +199,37 @@
       "section": false
     },
     {
+      "name": "vault.shape.read",
+      "description": "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read.",
+      "input": "EmptyRequest",
+      "output": "crate::vault_shape::ShapeRead",
+      "call": "memory.shape_read()?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shape.plan",
+      "description": "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing.",
+      "input": "crate::vault_shape::ShapePlanRequest",
+      "output": "crate::vault_shape::ShapePlan",
+      "call": "memory.shape_plan(&input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.shape.apply",
+      "description": "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item.",
+      "input": "crate::vault_shape::ShapeApplyRequest",
+      "output": "crate::vault_shape::ShapeApplyReceipt",
+      "call": "memory.shape_apply(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "self.message",
       "description": "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.",
       "input": "crate::memory::MessagePersonRequest",
@@ -349,6 +380,19 @@
       "section": true
     },
     {
+      "name": "tasks.wave",
+      "description": "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave.",
+      "input": "crate::task_verb::sdk::TaskWaveRequest",
+      "output": "crate::task_verb::sdk::TaskWaveReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"tasks.wave\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "tasks.update",
       "description": "Records the owner's acknowledgement of a failed TASK; any other task stays as it was.",
       "refs": ["/task_ref"],
@@ -440,7 +484,7 @@
       "description": "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting.",
       "input": "RecallRequest",
       "output": "crate::memory::MemoryPack",
-      "call": "crate::task_verb::sdk::recall_with_vector(memory, input, |_| None)?",
+      "call": "crate::task_verb::sdk::recall_unembedded(memory, input)?",
       "server_door": "recall_off_runtime",
       "scope": "Read",
       "admission": {
@@ -481,12 +525,16 @@
           {
             "name": "deadline_ms",
             "kind": "deadline_ms"
+          },
+          {
+            "name": "media",
+            "kind": "media"
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``.\n        "
         }
       },
       "uniffi": {
@@ -497,7 +545,8 @@
           "limit": "u32",
           "format": "Option<String>",
           "as_of": "Option<u64>",
-          "deadline_ms": "Option<u64>"
+          "deadline_ms": "Option<u64>",
+          "media": "Option<RecallMedia>"
         },
         "output": "MemoryPack"
       }
@@ -958,10 +1007,21 @@
     },
     {
       "name": "vault.members.add",
-      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept.",
+      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
-      "output": "crate::federation::SharedActExecutionReceipt",
-      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
+      "output": "crate::task_verb::sdk::SharedMemberInvited",
+      "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, None, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.invitation_slip",
+      "description": "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost.",
+      "input": "crate::task_verb::sdk::InvitationSlipRequest",
+      "output": "crate::task_verb::sdk::InvitationSlip",
+      "call": "crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -1137,6 +1197,28 @@
       "input": "crate::task_verb::sdk::GuestSlipMintRequest",
       "output": "crate::task_verb::sdk::GuestSlipMinted",
       "call": "crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.records.erase_preview",
+      "description": "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.",
+      "input": "crate::task_verb::sdk::RecordEraseRequest",
+      "output": "crate::task_verb::sdk::RecordErasePreview",
+      "call": "crate::task_verb::sdk::preview_record_erase(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.records.erase_confirm",
+      "description": "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead.",
+      "input": "crate::task_verb::sdk::RecordEraseConfirmRequest",
+      "output": "crate::task_verb::sdk::RecordEraseOutcome",
+      "call": "crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -1508,13 +1590,13 @@
     },
     {
       "name": "vault.lenses.list",
-      "description": "One page of the vault's lens proposals, each with its slot state from the owner's current selection.",
+      "description": "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees.",
       "input": "crate::lens::LensListRequest",
       "output": "crate::lens::LensListPage",
       "call": "memory.lenses_list(input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "projection_record_scope": true
       },
       "section": false
     },
@@ -1526,7 +1608,7 @@
       "call": "memory.lenses_default(input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "projection_record_scope": true
       },
       "section": false
     },
@@ -1616,6 +1698,110 @@
           "remote": "    /// One artifact's kind, head and versions, each with its made_by and born-from.\n",
           "ts": "/** One artifact's kind, head and versions, each with its made_by and born-from. */",
           "py": "One artifact's kind, head and versions, each with its made_by and born-from."
+        }
+      }
+    },
+    {
+      "name": "vault.code.diff",
+      "description": "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort.",
+      "input": "crate::code_document::CodeDiffRequest",
+      "output": "Option<crate::code_document::CodeDiffView>",
+      "call": "memory.code_diff(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// The semantic changes between two tested states of one code file, each with the operations that made it.\n",
+          "ts": "/** The semantic changes between two tested states of one code file, each with the operations that made it. */",
+          "py": "The semantic changes between two tested states of one code file, each with the operations that made it."
+        }
+      }
+    },
+    {
+      "name": "vault.code.blame",
+      "description": "Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why.",
+      "input": "crate::code_document::CodeStateRequest",
+      "output": "Option<crate::code_document::CodeBlameView>",
+      "call": "memory.code_blame(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Every unit of one tested code file state, blamed by the operations that wrote it.\n",
+          "ts": "/** Every unit of one tested code file state, blamed by the operations that wrote it. */",
+          "py": "Every unit of one tested code file state, blamed by the operations that wrote it."
+        }
+      }
+    },
+    {
+      "name": "vault.code.proposal_view",
+      "description": "One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied.",
+      "input": "crate::code_document::CodeProposalViewRequest",
+      "output": "Option<crate::code_document::CodeProposalView>",
+      "call": "memory.code_proposal_view(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// One repo proposal's semantic change from its base, under the provenance it was proposed with.\n",
+          "ts": "/** One repo proposal's semantic change from its base, under the provenance it was proposed with. */",
+          "py": "One repo proposal's semantic change from its base, under the provenance it was proposed with."
+        }
+      }
+    },
+    {
+      "name": "vault.code.repo_diff",
+      "description": "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it.",
+      "input": "crate::code_document::CodeRepoDiffRequest",
+      "output": "Option<crate::code_document::CodeRepoDiffView>",
+      "call": "memory.code_repo_diff(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Every file changed between two trees of a repository, unit by unit, with the operations that wrote each.\n",
+          "ts": "/** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */",
+          "py": "Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."
         }
       }
     },
@@ -1902,6 +2088,7 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
+      "task_work": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -1956,6 +2143,7 @@
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
@@ -1970,6 +2158,7 @@
       "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_wait(input.handle, Some(&input.step_key))?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
@@ -1985,6 +2174,7 @@
       "mcp_served": "[input.handle.group_ref]",
       "call": "memory.tasks_answer(&input.handle, &input.word)?",
       "scope": "Write",
+      "task_work": true,
       "mcp_fields": {
         "spec": "$"
       },
@@ -2261,7 +2451,7 @@
     },
     {
       "name": "vault.rooms.offer",
-      "description": "Publishes an agent's offer card to join a room or one of its threads.",
+      "description": "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card.",
       "input": "crate::workspace_roster::OfferDraft",
       "output": "crate::workspace_roster::OfferCard",
       "call": "memory.rooms_offer(&input)?",
@@ -2281,6 +2471,32 @@
       "call": "memory.rooms_offer_answer(&input)?",
       "scope": "Write",
       "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offer.vote",
+      "description": "Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits.",
+      "input": "crate::workspace_roster::OfferVoteRequest",
+      "output": "crate::workspace_roster::OfferCard",
+      "call": "memory.rooms_offer_vote(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.offer.reopen",
+      "description": "The room's owner or delegated host reopens its aged-out room-wide offer card.",
+      "input": "crate::workspace_roster::OfferReopenRequest",
+      "output": "crate::workspace_roster::OfferCard",
+      "call": "memory.rooms_offer_reopen(&input)?",
+      "scope": "Write",
       "mcp_fields": {
         "spec": "$"
       },
@@ -2358,6 +2574,19 @@
       "mcp_fields": {
         "spec": "$"
       },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.messages.react",
+      "description": "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress.",
+      "input": "crate::reaction::MessageReactionRequest",
+      "output": "crate::reaction::MessageReactionReceipt",
+      "call": "memory.messages_react(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -3528,6 +3757,18 @@
       "proposes": true
     },
     {
+      "name": "vault.artifacts.create",
+      "description": "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run.",
+      "input": "crate::blob_artifact::ArtifactCreateRequest",
+      "output": "Option<crate::blob_artifact::ArtifactView>",
+      "call": "memory.artifacts_create(&input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.artifacts.put",
       "description": "Registers one blob artifact; its bytes ride vault.artifacts.append.",
       "uniffi": {
@@ -3689,6 +3930,7 @@
     {
       "name": "vault.search",
       "input": "crate::code_run::MemorySearchInput",
+      "output": "crate::code_run::MemorySearchOutput",
       "scope": "Read",
       "context": "run",
       "effect": "MemorySearch"
@@ -3696,6 +3938,7 @@
     {
       "name": "vault.claims.put",
       "input": "crate::code_run::MemoryClaimInput",
+      "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
       "effect": "MemoryPutClaim"
@@ -3703,6 +3946,7 @@
     {
       "name": "vault.claims.supersede",
       "input": "crate::code_run::MemorySupersedeInput",
+      "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
       "effect": "MemorySupersedeClaim"
@@ -3710,6 +3954,7 @@
     {
       "name": "vault.edges.put",
       "input": "crate::code_run::MemoryEdgeInput",
+      "output": "crate::code_run::MemoryEdgeOutput",
       "scope": "Write",
       "context": "run",
       "effect": "MemoryPutEdge"
@@ -3775,6 +4020,7 @@
     {
       "name": "self.fold",
       "input": "crate::compaction::FoldMarkInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",
       "scope": "Write",
       "context": "run",
       "effect": "Fold"
@@ -3782,6 +4028,7 @@
     {
       "name": "self.compact",
       "input": "crate::compaction::FoldCompactInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldCompactAsked>",
       "scope": "Write",
       "context": "run",
       "effect": "Fold"
@@ -3789,6 +4036,7 @@
     {
       "name": "self.unfold",
       "input": "crate::compaction::FoldUnfoldInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldUnfolded>",
       "scope": "Write",
       "context": "run",
       "effect": "Fold"
@@ -3796,6 +4044,7 @@
     {
       "name": "self.folds",
       "input": "crate::compaction::FoldsInput",
+      "output": "crate::compaction::FoldReply<crate::compaction::FoldList>",
       "scope": "Read",
       "context": "run",
       "effect": "Fold"
@@ -3803,6 +4052,7 @@
     {
       "name": "tasks.refuse",
       "input": "crate::code_run::TaskRefuseInput",
+      "output": "crate::code_run::TaskRefuseOutput",
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
@@ -3810,6 +4060,7 @@
     {
       "name": "self.agents.spawn",
       "input": "crate::code_run::AgentSpawnInput",
+      "output": "crate::code_run::AgentSpawnOutput",
       "scope": "Write",
       "context": "run",
       "effect": "AgentsSpawn"
@@ -3817,6 +4068,7 @@
     {
       "name": "self.leader.advice",
       "input": "crate::code_run::LeaderAdviceInput",
+      "output": "serde_json::Value",
       "scope": "Read",
       "context": "run",
       "effect": "Leader"
@@ -3824,6 +4076,7 @@
     {
       "name": "self.leader.pattern",
       "input": "crate::code_run::LeaderPatternInput",
+      "output": "crate::code_run::LeaderPatternOutput",
       "scope": "Read",
       "context": "run",
       "effect": "Leader"
@@ -3831,6 +4084,7 @@
     {
       "name": "self.skills.call",
       "input": "crate::code_run::SkillCallInput",
+      "output": "serde_json::Value",
       "scope": "Write",
       "context": "run",
       "effect": "SkillsCall"
@@ -3838,6 +4092,7 @@
     {
       "name": "self.team.start",
       "input": "crate::team::TeamStartInput",
+      "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
       "effect": "Team"
@@ -3845,6 +4100,7 @@
     {
       "name": "self.team.record",
       "input": "crate::team::TeamRecordInput",
+      "output": "crate::team::TeamRunAnswer",
       "scope": "Write",
       "context": "run",
       "effect": "Team"
@@ -3852,6 +4108,7 @@
     {
       "name": "self.spawn",
       "input": "crate::code_run::ReaderSpawnInput",
+      "output": "crate::code_run::ReaderSpawnReceipt",
       "scope": "Write",
       "context": "run",
       "effect": "ReaderSpawn"
@@ -3859,9 +4116,17 @@
     {
       "name": "tasks.wait",
       "input": "crate::code_run::TaskWaitSetRequest",
+      "output": "crate::code_run::TaskWaitSetResult",
       "scope": "Read",
       "context": "run",
       "effect": "TasksWaitSet"
+    },
+    {
+      "name": "summarize",
+      "input": "crate::code_run::SummarizeInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Summarize"
     }
   ]
 }

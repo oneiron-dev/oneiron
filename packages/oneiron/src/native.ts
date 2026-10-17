@@ -19,6 +19,7 @@ import type {
   CommitReceipt,
   FacadeReceipt,
   MemoryPack,
+  RecallMedia,
   RecallScope,
   WitnessReceipt,
   WitnessTurn,
@@ -40,6 +41,9 @@ selfInboxConcernOutcome(input: unknown): unknown
 selfInboxConcernMove(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
+vaultShapeRead(input: unknown): unknown
+vaultShapePlan(input: unknown): unknown
+vaultShapeApply(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
@@ -47,10 +51,11 @@ cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
+tasksWave(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
-vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined): MemoryPack
+vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined): MemoryPack
 vaultExport(input: unknown): unknown
 vaultReceipts(limit: number | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
@@ -79,6 +84,7 @@ vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
+vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
 vaultMembersRemove(input: unknown): unknown
 vaultMembersLeave(input: unknown): unknown
@@ -95,6 +101,8 @@ vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultRecordsErasePreview(input: unknown): unknown
+vaultRecordsEraseConfirm(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
@@ -135,6 +143,10 @@ vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
+vaultCodeDiff(requestJson: string): string
+vaultCodeBlame(requestJson: string): string
+vaultCodeProposalView(requestJson: string): string
+vaultCodeRepoDiff(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
@@ -171,12 +183,15 @@ vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown
+vaultRoomsOfferVote(input: unknown): unknown
+vaultRoomsOfferReopen(input: unknown): unknown
 vaultRoomsOffers(input: unknown): unknown
 vaultProjectsGoalRevisions(input: unknown): unknown
 vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
+vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown
 vaultRoomsHostHand(input: unknown): unknown
@@ -225,6 +240,7 @@ vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
 vaultHabitsCheckin(input: unknown): unknown
 vaultClaimsAdmit(input: unknown): unknown
+vaultArtifactsCreate(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown

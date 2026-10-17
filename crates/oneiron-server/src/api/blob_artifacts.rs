@@ -27,7 +27,7 @@ use base64::Engine as _;
 use oneiron::EntityId;
 use oneiron::anchored_annotation::Locator;
 use oneiron::blob_artifact::{
-    ArtifactVersionView, BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance,
+    ArtifactCreateRequest, ArtifactVersionView, BlobArtifactVersion, BlobVersionProvenance,
     BornFromSource,
 };
 use oneiron::edge::EdgeActorClass;
@@ -41,7 +41,7 @@ use serde_json::{Value, json};
 use super::conversation_members::actor;
 use super::{core_engine_error, json_payload, parse_entity_id_param};
 use crate::auth::{CoreAuth, CoreScope};
-use crate::error::{ApiError, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 
 /// The largest JSON body these routes take: a file travels base64 inside it.
@@ -249,52 +249,73 @@ fn owner_actor(auth: &CoreAuth, server: &SyncServer) -> Result<WriteActor, ApiEr
     actor(auth, None)
 }
 
+/// `POST /v1/core/artifacts` through the `vault.artifacts.create` row's
+/// door (OF-181), as the credential's actor. Its bytes ride the request
+/// whole, past what one action argument carries, so the route runs the
+/// row's door itself rather than the action table.
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts",
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 201, description = "The new artifact's family view (head, versions, kind).", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed body, content not base64, or an agent's version without run_ref.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Artifact create failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn create(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CreateArtifact>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
+) -> Result<(StatusCode, Json<Value>), super::facade::FacadeApiError> {
     auth.require(CoreScope::Write)?;
     let actor = actor(&auth, None)?;
     let request = json_payload(payload)?;
-    let bytes = decode_content(&request.content_base64)?;
-    let provenance = provenance(actor, request.run_ref)?;
-    let view = blocking("artifact create failed", move || {
-        let vault = server.vault();
-        let (occurred, now) = moment(&server);
-        let id = vault.new_entity_id()?;
-        vault.put_blob_artifact(
-            &id,
-            &BlobArtifactBody::new(request.name, request.media_type),
-            occurred,
-            now,
-        )?;
-        match &request.made_by {
-            Some(made_by) => vault.append_blob_artifact_version_made_by(
-                &id,
-                None,
-                &bytes,
-                &provenance,
-                made_by,
-                actor,
-                occurred,
-                now,
-            )?,
-            None => vault.append_blob_artifact_version(
-                &id,
-                &bytes,
-                &provenance,
-                actor,
-                occurred,
-                now,
-            )?,
-        };
-        vault.blob_artifact_view(&id)
+    let made_by = request
+        .made_by
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|_| ApiError::bad_request("made_by is not encodable", Some("made_by")))?;
+    let input = ArtifactCreateRequest {
+        name: request.name,
+        media_type: request.media_type,
+        content_base64: request.content_base64,
+        run_ref: request.run_ref,
+        made_by,
+    };
+    let view = tokio::task::spawn_blocking(move || {
+        crate::api::credential_memory(
+            &server.vault,
+            Some(&auth),
+            actor.entity_ref(),
+            actor.actor_class(),
+        )
+        .at(auth.locality())
+        .artifacts_create(&input)
     })
-    .await?;
+    .await
+    .map_err(|_| ApiError::internal_server_error("artifact task failed"))??;
     Ok((StatusCode::CREATED, Json(json!(view))))
 }
 
+/// Read an artifact's family view.
+#[utoipa::path(
+    get,
+    path = "/v1/core/artifacts/{artifact}",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    responses(
+        (status = 200, description = "The artifact's family view.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No such artifact.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Artifact read failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn view(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -310,6 +331,22 @@ pub(super) async fn view(
     Ok(Json(json!(view)))
 }
 
+/// Append a version, on the head or forked from an earlier version.
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/versions",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 200, description = "The new version.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed body, content not base64, or an agent's version without run_ref.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Artifact version append failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn append(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -429,6 +466,22 @@ async fn export(
     Ok(response)
 }
 
+/// Download the head version's file. Keys in it are masked for every reader but the owner; the download records a travel receipt.
+#[utoipa::path(
+    get,
+    path = "/v1/core/artifacts/{artifact}/export",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    responses(
+        (status = 200, description = "The file bytes, as an attachment; `x-oneiron-artifact-version` and `x-oneiron-artifact-kind` name what was read.", body = String, content_type = "application/octet-stream"),
+        (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No such artifact version.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Artifact export failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn export_head(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -437,6 +490,23 @@ pub(super) async fn export_head(
     export(auth, server, artifact, None).await
 }
 
+/// Download one version's file. Keys in it are masked for every reader but the owner; the download records a travel receipt.
+#[utoipa::path(
+    get,
+    path = "/v1/core/artifacts/{artifact}/versions/{version}/export",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id."),
+        ("version" = u64, Path, description = "The version number.")
+    ),
+    responses(
+        (status = 200, description = "The file bytes, as an attachment; `x-oneiron-artifact-version` and `x-oneiron-artifact-kind` name what was read.", body = String, content_type = "application/octet-stream"),
+        (status = 400, description = "Malformed artifact id or version.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No such artifact version.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Artifact export failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn export_version(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -445,6 +515,25 @@ pub(super) async fn export_version(
     export(auth, server, artifact, Some(version)).await
 }
 
+/// List what one task, ask, code run, skill or agent run produced.
+#[utoipa::path(
+    get,
+    path = "/v1/core/artifacts/born-from",
+    params(
+        ("task" = Option<String>, Query, description = "Hex task id."),
+        ("ask" = Option<String>, Query, description = "Hex ask id."),
+        ("run" = Option<String>, Query, description = "Hex code-mode run id."),
+        ("skill" = Option<String>, Query, description = "Hex skill id."),
+        ("agent_run" = Option<String>, Query, description = "An agent run ref, as its versions' provenance names it.")
+    ),
+    responses(
+        (status = 200, description = "`born`: the rows the source created; `versions`: every artifact version it made, in artifact then version order.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Name exactly one of task, ask, run, skill or agent_run.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Born-from read failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn born_from(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -494,6 +583,21 @@ pub(super) async fn born_from(
     Ok(Json(json!({ "born": born, "versions": versions })))
 }
 
+/// List an artifact's pending proposals.
+#[utoipa::path(
+    get,
+    path = "/v1/core/artifacts/{artifact}/proposals",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    responses(
+        (status = 200, description = "`proposals`: the pending proposals.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Proposal list failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn proposals(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -508,6 +612,23 @@ pub(super) async fn proposals(
     Ok(Json(json!({ "proposals": pending })))
 }
 
+/// Propose a native deck transaction against a PPTX artifact.
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/deck/proposals",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 201, description = "`proposed`: the retained pending proposal.", body = Object, content_type = "application/json"),
+        (status = 422, description = "`rejected`: the inspection and report of a transaction the editor refused.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed body.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Deck proposal failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn propose_deck(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -551,6 +672,22 @@ pub(super) async fn propose_deck(
     })
 }
 
+/// Propose an organ's native output as the artifact's next version.
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/outputs",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 201, description = "`proposed`: the retained pending proposal.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed body or content not base64.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Native output proposal failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn propose_output(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -581,6 +718,23 @@ fn settle_request(payload: Option<Json<Settle>>) -> Settle {
     payload.map(|Json(settle)| settle).unwrap_or_default()
 }
 
+/// Keep a pending proposal as the next version (owner consent).
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/proposals/{proposal}/keep",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id."),
+        ("proposal" = String, Path, description = "The pending proposal id.")
+    ),
+    request_body(content = Object, description = "Optional body: `brief_ref` and `reason`.", content_type = "application/json"),
+    responses(
+        (status = 200, description = "The kept `version`, whether a stranded proposal was left, the comments `remapped` and `drifted`, and the settle `receipt`.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "The caller is not the vault owner (Keep, Discard, Undo and Restore are the owner's consent).", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Keep failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn keep(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -613,6 +767,23 @@ pub(super) async fn keep(
     })))
 }
 
+/// Discard a pending proposal (owner consent).
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/proposals/{proposal}/discard",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id."),
+        ("proposal" = String, Path, description = "The pending proposal id.")
+    ),
+    request_body(content = Object, description = "Optional body: `brief_ref` and `reason`.", content_type = "application/json"),
+    responses(
+        (status = 200, description = "The settle `receipt`.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "The caller is not the vault owner (Keep, Discard, Undo and Restore are the owner's consent).", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Discard failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn discard(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -639,6 +810,23 @@ pub(super) async fn discard(
     Ok(Json(json!({ "receipt": outcome.receipt })))
 }
 
+/// Undo a kept proposal as a new version (owner consent).
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/proposals/{proposal}/undo",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id."),
+        ("proposal" = String, Path, description = "The pending proposal id.")
+    ),
+    request_body(content = Object, description = "Optional body: `brief_ref` and `reason`.", content_type = "application/json"),
+    responses(
+        (status = 200, description = "The `undo` record, the new `version`, and the comments `remapped` and `drifted`.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "The caller is not the vault owner (Keep, Discard, Undo and Restore are the owner's consent).", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Undo failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn undo(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -704,6 +892,22 @@ fn place_locator(place: PlaceInput) -> Result<Locator, ApiError> {
     .map_err(|_| ApiError::bad_request("place is not a valid locator", Some("place")))
 }
 
+/// Restore an earlier version as the new head (owner consent); its comments reattach by exact stored identity.
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/versions/{version}/restore",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id."),
+        ("version" = u64, Path, description = "The version number.")
+    ),
+    responses(
+        (status = 200, description = "The new `version`, the `restored_version`, and how many comments `reattached`.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed artifact id or version.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "The caller is not the vault owner (Keep, Discard, Undo and Restore are the owner's consent).", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Restore failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn restore(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -725,6 +929,21 @@ pub(super) async fn restore(
     })))
 }
 
+/// List comment threads whose spot was deleted, with their words.
+#[utoipa::path(
+    get,
+    path = "/v1/core/artifacts/{artifact}/unattached",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    responses(
+        (status = 200, description = "`unattached`: each thread with its pinned version, place, words snapshot, the version it detached at and any held task.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Unattached list failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn unattached(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -752,6 +971,21 @@ pub(super) async fn unattached(
     Ok(Json(json!({ "unattached": threads })))
 }
 
+/// List the exact places an unattached thread's words read again.
+#[utoipa::path(
+    get,
+    path = "/v1/core/artifacts/{artifact}/reattach-offers",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id.")
+    ),
+    responses(
+        (status = 200, description = "`offers`: each thread, version and place.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed artifact id.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Reattach offers failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn reattach_offers(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -776,6 +1010,23 @@ pub(super) async fn reattach_offers(
     Ok(Json(json!({ "offers": offers })))
 }
 
+/// Reattach an unattached thread at one offered place.
+#[utoipa::path(
+    post,
+    path = "/v1/core/artifacts/{artifact}/threads/{thread}/reattach",
+    params(
+        ("artifact" = String, Path, description = "Hex artifact id."),
+        ("thread" = String, Path, description = "Hex annotation thread id.")
+    ),
+    request_body(content = Object, content_type = "application/json"),
+    responses(
+        (status = 200, description = "The reattached thread, its version and place.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed id, body or place.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or names no actor.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Reattach failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn reattach(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

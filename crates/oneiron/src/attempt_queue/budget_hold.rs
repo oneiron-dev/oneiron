@@ -10,7 +10,7 @@
 
 use super::AttemptQueue;
 use super::AttemptResumePoint;
-use super::encoding::{decode_record, encode_record};
+use super::encoding::decode_record;
 use super::telemetry::invalid_transition;
 use super::types::{AttemptId, AttemptInterventionKind, AttemptRecord, AttemptState};
 use super::validate::{
@@ -119,7 +119,7 @@ impl AttemptQueue<'_> {
         record.state = AttemptState::Paused;
         record.lease_owner = None;
         record.updated_at = input.now;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;

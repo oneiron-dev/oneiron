@@ -19,13 +19,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/status.rs` | src | s | 3 enum · 7 fn | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
 | `src/code_run.rs` | src | s | 1 mod | — | Shared vocabulary of the code-run vault-read contract |
 | `src/code_run/vault_read.rs` | src | s | 4 re-export | — | The vault-read contract table, the method vocabulary it generates, the request shapes and the error taxonomy… |
-| `src/code_run/vault_read/context_pack.rs` | src | s | 4 struct · 1 fn | ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls, CoreContextPackRequest | The vault-read context-pack request and its depth / budget controls |
+| `src/code_run/vault_read/context_pack.rs` | src | s | 5 struct · 1 enum · 1 fn | ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery, ContextPackRetrievalBudgetControls, CoreContextPackRequest, MediaQueryKind | The vault-read context-pack request and its depth / budget controls |
 | `src/code_run/vault_read/contract.rs` | src | s | 1 struct · 4 enum · 8 fn · 4 const | VaultReadAdapterKind, VaultReadAvailability, VaultReadMethod, VaultReadMethodMapping, VaultReadWireOp | The vault-read contract table and the method vocabulary generated from it |
 | `src/code_run/vault_read/error.rs` | src | s | 1 enum · 1 type | VaultReadError | The vault-read error vocabulary |
 | `src/code_run/vault_read/types.rs` | src | s | 7 struct · 2 enum · 3 fn | AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest, CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest, CountMode +1 | Vault-read request shapes and the view / count-mode knobs they carry |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 18 fn · 3 const · 2 mod | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | s | 41 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | s | 42 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
 | `src/error/artifact.rs` | src | s | 2 enum · 1 fn · 1 crate-vis | ArtifactError, LiveDeckRefusal | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate.rs` | src | s | 1 struct | RetrievalFilter | The caller-supplied retrieval filter |
 | `src/identity_topology.rs` | src | s | 2 enum · 4 fn | EntityLifecycleState, IdentityTopologyRejection | Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay… |
 | `src/lib.rs` | src | s | 22 mod · 2 re-export | — | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… |
-| `src/limit_ask.rs` | src | s | 2 struct · 1 enum · 1 trait · 11 fn · 1 const | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
+| `src/limit_ask.rs` | src | m | 2 struct · 1 enum · 1 trait · 11 fn · 1 const | EngineLimit, EngineLimits, LimitAsk, LimitWatch | The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520) |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
 | `src/memory.rs` | src | s | 3 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
 | `src/memory/error.rs` | src | m | 5 struct · 7 fn · 1 type · 15 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |

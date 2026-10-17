@@ -18,13 +18,14 @@ use crate::server::SyncServer;
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest, QuoteSpan};
 use oneiron::memory::MemoryError;
-use oneiron::reaction::{ReactionExternalId, ReactionIngress, ReactionInput};
+use oneiron::reaction::{MessageReactionExternal, MessageReactionReceipt, MessageReactionRequest};
 use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
+use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{EdgeKind, EntityId};
 use std::sync::Arc;
 pub(crate) use summary::*;
@@ -72,6 +73,12 @@ impl From<ApiError> for DagWriteError {
 impl From<EnvelopedApiError> for DagWriteError {
     fn from(error: EnvelopedApiError) -> Self {
         Self::Core(error)
+    }
+}
+
+impl From<super::facade::FacadeApiError> for DagWriteError {
+    fn from(error: super::facade::FacadeApiError) -> Self {
+        Self::Memory(error)
     }
 }
 
@@ -135,7 +142,10 @@ fn append_input(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records",
     params(("conversation_id" = String, Path)), request_body = DagAppendRequest,
-    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The conversation or its HEAD is not in a state this append takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 422, description = "A ref the write names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn append_core_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -414,7 +424,10 @@ pub(crate) async fn drill_core_header(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread",
     params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagAppendRequest,
-    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The thread or its conversation is not in a state this reply takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 422, description = "A ref the reply names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn reply_in_thread(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -596,9 +609,12 @@ fn reaction_records(
     Ok((records, outbound))
 }
 
-/// Puts or removes one reaction on a MESSAGE or TURN. The actor binding is
-/// checked against the credential; the vault revalidates the person and the
-/// room audience in its write transaction.
+/// Puts or removes one reaction on a MESSAGE or TURN through the
+/// `vault.messages.react` row (OF-181): a credential an action binds runs it
+/// as that action, as the app's button does; an owner-grade credential that
+/// names no principal writes through the row's own door as the actor its
+/// body binds. The vault revalidates the person and the room audience in
+/// its write transaction.
 #[utoipa::path(post, path = "/v1/core/messages/{message}/reactions",
     params(("message" = String, Path)), request_body = ReactionRequest,
     responses((status = 200, body = ReactionResponse), (status = 400, body = ApiErrorEnvelope),
@@ -607,76 +623,77 @@ pub(crate) async fn react_core_message(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(message): Path<String>,
+    headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<ReactionRequest>, JsonRejection>,
-) -> Result<Json<ReactionResponse>, EnvelopedApiError> {
+) -> Result<Json<ReactionResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let message = parse_entity_id_param(&message, "message")?;
     let req = json_payload(payload)?;
     let by = parse_entity_id_param(&req.by, "by")?;
     let actor = req.actor.parse(&auth)?;
-    let change = if let Some(external) = req.external {
+    if let Some(external) = &req.external {
         // Connector ingress: the host resolved the provider's identities, and
         // the engine's mirror MACHINE writes the claim.
         if !auth.is_owner_grade() {
             return Err(ApiError::forbidden_scope("reaction_external").into());
         }
-        let generation = ReactionExternalId {
-            connector: external.connector,
-            id: external.id,
-        };
-        let glyph = req.glyph;
-        let input = match (req.remove, external.origin, req.occurred_at) {
-            (true, None, _) => ReactionIngress::Remove {
-                message,
-                by,
-                glyph,
-                generation,
-            },
-            (false, Some(origin), _) => ReactionIngress::Echo {
-                original: parse_entity_id_param(&origin, "external.origin")?,
-                message,
-                by,
-                glyph,
-                generation,
-            },
-            (false, None, Some(occurred_at)) => ReactionIngress::ProviderAdd {
-                message,
-                by,
-                glyph,
-                occurred_at,
-                generation,
-            },
-            _ => {
-                return Err(ApiError::bad_request(
-                    "a provider add needs occurred_at, an echo origin, a removal neither",
-                    Some("external"),
-                )
-                .into());
-            }
-        };
-        server.vault.ingest_reaction(input)
+        if let Some(origin) = &external.origin {
+            parse_entity_id_param(origin, "external.origin")?;
+        }
+        if !matches!(
+            (
+                req.remove,
+                external.origin.is_some(),
+                req.occurred_at.is_some()
+            ),
+            (true, false, _) | (false, true, _) | (false, false, true)
+        ) {
+            return Err(ApiError::bad_request(
+                "a provider add needs occurred_at, an echo origin, a removal neither",
+                Some("external"),
+            )
+            .into());
+        }
     } else {
         if actor.entity_ref() != by {
             return Err(ApiError::forbidden_scope("reaction_actor").into());
         }
-        if req.remove {
-            server.vault.remove_reaction(message, by, &req.glyph, actor)
-        } else {
-            let occurred_at = req.occurred_at.ok_or_else(|| {
-                ApiError::bad_request("occurred_at is required", Some("occurred_at"))
-            })?;
-            server.vault.react(ReactionInput {
-                message,
-                by,
-                glyph: req.glyph,
-                occurred_at,
-                actor,
-            })
+        if !req.remove && req.occurred_at.is_none() {
+            return Err(
+                ApiError::bad_request("occurred_at is required", Some("occurred_at")).into(),
+            );
         }
     }
-    .map_err(|e| core_engine_error("reaction write failed", e))?;
+    let input = MessageReactionRequest {
+        message: message.to_hex(),
+        by: by.to_hex(),
+        glyph: req.glyph,
+        occurred_at: req.occurred_at,
+        remove: req.remove,
+        external: req.external.map(|external| MessageReactionExternal {
+            connector: external.connector,
+            id: external.id,
+            origin: external.origin,
+        }),
+    };
+    let receipt = match super::facade::action_routes::action_bound(&server, &auth)? {
+        Some(bound) => {
+            let row = AgentVerb::VaultMessagesReact;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let output = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            serde_json::from_value::<MessageReactionReceipt>(output)
+                .map_err(|_| ApiError::internal_server_error("reaction result encoding failed"))?
+        }
+        None => {
+            super::facade::host_doors::react_message(&server, &auth, Some(actor), input).await?
+        }
+    };
     Ok(Json(ReactionResponse {
-        id: change.id.to_hex(),
-        event: change.state.event(),
+        id: receipt.id,
+        event: receipt.event,
     }))
 }

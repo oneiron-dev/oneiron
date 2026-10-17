@@ -68,6 +68,8 @@ pub struct McpQuickJsProvider {
     /// Builds each run's compaction seat; none keeps every window raw.
     compaction: Option<RunCompactionSeat>,
     seat_router: Option<(SeatDecisions, String)>,
+    /// The seats a leased agent's planned spawns choose among.
+    planner: Option<crate::config::models::PlannerSettings>,
     /// Each run's clock is frozen at its first start, and a resumed run keeps
     /// it; otherwise every run shares the configured frozen clock.
     clock_from_first_start: bool,
@@ -78,9 +80,16 @@ pub struct McpQuickJsProvider {
     /// Builds each reader child's backend on its own meter; none runs no
     /// child.
     reader_meter: Option<ReaderMeter>,
+    /// The meter the host runs this provider's own model calls on, lent to
+    /// the reader children of a run that spends under no scope; none runs
+    /// no such child.
+    host_meter: Option<BudgetGuard>,
     /// The runtime reader children are made fresh from, compiled once at
     /// the first child.
     reader_template: Mutex<Option<WasmtimeComponentRuntime>>,
+    /// The input window of the model reader children and summaries run
+    /// on, in tokens, when the host knows it.
+    reader_window_tokens: Option<u64>,
 }
 
 /// A reader child's backend over the host-injected model: its calls are
@@ -120,6 +129,7 @@ impl McpQuickJsProvider {
             Arc::clone(&backend),
             Arc::new(LoggedReceipts),
         ));
+        provider.host_meter = Some(meter.clone());
         provider.injected = Some((backend, meter));
         Ok(provider)
     }
@@ -141,11 +151,14 @@ impl McpQuickJsProvider {
             config,
             compaction: None,
             seat_router: None,
+            planner: None,
             clock_from_first_start: false,
             injected: None,
             code_check: None,
             reader_meter: None,
+            host_meter: None,
             reader_template: Mutex::new(None),
+            reader_window_tokens: None,
         })
     }
 
@@ -167,6 +180,22 @@ impl McpQuickJsProvider {
     #[must_use]
     pub(crate) fn with_reader_meter(mut self, meter: ReaderMeter) -> Self {
         self.reader_meter = Some(meter);
+        self
+    }
+
+    /// The reader children of a run that spends under no scope spend on
+    /// `meter`, the one the host runs this provider's own calls on.
+    #[must_use]
+    pub(crate) fn with_host_meter(mut self, meter: BudgetGuard) -> Self {
+        self.host_meter = Some(meter);
+        self
+    }
+
+    /// The input window, in tokens, of the model reader children and
+    /// summaries run on: what `readAll` sizes its chunks and groups by.
+    #[must_use]
+    pub(crate) fn with_reader_window_tokens(mut self, tokens: u64) -> Self {
+        self.reader_window_tokens = (tokens > 0).then_some(tokens);
         self
     }
 
@@ -205,6 +234,13 @@ impl McpQuickJsProvider {
         self.seat_router = Some((decisions, facet.into()));
         self
     }
+
+    /// Lend leased agent runs the host's planner over `planner`'s seats.
+    #[must_use]
+    pub fn with_planner(mut self, planner: crate::config::models::PlannerSettings) -> Self {
+        self.planner = Some(planner);
+        self
+    }
 }
 
 impl McpCodeModeProvider for McpQuickJsProvider {
@@ -216,6 +252,9 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn seat_facet(&self) -> Option<&str> {
         self.seat_router.as_ref().map(|(_, facet)| facet.as_str())
+    }
+    fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
+        self.planner.as_ref()
     }
     fn code_check(&self) -> Option<&ShadowCheck> {
         self.code_check.as_deref()
@@ -259,6 +298,12 @@ impl McpCodeModeProvider for McpQuickJsProvider {
     }
     fn reader_backend(&self, meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
         self.reader_meter.as_ref().map(|build| build(meter))
+    }
+    fn host_meter(&self) -> Option<BudgetGuard> {
+        self.host_meter.clone()
+    }
+    fn reader_window_tokens(&self) -> Option<u64> {
+        self.reader_window_tokens
     }
     fn executor_config(
         &self,
