@@ -139,7 +139,11 @@ impl Vault {
             // OF-529: an agent holding the task joins the thread now when a
             // Ready receipt stands there, else at its first passing claim.
             rooms::record_bound_task_in_txn(self, txn, room, &row, task)
-        })
+        })?;
+        // The changed turn reaches the room's live window after commit.
+        #[cfg(feature = "sync")]
+        self.refresh_room_turn_in_live_window(&thread);
+        Ok(())
     }
 
     /// Convert a room thread once, as the owner's act: the owner is
@@ -272,7 +276,7 @@ impl Vault {
     {
         let kind = self.project_type_byte()?;
         self.backfill_tasks_by_owner()?;
-        self.with_write_txn_grouped(|txn| {
+        let converted = self.with_write_txn_grouped(|txn| {
             // The bare path's owner is revalidated here, before anything is
             // read for it; a card's below, with its intent.
             if let Some((owner, _)) = bare {
@@ -554,7 +558,10 @@ impl Vault {
             row.converted_project = Some(project_id.to_hex());
             rooms::TURNS.put(&self.store, txn, &thread, &row)?;
             Ok((project, receipt))
-        })
+        })?;
+        #[cfg(feature = "sync")]
+        self.refresh_room_turn_in_live_window(&thread);
+        Ok(converted)
     }
 
     fn apply_card_terms_in_txn(
