@@ -303,6 +303,9 @@ class Oneiron:
         @property
         def grants(self) -> "Oneiron._SelfGrantsVerbs":
             return Oneiron._SelfGrantsVerbs(self._client)
+        def use(self, spec):
+            """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
+            return json.loads(_translate(lambda: self._client.self_use(json.dumps(spec))))
         @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs":
             return Oneiron._SelfSkillsVerbs(self._client)
@@ -1390,7 +1393,7 @@ class Oneiron:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
             return json.loads(_translate(lambda: self._client.tasks_wave(json.dumps(spec))))
         def update(self, spec):
-            """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""
