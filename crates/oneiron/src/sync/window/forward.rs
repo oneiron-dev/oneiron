@@ -181,6 +181,9 @@ fn forward_with_recovery(
         count: 0u32,
     };
 
+    // OF-013: the withdrawn cutoffs the window carries are staged first, so
+    // the entity pass refuses a withdrawn body whichever carrier won its key.
+    crate::sync::withdrawn_cutoffs::apply_withdrawn_cutoff_map(vault, doc, window_key.as_str())?;
     // Pass order is pinned: entities (with companion cleanup), edges,
     // tombstones, then the marker settle below. The tombstone call has no
     // `?`: its error stays deferred past the marker txn (Trap 2).

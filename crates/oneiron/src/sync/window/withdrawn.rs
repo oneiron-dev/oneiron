@@ -132,6 +132,11 @@ pub(super) fn scrub_withdrawn_generation_carriers(
         let rtxn = vault.store.env.read_txn()?;
         crate::deletion::withdrawn_generation_cutoffs_in_txn(&vault.store, &rtxn)?
     };
+    // Each cutoff rides the windows that carry its artifact, so another
+    // machine of this vault owes the same sweep (OF-013).
+    if crate::sync::withdrawn_cutoffs::mirror_withdrawn_cutoffs(doc, &cutoffs)? {
+        doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    }
     let found = replace_withdrawn_carriers(vault, doc, &cutoffs)?;
     if found.replaced == 0 && found.held.is_empty() {
         return Ok(false);
