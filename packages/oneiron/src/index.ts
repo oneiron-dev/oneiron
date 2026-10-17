@@ -127,6 +127,19 @@ export class Oneiron {
     return new Oneiron(this.#call(() => this.#client.inRoomTurn(roomRef)))
   }
 
+  /**
+   * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
+   * whether it answered or refused; `vault.receipts.get` resolves it for the
+   * same actor or the vault's owner.
+   *
+   * Typed returns keep their shape; the ref rides beside them here. `null` for
+   * an embedded handle, before any call, after a call that reached no server,
+   * and for an anonymous off-record call.
+   */
+  lastReceiptRef(): string | null {
+    return this.#client.lastReceiptRef() ?? null
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
