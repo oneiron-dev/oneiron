@@ -78,6 +78,10 @@ pub(crate) struct RoomTurnCeiling {
     /// Every other member's read key: a row the room reads must be one each
     /// of them may read too, private principal rows and NOTEs included.
     pub(crate) peers: Vec<ScopedReadActorKey>,
+    /// The thread this ceiling reads, when it is a thread's (OF-529): each
+    /// refresh re-proves the caller's standing on that thread, which a
+    /// thread's own Ready receipt gives without a seat. `None` is the room's.
+    pub(crate) branch: Option<EntityId>,
 }
 
 /// What `room_scope` gives for a roster, as two terms.
@@ -250,7 +254,7 @@ impl RoomTurnCeiling {
     /// and every peer read either holds. A member who joined binds the read;
     /// one who left still binds a lane built while it belonged. Refreshing a
     /// ceiling can therefore narrow the read and never drop a restriction it
-    /// held.
+    /// held. The thread it reads, if any, stays this ceiling's.
     #[must_use]
     pub(crate) fn narrowed_by(&self, now: &Self) -> Self {
         let mut roster = self.roster.clone();
@@ -270,6 +274,7 @@ impl RoomTurnCeiling {
             terms: self.terms.clone(),
             roster,
             peers,
+            branch: self.branch,
         }
     }
 

@@ -76,6 +76,7 @@ impl WitnessTurnInput {
         Ok(WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
+            quote: None,
             messages,
             occurred_at,
         })
@@ -455,6 +456,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_weave_lens(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.lens")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.weave.lens", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_weave_link_wrong(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.weave.link.wrong")?;
         let output = py
@@ -711,6 +719,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.shares.create")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.shares.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shares_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shares.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shares.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shares_view(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shares.view")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shares.view", input))
             .map_err(raise)?;
         encode(&output)
     }
