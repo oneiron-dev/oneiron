@@ -193,6 +193,7 @@ impl Vault {
                 decision: None,
                 lease: None,
                 delivered_at: Some(now),
+                file: None,
             };
             row.decision = Some(append_reveal_decision_in_txn(
                 self,
@@ -227,13 +228,24 @@ fn ask_view(
     let agents = row.reader == READER_AGENT;
     let card = if open {
         let connection = row.connection.as_deref().unwrap_or_default();
-        let card = ConsentAskCard::new(
-            format!("secret-reveal:{}", reveal.to_hex()),
-            principal,
-            format!(
+        let prompt = match &row.file {
+            Some(file) => format!(
+                "{connection} asks to read file {} unmasked, with its keys {} ({}), for its \
+                 model: {}",
+                file.artifact.to_hex(),
+                row.handle,
+                row.class,
+                row.why
+            ),
+            None => format!(
                 "{connection} asks to reveal {} ({}) to its model: {}",
                 row.handle, row.class, row.why
             ),
+        };
+        let card = ConsentAskCard::new(
+            format!("secret-reveal:{}", reveal.to_hex()),
+            principal,
+            prompt,
             row.disclosure().unwrap_or_default(),
             SECRET_REVEAL_OPERATION,
             vec![

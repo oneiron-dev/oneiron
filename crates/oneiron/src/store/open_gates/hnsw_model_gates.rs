@@ -1,11 +1,12 @@
 //! HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration, and UTF-8 helper.
 
-use heed::{Env, RwTxn};
+use heed::RwTxn;
 
 use crate::config::VaultConfig;
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
-use crate::store::ManifestDbs;
+use crate::ports::{IndexMetaKey, IndexRows, RetrievalIndexInventory};
+use crate::store::{ManifestDbs, Store};
 
 use super::open_version_keys::{
     ERR_POPULATED_MISSING_MODEL_ID, ERR_POPULATED_REQUIRES_EMBEDDING_MODEL,
@@ -66,60 +67,35 @@ pub fn validate_embedding_model_id(model_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn preflight_embedding_model(
-    env: &Env,
-    hnsw_meta: &OverlayDb,
-    vectors: &OverlayDb,
-    hnsw_neighbors: &OverlayDb,
-    requested: Option<&str>,
-) -> Result<bool> {
+pub(super) fn preflight_embedding_model(store: &Store, requested: Option<&str>) -> Result<bool> {
     if let Some(requested) = requested {
         validate_embedding_model_id(requested)?;
     }
-    let rtxn = env.read_txn()?;
-    match hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
-        Some(raw) => {
-            let stored = parse_utf8_bytes(&raw)?;
-            match requested {
-                Some(requested) if stored != requested => {
-                    Err(Error::Store(StoreError::EmbeddingModelChanged {
-                        stored,
-                        requested: requested.to_owned(),
-                    }))
-                }
-                Some(_) => Ok(false),
-                None if has_persisted_vector_or_hnsw_data(
-                    hnsw_meta,
-                    vectors,
-                    hnsw_neighbors,
-                    &rtxn,
-                )? =>
-                {
-                    Err(Error::InvalidConfig(
-                        ERR_POPULATED_REQUIRES_EMBEDDING_MODEL.to_owned(),
-                    ))
-                }
-                None => Ok(false),
+    let rtxn = store.env.read_txn()?;
+    match store.port_index_meta_with_raw(&rtxn, IndexMetaKey::ModelId, parse_utf8_bytes)? {
+        Some(stored) => match requested {
+            Some(requested) if stored != requested => {
+                Err(Error::Store(StoreError::EmbeddingModelChanged {
+                    stored,
+                    requested: requested.to_owned(),
+                }))
             }
-        }
-        None if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? => {
-            Err(Error::InvalidConfig(
-                ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
-            ))
-        }
+            Some(_) => Ok(false),
+            None if has_persisted_vector_or_hnsw_data(store, &rtxn)? => Err(Error::InvalidConfig(
+                ERR_POPULATED_REQUIRES_EMBEDDING_MODEL.to_owned(),
+            )),
+            None => Ok(false),
+        },
+        None if has_persisted_vector_or_hnsw_data(store, &rtxn)? => Err(Error::InvalidConfig(
+            ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
+        )),
         None => Ok(requested.is_some()),
     }
 }
 
-pub(super) fn preflight_hnsw_config(
-    env: &Env,
-    hnsw_meta: &OverlayDb,
-    vectors: &OverlayDb,
-    hnsw_neighbors: &OverlayDb,
-    requested: &VaultConfig,
-) -> Result<bool> {
-    let rtxn = env.read_txn()?;
-    match read_hnsw_compatibility(hnsw_meta, &rtxn)? {
+pub(super) fn preflight_hnsw_config(store: &Store, requested: &VaultConfig) -> Result<bool> {
+    let rtxn = store.env.read_txn()?;
+    match read_hnsw_compatibility(store, &rtxn)? {
         HnswCompatibilityState::Current(stored) => {
             let requested = PersistedHnswCompatibility::from_config(requested);
             if stored != requested {
@@ -131,7 +107,7 @@ pub(super) fn preflight_hnsw_config(
             Ok(false)
         }
         HnswCompatibilityState::Missing => {
-            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
+            if has_persisted_vector_or_hnsw_data(store, &rtxn)? {
                 return Err(Error::InvalidConfig(
                     "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
                 ));
@@ -140,7 +116,7 @@ pub(super) fn preflight_hnsw_config(
         }
         HnswCompatibilityState::Legacy(stored) => {
             let requested = PersistedHnswCompatibility::from_config(requested);
-            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &rtxn)? {
+            if has_persisted_vector_or_hnsw_data(store, &rtxn)? {
                 return Err(Error::Store(StoreError::HnswConfigChanged {
                     stored: format_hnsw_compatibility(&stored),
                     requested: format_hnsw_compatibility(&requested),
@@ -151,17 +127,11 @@ pub(super) fn preflight_hnsw_config(
     }
 }
 
-pub(super) fn persist_hnsw_config_if_missing(
-    env: &Env,
-    hnsw_meta: &OverlayDb,
-    vectors: &OverlayDb,
-    hnsw_neighbors: &OverlayDb,
-    requested: &VaultConfig,
-) -> Result<()> {
+pub(super) fn persist_hnsw_config_if_missing(store: &Store, requested: &VaultConfig) -> Result<()> {
     let requested = PersistedHnswCompatibility::from_config(requested);
     let encoded = encode_hnsw_config(&requested)?;
-    let mut wtxn = env.write_txn()?;
-    match read_hnsw_compatibility(hnsw_meta, &wtxn)? {
+    let mut wtxn = store.env.write_txn()?;
+    match read_hnsw_compatibility(store, &wtxn)? {
         HnswCompatibilityState::Current(stored) => {
             if stored != requested {
                 return Err(Error::Store(StoreError::HnswConfigChanged {
@@ -171,40 +141,33 @@ pub(super) fn persist_hnsw_config_if_missing(
             }
         }
         HnswCompatibilityState::Missing => {
-            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
+            if has_persisted_vector_or_hnsw_data(store, &wtxn)? {
                 return Err(Error::InvalidConfig(
                     "populated vault is missing complete vector/hnsw compatibility metadata; rebuild or migrate it before reopening".to_owned(),
                 ));
             }
-            hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
+            store.hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
             wtxn.commit()?;
         }
         HnswCompatibilityState::Legacy(stored) => {
-            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
+            if has_persisted_vector_or_hnsw_data(store, &wtxn)? {
                 return Err(Error::Store(StoreError::HnswConfigChanged {
                     stored: format_hnsw_compatibility(&stored),
                     requested: format_hnsw_compatibility(&requested),
                 }));
             }
-            hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
+            store.hnsw_meta.put(&mut wtxn, HNSW_CONFIG_KEY, &encoded)?;
             wtxn.commit()?;
         }
     }
     Ok(())
 }
 
-pub(super) fn persist_model_id_if_missing(
-    env: &Env,
-    hnsw_meta: &OverlayDb,
-    vectors: &OverlayDb,
-    hnsw_neighbors: &OverlayDb,
-    requested: &str,
-) -> Result<()> {
+pub(super) fn persist_model_id_if_missing(store: &Store, requested: &str) -> Result<()> {
     validate_embedding_model_id(requested)?;
-    let mut wtxn = env.write_txn()?;
-    match hnsw_meta.get(&wtxn, MODEL_ID_KEY)? {
-        Some(raw) => {
-            let stored = parse_utf8_bytes(&raw)?;
+    let mut wtxn = store.env.write_txn()?;
+    match store.port_index_meta_with_raw(&wtxn, IndexMetaKey::ModelId, parse_utf8_bytes)? {
+        Some(stored) => {
             if stored != requested {
                 return Err(Error::Store(StoreError::EmbeddingModelChanged {
                     stored,
@@ -213,13 +176,17 @@ pub(super) fn persist_model_id_if_missing(
             }
         }
         None => {
-            if has_persisted_vector_or_hnsw_data(hnsw_meta, vectors, hnsw_neighbors, &wtxn)? {
+            if has_persisted_vector_or_hnsw_data(store, &wtxn)? {
                 return Err(Error::InvalidConfig(
                     ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
                 ));
             }
-            hnsw_meta.put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
-            hnsw_meta.put(&mut wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
+            store
+                .hnsw_meta
+                .put(&mut wtxn, MODEL_ID_KEY, requested.as_bytes())?;
+            store
+                .hnsw_meta
+                .put(&mut wtxn, crate::embed::COLD_ATTACH_PENDING_KEY, b"1")?;
             wtxn.commit()?;
         }
     }
@@ -235,9 +202,8 @@ pub(crate) fn ensure_model_id_for_vector_write(
         Error::InvalidConfig(ERR_VECTOR_WRITE_REQUIRES_EMBEDDING_MODEL.to_owned())
     })?;
     validate_embedding_model_id(requested)?;
-    match store.hnsw_meta().get(&*wtxn, MODEL_ID_KEY)? {
-        Some(raw) => {
-            let stored = parse_utf8_bytes(&raw)?;
+    match store.port_index_meta_with_raw(&*wtxn, IndexMetaKey::ModelId, parse_utf8_bytes)? {
+        Some(stored) => {
             if stored != requested {
                 return Err(Error::Store(StoreError::EmbeddingModelChanged {
                     stored,
@@ -246,12 +212,7 @@ pub(crate) fn ensure_model_id_for_vector_write(
             }
         }
         None => {
-            if has_persisted_vector_or_hnsw_data(
-                store.hnsw_meta(),
-                store.vectors(),
-                store.hnsw_neighbors(),
-                &*wtxn,
-            )? {
+            if has_persisted_vector_or_hnsw_data(store, &*wtxn)? {
                 return Err(Error::InvalidConfig(
                     ERR_POPULATED_MISSING_MODEL_ID.to_owned(),
                 ));
@@ -286,16 +247,18 @@ pub(super) fn encode_hnsw_config(
 }
 
 pub(crate) fn read_hnsw_compatibility(
-    hnsw_meta: &OverlayDb,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<HnswCompatibilityState> {
-    let Some(raw) = hnsw_meta.get(txn, HNSW_CONFIG_KEY)? else {
-        return Ok(HnswCompatibilityState::Missing);
-    };
+    Ok(store
+        .port_index_meta_with_raw(txn, IndexMetaKey::HnswConfig, decode_hnsw_config)?
+        .unwrap_or(HnswCompatibilityState::Missing))
+}
 
+fn decode_hnsw_config(raw: &[u8]) -> Result<HnswCompatibilityState> {
     match raw.len() {
         HNSW_COMPATIBILITY_LEN => {
-            decode_hnsw_compatibility(&raw).map(HnswCompatibilityState::Current)
+            decode_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
         }
         // v2 records decode as CURRENT with `fast_dims: None`, never Legacy:
         // `preflight_hnsw_config` hard-errors Legacy on populated vaults, so
@@ -303,10 +266,10 @@ pub(crate) fn read_hnsw_compatibility(
         // vault. A v2 vault opens under `fast_dims: None` (struct equality
         // holds) and correctly fails `HnswConfigChanged` under `Some(_)`.
         HNSW_COMPATIBILITY_V2_LEN => {
-            decode_v2_hnsw_compatibility(&raw).map(HnswCompatibilityState::Current)
+            decode_v2_hnsw_compatibility(raw).map(HnswCompatibilityState::Current)
         }
         HNSW_COMPATIBILITY_V1_LEN | HNSW_COMPATIBILITY_V0_LEN => {
-            decode_legacy_hnsw_compatibility(&raw).map(HnswCompatibilityState::Legacy)
+            decode_legacy_hnsw_compatibility(raw).map(HnswCompatibilityState::Legacy)
         }
         _ => Err(Error::InvalidKey),
     }
@@ -437,31 +400,26 @@ pub(crate) fn format_hnsw_index_structure(code: u8) -> String {
 }
 
 pub(super) fn has_persisted_vector_or_hnsw_data(
-    hnsw_meta: &OverlayDb,
-    vectors: &OverlayDb,
-    hnsw_neighbors: &OverlayDb,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<bool> {
-    Ok(database_has_entries(vectors, txn)?
-        || database_has_entries(hnsw_neighbors, txn)?
-        || crate::hnsw::has_population(hnsw_meta, txn)?)
+    Ok(store.port_index_has_rows(txn, IndexRows::Vectors)?
+        || store.port_index_has_rows(txn, IndexRows::HnswNeighbors)?
+        || crate::hnsw::has_population(store.hnsw_meta(), txn)?)
 }
 
-pub(super) fn database_has_entries(db: &OverlayDb, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(db.iter(txn)?.next().transpose()?.is_some())
-}
-
-pub(super) fn migrate_temporal_long_intervals_if_needed(
-    env: &Env,
-    hnsw_meta: &OverlayDb,
-    temporal_long_intervals: &OverlayDb,
-) -> Result<()> {
-    let rtxn = env.read_txn()?;
-    let stored_version = match hnsw_meta.get(&rtxn, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY)? {
-        Some(raw) if raw.len() == 1 => raw[0],
-        Some(_) => return Err(Error::InvalidKey),
-        None => 0,
-    };
+pub(super) fn migrate_temporal_long_intervals_if_needed(store: &Store) -> Result<()> {
+    let rtxn = store.env.read_txn()?;
+    let stored_version = store
+        .port_index_meta_with_raw(
+            &rtxn,
+            IndexMetaKey::TemporalLongIntervalsSchemaVersion,
+            |raw| match raw {
+                [version] => Ok(*version),
+                _ => Err(Error::InvalidKey),
+            },
+        )?
+        .unwrap_or(0);
     drop(rtxn);
 
     if stored_version > TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION {
@@ -471,9 +429,9 @@ pub(super) fn migrate_temporal_long_intervals_if_needed(
         return Ok(());
     }
 
-    let mut wtxn = env.write_txn()?;
+    let mut wtxn = store.env.write_txn()?;
     let mut legacy_rows = Vec::<([u8; 16], [u8; 16])>::new();
-    for entry in temporal_long_intervals.iter(&wtxn)? {
+    for entry in store.temporal_long_intervals.iter(&wtxn)? {
         let (key, value) = entry?;
         match (key.len(), value.len()) {
             (24, 8) => {}
@@ -504,11 +462,15 @@ pub(super) fn migrate_temporal_long_intervals_if_needed(
             key
         };
 
-        temporal_long_intervals.delete(&mut wtxn, &legacy_key)?;
-        temporal_long_intervals.put(&mut wtxn, &new_key, &occurred_start.to_be_bytes())?;
+        store
+            .temporal_long_intervals
+            .delete(&mut wtxn, &legacy_key)?;
+        store
+            .temporal_long_intervals
+            .put(&mut wtxn, &new_key, &occurred_start.to_be_bytes())?;
     }
 
-    hnsw_meta.put(
+    store.hnsw_meta.put(
         &mut wtxn,
         TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
         &[TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION],

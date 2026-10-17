@@ -5,15 +5,19 @@
 //! builds the frame from the key the caller already holds, reads every source
 //! through that key, mints backing refs only from the rows it admitted, and
 //! composes them with [`compose_default_vault`]. A source the key does not
-//! admit is left out exactly as a missing one is. No model call, layout,
+//! admit is left out exactly as a missing one is. An `as_of` request reads
+//! every source through the scoped lane's as-of point read, so a source
+//! outside that instant is left out before composition too, and the sheet
+//! carries the scrubber atom naming the instant. No model call, layout,
 //! navigation or owner proof.
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    DefaultVaultInput, DefaultVaultItem, HostedLensRender, LedgerCell, LedgerRowAtom,
-    LensBackingRefToken, LensBackingTarget, LensHandleName, LensHandleRole, LensPrincipalBinding,
-    LensRenderFrame, LensRenderId, LensText, SectionAtom, compose_default_vault,
+    AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, HostedLensRender, LedgerCell,
+    LedgerRowAtom, LensBackingRefToken, LensBackingTarget, LensHandleName, LensHandleRole,
+    LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
+    compose_default_vault,
 };
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
@@ -54,6 +58,11 @@ pub struct LensDefaultRequest {
     pub dossiers: Vec<LensDossierSource>,
     #[serde(default)]
     pub threads: Vec<String>,
+    /// An as-of instant in unix seconds: only sources that had occurred and
+    /// been learned by then are selected, before composition. Omitted, the
+    /// sources read live.
+    #[serde(default)]
+    pub as_of: Option<u64>,
 }
 
 /// One source row the caller's key admitted, with its minted backing ref and
@@ -74,6 +83,7 @@ impl Memory<'_> {
         &self,
         input: LensDefaultRequest,
     ) -> MemoryResult<ScopedReadResult<HostedLensRender>> {
+        crate::memory::caps::check_as_of(input.as_of)?;
         let count = input.ledger.len() + input.dossiers.len() + input.threads.len();
         if count > LENS_DEFAULT_MAX_SOURCES {
             return Err(MemoryError::bad_request(format!(
@@ -95,7 +105,7 @@ impl Memory<'_> {
         let mut frame = principal_frame(&read)?;
 
         let mut ledger = Vec::new();
-        for (_, admitted) in admit(&read, &mut frame, "ledger", &ledger_ids)? {
+        for (_, admitted) in admit(&read, &mut frame, "ledger", &ledger_ids, input.as_of)? {
             let row = &admitted.row;
             let value = ScopedReadResult {
                 value: LedgerRowAtom {
@@ -115,7 +125,7 @@ impl Memory<'_> {
             ledger.push(item(value, admitted.token));
         }
         let mut dossiers = Vec::new();
-        for (index, admitted) in admit(&read, &mut frame, "dossier", &dossier_ids)? {
+        for (index, admitted) in admit(&read, &mut frame, "dossier", &dossier_ids, input.as_of)? {
             let text = super::instrument::display_body(&admitted.body);
             let lines = text
                 .lines()
@@ -134,7 +144,7 @@ impl Memory<'_> {
             dossiers.push(item(value, admitted.token));
         }
         let mut threads = Vec::new();
-        for (_, admitted) in admit(&read, &mut frame, "thread", &thread_ids)? {
+        for (_, admitted) in admit(&read, &mut frame, "thread", &thread_ids, input.as_of)? {
             if admitted.row.entity_type != ENTITY_TYPE_MESSAGE {
                 return Err(MemoryError::bad_request(
                     "thread sources are MESSAGE entities",
@@ -149,14 +159,24 @@ impl Memory<'_> {
             };
             threads.push(item(value, admitted.token));
         }
+        // The reads above applied the requested as-of selection, so the
+        // composed sheet describes it; live reads describe none.
+        let as_of = input
+            .as_of
+            .map(|as_of| {
+                Ok::<_, Error>(AsofScrubberAtom {
+                    value: LensText::new(as_of.to_string())?,
+                    min: None,
+                    max: None,
+                })
+            })
+            .transpose()?;
         let ScopedReadResult { value, receipt } = compose_default_vault(
             &read,
             &frame,
             DefaultVaultInput {
                 title,
-                // The reads above are live; no as-of selection is applied, so
-                // none is described.
-                as_of: None,
+                as_of,
                 ledger,
                 dossiers,
                 threads,
@@ -196,11 +216,15 @@ fn principal_frame(read: &ScopedRead<'_>) -> Result<LensRenderFrame> {
 /// The rows of `ids` the caller's key admits, in request order, each with a
 /// backing ref minted from that admitted read. A withheld row and a missing
 /// one are both left out. The index is the source's position in `ids`.
+/// With `as_of`, the rows are the as-of selection of the same point read:
+/// a source that had not occurred and been learned by then is left out
+/// before any backing ref is minted for it.
 fn admit(
     read: &ScopedRead<'_>,
     frame: &mut LensRenderFrame,
     list: &str,
     ids: &[EntityId],
+    as_of: Option<u64>,
 ) -> Result<Vec<(usize, Admitted)>> {
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -209,7 +233,10 @@ fn admit(
     let ScopedReadResult {
         value: rows,
         receipt,
-    } = read.read(&reads, None)?;
+    } = match as_of {
+        Some(as_of) => read.read_as_of(&reads, None, as_of)?,
+        None => read.read(&reads, None)?,
+    };
     let mut admitted = Vec::new();
     for (index, row) in rows.into_iter().enumerate() {
         let Some(row) = row else { continue };

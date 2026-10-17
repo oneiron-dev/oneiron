@@ -299,6 +299,7 @@ where
             verb_door: Some(door),
             owner: owner.as_ref(),
             live_run: None,
+            planner: None,
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
     })
