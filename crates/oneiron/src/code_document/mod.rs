@@ -18,7 +18,9 @@ pub use review_views::{
     CodeRepoDiffRequest, CodeRepoDiffView, CodeTreeRequest,
 };
 pub use session::CodeDocumentSession;
-pub(crate) use storage::{CodeFileIngress, verify_frontier_in_txn};
+pub(crate) use storage::{
+    CodeDocumentRows, CodeFileIngress, code_document_texts_in_txn, verify_frontier_in_txn,
+};
 pub use types::{
     CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance,
     CodeRangeChange, CodeSpanAnchor, CodeSpanBlame, CodeSpanResolution,

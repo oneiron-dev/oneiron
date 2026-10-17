@@ -50,6 +50,7 @@ mod expression_preference;
 pub mod extraction;
 mod inspection;
 mod key_value;
+mod lifted_view;
 mod locality;
 mod machine_write;
 mod notes;

@@ -218,7 +218,8 @@ impl Memory<'_> {
     ) -> MemoryResult<DeckReviewView> {
         let artifact = self.body_ref(&input.artifact_ref)?;
         let fork = self.body_ref(&input.fork_ref)?;
-        Ok(self.vault().pptx_body_fork_review(&artifact, &fork)?.into())
+        let review: DeckReviewView = self.vault().pptx_body_fork_review(&artifact, &fork)?.into();
+        self.lifted_body_view(&artifact, review)
     }
 
     /// `vault.artifacts.body.deck.merge`: a person lands a reviewed deck

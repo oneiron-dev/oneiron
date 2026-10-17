@@ -8,6 +8,7 @@ mod citation_floor;
 mod document;
 mod forks;
 mod history_erase;
+mod lift;
 mod message_stream;
 mod metadata;
 pub mod office;
@@ -38,6 +39,7 @@ pub use forks::{
 };
 pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
+pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
 pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};

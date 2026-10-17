@@ -19,6 +19,9 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
+mod lift;
+pub(crate) use self::lift::{CodeDocumentRows, code_document_texts_in_txn};
+
 /// Immutable tested snapshot of a code document at one exact operation
 /// frontier: key is the document id then the op-fold hash, raw-concatenated.
 pub(super) const CODE_DOCUMENT_FRONTIER: SideTable<([u8; 32], [u8; 32]), SnapshotRow, Named> =
@@ -488,12 +491,22 @@ impl Vault {
         // receipt binds the edit's bytes, so a replay can prove it the same
         // edit: no handle can stand in a secret, and a hit refuses, unless
         // the file read the same way before the edit.
+        let mut stood = false;
         crate::batch::secret_scan::scan_document_in_txn(
             &self.store,
             wtxn,
             merged_text.as_bytes(),
-            || Ok(Some(text.into_bytes())),
+            || {
+                stood = true;
+                Ok(Some(text.into_bytes()))
+            },
         )?;
+        // A file that read as secret before its edit and still does: the
+        // text it leaves is marked, a lifted value keeping its record
+        // (OF-067).
+        if stood {
+            lift::remark_code_document_in_txn(self, wtxn, &session.document_id, &merged_text)?;
+        }
         let after = frontier(&merged, &session.repo, session.document_id)?;
         if let Some(path) = &edit.new_path {
             if after.path != *path {

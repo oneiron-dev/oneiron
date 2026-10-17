@@ -306,6 +306,19 @@ impl Memory<'_> {
                 _ => format!("{short}:{:02x}", row.content_hash),
             }
         });
+        let mut body = decode_body_json(&body);
+        // A key the lift sweep marked in a record's text reads as its handle
+        // to all but the owner (OF-067).
+        if let Some(value) = &mut body
+            && self.reads_lifted_keys_masked()?
+        {
+            let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
+                &self.vault().store,
+                txn,
+                value,
+            )?;
+            keys.mask_json(value);
+        }
         Ok(Some(EntityView {
             id_hex: row.id.to_hex(),
             short_ref,
@@ -313,7 +326,7 @@ impl Memory<'_> {
             occurred_start: row.occurred.start,
             occurred_end: row.occurred.end,
             learned_at: row.learned_at,
-            body: decode_body_json(&body),
+            body,
         }))
     }
 }

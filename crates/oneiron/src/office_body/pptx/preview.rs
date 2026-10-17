@@ -83,6 +83,15 @@ impl Memory<'_> {
         }
         admit_row_references(self, ROW, input, &["/artifact_ref"])?;
         let artifact = self.body_ref(&input.artifact_ref)?;
+        // A drawn slide cannot show a lifted key as its handle: a deck that
+        // holds one draws for the owner alone (OF-067).
+        if self.reads_lifted_keys_masked()?
+            && !self.vault().typed_body_lifted_keys(&artifact)?.is_empty()
+        {
+            return Err(MemoryError::bad_request(format!(
+                "{ROW} draws a deck whose text holds a lifted secret for the vault owner only"
+            )));
+        }
         let export = self.vault().export_pptx_body(&artifact)?;
         let count = Package::open(
             &export.outcome.bytes,
