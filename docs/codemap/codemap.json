@@ -10619,7 +10619,7 @@
      "path": "src/code_run/agent_authoring.rs",
      "purpose": "Bounded guest definition request; actor, lease and approval stay host-owned",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -10723,7 +10723,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5
      }
     },
@@ -17113,13 +17113,13 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsolidationDecisions"
@@ -17127,7 +17127,7 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -17139,7 +17139,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -17149,7 +17149,7 @@
      "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
      "purpose": "A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -17305,13 +17305,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConsolidationEvidenceEnvelope",
       "ConsolidationProvenanceHop",
       "ConsolidationProvenanceHopKind",
       "ConsolidationSink",
+      "KeptAsk",
+      "KeptDecision",
       "PeerAnswerLineage",
       "PeerTrustDigestLine",
       "PeerTrustDigestSink",
@@ -17320,10 +17322,10 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 7,
-      "struct": 5,
+      "fn": 10,
+      "struct": 7,
       "trait": 2
      }
     },
@@ -17360,7 +17362,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "re-export": 1
      }
     },
@@ -17918,7 +17920,7 @@
      "path": "src/dreamer_promotion.rs",
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 1,
       "fn": 4,
       "re-export": 4,
@@ -20677,10 +20679,10 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 8,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 4,
       "trait": 2
      }
@@ -20773,8 +20775,8 @@
      "path": "src/embed/space.rs",
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
-      "const": 3,
-      "crate-vis": 22,
+      "const": 4,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -27177,7 +27179,7 @@
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
       "crate-vis": 2,
-      "fn": 20,
+      "fn": 21,
       "struct": 4
      }
     },
@@ -36439,7 +36441,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -37264,17 +37266,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "HookReplayCase",
+      "HookReplayCompare",
       "HookReplayEntry",
       "HookReplayResult"
      ],
      "path": "src/runtime_hooks/replay.rs",
-     "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome",
+     "purpose": "`hooks.replay` (ARCH-0080 §6): runs a hook's body over past entries and shows each outcome beside the one…",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 4,
+      "enum": 3,
       "fn": 1,
       "struct": 1
      }
@@ -37290,7 +37294,7 @@
      "purpose": "The fact-hook runner (ARCH-0080 §4 Delivery)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 4,
       "struct": 2,
       "type": 1
@@ -37346,13 +37350,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/store.rs",
-     "purpose": "The runner's durable rows: cursors, the run memo, saved intents and the Hook receipts (ARCH-0080 §4…",
+     "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
      }
     },
     {
@@ -37387,12 +37391,22 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 12,
       "re-export": 2,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/record.rs",
+     "purpose": "A verb hook run's saved copy (ARCH-0080 §6 Replay): the exact input its body saw, the reads it made and what…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -51536,7 +51550,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51935,9 +51949,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 147,
+   "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3139,
+   "source_files": 3140,
    "test_files": 903
   },
   "oneiron-android": {
@@ -54803,7 +54817,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 42,
+      "const": 43,
       "crate-vis": 1
      }
     },
@@ -55178,7 +55192,7 @@
      "path": "src/registry/mod.rs",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators",
      "surface": {
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -55219,7 +55233,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 49
+      "const": 50
      }
     },
     {
@@ -70778,6 +70792,7 @@
       "ExpectedSpend",
       "ExportDiaryRead",
       "FactKind",
+      "FactSource",
       "FanoutStatement",
       "FatalLlmError",
       "FederationGrantRole",
@@ -70803,6 +70818,9 @@
       "GuestSlipMinted",
       "HandoffAlarmRequest",
       "HolderKind",
+      "HookPhase",
+      "HookReplayCase",
+      "HookReplayCompare",
       "HookReplayOutcome",
       "HookReplayRow",
       "HooksReplayRequest",
@@ -71263,7 +71281,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 184,
+      "enum": 188,
       "struct": 479
      }
     },
