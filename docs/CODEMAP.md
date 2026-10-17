@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3160 | 903 | 150 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3165 | 903 | 150 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -72,7 +72,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `attempt_queue` | dir | 41 | L | yes | Generic LMDB-backed background attempt queue |
 | `authority` | dir | 130 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 16 | L | — | Engine-side AR-3 campaign reports and read-only experiment selection |
-| `batch` | dir | 112 | L | yes | — |
+| `batch` | dir | 113 | L | yes | — |
 | `blob_artifact` | dir | 53 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 9 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | s | — | — |
@@ -185,11 +185,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `msgpack_shape` | file | 1 | s | — | A budget check of untrusted MessagePack before it is decoded |
 | `note` | file+dir | 40 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 18 | L | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
-| `office_body` | dir | 7 | L | yes | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX, XLSX or… |
+| `office_body` | dir | 8 | L | yes | Live office bodies (ARCH-0075; ARCH-0077, "Multiplayer: the target body shape"): an imported DOCX, XLSX or… |
 | `origin` | dir | 61 | L | yes | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `outbound` | dir | 43 | m | yes | Outbound action capability manifests and dispatch spine for OF-327 |
 | `outbound_chokepoint` | dir | 9 | L | — | Replay-first outbound effect execution |
-| `outbound_consent` | dir | 11 | L | yes | Payload-aware consent and transport boundary for scoped outbound tools |
+| `outbound_consent` | dir | 14 | L | yes | Payload-aware consent and transport boundary for scoped outbound tools |
 | `outbound_grant` | dir | 9 | m | yes | Standing outbound-grant records for OF-367 RS6.2/RS6.5 |
 | `outbound_intent_ledger` | dir | 7 | m | — | Device-local durable intent ledger for effectful outbound calls |
 | `overlay_db` | dir | 5 | m | — | Per-database accessor seam for the session write-overlay (ARCH-0052, D2) |
@@ -687,7 +687,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
 | `replay_judge` | file | 1 | m | The serve host's skill judge (OF-495) |
 | `runtime` | dir | 9 | L | — |
-| `saved_query_sweep` | file | 1 | s | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the… |
+| `saved_query_sweep` | file | 1 | m | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query the… |
 | `server` | dir | 29 | L | Sync server state and maintenance jobs, split by concern |
 | `skills_pack` | file | 1 | s | — |
 | `slide_render` | file | 1 | s | The host's review renderer (ARCH-0077 "Review images"): LibreOffice Impress headless exports the deck to… |

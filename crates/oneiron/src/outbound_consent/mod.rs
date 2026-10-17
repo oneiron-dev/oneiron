@@ -8,6 +8,9 @@
 
 mod authority;
 mod connector_call;
+mod connector_call_asks;
+mod connector_call_pending;
+mod connector_call_resume;
 mod execution;
 mod recovery;
 mod result_scrub;
