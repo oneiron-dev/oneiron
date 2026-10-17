@@ -657,6 +657,7 @@ fn mcp_agent_verb_input(
         "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.report" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.digest" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.lens" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.link.wrong" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.put" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.setup.prepare" => a.spec.clone().ok_or_else(invalid),
@@ -1026,6 +1027,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.digest" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.lens" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.link.wrong" => {
@@ -1949,6 +1953,18 @@ async fn execute_agent_verb_row(
             let input: oneiron::claim::WeaveDigestRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_weave_digest(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.lens" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.lens", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveReportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_weave_lens(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

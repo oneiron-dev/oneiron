@@ -258,6 +258,7 @@ declare const vault: {
   };
   weave: {
     digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    lens(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
     link: {
       wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
     };

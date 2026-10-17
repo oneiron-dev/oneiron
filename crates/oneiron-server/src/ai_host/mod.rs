@@ -46,10 +46,12 @@ mod tests;
 mod turn_actions;
 mod turns;
 pub(crate) mod waves;
+mod weave_lens;
 mod workflows;
 
 pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
+pub(crate) use weave_lens::{WeaveLensCaller, render_live_weave_lens};
 pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };

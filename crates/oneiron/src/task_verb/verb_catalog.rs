@@ -34,6 +34,7 @@ pub enum AgentVerb {
     VaultKvNamespaces,
     VaultWeaveReport,
     VaultWeaveDigest,
+    VaultWeaveLens,
     VaultWeaveLinkWrong,
     VaultPacksPut,
     VaultPacksSetupPrepare,
@@ -207,6 +208,7 @@ impl AgentVerb {
         Self::VaultKvNamespaces,
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
+        Self::VaultWeaveLens,
         Self::VaultWeaveLinkWrong,
         Self::VaultPacksPut,
         Self::VaultPacksSetupPrepare,
@@ -383,6 +385,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => "vault.kv.namespaces",
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
+            Self::VaultWeaveLens => "vault.weave.lens",
             Self::VaultWeaveLinkWrong => "vault.weave.link.wrong",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
@@ -557,6 +560,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
@@ -737,6 +741,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
@@ -956,6 +961,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
+                | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
@@ -1234,6 +1240,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
+            Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
@@ -1408,6 +1415,7 @@ impl AgentVerb {
             Self::VaultKvNamespaces => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
+            Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],

@@ -46,7 +46,7 @@ pub(crate) use weave_lens::{
 };
 pub use weave_lens::{
     WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_READ_RATE_AXIS, WEAVE_REPORT_SKILL_NAME,
-    WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender,
+    WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender, WeaveLiveLens,
     weave_report_skill_id,
 };
 mod weave_report;
