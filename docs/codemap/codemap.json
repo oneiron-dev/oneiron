@@ -4739,7 +4739,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -17724,7 +17724,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health.rs",
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
-      "const": 10,
+      "const": 11,
       "crate-vis": 2,
       "enum": 6,
       "fn": 12,
@@ -17755,6 +17755,26 @@
       "fn": 3,
       "struct": 6,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/check_repeat.rs",
+     "purpose": "`failed_check_repeat` (agent-mind §3.4): the same tool run fails the same way again",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/run_loop.rs",
+     "purpose": "`loop` over an agent run's own calls",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21092,8 +21112,8 @@
      "surface": {
       "crate-vis": 3,
       "enum": 4,
-      "fn": 9,
-      "re-export": 3,
+      "fn": 10,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -21124,9 +21144,28 @@
       "const": 5,
       "crate-vis": 2,
       "enum": 8,
-      "fn": 3,
+      "fn": 5,
       "struct": 6,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FailureSignalBatch",
+      "FailureSignalDelivery",
+      "FailureSignalTransport",
+      "FailureSignalTransportRequest"
+     ],
+     "path": "src/failure_signals/delivery.rs",
+     "purpose": "Delivery of the failure-signal exports to the deployment's publisher (OF-380)",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -26539,10 +26578,10 @@
       "DecisionAsks"
      ],
      "path": "src/llm/decision/asks.rs",
-     "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an owner ask that the…",
+     "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 12,
+      "crate-vis": 2,
+      "fn": 16,
       "struct": 4
      }
     },
@@ -26567,7 +26606,7 @@
      "path": "src/llm/decision/codec.rs",
      "purpose": "Canonical entity references for typed-decision wire records",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -26605,17 +26644,25 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "AskAct",
+      "AskRole",
+      "AskRoleResolver",
+      "AskTo",
       "DecisionCall",
       "DecisionLadder",
       "DecisionModel",
       "DecisionPack",
       "DecisionProvider",
+      "HolderKind",
       "HumanDecisionQueue",
       "HumanDecisionRequest",
       "ModelDecisionProvider",
       "PairedAnswer",
       "ProviderCapability",
       "ProviderDecision",
+      "ResolvedRole",
+      "RoleHolder",
+      "RoleRank",
       "RuleDecisionProvider"
      ],
      "path": "src/llm/decision/ladder.rs",
@@ -26623,9 +26670,10 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 14,
-      "struct": 9,
-      "trait": 3
+      "enum": 4,
+      "fn": 18,
+      "struct": 12,
+      "trait": 4
      }
     },
     {
@@ -26737,7 +26785,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -49583,7 +49631,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 42,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -49681,7 +49729,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -50565,7 +50613,7 @@
    },
    "over_bar": 134,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3053,
+   "source_files": 3056,
    "test_files": 903
   },
   "oneiron-android": {
@@ -52399,13 +52447,16 @@
      "notable": [
       "BrokerClient",
       "BrokerConnection",
-      "BrokerReply"
+      "BrokerReply",
+      "BrokerStream",
+      "StreamPart"
      ],
      "path": "src/client.rs",
      "purpose": "The daemon's side of the socket",
      "surface": {
-      "fn": 6,
-      "struct": 3
+      "enum": 1,
+      "fn": 9,
+      "struct": 4
      }
     },
     {
@@ -52435,12 +52486,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FormData"
+     ],
+     "path": "src/form.rs",
+     "purpose": "`multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/frame.rs",
      "purpose": "The wire between the daemon and the broker, one connection per call",
      "surface": {
-      "const": 3,
-      "crate-vis": 6
+      "const": 4,
+      "crate-vis": 13
      }
     },
     {
@@ -52455,7 +52520,7 @@
       "enum": 1,
       "fn": 1,
       "mod": 2,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -52469,7 +52534,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SendPolicy"
@@ -52477,7 +52542,7 @@
      "path": "src/send.rs",
      "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "struct": 1
      }
     },
@@ -52505,16 +52570,17 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Shape"
      ],
      "path": "src/shape.rs",
-     "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, where the model selector…",
+     "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 5
+      "fn": 7
      }
     },
     {
@@ -52533,7 +52599,7 @@
      "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -52604,6 +52670,13 @@
      "layout": "file",
      "purpose": "Why a call stopped"
     },
+    "form": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`multipart/form-data` bodies, for the shapes that upload a file: the check the broker runs on one, which…"
+    },
     "frame": {
      "files": 1,
      "impl_vault": false,
@@ -52621,7 +52694,7 @@
     "send": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The broker's one send: verified TLS, no redirect, no retry, no proxy, and no content encoding, so the reply…"
     },
@@ -52635,9 +52708,9 @@
     "shape": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, where the model selector…"
+     "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the…"
     },
     "strip": {
      "files": 2,
@@ -52656,7 +52729,7 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 14,
+   "source_files": 15,
    "test_files": 5
   },
   "oneiron-browser": {
@@ -60797,6 +60870,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/failure_signals.rs",
+     "purpose": "The host's failure-signal sender (OF-380)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/harness.rs",
      "purpose": "The Dreamer's tuning config, recorded as a versioned vault artifact so the nightly harness self-audit…",
      "surface": {
@@ -60833,7 +60916,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -64251,6 +64334,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FailureSignalsConfig"
+     ],
+     "path": "src/config/failure_signals.rs",
+     "purpose": "The `[failure_signals]` section: the publisher this deployment's failure signals go to (OF-380, DEC-0005…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FeedbackConfig",
       "FeedbackInboxConfig"
      ],
@@ -64349,7 +64447,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 11,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -66136,7 +66234,7 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -68008,7 +68106,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68071,7 +68169,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -68332,7 +68430,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 504,
+   "source_files": 506,
    "test_files": 182
   },
   "oneiron-spawn": {
