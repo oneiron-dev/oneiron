@@ -366,6 +366,23 @@ reason, the connection and who answered, never the value. An agent's granted rev
 lease to its model connection, and an unanswered ask lapses after an hour. A standing grant is
 revoked in the consent registry like any other.
 
+## Bind a secret so an agent can use it
+
+An agent can hand a secret to a trusted operation, such as Slack's `auth.test`, with
+`self.use({handle, operation})`. The value goes to that operation's door and never to the agent's
+model. The only grant is the secret's binding for the operation's effector. A secret the mask on
+write found has no binding, so the agent's use is refused, and the refusal names this door:
+
+```sh
+oneiron api raw POST /v1/owner/secrets/bind \
+  --data '{"handle": "sc12", "effector": "connector:slack"}'
+```
+
+Name the secret by `handle` or `name`. `tier_ceiling` is the binding's rung, 0 (doored) by default
+and never above the class's live floor, and `scopes` defaults to `["read"]`. A binding for the same
+effector is replaced. The reply lists the record's bindings and the Gate record that keeps the
+binding. A portable secret's new binding reaches your other machines as a signed custody transition.
+
 ## Hand a served repository's origin to another host
 
 A repository this vault serves at `/git/<repo>` has no origin authority until you set one. With
