@@ -106,6 +106,7 @@ impl Memory<'_> {
             raw: message.content.clone(),
             lifted: Lifted::default(),
             withheld: false,
+            relift: false,
             // The idle clock starts once the stream holds its turn: time
             // spent waiting for it is not the stream's idleness.
             last_op_at_ms: at
@@ -260,7 +261,7 @@ impl Memory<'_> {
             let mut lifted = state.lifted.clone();
             // The whole text is admitted again, before its checkpoint saves
             // it and before a partial publishes it (OF-067).
-            let (pending, withheld) =
+            let (pending, withheld, metadata) =
                 self.vault
                     .try_with_write_txn_grouped(|txn| -> MessageStreamResult<_> {
                         let (pending, withheld) = admit_stream_text_in_txn(
@@ -277,16 +278,24 @@ impl Memory<'_> {
                             return Err(MessageStreamError::BufferOverflow);
                         }
                         stage(&*state, &text)?;
-                        let row = state.checkpoint(pending.clone());
+                        let mut row = state.checkpoint(pending.clone());
+                        // The lift sweep stored the seed again: its axes are
+                        // admitted again here, in the stream's own write.
+                        if state.relift {
+                            admit_axes_in_txn(self.vault, txn, &mut row, &mut lifted)?;
+                        }
                         authorize(self.vault, txn, &row, &text)?;
                         storage::checkpoint(self.vault, txn, &row)?;
-                        Ok((pending, withheld))
+                        Ok((pending, withheld, row.metadata))
                     })?;
             // Saved: the delta is accepted whatever its publication does.
             state.raw = raw;
             state.pending = pending;
             state.lifted = lifted;
             state.withheld = withheld;
+            if std::mem::take(&mut state.relift) {
+                state.seed.metadata = metadata;
+            }
         }
         state.sequence = next;
         state.last_op_at_ms = at;
@@ -380,9 +389,7 @@ impl Memory<'_> {
 /// Where a stream's text sits in its MESSAGE: a lifted secret's origin.
 pub(super) const CONTENT: &str = "text:content";
 /// Admits what a stream opens with, in the transaction of its first
-/// checkpoint (OF-067): its text, and a new MESSAGE's own axes. Its type is
-/// an identifier, so a hit refuses; its metadata masks as the body it joins
-/// would. A continuation's axes are its stored row's, admitted with it.
+/// checkpoint (OF-067): its text, and a new MESSAGE's own axes.
 fn admit_opening(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -396,26 +403,40 @@ fn admit_opening(
         withheld,
         ..
     } = state;
-    if !seed.continuation {
-        scan_content_in_txn(&vault.store, txn, seed.message_type.as_bytes())?;
-        if let Some(metadata) = seed.metadata.as_mut() {
-            let mut body = serde_json::to_vec(metadata)
-                .map_err(|_| Error::InvariantViolation("stream metadata did not encode"))?;
-            if admit_parts_in_txn(
-                vault,
-                txn,
-                seed.message_id,
-                &mut [("body", Part::Body(&mut body))],
-                lifted,
-            )? {
-                *metadata = serde_json::from_slice(&body).map_err(|_| {
-                    Error::InvariantViolation("masked stream metadata did not decode")
-                })?;
-            }
-        }
-    }
+    admit_axes_in_txn(vault, txn, seed, lifted)?;
     (*pending, *withheld) =
         admit_stream_text_in_txn(vault, txn, seed.message_id, CONTENT, raw, true, lifted)?;
+    Ok(())
+}
+/// A new MESSAGE's own axes in `seed`, admitted as its opening admits them
+/// (OF-067). Its type is an identifier, so a hit refuses; its metadata masks
+/// as the body it joins would. A continuation's axes are its stored row's,
+/// admitted with it. The lift sweep's door and the checkpoint after it admit
+/// them the same way.
+pub(super) fn admit_axes_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    seed: &mut Seed,
+    lifted: &mut Lifted,
+) -> crate::error::Result<()> {
+    if seed.continuation {
+        return Ok(());
+    }
+    scan_content_in_txn(&vault.store, txn, seed.message_type.as_bytes())?;
+    if let Some(metadata) = seed.metadata.as_mut() {
+        let mut body = serde_json::to_vec(metadata)
+            .map_err(|_| Error::InvariantViolation("stream metadata did not encode"))?;
+        if admit_parts_in_txn(
+            vault,
+            txn,
+            seed.message_id,
+            &mut [("body", Part::Body(&mut body))],
+            lifted,
+        )? {
+            *metadata = serde_json::from_slice(&body)
+                .map_err(|_| Error::InvariantViolation("masked stream metadata did not decode"))?;
+        }
+    }
     Ok(())
 }
 fn should_emit(mode: MessageWriteMode, text: &str, new_chars: usize) -> bool {

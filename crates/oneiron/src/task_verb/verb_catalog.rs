@@ -54,6 +54,8 @@ pub enum AgentVerb {
     VaultWeaveLens,
     VaultWeaveLinkWrong,
     VaultWeaveOwnerLinkWrong,
+    VaultWeaveItemWrong,
+    VaultWeaveOwnerItemWrong,
     VaultPacksPut,
     VaultPacksSetupPrepare,
     VaultPacksSetupGet,
@@ -364,6 +366,8 @@ impl AgentVerb {
         Self::VaultWeaveLens,
         Self::VaultWeaveLinkWrong,
         Self::VaultWeaveOwnerLinkWrong,
+        Self::VaultWeaveItemWrong,
+        Self::VaultWeaveOwnerItemWrong,
         Self::VaultPacksPut,
         Self::VaultPacksSetupPrepare,
         Self::VaultPacksSetupGet,
@@ -677,6 +681,8 @@ impl AgentVerb {
             Self::VaultWeaveLens => "vault.weave.lens",
             Self::VaultWeaveLinkWrong => "vault.weave.link.wrong",
             Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
+            Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
+            Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksSetupPrepare => "vault.packs.setup.prepare",
             Self::VaultPacksSetupGet => "vault.packs.setup.get",
@@ -990,6 +996,8 @@ impl AgentVerb {
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultWeaveOwnerLinkWrong
+                | Self::VaultWeaveItemWrong
+                | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1307,6 +1315,8 @@ impl AgentVerb {
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultWeaveOwnerLinkWrong
+                | Self::VaultWeaveItemWrong
+                | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1649,6 +1659,8 @@ impl AgentVerb {
                 | Self::VaultWeaveLens
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultWeaveOwnerLinkWrong
+                | Self::VaultWeaveItemWrong
+                | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupGet
@@ -1929,6 +1941,8 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultWeaveOwnerLinkWrong
+                | Self::VaultWeaveItemWrong
+                | Self::VaultWeaveOwnerItemWrong
                 | Self::VaultPacksPut
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
@@ -2156,6 +2170,8 @@ impl AgentVerb {
             Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
+            Self::VaultWeaveItemWrong => &["spec"],
+            Self::VaultWeaveOwnerItemWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -2467,6 +2483,8 @@ impl AgentVerb {
             Self::VaultWeaveLens => &["spec"],
             Self::VaultWeaveLinkWrong => &["spec"],
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
+            Self::VaultWeaveItemWrong => &["spec"],
+            Self::VaultWeaveOwnerItemWrong => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksSetupPrepare => &["spec"],
             Self::VaultPacksSetupGet => &["spec"],
@@ -2873,6 +2891,12 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => {
                 "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."
             }
+            Self::VaultWeaveItemWrong => {
+                "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."
+            }
+            Self::VaultWeaveOwnerItemWrong => {
+                "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+            }
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
             }
@@ -3272,7 +3296,7 @@ impl AgentVerb {
             }
             Self::AiVideo => "Starts a video render as a provider job and answers with its ticket.",
             Self::AiVideoPoll => {
-                "Where a video job stands; a finished one answers with its clip, once."
+                "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
             }
             Self::AiVideoCancel => "Stops a video job at its provider.",
             Self::AiVerdict => {

@@ -203,6 +203,12 @@ impl OneironClient {
                 "vault.weave.owner.link.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveLinkCorrectionView,
                 >(client, verb, &input),
+                "vault.weave.item.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveItemCorrectionView,
+                >(client, verb, &input),
+                "vault.weave.owner.item.wrong" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveItemCorrectionView,
+                >(client, verb, &input),
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
@@ -1356,14 +1362,16 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.export", value)
     }
-    /// Lists governance receipts, newest first.
+    /// Lists governance receipts, newest first: the gate decision ledger, or
+    /// the receipts of the named kinds.
     pub fn vault_receipts(
         &self,
         limit: usize,
+        kinds: &[String],
     ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
-            ..Default::default()
+            kinds: kinds.to_vec(),
         };
         oneiron::memory::caps::check_limit(
             input
@@ -1575,6 +1583,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.weave.owner.link.wrong", value)
+    }
+    pub fn vault_weave_item_wrong(
+        &self,
+        input: &oneiron::claim::WeaveWrongItemRequest,
+    ) -> Result<oneiron::claim::WeaveItemCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.item.wrong", value)
+    }
+    pub fn vault_weave_owner_item_wrong(
+        &self,
+        input: &oneiron::claim::WeaveWrongItemRequest,
+    ) -> Result<oneiron::claim::WeaveItemCorrectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.owner.item.wrong", value)
     }
     pub fn vault_packs_put(
         &self,
