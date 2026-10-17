@@ -482,6 +482,9 @@ side_tables! {
     /// The home-room TURN one skill tradeoff question was witnessed as, ids reserved before the
     /// speak. Key: id16 (proposal) + id16 (project) + question digest (64 hex).
     TASK_PROJECT_TRADEOFF_TURN: VaultMeta b"tasks.project_tradeoff.turn.v1/" Named;
+    /// One try's journaled report: the request and the receipt it was first answered with.
+    /// Key: id16 (attempt) + u64 (attempt count) + bytes32 (reporter, TASK and report key).
+    TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// Registered external ask wait. Key: id16 + bytes32.

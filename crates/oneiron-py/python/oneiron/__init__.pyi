@@ -293,6 +293,10 @@ class Oneiron:
         def settle(self, spec: Facade.IdentityActNowRequest) -> Facade.IdentityActNow:
             """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""
     class _SelfInboxVerbs:
+        def list(self, spec: Facade.InboxListRequest) -> Facade.NotificationPage:
+            """Lists one page of notifications delivered to the bound actor, without marking them."""
+        def mark(self, spec: Facade.InboxMarkRequest) -> Facade.NotificationRow:
+            """Marks one delivered notification seen or acknowledged for the bound actor."""
         @property
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
     class _SelfInboxConcernVerbs:
@@ -339,6 +343,8 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
+        @property
+        def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
@@ -390,6 +396,8 @@ class Oneiron:
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
         @property
+        def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
@@ -406,6 +414,8 @@ class Oneiron:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
+        def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
+            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
     class _VaultReceiptsVerbs:
         def __call__(self, limit: int = 100) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
@@ -503,6 +513,36 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
         def lift_and_erase(self, spec: Facade.LegalHoldLiftAndEraseRequest) -> Facade.LegalHoldLiftAndErased:
             """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
+    class _VaultEmbeddingSpacesVerbs:
+        def list(self, spec: Facade.EmptyRequest | None = None) -> Facade.EmbeddingSpacesView:
+            """Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."""
+        def declare(self, spec: Facade.EmbeddingSpaceDeclareRequest) -> Facade.EmbeddingSpacesView:
+            """Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."""
+        def bind(self, spec: Facade.EmbeddingSpaceBindRequest) -> Facade.EmbeddingSpacesView:
+            """Binds one kind slot to a declared space, or returns it to its default when no space is named."""
+        def one_space(self, spec: Facade.EmbeddingSpaceRequest) -> Facade.EmbeddingSpacesView:
+            """Binds every kind slot the space accepts, text included, to that one space."""
+        def retire(self, spec: Facade.EmbeddingSpaceRequest) -> Facade.EmbeddingSpacesView:
+            """Drops a declared space that no slot binds and no open move names, with its vector rows."""
+        def move(self, spec: Facade.EmbeddingSpaceMoveRequest) -> Facade.SpaceMove:
+            """Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space."""
+        def move_check(self, spec: Facade.EmbeddingSpaceCandidateRequest) -> Facade.EmbeddingSpaceMoveChecked:
+            """Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes."""
+        def move_approve(self, spec: Facade.EmbeddingSpaceCandidateRequest) -> Facade.EmbeddingSpacesView:
+            """The owner says yes to a full candidate over a check that did not read not worse; it swaps in."""
+        def move_undo(self, spec: Facade.EmbeddingSpaceCandidateRequest) -> Facade.EmbeddingSpacesView:
+            """Binds a swapped-in move incumbent again."""
+        def move_abandon(self, spec: Facade.EmbeddingSpaceCandidateRequest) -> Facade.EmbeddingSpacesView:
+            """Ends an open embedding space move with no swap."""
+        @property
+        def probes(self) -> "Oneiron._VaultEmbeddingSpacesProbesVerbs": ...
+    class _VaultEmbeddingSpacesProbesVerbs:
+        def list(self, spec: Facade.EmptyRequest | None = None) -> Facade.EmbeddingSpaceProbes:
+            """Every stored embedding space probe with its id."""
+        def put(self, spec: Facade.EmbeddingSpaceProbePutRequest) -> Facade.EmbeddingSpaceProbe:
+            """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
+        def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
+            """Removes one stored embedding space probe by its id."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...
@@ -668,6 +708,11 @@ class Oneiron:
     class _VaultHabitsVerbs:
         def checkin(self, input: Facade.HabitCheckinInput) -> Facade.EntityRefReceipt:
             """Appends one immutable check-in under a Habit TASK."""
+    class _VaultConsolidationVerbs:
+        def enqueue(self, spec: Facade.ConsolidationEnqueueRequest) -> Facade.DreamerAttemptRef:
+            """Enqueues one consolidation attempt and returns its durable job reference."""
+        def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
+            """Reads the status of one consolidation attempt by its durable job reference."""
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""

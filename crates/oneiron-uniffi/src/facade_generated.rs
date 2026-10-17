@@ -30,6 +30,16 @@ export_facade! {
     let output = client.self_identity_settle(&input)?;
     crate::codec::encode("self.identity.settle", &output)
 };
+"self.inbox.list" => fn self_inbox_list(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::InboxListRequest = crate::codec::decode("self.inbox.list", &input)?;
+    let output = client.self_inbox_list(&input)?;
+    crate::codec::encode("self.inbox.list", &output)
+};
+"self.inbox.mark" => fn self_inbox_mark(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::InboxMarkRequest = crate::codec::decode("self.inbox.mark", &input)?;
+    let output = client.self_inbox_mark(&input)?;
+    crate::codec::encode("self.inbox.mark", &output)
+};
 "self.inbox.concern" => fn self_inbox_concern(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest = crate::codec::decode("self.inbox.concern", &input)?;
     let output = client.self_inbox_concern(&input)?;
@@ -328,6 +338,71 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest = crate::codec::decode("vault.legal_holds.lift_and_erase", &input)?;
     let output = client.vault_legal_holds_lift_and_erase(&input)?;
     crate::codec::encode("vault.legal_holds.lift_and_erase", &output)
+};
+"vault.embedding_spaces.list" => fn vault_embedding_spaces_list(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::decode("vault.embedding_spaces.list", &input)?;
+    let output = client.vault_embedding_spaces_list(&input)?;
+    crate::codec::encode("vault.embedding_spaces.list", &output)
+};
+"vault.embedding_spaces.declare" => fn vault_embedding_spaces_declare(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceDeclareRequest = crate::codec::decode("vault.embedding_spaces.declare", &input)?;
+    let output = client.vault_embedding_spaces_declare(&input)?;
+    crate::codec::encode("vault.embedding_spaces.declare", &output)
+};
+"vault.embedding_spaces.bind" => fn vault_embedding_spaces_bind(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceBindRequest = crate::codec::decode("vault.embedding_spaces.bind", &input)?;
+    let output = client.vault_embedding_spaces_bind(&input)?;
+    crate::codec::encode("vault.embedding_spaces.bind", &output)
+};
+"vault.embedding_spaces.one_space" => fn vault_embedding_spaces_one_space(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceRequest = crate::codec::decode("vault.embedding_spaces.one_space", &input)?;
+    let output = client.vault_embedding_spaces_one_space(&input)?;
+    crate::codec::encode("vault.embedding_spaces.one_space", &output)
+};
+"vault.embedding_spaces.retire" => fn vault_embedding_spaces_retire(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceRequest = crate::codec::decode("vault.embedding_spaces.retire", &input)?;
+    let output = client.vault_embedding_spaces_retire(&input)?;
+    crate::codec::encode("vault.embedding_spaces.retire", &output)
+};
+"vault.embedding_spaces.move" => fn vault_embedding_spaces_move(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceMoveRequest = crate::codec::decode("vault.embedding_spaces.move", &input)?;
+    let output = client.vault_embedding_spaces_move(&input)?;
+    crate::codec::encode("vault.embedding_spaces.move", &output)
+};
+"vault.embedding_spaces.move_check" => fn vault_embedding_spaces_move_check(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest = crate::codec::decode("vault.embedding_spaces.move_check", &input)?;
+    let output = client.vault_embedding_spaces_move_check(&input)?;
+    crate::codec::encode("vault.embedding_spaces.move_check", &output)
+};
+"vault.embedding_spaces.move_approve" => fn vault_embedding_spaces_move_approve(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest = crate::codec::decode("vault.embedding_spaces.move_approve", &input)?;
+    let output = client.vault_embedding_spaces_move_approve(&input)?;
+    crate::codec::encode("vault.embedding_spaces.move_approve", &output)
+};
+"vault.embedding_spaces.move_undo" => fn vault_embedding_spaces_move_undo(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest = crate::codec::decode("vault.embedding_spaces.move_undo", &input)?;
+    let output = client.vault_embedding_spaces_move_undo(&input)?;
+    crate::codec::encode("vault.embedding_spaces.move_undo", &output)
+};
+"vault.embedding_spaces.move_abandon" => fn vault_embedding_spaces_move_abandon(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest = crate::codec::decode("vault.embedding_spaces.move_abandon", &input)?;
+    let output = client.vault_embedding_spaces_move_abandon(&input)?;
+    crate::codec::encode("vault.embedding_spaces.move_abandon", &output)
+};
+"vault.embedding_spaces.probes.list" => fn vault_embedding_spaces_probes_list(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::decode("vault.embedding_spaces.probes.list", &input)?;
+    let output = client.vault_embedding_spaces_probes_list(&input)?;
+    crate::codec::encode("vault.embedding_spaces.probes.list", &output)
+};
+"vault.embedding_spaces.probes.put" => fn vault_embedding_spaces_probes_put(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceProbePutRequest = crate::codec::decode("vault.embedding_spaces.probes.put", &input)?;
+    let output = client.vault_embedding_spaces_probes_put(&input)?;
+    crate::codec::encode("vault.embedding_spaces.probes.put", &output)
+};
+"vault.embedding_spaces.probes.delete" => fn vault_embedding_spaces_probes_delete(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest = crate::codec::decode("vault.embedding_spaces.probes.delete", &input)?;
+    let output = client.vault_embedding_spaces_probes_delete(&input)?;
+    crate::codec::encode("vault.embedding_spaces.probes.delete", &output)
 };
 "vault.settings.learning" => fn vault_settings_learning(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::learning_setting_doors::LearningSettingsRequest = crate::codec::decode("vault.settings.learning", &input)?;
@@ -849,6 +924,21 @@ export_facade! {
     let output = client.vault_artifacts_read(&input)?;
     Lift::lift(output)
 };
+"vault.consolidation.enqueue" => fn vault_consolidation_enqueue(&self, input: ConsolidationJobInput) -> DreamerJobRef = |client| {
+    let input: oneiron::task_verb::sdk::ConsolidationEnqueueRequest = input.lower()?;
+    let output = client.vault_consolidation_enqueue(&input)?;
+    Lift::lift(output)
+};
+"vault.consolidation.status" => fn vault_consolidation_status(&self, job_ref: String) -> Option<DreamerJobView> = |client| {
+    let input: oneiron::task_verb::sdk::ConsolidationStatusRequest = job_ref.lower()?;
+    let output = client.vault_consolidation_status(&input)?;
+    Lift::lift(output)
+};
+"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
+    let output = client.vault_claims_seed(&input)?;
+    Lift::lift(output)
+};
 "connector.outbound.schedule" => fn connector_outbound_schedule(&self, draft: OutboundDraftInput) -> OutboundIntentReceipt = |client| {
     let input: oneiron::task_verb::sdk::OutboundScheduleRequest = draft.lower()?;
     let output = client.connector_outbound_schedule(&input)?;
@@ -868,17 +958,5 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EditNoteRequest = crate::codec::decode("vault.notes.edit", &input)?;
     let output = client.vault_notes_edit(&input)?;
     crate::codec::encode("vault.notes.edit", &output)
-};
-"vault.consolidation.enqueue" => fn vault_consolidation_enqueue(&self, input: ConsolidationJobInput) -> DreamerJobRef = |_client| {
-    let _ = (&input,);
-    definition_only("vault.consolidation.enqueue")
-};
-"vault.consolidation.status" => fn vault_consolidation_status(&self, job_ref: String) -> Option<DreamerJobView> = |_client| {
-    let _ = (&job_ref,);
-    definition_only("vault.consolidation.status")
-};
-"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |_client| {
-    let _ = (&claims,);
-    definition_only("vault.claims.seed")
 };
 }

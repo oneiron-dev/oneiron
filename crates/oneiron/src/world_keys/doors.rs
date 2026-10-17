@@ -430,21 +430,7 @@ impl Vault {
     pub fn world_recovery_state(&self, world: EntityId) -> Result<WorldRecoveryState> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let private = fold.world_privacy(world).read != EffectiveRead::Everywhere;
-        let roots: Vec<RecoveryRootId> = fold
-            .current_world_key(world)
-            .into_iter()
-            .flat_map(|key| key.wraps.keys())
-            .filter_map(|recipient| match recipient {
-                WrapRecipient::RecoveryRoot(root) => Some(*root),
-                WrapRecipient::Machine(_) => None,
-            })
-            .collect();
-        Ok(recovery_state(
-            private,
-            fold.pinned_root.map(|pin| pin.id),
-            &roots,
-        ))
+        Ok(world_recovery_state_in(&fold, world))
     }
 
     /// This install's pinned root as a wrap recipient, read from its stored
@@ -775,6 +761,21 @@ pub(crate) struct RootRecipient {
     /// The entry that records the root.
     pub(crate) entry: AuthorityEntryHash,
     pub(crate) key: HybridPublicKey,
+}
+
+/// The no-kit warning for `world`, read from `fold`.
+pub(super) fn world_recovery_state_in(fold: &AuthorityFold, world: EntityId) -> WorldRecoveryState {
+    let private = fold.world_privacy(world).read != EffectiveRead::Everywhere;
+    let roots: Vec<RecoveryRootId> = fold
+        .current_world_key(world)
+        .into_iter()
+        .flat_map(|key| key.wraps.keys())
+        .filter_map(|recipient| match recipient {
+            WrapRecipient::RecoveryRoot(root) => Some(*root),
+            WrapRecipient::Machine(_) => None,
+        })
+        .collect();
+    recovery_state(private, fold.pinned_root.map(|pin| pin.id), &roots)
 }
 
 /// This machine is mine here under the key it signs with, and may read

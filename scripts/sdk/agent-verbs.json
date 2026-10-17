@@ -122,6 +122,36 @@
       "section": false
     },
     {
+      "name": "self.inbox.list",
+      "description": "Lists one page of notifications delivered to the bound actor, without marking them.",
+      "input": "InboxListRequest",
+      "output": "crate::inbox::NotificationPage",
+      "call": "memory.inbox_list(input.after.as_deref(), input.limit.unwrap_or(crate::inbox::INBOX_PAGE_DEFAULT))?",
+      "scope": "Read",
+      "admission": {"lane_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "page": {
+        "rows": "rows",
+        "cursor": "next_after"
+      },
+      "mcp_scope": "filtered",
+      "mcp_served_output": "output.rows.iter().filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())",
+      "section": false
+    },
+    {
+      "name": "self.inbox.mark",
+      "description": "Marks one delivered notification seen or acknowledged for the bound actor.",
+      "input": "InboxMarkRequest",
+      "output": "crate::inbox::NotificationRow",
+      "call": "memory.inbox_mark(&input.notification_ref, input.mark)?",
+      "scope": "Write",
+      "admission": {"lane_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "filtered",
+      "mcp_served_output": "oneiron::EntityId::from_hex(&output.id).ok()",
+      "section": false
+    },
+    {
       "name": "self.inbox.concern",
       "input": "crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest",
       "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
@@ -1110,6 +1140,151 @@
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.list",
+      "description": "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::read_embedding_spaces(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.list\")?)?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.declare",
+      "description": "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceDeclareRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::declare_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.declare\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.bind",
+      "description": "Binds one kind slot to a declared space, or returns it to its default when no space is named.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceBindRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::bind_embedding_slot_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.bind\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.one_space",
+      "description": "Binds every kind slot the space accepts, text included, to that one space.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::bind_one_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.one_space\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.retire",
+      "description": "Drops a declared space that no slot binds and no open move names, with its vector rows.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::retire_embedding_space_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.retire\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.move",
+      "description": "Starts moving every kind slot the incumbent serves (the text index when none is named) to the candidate space.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceMoveRequest",
+      "output": "crate::embed::SpaceMove",
+      "call": "crate::task_verb::sdk::begin_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.move_check",
+      "description": "Runs an embedding space move probes now through both spaces and acts on the reading; it can take minutes.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceCandidateRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpaceMoveChecked",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.embedding_spaces.move_check\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.move_approve",
+      "description": "The owner says yes to a full candidate over a check that did not read not worse; it swaps in.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceCandidateRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::approve_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move_approve\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.move_undo",
+      "description": "Binds a swapped-in move incumbent again.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceCandidateRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::undo_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move_undo\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.move_abandon",
+      "description": "Ends an open embedding space move with no swap.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceCandidateRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpacesView",
+      "call": "crate::task_verb::sdk::abandon_embedding_space_move_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.move_abandon\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.probes.list",
+      "description": "Every stored embedding space probe with its id.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpaceProbes",
+      "call": "crate::task_verb::sdk::read_embedding_space_probes(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.probes.list\")?)?",
+      "host_door": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.probes.put",
+      "description": "Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceProbePutRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpaceProbe",
+      "call": "crate::task_verb::sdk::put_embedding_space_probe_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.probes.put\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.embedding_spaces.probes.delete",
+      "description": "Removes one stored embedding space probe by its id.",
+      "input": "crate::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest",
+      "output": "crate::task_verb::sdk::EmbeddingSpaceProbeDeleted",
+      "call": "crate::task_verb::sdk::delete_embedding_space_probe_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.probes.delete\")?, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -3258,33 +3433,65 @@
     },
     {
       "name": "vault.consolidation.enqueue",
+      "description": "Enqueues one consolidation attempt and returns its durable job reference.",
       "uniffi": {
         "args": {
           "input": "ConsolidationJobInput"
         },
         "output": "DreamerJobRef"
       },
-      "context": "definition"
+      "input": "ConsolidationEnqueueRequest",
+      "output": "crate::memory::DreamerAttemptRef",
+      "call": "memory_requests::enqueue_consolidation(memory, input)?",
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "vault.consolidation.status",
+      "description": "Reads the status of one consolidation attempt by its durable job reference.",
       "uniffi": {
         "args": {
           "job_ref": "String"
         },
         "output": "Option<DreamerJobView>"
       },
-      "context": "definition"
+      "input": "ConsolidationStatusRequest",
+      "output": "Option<crate::memory::DreamerAttemptView>",
+      "call": "memory_requests::dreamer_attempt_status(memory, input)?",
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted",
+      "section": false
     },
     {
       "name": "vault.claims.seed",
+      "description": "Seeds claims through their individual gates, forced proposed, returning one receipt per claim.",
+      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
       "uniffi": {
         "args": {
           "claims": "Vec<ClaimInput>"
         },
         "output": "Vec<CommitReceipt>"
       },
-      "context": "definition"
+      "input": "CommitRequest",
+      "output": "Vec<crate::memory::CommitReceipt>",
+      "call": "memory_requests::seed_claims(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?; for claim in &input.claims { crate::memory::caps::check_claim_input(claim)?; }"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "proposes": true,
+      "mcp_fields": {"spec": "$"},
+      "mcp_scope": "unrestricted"
     },
     {
       "name": "connector.outbound.schedule",
@@ -3425,6 +3632,13 @@
       "scope": "Write",
       "context": "run",
       "effect": "TasksRefuse"
+    },
+    {
+      "name": "self.agents.spawn",
+      "input": "crate::code_run::AgentSpawnInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "AgentsSpawn"
     },
     {
       "name": "self.leader.advice",
