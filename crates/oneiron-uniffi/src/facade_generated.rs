@@ -545,10 +545,10 @@ export_facade! {
     let output = client.vault_lenses_list(&input)?;
     crate::codec::lift_record("vault.lenses.list", &output)
 };
-"vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> ScopedReadResultGeneratedLens = |client| {
+"vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> WireJson = |client| {
     let input: oneiron::lens::LensDefaultRequest = crate::codec::lower_record("vault.lenses.default", input)?;
     let output = client.vault_lenses_default(&input)?;
-    crate::codec::lift_record("vault.lenses.default", &output)
+    crate::codec::encode("vault.lenses.default", &output)
 };
 "vault.disclosure.offer" => fn vault_disclosure_offer(&self, input: DisclosureOfferRequest) -> DisclosureOffered = |client| {
     let input: oneiron::task_verb::sdk::DisclosureOfferRequest = crate::codec::lower_record("vault.disclosure.offer", input)?;

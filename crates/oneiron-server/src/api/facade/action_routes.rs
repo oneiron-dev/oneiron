@@ -43,7 +43,7 @@ use oneiron::code_run::{
     SelfDispatchOutcome, SelfEffect,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::lens::{LensPrincipalBinding, LensText, SelfUiActionId};
+use oneiron::lens::{GeneratedUiValidatedAction, LensPrincipalBinding, LensText, SelfUiActionId};
 use oneiron::memory::{
     HostWriteOrigin, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MemoryError,
 };
@@ -86,26 +86,7 @@ async fn invoke(
     extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    // A verb-table or run row that only reads needs only read; any other
-    // action is an effect. The row's own route re-checks its scope in any
-    // case. A run row has no route, so its record bounds are checked here:
-    // a search reads on the credential's lane, as `vault.recall` does, and
-    // a write commits at once, as `execute_code` does.
-    let run_row = RunVerb::from_name(&verb);
-    let writes = AgentVerb::from_name(&verb)
-        .map(AgentVerb::writes)
-        .or(run_row.map(RunVerb::writes))
-        .unwrap_or(true);
-    auth.require(if writes {
-        CoreScope::Write
-    } else {
-        CoreScope::Read
-    })?;
-    match run_row {
-        Some(row) if row.writes() => auth.require_unrestricted_record_scope()?,
-        Some(_) => auth.require_lane_record_scope()?,
-        None => {}
-    }
+    require_action_scope(&auth, &verb)?;
     let request: ActionRequest = facade_input(facade_json(payload)?)?;
     let verb_id = SelfUiActionId::new(verb).map_err(|_| {
         FacadeApiError::new(
@@ -133,6 +114,32 @@ async fn invoke(
         "outcome": dispatch.outcome_value().map_err(engine)?,
         "readReceipt": dispatch.read_receipt,
     })))
+}
+
+/// The scope and record admission an action of `verb` meets, wherever its
+/// call comes from (an action call, a lens card's event). A verb-table or
+/// run row that only reads needs only read; any other action is an effect.
+/// The row's own route re-checks its scope in any case. A run row has no
+/// route, so its record bounds are checked here: a search reads on the
+/// credential's lane, as `vault.recall` does, and a write commits at once,
+/// as `execute_code` does.
+pub(super) fn require_action_scope(auth: &CoreAuth, verb: &str) -> Result<(), FacadeApiError> {
+    let run_row = RunVerb::from_name(verb);
+    let writes = AgentVerb::from_name(verb)
+        .map(AgentVerb::writes)
+        .or(run_row.map(RunVerb::writes))
+        .unwrap_or(true);
+    auth.require(if writes {
+        CoreScope::Write
+    } else {
+        CoreScope::Read
+    })?;
+    match run_row {
+        Some(row) if row.writes() => auth.require_unrestricted_record_scope()?,
+        Some(_) => auth.require_lane_record_scope()?,
+        None => {}
+    }
+    Ok(())
 }
 
 /// What one action runs under: the credential's principal and class, its
@@ -211,11 +218,8 @@ async fn execute(
     call: AgentActionCall,
 ) -> Result<ActionDispatch, FacadeApiError> {
     let ActionBound {
-        actor,
-        class,
-        key,
-        owner,
-    } = bound;
+        actor, class, key, ..
+    } = &bound;
     let principal = match class {
         EdgeActorClass::Agent => {
             LensPrincipalBinding::agent_task(actor.to_hex(), key.clone(), vec![key.clone()])
@@ -223,6 +227,69 @@ async fn execute(
         _ => LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key.clone()]),
     }
     .map_err(engine)?;
+    run_bound(
+        server,
+        headers,
+        extensions,
+        bound,
+        move |executor, vault, writer, binding| {
+            executor.execute_call(vault, writer, &principal, &call, binding)
+        },
+    )
+    .await
+}
+
+/// Runs a lens card's validated event under `bound`, as an action call
+/// runs: its deterministic tool through the app's table, its verb-table row
+/// through its own route under this request's headers and connection. The
+/// event's emitter is the held frame's principal; `key` is its idempotency
+/// key.
+pub(super) async fn execute_validated_ui(
+    server: &Arc<SyncServer>,
+    headers: HeaderMap,
+    extensions: Extensions,
+    bound: ActionBound,
+    event: GeneratedUiValidatedAction,
+    key: String,
+) -> Result<ActionDispatch, FacadeApiError> {
+    run_bound(
+        server,
+        headers,
+        extensions,
+        bound,
+        move |executor, vault, writer, binding| {
+            executor.execute_ui_bound(vault, writer, &event, &key, binding)
+        },
+    )
+    .await
+}
+
+/// Runs `run` on a blocking thread with the app's table, the vault, the
+/// actor `bound` writes as, and its host binding: the verb door over this
+/// request and the credential's read key, and the owner's proof.
+async fn run_bound<F>(
+    server: &Arc<SyncServer>,
+    headers: HeaderMap,
+    extensions: Extensions,
+    bound: ActionBound,
+    run: F,
+) -> Result<ActionDispatch, FacadeApiError>
+where
+    F: FnOnce(
+            &SharedActionExecutor,
+            &oneiron::Vault,
+            WriteActor,
+            ActionHostBinding<'_>,
+        ) -> oneiron::Result<ActionDispatch>
+        + Send
+        + 'static,
+{
+    let ActionBound {
+        actor,
+        class,
+        key,
+        owner,
+    } = bound;
     let door: Arc<dyn AgentVerbDoor> =
         Arc::new(FacadeRowDoor::new(server, headers, extensions, key));
     let executor = app()?;
@@ -233,13 +300,7 @@ async fn execute(
             owner: owner.as_ref(),
             live_run: None,
         };
-        executor.execute_call(
-            &vault,
-            WriteActor::new(actor, class),
-            &principal,
-            &call,
-            binding,
-        )
+        run(executor, &vault, WriteActor::new(actor, class), binding)
     })
     .await
     .map_err(|_| internal())?

@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 307 code-mode rows (289 host rows, 18 run rows), 973 declarations.
-// Replies: 250 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 307 code-mode rows (289 host rows, 18 run rows), 982 declarations.
+// Replies: 249 fully typed, 45 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 70; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -420,6 +420,15 @@ declare namespace Sdk {
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[] };
   type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
+  type GeneratedUiCatalog = "lens_atom_kit";
+  type GeneratedUiNode = { id: string; parent?: string | null; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; childRefs?: string[] };
+  type GeneratedUiActionTier = "local" | "deterministic_tool" | "model_round_trip";
+  type GeneratedUiActionDeclaration = { elementId: string; actionId: string; tier: GeneratedUiActionTier; action: SelfUiAction };
+  type GeneratedUiCardPhase = "generating" | "active" | "responded" | "archived";
+  type GeneratedUiArchiveReason = "completed" | "expired" | "dismissed" | "superseded";
+  type GeneratedUiCardLifecycle = { phase: GeneratedUiCardPhase; revision: number; archiveReason?: GeneratedUiArchiveReason | null };
+  type GeneratedUiRender = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; root: string; nodes: GeneratedUiNode[]; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle };
+  type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: GeneratedLens };
   type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeId = string;
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
@@ -1455,8 +1464,8 @@ declare const vault: Sdk.VaultHost & {
     activate(input: Sdk.LensActivateRequest): Promise<Sdk.Reply<Sdk.LensActivationReceipt>>;
     /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
     deactivate(input: Sdk.LensDeactivateRequest): Promise<Sdk.Reply<Sdk.LensActivationReceipt>>;
-    /** Composes the default vault lens from the named sources, read under the caller's own scope. */
-    default(input: Sdk.LensDefaultRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.GeneratedLens>>>;
+    /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
+    default(input: Sdk.LensDefaultRequest): Promise<Sdk.Reply<Sdk.ScopedReadResult<Sdk.LensFrameCard>>>;
     /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
     list(input: Sdk.LensListRequest): Promise<Sdk.Reply<Sdk.LensListPage>>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */

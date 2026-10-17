@@ -2877,7 +2877,7 @@ impl AgentVerb {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
             Self::VaultLensesDefault => {
-                "Composes the default vault lens from the named sources, read under the caller's own scope."
+                "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."
             }
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."

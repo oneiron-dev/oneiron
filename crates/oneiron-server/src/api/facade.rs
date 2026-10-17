@@ -46,6 +46,7 @@ mod shared_act_doors;
 mod shared_member_doors;
 #[cfg(test)]
 pub(super) mod tests;
+pub(super) mod ui_action_routes;
 mod vault_shape_doors;
 mod wave_doors;
 mod weave_doors;

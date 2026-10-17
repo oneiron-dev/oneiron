@@ -368,7 +368,7 @@ export interface FacadeResults {
   "vault.lenses.activate": Facade.LensActivationReceipt;
   "vault.lenses.deactivate": Facade.LensActivationReceipt;
   "vault.lenses.list": Facade.LensListPage;
-  "vault.lenses.default": Facade.ScopedReadResult<Facade.GeneratedLens>;
+  "vault.lenses.default": Facade.ScopedReadResult<Facade.LensFrameCard>;
   "vault.disclosure.offer": Facade.DisclosureOffered;
   "reveal": Facade.RevealPending;
   "reveal.wait": Facade.RevealWaitAnswer;
@@ -636,7 +636,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.lenses.activate": { description: "The owner selects a proposed lens revision for its pack slot.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.deactivate": { description: "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.list": { description: "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.lenses.default": { description: "Composes the default vault lens from the named sources, read under the caller's own scope.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.lenses.default": { description: "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.disclosure.offer": { description: "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "reveal": { description: "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "reveal.wait": { description: "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -1126,7 +1126,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         deactivate: (input: Facade.LensDeactivateRequest, options?: O): FacadeReturns<"vault.lenses.deactivate">[K] => invoke("vault.lenses.deactivate", input, options, newInvocation()),
         /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
         list: (input: Facade.LensListRequest, options?: O): FacadeReturns<"vault.lenses.list">[K] => invoke("vault.lenses.list", input, options, newInvocation()),
-        /** Composes the default vault lens from the named sources, read under the caller's own scope. */
+        /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
         default: (input: Facade.LensDefaultRequest, options?: O): FacadeReturns<"vault.lenses.default">[K] => invoke("vault.lenses.default", input, options, newInvocation()),
       },
       disclosure: {

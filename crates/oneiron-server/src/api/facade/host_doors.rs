@@ -71,6 +71,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::reaction_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
+// The default lens's door, which holds its card's frame (OF-181), likewise.
+pub(crate) use super::ui_action_routes::vault_lenses_default;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the

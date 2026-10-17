@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 249 facade rows, 868 declarations.
+Census: 249 facade rows, 877 declarations.
 Inputs: 208 of 249 fully typed, 40 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 202 of 249 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Results: 201 of 249 fully typed, 39 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
 Opaque serde_json::Value leaves: 64; unread shapes: 1.
 """
 
@@ -2064,6 +2064,25 @@ class LensDefaultRequest(TypedDict):
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
+GeneratedUiCatalog = Literal["lens_atom_kit"]
+GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
+GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
+class GeneratedUiActionDeclaration(TypedDict):
+    elementId: str
+    actionId: str
+    tier: GeneratedUiActionTier
+    action: SelfUiAction
+GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
+GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
+class GeneratedUiCardLifecycle(TypedDict):
+    phase: GeneratedUiCardPhase
+    revision: int
+    archiveReason: NotRequired[GeneratedUiArchiveReason | None]
+GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+class LensFrameCard(TypedDict):
+    card_id: str
+    render: GeneratedUiRender
+    lens: GeneratedLens
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):

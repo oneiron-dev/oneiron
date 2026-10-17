@@ -1068,6 +1068,10 @@ instead when the request is larger than one action argument (16 KiB of JSON), na
 turn, or comes from a credential that binds no person or agent. The route picks the path before
 it writes. A TURN write wakes the Dreamer once on either path.
 
+A running server holds the frame of each card `vault.lenses.default` returns, for your credential:
+- `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
+- `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
+
 ## Widen proposals
 
 When an agent asks to spawn a child with more context than its own slice holds, the gate does not

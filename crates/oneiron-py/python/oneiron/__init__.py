@@ -936,7 +936,7 @@ class Oneiron:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
             return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
     class _VaultDisclosureVerbs:
         def __init__(self, client: _NativeClient) -> None:

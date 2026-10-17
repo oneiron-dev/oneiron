@@ -5734,7 +5734,7 @@ pub fn vault_lenses_list(
 pub fn vault_lenses_default(
     memory: &Memory<'_>,
     input: crate::lens::LensDefaultRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::LensFrameCard>> {
     memory.lenses_default(input)
 }
 pub fn vault_disclosure_offer(

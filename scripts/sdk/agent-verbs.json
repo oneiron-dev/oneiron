@@ -1621,10 +1621,12 @@
     },
     {
       "name": "vault.lenses.default",
-      "description": "Composes the default vault lens from the named sources, read under the caller's own scope.",
+      "description": "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server.",
       "input": "crate::lens::LensDefaultRequest",
-      "output": "crate::claim::ScopedReadResult<crate::lens::GeneratedLens>",
+      "output": "crate::claim::ScopedReadResult<crate::lens::LensFrameCard>",
       "call": "memory.lenses_default(input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "projection_record_scope": true
