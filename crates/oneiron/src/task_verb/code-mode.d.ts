@@ -83,7 +83,9 @@ declare namespace self {
   const focus: {
     refresh(input: { frame_epoch?: number | null }): Promise<unknown>;
     scratchpad: {
+      append(input: { mark?: "keep" | "scratch" | null; pin?: boolean; session_id: string; text: string }): Promise<unknown>;
       recall(input: { query: string; session_id: string }): Promise<unknown>;
+      seal(input: { session_id: string }): Promise<unknown>;
     };
     subscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
     unsubscribe(input: { scopes: ("my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts")[] }): Promise<unknown>;
@@ -145,6 +147,7 @@ declare const tasks: {
 declare const vault: {
   artifacts: {
     append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
+    ask(input: { artifact_ref: string; deadline_ms?: number | null; evidence_refs?: string[]; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { kind: 'sheet_rows'; answer_column: number; header_row?: number | null; max_count?: number | null; rows: string; sheet: string } | { kind: 'paragraphs'; author: string; blocks: string[]; labels: unknown } | { kind: 'folder_items'; answer_column: number; items: { artifact_ref: string; row: number }[]; max_count?: number | null; sheet: string } }): Promise<unknown>;
     body: {
       commits(input: { artifact_ref: string }): Promise<unknown>;
       deck: {
@@ -266,6 +269,10 @@ declare const vault: {
     };
     retire(input: { space: string }): Promise<unknown>;
   };
+  explain: {
+    gate(input: { receipt: string }): Promise<unknown>;
+    memory(input: { entity: string; session_id?: string | null }): Promise<unknown>;
+  };
   export(input: { format?: string | null }): Promise<unknown>;
   fanout: {
     ack(input: { answer: "ack" | "ack_and_remember"; launch_ref: string; plan_digest: string; remembered_cap?: number | null }): Promise<unknown>;
@@ -326,6 +333,9 @@ declare const vault: {
     remove(input: { member: string; vault_id: number }): Promise<unknown>;
     withdraw_invitation(input: { invitation: string; member: string; vault_id: number }): Promise<unknown>;
   };
+  mesh: {
+    path_receipts(input: { limit?: number | null }): Promise<unknown>;
+  };
   messages: {
     react(input: { message: string; by: string; glyph: string; occurred_at?: number | null; remove?: boolean; external?: { connector: string; id: string; origin?: string | null } | null }): Promise<unknown>;
   };
@@ -372,6 +382,7 @@ declare const vault: {
     edit(input: { definition: unknown; expected_version: number; id: string }): Promise<unknown>;
     pause(input: { id: string; paused: boolean }): Promise<unknown>;
     read(input: { id: string; version?: number | null }): Promise<unknown>;
+    refresh(input: { id: string }): Promise<unknown>;
   };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; media?: { bytes_b64: string; kinds?: ("text" | "image" | "audio")[]; mime: string; space: string } | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {

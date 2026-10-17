@@ -10,6 +10,16 @@ export_facade! {
     let output = client.self_focus_scratchpad_recall(&input)?;
     crate::codec::lift_record("self.focus.scratchpad.recall", &output)
 };
+"self.focus.scratchpad.append" => fn self_focus_scratchpad_append(&self, input: ScratchpadAppendRequest) -> ScratchpadWriteReply = |client| {
+    let input: oneiron::task_verb::sdk::ScratchpadAppendRequest = crate::codec::lower_record("self.focus.scratchpad.append", input)?;
+    let output = client.self_focus_scratchpad_append(&input)?;
+    crate::codec::lift_record("self.focus.scratchpad.append", &output)
+};
+"self.focus.scratchpad.seal" => fn self_focus_scratchpad_seal(&self, input: ScratchpadSealRequest) -> ScratchpadWriteReply = |client| {
+    let input: oneiron::task_verb::sdk::ScratchpadSealRequest = crate::codec::lower_record("self.focus.scratchpad.seal", input)?;
+    let output = client.self_focus_scratchpad_seal(&input)?;
+    crate::codec::lift_record("self.focus.scratchpad.seal", &output)
+};
 "self.memory.diary" => fn self_memory_diary(&self, input: DiaryEntryRequest) -> DiaryEntryReceipt = |client| {
     let input: oneiron::task_verb::sdk::DiaryEntryRequest = crate::codec::lower_record("self.memory.diary", input)?;
     let output = client.self_memory_diary(&input)?;
@@ -181,6 +191,16 @@ export_facade! {
     let output = client.vault_receipts_get(&input)?;
     crate::codec::lift_record("vault.receipts.get", &output)
 };
+"vault.explain.memory" => fn vault_explain_memory(&self, input: ExplainMemoryRequest) -> Option<ExplainMemoryReply> = |client| {
+    let input: oneiron::task_verb::sdk::ExplainMemoryRequest = crate::codec::lower_record("vault.explain.memory", input)?;
+    let output = client.vault_explain_memory(&input)?;
+    crate::codec::lift_record("vault.explain.memory", &output)
+};
+"vault.explain.gate" => fn vault_explain_gate(&self, input: ExplainGateRequest) -> Option<ExplainGateReply> = |client| {
+    let input: oneiron::task_verb::sdk::ExplainGateRequest = crate::codec::lower_record("vault.explain.gate", input)?;
+    let output = client.vault_explain_gate(&input)?;
+    crate::codec::lift_record("vault.explain.gate", &output)
+};
 "vault.kv.get" => fn vault_kv_get(&self, input: KeyValueAddress) -> Option<KeyValueItem> = |client| {
     let input: oneiron::memory::KeyValueAddress = crate::codec::lower_record("vault.kv.get", input)?;
     let output = client.vault_kv_get(&input)?;
@@ -255,6 +275,11 @@ export_facade! {
     let input: oneiron::receipt::AuthorityAuditQuery = crate::codec::lower_record("vault.authority.audit", input)?;
     let output = client.vault_authority_audit(&input)?;
     crate::codec::lift_record("vault.authority.audit", &output)
+};
+"vault.mesh.path_receipts" => fn vault_mesh_path_receipts(&self, input: MeshPathReceiptsRequest) -> Vec<MeshPathReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::MeshPathReceiptsRequest = crate::codec::lower_record("vault.mesh.path_receipts", input)?;
+    let output = client.vault_mesh_path_receipts(&input)?;
+    crate::codec::lift_record("vault.mesh.path_receipts", &output)
 };
 "vault.inspection.resolve" => fn vault_inspection_resolve(&self, input: InspectionResolveRequest) -> InspectionResolved = |client| {
     let input: oneiron::lens::InspectionResolveRequest = crate::codec::lower_record("vault.inspection.resolve", input)?;
@@ -671,6 +696,11 @@ export_facade! {
     let output = client.vault_artifacts_review_slides(&input)?;
     crate::codec::lift_record("vault.artifacts.review_slides", &output)
 };
+"vault.artifacts.ask" => fn vault_artifacts_ask(&self, input: ArtifactAskSubmit) -> ArtifactAskOutcome = |client| {
+    let input: oneiron::blob_artifact::ArtifactAskSubmit = crate::codec::lower_record("vault.artifacts.ask", input)?;
+    let output = client.vault_artifacts_ask(&input)?;
+    crate::codec::lift_record("vault.artifacts.ask", &output)
+};
 "vault.artifacts.propose_deck" => fn vault_artifacts_propose_deck(&self, input: DeckProposeRequest) -> DeckProposeOutcome = |client| {
     let input: oneiron::blob_artifact::DeckProposeRequest = crate::codec::lower_record("vault.artifacts.propose_deck", input)?;
     let output = client.vault_artifacts_propose_deck(&input)?;
@@ -1005,6 +1035,11 @@ export_facade! {
     let input: oneiron::receipt::QuestionAnswersRequest = crate::codec::lower_record("vault.questions.answers", input)?;
     let output = client.vault_questions_answers(&input)?;
     crate::codec::lift_record("vault.questions.answers", &output)
+};
+"vault.questions.refresh" => fn vault_questions_refresh(&self, input: QuestionRefreshRequest) -> Vec<AnswerRecord> = |client| {
+    let input: oneiron::receipt::QuestionRefreshRequest = crate::codec::lower_record("vault.questions.refresh", input)?;
+    let output = client.vault_questions_refresh(&input)?;
+    crate::codec::lift_record("vault.questions.refresh", &output)
 };
 "vault.decisions.asks.answer" => fn vault_decisions_asks_answer(&self, input: DecisionAskAnswerRequest) -> DecisionAsk = |client| {
     let input: oneiron::receipt::DecisionAskAnswerRequest = crate::codec::lower_record("vault.decisions.asks.answer", input)?;

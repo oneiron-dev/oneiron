@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 320 code-mode rows (302 host rows, 18 run rows), 1097 declarations.
-// Replies: 259 fully typed, 47 typed down to an opaque serde_json::Value leaf, 13 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 327 code-mode rows (309 host rows, 18 run rows), 1118 declarations.
+// Replies: 265 fully typed, 48 typed down to an opaque serde_json::Value leaf, 13 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
+// Opaque serde_json::Value leaves: 78; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -33,6 +33,9 @@ declare namespace Sdk {
   type ScratchpadRecallMark = "keep" | "scratch";
   type ScratchpadRecallReplyLine = { index: number; mark?: ScratchpadRecallMark | null; pin: boolean; text: string };
   type ScratchpadRecallReply = { pad?: EntityId | null; sealed: boolean; matched: number; lines: ScratchpadRecallReplyLine[] };
+  type ScratchpadAppendRequest = { session_id: string; text: string; mark?: ScratchpadRecallMark | null; pin?: boolean };
+  type ScratchpadWriteReply = { pad?: EntityId | null; sealed: boolean; sealed_prior?: EntityId | null };
+  type ScratchpadSealRequest = { session_id: string };
   type DiaryEntryRequest = { content: string; kind?: string | null };
   type RecordRef = { kind: string; id: string; short_id?: string | null; label: string };
   type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null };
@@ -273,6 +276,14 @@ declare namespace Sdk {
   type CallTransport = "http_facade" | "mcp" | "ws";
   type CallOutcome = "ok" | { refused: { code: string } };
   type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; served: string[]; served_records?: RecordRef[] };
+  type ExplainMemoryRequest = { entity: string; session_id?: string | null };
+  type RetrievalSignal = "vector" | "text" | "phonetic" | "temporal" | "ppr" | "recency" | "salience" | "confidence" | "gravity" | "rerank" | "hyde" | "hyde_retry" | "media_vector";
+  type RetrievalScoreComponent = { signal: RetrievalSignal; rank: number; score: number };
+  type ExplainScoreEvidence = { result_id: string; final_rank: number; final_score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
+  type ExplainMemoryReply = { id: string; run_id?: string | null; rank?: number | null; neighbor: boolean; tier?: string | null; hook?: string | null; score?: ExplainScoreEvidence | null };
+  type ExplainGateRequest = { receipt: string };
+  type ExplainGateNotice = { notice_type: string; row_ref?: string | null };
+  type ExplainGateReply = { receipt_id: string; decided_at: number; outcome: string; reason_codes: string[]; receipt_reasons: string[]; notices: ExplainGateNotice[]; actor_class: string; actor_ref?: string | null; content_kind: string; policy_manifest_version: string; claim_ref?: string | null };
   type KeyValueAddress = { namespace: string[]; key: string };
   type KeyValueItem = { namespace: string[]; key: string; value: unknown; created_at: number; updated_at: number; revision: string };
   type KeyValuePut = { namespace: string[]; key: string; value: unknown; request_id: string; source?: string };
@@ -397,6 +408,11 @@ declare namespace Sdk {
   type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditOrder = "entry_ref_ascending";
   type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number };
+  type MeshPathReceiptsRequest = { limit?: number | null };
+  type MeshPathDirection = "inbound" | "outbound";
+  type MeshPathOutcome = "admitted" | "refused" | "failed";
+  type MeshPathKind = "direct" | "relayed" | "mixed" | "none";
+  type MeshPathReceipt = { id: string; direction: MeshPathDirection; outcome: MeshPathOutcome; machine?: string | null; endpoint_key?: string | null; alpn: string; opened_at_ms: number; closed_at_ms?: number | null; paths: MeshPathKind; used_direct: boolean; used_relay: boolean; direct_addr?: string | null; relay_url?: string | null; detail?: string | null; attempts: number };
   type InspectionResolveRequest = { handle: string };
   type LensBackingTargetKind = "entity" | "claim";
   type InspectionState = { target_ref: EntityId; target_kind: LensBackingTargetKind };
@@ -618,6 +634,27 @@ declare namespace Sdk {
   type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: unknown; author: unknown; labels: unknown; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
   type SlideUnitRefused = { target: unknown; reason: string; offer?: unknown | null };
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; abstained: unknown[]; refused: SlideUnitRefused[] };
+  type FolderItemInput = { artifact_ref: string; row: number };
+  type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
+  type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: unknown; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
+  type ImageBox = { top: number; bottom: number; left: number; right: number };
+  type ImagePoint = { x: number; y: number };
+  type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type DecisionBand = { low: number; high: number };
+  type EvidenceVersion = { id: string; body_hash: number[] };
+  type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
+  type StopCause = "done" | "deadline" | "provider_failure";
+  type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
+  type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
+  type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
+  type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
+  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null };
+  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline";
+  type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
+  type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
+  type UnitRefusal = { unit: unknown; reason: string };
+  type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
   type DeckProposeRequest = { artifact_ref: string; transaction: unknown; run_ref: string; context?: unknown; made_by?: unknown | null };
   type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: unknown | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null };
@@ -641,9 +678,6 @@ declare namespace Sdk {
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
   type TaskAnswerRequest = { handle: TaskAskHandle; word: TaskAskWord };
-  type ImageBox = { top: number; bottom: number; left: number; right: number };
-  type ImagePoint = { x: number; y: number };
-  type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
   type OutcomeLabel = { answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number };
   type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel };
   type RoomOriginCard = { room: string; thread: string; message: string; at: number };
@@ -787,17 +821,6 @@ declare namespace Sdk {
   type AiVideoCancelled = { job: string };
   type AiVerdictReversibility = "reversible_read" | "outbound_effect";
   type AiVerdictRequest = { question: string; options?: string[]; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; locate?: boolean; misses?: number; until_ms?: number | null };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
-  type DecisionBand = { low: number; high: number };
-  type EvidenceVersion = { id: string; body_hash: number[] };
-  type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
-  type StopCause = "done" | "deadline" | "provider_failure";
-  type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
-  type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
-  type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
-  type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
-  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null };
-  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline";
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
   type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
@@ -807,7 +830,6 @@ declare namespace Sdk {
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
   type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
   type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null; criteria?: QuestionCriteria | null };
-  type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
   type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[] };
@@ -816,8 +838,6 @@ declare namespace Sdk {
   type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null };
   type QuestionAudience = "asker";
   type QuestionMedia = { images?: boolean; audio?: boolean };
-  type FolderItemInput = { artifact_ref: string; row: number };
-  type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
   type ArtifactUnits = { artifact: string; selection: ArtifactAskUnits };
   type QuestionDefinition = { question: DecisionQuestion; adapter: string; units: string[]; recipe: string; profile: string; dial: DecisionDial; activation: QuestionActivation; refresh: RefreshPolicy; delivery: string; learning: boolean; binding?: OutcomeBinding | null; criteria?: QuestionCriteria; audience?: QuestionAudience; posture?: HostingPrivacyPosture | null; media?: QuestionMedia; deadline_ms?: number | null; artifacts?: ArtifactUnits[] };
   type QuestionCreateRequest = { definition: QuestionDefinition };
@@ -832,6 +852,7 @@ declare namespace Sdk {
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" };
   type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
+  type QuestionRefreshRequest = { id: EntityId };
   type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer };
   type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null };
   type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" };
@@ -1261,8 +1282,12 @@ declare namespace self {
     /** Re-renders the run's context board as one frame, at the frame epoch the caller last saw. */
     refresh(input: Sdk.BoardRefreshRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
     scratchpad: {
+      /** Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused. */
+      append(input: Sdk.ScratchpadAppendRequest): Promise<Sdk.ScratchpadWriteReply | StoredResult>;
       /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
       recall(input: Sdk.ScratchpadRecallRequest): Promise<Sdk.ScratchpadRecallReply | StoredResult>;
+      /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
+      seal(input: Sdk.ScratchpadSealRequest): Promise<Sdk.ScratchpadWriteReply | StoredResult>;
     };
     /** Subscribes the run's board stream to the named scopes. */
     subscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
@@ -1348,6 +1373,8 @@ declare const vault: Sdk.VaultHost & {
   artifacts: {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
+    /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
+    ask(input: Sdk.ArtifactAskSubmit): Promise<Sdk.ArtifactAskOutcome | StoredResult>;
     body: {
       /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
       commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.TextCommitReceipt[] | StoredResult>;
@@ -1543,6 +1570,12 @@ declare const vault: Sdk.VaultHost & {
     /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
     retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
   };
+  explain: {
+    /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
+    gate(input: Sdk.ExplainGateRequest): Promise<Sdk.ExplainGateReply | null | StoredResult>;
+    /** Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it. */
+    memory(input: Sdk.ExplainMemoryRequest): Promise<Sdk.ExplainMemoryReply | null | StoredResult>;
+  };
   /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. */
   export(input: Sdk.ExportOptions): Promise<Sdk.MemoryExport | StoredResult>;
   fanout: {
@@ -1639,6 +1672,10 @@ declare const vault: Sdk.VaultHost & {
     /** An Admin with the add_member power takes back a pending invitation. */
     withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
   };
+  mesh: {
+    /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
+    path_receipts(input: Sdk.MeshPathReceiptsRequest): Promise<Sdk.MeshPathReceipt[] | StoredResult>;
+  };
   messages: {
     /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
@@ -1708,6 +1745,8 @@ declare const vault: Sdk.VaultHost & {
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.QuestionRecord | StoredResult>;
     pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.QuestionPaused | StoredResult>;
     read(input: Sdk.QuestionReadRequest): Promise<Sdk.QuestionRecord | null | StoredResult>;
+    /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
+    refresh(input: Sdk.QuestionRefreshRequest): Promise<Sdk.AnswerRecord[] | StoredResult>;
   };
   /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;

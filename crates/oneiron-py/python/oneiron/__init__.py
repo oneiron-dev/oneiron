@@ -324,6 +324,12 @@ class Oneiron:
         def recall(self, spec):
             """Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."""
             return json.loads(_translate(lambda: self._client.self_focus_scratchpad_recall(json.dumps(spec))))
+        def append(self, spec):
+            """Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused."""
+            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_append(json.dumps(spec))))
+        def seal(self, spec):
+            """Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad."""
+            return json.loads(_translate(lambda: self._client.self_focus_scratchpad_seal(json.dumps(spec))))
     class _SelfMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -449,6 +455,9 @@ class Oneiron:
         def images(self) -> "Oneiron._VaultImagesVerbs":
             return Oneiron._VaultImagesVerbs(self._client)
         @property
+        def explain(self) -> "Oneiron._VaultExplainVerbs":
+            return Oneiron._VaultExplainVerbs(self._client)
+        @property
         def kv(self) -> "Oneiron._VaultKvVerbs":
             return Oneiron._VaultKvVerbs(self._client)
         @property
@@ -460,6 +469,9 @@ class Oneiron:
         @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
+        @property
+        def mesh(self) -> "Oneiron._VaultMeshVerbs":
+            return Oneiron._VaultMeshVerbs(self._client)
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs":
             return Oneiron._VaultInspectionVerbs(self._client)
@@ -649,6 +661,15 @@ class Oneiron:
         def view(self, request: dict[str, Any]) -> dict[str, Any]:
             """The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull."""
             return json.loads(_translate(lambda: self._client.vault_images_view(json.dumps(request, allow_nan=False))))
+    class _VaultExplainVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def memory(self, spec):
+            """Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it."""
+            return json.loads(_translate(lambda: self._client.vault_explain_memory(json.dumps(spec))))
+        def gate(self, spec):
+            """Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it."""
+            return json.loads(_translate(lambda: self._client.vault_explain_gate(json.dumps(spec))))
     class _VaultKvVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -730,6 +751,12 @@ class Oneiron:
         def acknowledge(self, spec):
             """The owner acknowledges one saved handoff fork alarm."""
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultMeshVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def path_receipts(self, spec):
+            """The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."""
+            return json.loads(_translate(lambda: self._client.vault_mesh_path_receipts(json.dumps(spec))))
     class _VaultInspectionVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1015,6 +1042,9 @@ class Oneiron:
         def review_slides(self, request: dict[str, Any]) -> dict[str, Any]:
             """Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_review_slides(json.dumps(request, allow_nan=False))))
+        def ask(self, spec):
+            """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_ask(json.dumps(spec))))
         def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
             """Runs one native deck transaction over the head and holds the proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))
@@ -1353,6 +1383,9 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
         def answers(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
+        def refresh(self, spec):
+            """Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."""
+            return json.loads(_translate(lambda: self._client.vault_questions_refresh(json.dumps(spec))))
     class _VaultDecisionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

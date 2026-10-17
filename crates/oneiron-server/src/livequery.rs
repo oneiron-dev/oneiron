@@ -322,6 +322,9 @@ pub(crate) enum Channel {
     PendingConsent,
     /// Human owner feed of durable per-entry SAVED_QUERY watches.
     OwnerFeed,
+    /// The bound actor's delivered notifications, its inbox's first page
+    /// (OF-221), read through its credential's `Memory::inbox_list`.
+    Notifications,
     // Reserved, explicitly rejected rather than aliasing a different stream.
     MemoryBoard,
     Gap,
