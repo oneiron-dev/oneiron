@@ -202,7 +202,9 @@ fn unread_assertion_in(
     let ids: Vec<EntityId> = named.iter().filter_map(|(_, id)| *id).collect();
     let mut readable = lane.entities_readable_in_txn(txn, &ids)?.into_iter();
     for (pointer, id) in named {
-        if !(id.is_some() && readable.next().unwrap_or(false)) {
+        // A malformed id takes no readable slot: its pointer fails as it is.
+        let read = id.is_some() && readable.next().unwrap_or(false);
+        if !read {
             return Ok(Some(pointer));
         }
     }
@@ -421,11 +423,11 @@ impl Memory<'_> {
         // it takes its own snapshot and so never runs inside the writer. A
         // turn that asserts nothing opens none. `refused` carries the first
         // pointer the lane cannot read out of the aborted writer.
-        let asserts = !turn.assertions.cited.is_empty() || !turn.assertions.created.is_empty();
-        let assertion_lane = if asserts {
-            Some(self.read_lane(ClaimReadStatus::Recorded)?)
-        } else {
+        let silent = turn.assertions.cited.is_empty() && turn.assertions.created.is_empty();
+        let assertion_lane = if silent {
             None
+        } else {
+            Some(self.read_lane(ClaimReadStatus::Recorded)?)
         };
         let refused = Cell::new(None);
         let plan = self.plan_witness(turn, &landing, door, admit)?;
