@@ -33,6 +33,7 @@ use oneiron::task_verb::sdk::{
 };
 
 use crate::auth::CoreAuth;
+use crate::builtin_host::HostConnectionChecks;
 use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
@@ -643,7 +644,8 @@ pub(crate) async fn vault_packs_setup_answer(
     let owner = lens_owner(auth, server, "vault.packs.setup.answer")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        oneiron::task_verb::sdk::answer_pack_setup_as_owner(server.vault(), &owner, &input)
+        let checks = HostConnectionChecks::new(&server)?;
+        oneiron::task_verb::sdk::answer_pack_setup_as_owner(server.vault(), &owner, &input, &checks)
     })
     .await
     .map_err(|_| internal("vault.packs.setup.answer"))?
@@ -659,7 +661,8 @@ pub(crate) async fn vault_packs_setup_verify(
     let owner = lens_owner(auth, server, "vault.packs.setup.verify")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        oneiron::task_verb::sdk::verify_pack_setup_as_owner(server.vault(), &owner, &input)
+        let checks = HostConnectionChecks::new(&server)?;
+        oneiron::task_verb::sdk::verify_pack_setup_as_owner(server.vault(), &owner, &input, &checks)
     })
     .await
     .map_err(|_| internal("vault.packs.setup.verify"))?
