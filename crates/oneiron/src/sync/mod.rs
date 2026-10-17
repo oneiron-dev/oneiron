@@ -75,8 +75,8 @@ pub(crate) mod withdrawn_cutoffs;
 pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
-    ResidenceSearch, SealedRelay, SearchSource, SyncClient, SyncClientConfig, SyncEvent,
-    SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
+    ResidenceSearch, SealedBundleRelay, SealedRelay, SearchSource, SyncClient, SyncClientConfig,
+    SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{
     ConnectionConfig, HomeNodeTopology, HomeSearch, LocalUpdate, ResidenceModeChange,

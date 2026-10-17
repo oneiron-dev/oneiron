@@ -354,6 +354,8 @@ fn compact_window_with(
     crate::sync::room_facts::scrub_room_facts(vault, &doc, None)?;
     // FIX 853: and the document quote pins of an erased message or reply.
     crate::sync::document_pins::scrub_document_pins(vault, &doc, None)?;
+    // A removed session's epoch floor leaves the window too.
+    crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, &doc, None)?;
 
     // OF-013: a withdrawn generation's live carrier becomes its keyframe
     // envelope before the shallow export drops the history that held its

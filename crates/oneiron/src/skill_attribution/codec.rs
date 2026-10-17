@@ -3,6 +3,7 @@
 use std::io::Cursor;
 
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
@@ -12,6 +13,7 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::SkillRecord;
 
 use super::audit::AttributionAuditReport;
+use super::calibration::AuditBatch;
 use super::types::{
     AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
     OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
@@ -60,13 +62,40 @@ impl RawValue for SkillEditProposal {
     }
 }
 
-impl RawValue for AttributionAuditReport {
+/// One persisted audit run: its aggregate report and its batch kept whole
+/// (OF-542).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct AuditRow {
+    v: u64,
+    pub(super) report: AttributionAuditReport,
+    pub(super) batch: AuditBatch,
+}
+
+impl AuditRow {
+    pub(super) fn new(report: AttributionAuditReport, batch: AuditBatch) -> Self {
+        Self {
+            v: SKILL_ATTRIBUTION_SCHEMA_VERSION,
+            report,
+            batch,
+        }
+    }
+}
+
+const AUDIT_ROW_LABEL: &str = "skill attribution audit row";
+
+impl RawValue for AuditRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_value(&encode_audit(self))?)
+        rmp_serde::to_vec_named(self)
+            .map_err(|_| CodecError::Value(Error::InvariantViolation(AUDIT_ROW_LABEL)))
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_audit(bytes)?)
+        let row: Self = rmp_serde::from_slice(bytes)
+            .map_err(|_| CodecError::Value(Error::CorruptedIndex(AUDIT_ROW_LABEL)))?;
+        if row.v != SKILL_ATTRIBUTION_SCHEMA_VERSION {
+            return Err(CodecError::Value(Error::CorruptedIndex(AUDIT_ROW_LABEL)));
+        }
+        Ok(row)
     }
 }
 
@@ -86,9 +115,9 @@ pub(super) const JUDGMENT: SideTable<u64, AttributionJudgment, Raw> =
 pub(super) const EDIT_PROPOSAL: SideTable<u64, SkillEditProposal, Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_EDIT_PROPOSAL);
 
-/// Persisted audit report of a judge run, keyed by run time then evidence sequence.
-/// Key: u64be `at` + u64be sequence.
-pub(super) const AUDIT: SideTable<(u64, u64), AttributionAuditReport, Raw> =
+/// Persisted audit run of a judge (its report and batch), keyed by run time then
+/// evidence sequence. Key: u64be `at` + u64be sequence.
+pub(super) const AUDIT: SideTable<(u64, u64), AuditRow, Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_AUDIT);
 
 /// Highest evidence sequence the attribution projector has already routed. Key: ().
@@ -124,12 +153,6 @@ const KEY_VERDICT: &str = "verdict";
 const KEY_SUBJECT: &str = "subject";
 
 const KEY_EVIDENCE_RECEIPTS: &str = "evidence_receipts";
-
-const KEY_TOTAL: &str = "total";
-
-const KEY_PASSED: &str = "passed";
-
-const KEY_ABSTAINED: &str = "abstained";
 
 const fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
@@ -563,51 +586,6 @@ fn decode_edit_proposal(raw: &[u8]) -> Result<SkillEditProposal> {
         evidence_receipts: evidence_receipts
             .ok_or(invalid("skill edit proposal missing evidence"))?,
         at: at.ok_or(invalid("skill edit proposal missing timestamp"))?,
-    })
-}
-
-fn encode_audit(report: &AttributionAuditReport) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(SKILL_ATTRIBUTION_SCHEMA_VERSION),
-        ),
-        (Value::from(KEY_TOTAL), Value::from(report.total as u64)),
-        (Value::from(KEY_PASSED), Value::from(report.passed as u64)),
-        (
-            Value::from(KEY_ABSTAINED),
-            Value::from(report.abstained as u64),
-        ),
-        (Value::from(KEY_AT), Value::from(report.at)),
-    ])
-}
-
-fn decode_audit(raw: &[u8]) -> Result<AttributionAuditReport> {
-    let value = decode_value(raw)?;
-    let entries = expect_map(&value)?;
-    let mut total = None;
-    let mut passed = None;
-    let mut abstained = None;
-    let mut at = None;
-    for (key, value) in entries {
-        match expect_key(key)? {
-            KEY_SCHEMA_VERSION => require_schema_version(value)?,
-            KEY_TOTAL => total = value.as_u64(),
-            KEY_PASSED => passed = value.as_u64(),
-            KEY_ABSTAINED => abstained = value.as_u64(),
-            KEY_AT => at = value.as_u64(),
-            _ => return Err(invalid("attribution audit key is not pinned")),
-        }
-    }
-    let count = |value: Option<u64>| -> Result<usize> {
-        usize::try_from(value.ok_or(invalid("attribution audit missing count"))?)
-            .map_err(|_| invalid("attribution audit count exceeds usize"))
-    };
-    Ok(AttributionAuditReport {
-        total: count(total)?,
-        passed: count(passed)?,
-        abstained: count(abstained)?,
-        at: at.ok_or(invalid("attribution audit missing timestamp"))?,
     })
 }
 
