@@ -61,6 +61,7 @@
 use crate::ports::EntityStoreRead;
 mod driver;
 mod epoch;
+mod epoch_floor;
 mod fold_words;
 mod folds;
 mod gate;
@@ -89,6 +90,7 @@ pub(crate) use epoch::{
     EpochMint, EpochPlacement, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
     epoch_sources_admitted_in,
 };
+pub(crate) use epoch_floor::raise_epoch_floor_in_txn;
 pub(crate) use fold_words::{
     FOLD_LEDGERS, fence_withdrawn_folds_in, land_folds_in_base, land_folds_in_overlay,
     scrub_withdrawn_fold_summary_in_txn,
