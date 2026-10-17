@@ -38875,7 +38875,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/bootstrap.rs",
@@ -45041,6 +45041,7 @@
      "purpose": "Coordination patterns as skills (ARCH-0079 #coordination-patterns)",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 7,
       "struct": 1
