@@ -575,19 +575,26 @@ impl Memory<'_> {
 
     /// `vault.artifacts.body.fork.merge`: lands one reviewed fork, its
     /// proposal settled for that item: on the caller's word when the caller is
-    /// a person outside the opener's lineage, else on a standing grant.
+    /// a person outside the opener's lineage, else on a standing grant. A
+    /// fork nothing answers refuses and waits, and its holders are asked.
     pub fn artifacts_body_fork_merge(
         &self,
         input: &OfficeBodyForkMergeRequest,
     ) -> MemoryResult<OfficeBodyDiff> {
         let artifact = self.body_ref(&input.artifact_ref)?;
         let fork = self.body_ref(&input.fork_ref)?;
-        let diff = self.vault().merge_office_body_fork(
+        let diff = match self.vault().merge_office_body_fork_or_wait(
             &artifact,
             &fork,
             (&input.reviewed_head, &input.reviewed_fork),
             self.body_actor(),
-        )?;
+        )? {
+            Ok(diff) => diff,
+            Err(proposal) => {
+                self.ask_office_holders(&artifact, &proposal);
+                return Err(super::fork_waits(&proposal).into());
+            }
+        };
         self.lifted_body_view(&artifact, diff)
     }
 
@@ -606,6 +613,7 @@ impl Memory<'_> {
     }
 
     /// `vault.artifacts.body.proposal.settle`: the proposal after the answer.
+    /// An accept that leaves members waiting asks their holders.
     pub fn artifacts_body_proposal_settle(
         &self,
         input: &OfficeBodyProposalSettleRequest,
@@ -629,12 +637,18 @@ impl Memory<'_> {
             reviewed: &reviewed,
             reason: input.reason.as_deref(),
         };
-        let settled = self.vault().settle_office_body_proposal(
+        let mut settled = self.vault().settle_office_body_proposal(
             &artifact,
             &proposal,
             &request,
             self.body_actor(),
         )?;
+        if input.verdict == SettleVerdict::Accept && settled.settlement.is_none() {
+            self.ask_office_holders(&artifact, &proposal);
+            if let Some(asked) = self.vault().office_body_proposal(&artifact, &proposal)? {
+                settled = asked;
+            }
+        }
         self.lifted_body_view(&artifact, settled)
     }
 
