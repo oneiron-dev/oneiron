@@ -70901,7 +70901,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -70931,7 +70931,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 3
      }
     },
@@ -71020,7 +71020,7 @@
      "path": "src/server/resident_pump.rs",
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
