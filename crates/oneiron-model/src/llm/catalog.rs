@@ -11,6 +11,8 @@ use super::{FatalLlmError, ModelId, ModelLocality, UnsupportedCapability};
 
 /// The metadata key a catalog row's [`MediaCaps`] sit under.
 pub const MEDIA_METADATA_KEY: &str = "media";
+/// The metadata key a catalog row's model family sits under.
+const FAMILY_METADATA_KEY: &str = "family";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -151,6 +153,28 @@ impl LlmCatalogEntry {
             caps.inputs.insert(Modality::Audio);
         }
         caps
+    }
+
+    /// The family of models this row's model belongs to (the line one
+    /// developer trains), as its config or its pack names it. `None` when
+    /// nothing names one: a family is never read off a provider or an id.
+    #[must_use]
+    pub fn family(&self) -> Option<&str> {
+        self.metadata
+            .get(FAMILY_METADATA_KEY)
+            .and_then(JsonValue::as_str)
+            .map(str::trim)
+            .filter(|family| !family.is_empty())
+    }
+
+    /// This row, its model of `family`.
+    #[must_use]
+    pub fn with_family(mut self, family: &str) -> Self {
+        self.metadata.insert(
+            FAMILY_METADATA_KEY.to_owned(),
+            JsonValue::String(family.to_owned()),
+        );
+        self
     }
 
     /// This row, serving `caps`.

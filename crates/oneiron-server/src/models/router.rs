@@ -10,6 +10,9 @@ use super::ladder::OfferLadder;
 #[derive(Default)]
 pub struct ModelRouter {
     routes: BTreeMap<ModelId, (ModelLocality, Arc<OfferLadder>)>,
+    /// Each configured chat model served alone by its own id, and the family
+    /// its provider's config names for it.
+    chat: BTreeMap<ModelId, Option<String>>,
 }
 
 impl ModelRouter {
@@ -20,6 +23,23 @@ impl ModelRouter {
         ladder: Arc<OfferLadder>,
     ) {
         self.routes.insert(model, (locality, ladder));
+    }
+
+    /// Records `model`, served alone by its own id, as a chat model of
+    /// `family`.
+    pub(super) fn chat_model(&mut self, model: ModelId, family: Option<String>) {
+        self.chat.insert(model, family);
+    }
+
+    /// Every chat model this router serves alone by its own id (no seat, no
+    /// reranker), in id order.
+    pub fn chat_models(&self) -> impl Iterator<Item = &ModelId> {
+        self.chat.keys()
+    }
+
+    /// The family the config names for a chat model served by its own id.
+    pub fn family(&self, model: &ModelId) -> Option<&str> {
+        self.chat.get(model)?.as_deref()
     }
 
     pub(super) fn is_empty(&self) -> bool {
