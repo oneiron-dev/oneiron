@@ -202,13 +202,15 @@ declare interface StoreOptions {
   receipt?: { source: ResultRef; tasks: string[]; tree?: { summary: ResultRef; inputs: ResultRef[] }[]; recipe?: unknown };
 }
 /** What a fold read of its source, in its byte offsets: ranges its readers
- * finished, ranges none read, readers that stopped short and why, and how
- * many it named. */
+ * finished, ranges none read, readers that stopped short and why, how many
+ * it named, and, for a fold a document import restored, how many of the
+ * results it names did not come back. */
 declare interface FoldCoverage {
   read: [number, number][];
   unread: [number, number][];
   partial: { task: string; reason: string }[];
   children: number;
+  unresolved?: number;
 }
 /** One model call over a result and the results after it (`group`), made
  * by a host job, never inside the step, and memoised by those results and
