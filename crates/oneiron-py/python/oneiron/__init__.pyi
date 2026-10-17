@@ -1040,7 +1040,7 @@ class Oneiron:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
-            """The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."""
+            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
             """One image out of the host's image model; reference images make it an edit."""
         def speech(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
