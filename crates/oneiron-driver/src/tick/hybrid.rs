@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use super::{
-    DeadlineSource, PushTick, SessionHintCarrier, Tick, TickSource, TimerTick, sleep_until_due,
+    ArmedLane, CommitmentDeadline, DeadlineSource, PushTick, SessionHintCarrier, Tick, TickSource,
+    TimerTick, sleep_until_due,
 };
 use crate::session::SessionHint;
 
@@ -36,6 +37,16 @@ impl<D: DeadlineSource> HybridTick<D> {
             push_open: true,
         }
     }
+
+    /// One deadline read, recorded as the queue lane's armed instant.
+    fn read_armed_deadline(&mut self) -> Option<CommitmentDeadline> {
+        let deadline = self.timer.read_deadline();
+        self.push.record_armed(
+            ArmedLane::Queue,
+            deadline.map(|deadline| deadline.due_at_ms),
+        );
+        deadline
+    }
 }
 
 async fn wait_for_change(changes: &mut Option<tokio::sync::watch::Receiver<u64>>) {
@@ -51,7 +62,7 @@ async fn wait_for_change(changes: &mut Option<tokio::sync::watch::Receiver<u64>>
 impl<D: DeadlineSource> TickSource for HybridTick<D> {
     async fn next_tick(&mut self) -> Option<Tick> {
         loop {
-            match self.timer.read_deadline() {
+            match self.read_armed_deadline() {
                 // A due deadline beats buffered push, even after invalidation.
                 Some(deadline) if deadline.due_at_ms <= self.timer.now() => {
                     return Some(Tick::Deadline(deadline));
@@ -111,5 +122,9 @@ impl<D: DeadlineSource> TickSource for HybridTick<D> {
 
     fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
         self.push.take_delivered_session_hint_carrier()
+    }
+
+    fn note_armed(&mut self, lane: ArmedLane, at_ms: Option<u64>) {
+        self.push.record_armed(lane, at_ms);
     }
 }
