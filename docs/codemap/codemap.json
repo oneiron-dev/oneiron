@@ -68631,7 +68631,7 @@
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
