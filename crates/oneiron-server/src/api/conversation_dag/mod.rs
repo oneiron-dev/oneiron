@@ -155,7 +155,10 @@ fn append_input(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records",
     params(("conversation_id" = String, Path)), request_body = DagAppendRequest,
-    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The conversation or its HEAD is not in a state this append takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 422, description = "A ref the write names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn append_core_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -478,7 +481,10 @@ pub(crate) async fn drill_core_header(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread",
     params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagAppendRequest,
-    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The thread or its conversation is not in a state this reply takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 422, description = "A ref the reply names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn reply_in_thread(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

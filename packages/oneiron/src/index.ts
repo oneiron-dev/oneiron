@@ -418,7 +418,7 @@ export class Oneiron {
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
       /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
-      /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. */
+      /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
       /** Composes the default vault lens from the named sources, read under the caller's own scope. */
       default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.GeneratedLens> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.GeneratedLens>),
@@ -476,6 +476,10 @@ export class Oneiron {
       diff: (request: Facade.CodeDiffRequest): Facade.CodeDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeDiff(keyedJson(request))) as Facade.CodeDiffView | null; return result === null ? null : result }),
       /** Every unit of one tested code file state, blamed by the operations that wrote it. */
       blame: (request: Facade.CodeStateRequest): Facade.CodeBlameView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeBlame(keyedJson(request))) as Facade.CodeBlameView | null; return result === null ? null : result }),
+      /** One repo proposal's semantic change from its base, under the provenance it was proposed with. */
+      proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
+      /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
+      repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
     },
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */

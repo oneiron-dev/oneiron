@@ -50,6 +50,9 @@ struct Entry {
     uncompressed: usize,
     crc: u32,
     replacement: Option<Vec<u8>>,
+    /// Removed by [`Package::remove_part`]: no part, and no record in an
+    /// export.
+    removed: bool,
 }
 
 /// A part this package did not read: written fresh at export, after every
@@ -270,6 +273,7 @@ impl Package {
                 uncompressed,
                 crc,
                 replacement: None,
+                removed: false,
             });
             cursor = end;
         }
@@ -348,12 +352,13 @@ impl Package {
         self.limits
     }
 
-    /// Part names in central-directory order, including unreachable parts.
-    /// Directory entries stay in the archive and every export, unnamed here.
+    /// Part names in central-directory order, including unreachable parts
+    /// but not removed ones. Directory entries stay in the archive and every
+    /// export, unnamed here.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.entries
             .iter()
-            .filter(|entry| !entry.is_directory())
+            .filter(|entry| !entry.is_directory() && !entry.removed)
             .map(|entry| entry.name.as_str())
             .chain(self.added.iter().map(|part| part.name.as_str()))
     }
@@ -365,7 +370,7 @@ impl Package {
         }
         self.entries
             .iter()
-            .find(|entry| entry.name == name && !entry.is_directory())
+            .find(|entry| entry.name == name && !entry.is_directory() && !entry.removed)
             .map(|entry| self.expanded(entry))
             .transpose()
     }
@@ -386,7 +391,7 @@ impl Package {
             self.added_bytes(),
             |total, (at, entry)| {
                 total
-                    .checked_add(if at == index {
+                    .checked_add(if at == index || entry.removed {
                         0
                     } else {
                         entry
@@ -438,7 +443,7 @@ impl Package {
         }
         self.entries
             .iter()
-            .position(|entry| entry.name == name)
+            .position(|entry| entry.name == name && !entry.removed)
             .ok_or(Error::Edit("part missing"))
     }
 
@@ -455,6 +460,8 @@ impl Package {
                 .try_fold(self.added_bytes(), |sum, (at, entry)| {
                     sum.checked_add(if at == index {
                         new.len()
+                    } else if entry.removed {
+                        0
                     } else {
                         entry
                             .replacement
@@ -490,6 +497,12 @@ impl Package {
             .checked_add(self.added_archive_bytes()?)
             .ok_or(Error::Edit("edited ZIP size overflow"))?;
         for (index, entry) in self.entries.iter().enumerate() {
+            if entry.removed {
+                total = total
+                    .checked_sub(entry.local.len() + entry.central.len())
+                    .ok_or(Error::Edit("edited ZIP size overflow"))?;
+                continue;
+            }
             let replacement = if index == edited {
                 candidate
             } else {
@@ -525,9 +538,15 @@ impl Package {
 
     /// Export an exact original archive on no-op. After an edit, retain all
     /// untouched local records and compressed payloads, patch central offsets,
-    /// and replace only edited entry payload/header/checksum fields.
+    /// replace only edited entry payload/header/checksum fields, and leave out
+    /// removed entries' local and central records.
     pub fn export(&self) -> Result<Vec<u8>> {
-        if self.added.is_empty() && self.entries.iter().all(|entry| entry.replacement.is_none()) {
+        if self.added.is_empty()
+            && self
+                .entries
+                .iter()
+                .all(|entry| entry.replacement.is_none() && !entry.removed)
+        {
             return Ok(self.source.to_vec());
         }
         let mut out = Vec::with_capacity(self.source.len());
@@ -540,6 +559,9 @@ impl Package {
         out.extend_from_slice(&self.source[..first]);
         for index in order {
             let entry = &self.entries[index];
+            if entry.removed {
+                continue;
+            }
             offsets[index] = as_u32(out.len())?;
             if let Some(ref replacement) = entry.replacement {
                 let compressed = if entry.method == 0 {
@@ -573,6 +595,9 @@ impl Package {
         }
         let cd_offset = as_u32(out.len())?;
         for (index, entry) in self.entries.iter().enumerate() {
+            if entry.removed {
+                continue;
+            }
             let mut record = self.source[entry.central.clone()].to_vec();
             patch32(&mut record, 42, offsets[index]);
             if let Some(ref replacement) = entry.replacement {
@@ -599,7 +624,8 @@ impl Package {
         }
         let cd_size = as_u32(out.len() - cd_offset as usize)?;
         let mut footer = self.source[self.eocd..].to_vec();
-        let count = u16::try_from(self.entries.len() + self.added.len())
+        let kept = self.entries.iter().filter(|entry| !entry.removed).count();
+        let count = u16::try_from(kept + self.added.len())
             .map_err(|_| Error::Invalid("ZIP32 entry limit"))?;
         patch16(&mut footer, 8, count);
         patch16(&mut footer, 10, count);

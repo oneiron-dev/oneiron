@@ -8,7 +8,6 @@
 //!
 //! Only the home node sweeps, so a judge is paid once per vault.
 use std::collections::BTreeMap;
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,6 +23,7 @@ use oneiron::{
     WriteActor,
 };
 
+use crate::ladder_poll::block_on;
 use crate::models::RunBackend;
 use crate::server::SyncServer;
 
@@ -255,26 +255,5 @@ impl LlmBackend for AdmittedBackend<'_> {
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         self.inner.stream(self.admit(request)?, lease)
-    }
-}
-
-/// Polls `future` to its end on this thread. A runtime `block_on` here would
-/// mark the thread as inside the runtime, and the ladder's System One and Big
-/// rungs block on the runtime themselves.
-fn block_on<F: Future>(future: F) -> F::Output {
-    struct Unpark(std::thread::Thread);
-    impl std::task::Wake for Unpark {
-        fn wake(self: Arc<Self>) {
-            self.0.unpark();
-        }
-    }
-    let waker = std::task::Waker::from(Arc::new(Unpark(std::thread::current())));
-    let mut context = std::task::Context::from_waker(&waker);
-    let mut future = std::pin::pin!(future);
-    loop {
-        if let std::task::Poll::Ready(output) = future.as_mut().poll(&mut context) {
-            return output;
-        }
-        std::thread::park();
     }
 }

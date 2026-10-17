@@ -6,12 +6,17 @@
 
 mod blame;
 mod codec;
+mod review_views;
 mod session;
 mod storage;
 mod types;
 mod verbs;
 
 pub use blame::CodeRangePair;
+pub use review_views::{
+    CodeFileChange, CodeFileDiffView, CodeProposalView, CodeProposalViewRequest, CodeProposedStamp,
+    CodeRepoDiffRequest, CodeRepoDiffView, CodeTreeRequest,
+};
 pub use session::CodeDocumentSession;
 pub(crate) use storage::{CodeFileIngress, verify_frontier_in_txn};
 pub use types::{

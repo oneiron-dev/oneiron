@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 217 facade rows, 741 declarations.
-Inputs: 182 of 217 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 172 of 217 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 219 facade rows, 750 declarations.
+Inputs: 184 of 219 fully typed, 34 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 174 of 219 fully typed, 37 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 54; unread shapes: 1.
 """
 
@@ -549,6 +549,7 @@ class MemoryProvenance(TypedDict):
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
+    record: NotRequired[RecordRef | None]
 class MemoryItem(TypedDict):
     short_id: str
     source_revision_ref: NotRequired[str | None]
@@ -2080,6 +2081,47 @@ class CodeUnitBlameView(TypedDict):
 class CodeBlameView(TypedDict):
     at: CodeStateView
     units: list[CodeUnitBlameView]
+class CodeProposalViewRequest(TypedDict):
+    proposal_ref: str
+RepoProposalStatus = Literal["Proposed", "Approved", "Applied", "Failed"]
+class CodeProposedStamp(TypedDict):
+    actor_ref: str
+    session_ref: str
+    provenance_claim_ref: str
+    turn_ref: NotRequired[str | None]
+    activity_ref: NotRequired[str | None]
+    intent_ref: NotRequired[str | None]
+    model_ref: NotRequired[str | None]
+    reasoning_effort: NotRequired[str | None]
+class CodeProposalView(TypedDict):
+    proposal_ref: str
+    repo: str
+    path: str
+    message: str
+    status: RepoProposalStatus
+    proposed: CodeProposedStamp
+    changes: list[CodeChangeView]
+    landed: NotRequired[CodeOperationView | None]
+    rendered: str
+class CodeTreeRequest(TypedDict):
+    revision_ref: NotRequired[str | None]
+    repo: NotRequired[str | None]
+    snapshot_ref: NotRequired[str | None]
+class CodeRepoDiffRequest(TypedDict):
+    before: CodeTreeRequest
+    after: CodeTreeRequest
+CodeFileChange = Literal["added", "removed", "modified", "renamed"]
+class CodeFileDiffView(TypedDict):
+    path: str
+    change: CodeFileChange
+    renamed_from: NotRequired[str | None]
+    before: NotRequired[CodeStateView | None]
+    after: NotRequired[CodeStateView | None]
+    changes: list[CodeChangeView]
+class CodeRepoDiffView(TypedDict):
+    files: list[CodeFileDiffView]
+    not_text: list[str]
+    rendered: str
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
@@ -2450,7 +2492,7 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Leader", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
