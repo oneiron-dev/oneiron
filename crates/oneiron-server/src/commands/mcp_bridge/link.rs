@@ -71,6 +71,8 @@ pub(super) enum Cut {
     Idle,
     /// The answer grew past the reply limit.
     TooLarge,
+    /// The server closed the socket because the credential was revoked.
+    Revoked(String),
 }
 
 /// The bounds on one request.
@@ -277,6 +279,8 @@ enum Inbound {
     },
     /// The socket ended after the request was handed over.
     Closed(String),
+    /// The server closed the socket because its credential was revoked.
+    Revoked(String),
     /// The socket ended before the request was written.
     Unsent,
 }
@@ -349,6 +353,7 @@ impl SocketLink {
                     Err(_) => return Err(Carried::Cut(Cut::Deadline)),
                     Ok(Some(Inbound::Unsent)) => return Err(Carried::Unsent),
                     Ok(Some(Inbound::Closed(why))) => return Err(Carried::Cut(Cut::Failed(why))),
+                    Ok(Some(Inbound::Revoked(why))) => return Err(Carried::Cut(Cut::Revoked(why))),
                     Ok(None) => {
                         return Err(Carried::Cut(Cut::Failed(
                             "the MCP socket closed before the answer was whole".to_owned(),
@@ -523,6 +528,7 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
     let mut waiting: HashMap<u64, mpsc::UnboundedSender<Inbound>> = HashMap::new();
     let mut ping = tokio::time::interval(SOCKET_PING_INTERVAL);
     let mut heard = tokio::time::Instant::now();
+    let mut revoked = false;
     let why = loop {
         tokio::select! {
             request = requests.recv() => {
@@ -543,6 +549,10 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
                         }
                     }
                     Some(Ok(Message::Close(frame))) => {
+                        revoked = frame.as_ref().is_some_and(|frame| {
+                            u16::from(frame.code)
+                                == crate::protocol::close_codes::CLOSE_RPC_NO_PRINCIPAL
+                        });
                         break match frame {
                             Some(frame) => format!(
                                 "the server closed the MCP socket ({}: {})",
@@ -573,7 +583,11 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
     };
     requests.close();
     for chunks in waiting.into_values() {
-        let _ = chunks.send(Inbound::Closed(why.clone()));
+        let _ = chunks.send(if revoked {
+            Inbound::Revoked(why.clone())
+        } else {
+            Inbound::Closed(why.clone())
+        });
     }
     while let Ok(request) = requests.try_recv() {
         let _ = request.chunks.send(Inbound::Unsent);

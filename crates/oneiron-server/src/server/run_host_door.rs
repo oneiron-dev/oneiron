@@ -302,6 +302,11 @@ pub(crate) fn answer_as_agent(
     held: Option<HeldImage>,
     line: Option<&RunAdmission>,
 ) -> MemoryResult<(Value, Vec<EntityId>)> {
+    // The agent's task work waits its turn in the vault's line (Rule 5), as
+    // a served caller's does.
+    let _turn = verb
+        .is_task_work()
+        .then(|| server.vault.admit_task_work_blocking(actor.entity_ref()));
     let producers = ProducerRows::default();
     let memory = agent_memory(server, actor, origin, invocation)
         .with_task_decisions(server.decision_host().task_decisions()?)
