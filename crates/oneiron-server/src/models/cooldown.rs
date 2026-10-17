@@ -40,11 +40,6 @@ const PREFIX: &str = "models:offer-cooldown:v1:";
 /// in the same table: this deployment's routing state too.
 const QUESTION_PREFIX: &str = "models:offer-cooldown:v1:ask:";
 
-/// The owner's standing fallbacks, one per offer they answered
-/// `use_fallback` for: the engine id of the model its calls go to while it
-/// is parked.
-const FALLBACK_PREFIX: &str = "models:offer-cooldown:v1:fallback:";
-
 /// A down provider's first health rest, in seconds; each failure in a row
 /// doubles it.
 const HEALTH_REST_SECS: u64 = 5;
@@ -735,15 +730,14 @@ impl OfferCooldowns {
     ) -> Option<Arc<OfferLadder>> {
         let vault = self.vault.as_ref()?;
         let key = key(offer, wire_model);
-        let bytes = vault
-            .sync_state_get(&fallback_key(key.trim_start_matches(PREFIX)))
+        let model = vault
+            .model_fallback(key.trim_start_matches(PREFIX))
             .ok()??;
-        let model = std::str::from_utf8(&bytes).ok()?;
         self.fallbacks
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .find(|rung| rung.model.as_str() == model)?
+            .find(|rung| rung.model.as_str() == model.as_str())?
             .ladder
             .upgrade()
     }
@@ -799,7 +793,7 @@ impl OfferCooldowns {
             }) else {
                 return Ok(false);
             };
-            vault.sync_state_put(&fallback_key(&question.id), model.as_bytes())?;
+            vault.set_model_fallback(&question.id, model)?;
         }
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
@@ -912,10 +906,6 @@ fn question_key(id: &str) -> String {
 
 /// Where the owner's fallback for the offer question `id` asked about is
 /// kept.
-fn fallback_key(id: &str) -> String {
-    format!("{FALLBACK_PREFIX}{id}")
-}
-
 /// One row per deployment: the adapter and origin it goes out on, whose key
 /// pays, and the model it is asked for.
 fn key(offer: &OfferBinding, wire_model: &str) -> String {
