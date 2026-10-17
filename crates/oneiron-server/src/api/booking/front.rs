@@ -177,25 +177,26 @@ pub(super) async fn run_public_constraint_turn(
     let principal = transport.principal;
     let turn_server = Arc::clone(server);
     // The ladder's model rungs block on the server's runtime.
-    let outcome = tokio::task::spawn_blocking(move || {
-        let oracle = PublicSlotOracle(booking_oracle(&turn_server, page_ref, None, now)?);
-        let mut state = session.lock().unwrap_or_else(PoisonError::into_inner);
-        let (caps, copy) = (front.caps(), front.copy());
-        on_parse_seat(
-            &turn_server,
-            &settings,
-            principal,
-            now,
-            |backend, lease, config| {
-                block_on(run_constraint_turn(
-                    &oracle, backend, lease, config, &caps, &mut state, &copy, request,
-                ))
-                .map_err(booking_error)
-            },
-        )
-    })
-    .await
-    .map_err(|_| ApiError::internal_server_error("booking constraint turn stopped"))??;
+    let outcome =
+        tokio::task::spawn_blocking(move || -> Result<ConstraintFrontOutcome, ApiError> {
+            let oracle = PublicSlotOracle(booking_oracle(&turn_server, page_ref, None, now)?);
+            let mut state = session.lock().unwrap_or_else(PoisonError::into_inner);
+            let (caps, copy) = (front.caps(), front.copy());
+            on_parse_seat(
+                &turn_server,
+                &settings,
+                principal,
+                now,
+                |backend, lease, config| {
+                    block_on(run_constraint_turn(
+                        &oracle, backend, lease, config, &caps, &mut state, &copy, request,
+                    ))
+                    .map_err(booking_error)
+                },
+            )
+        })
+        .await
+        .map_err(|_| ApiError::internal_server_error("booking constraint turn stopped"))??;
     // Never answer from a publication the owner revoked or edited meanwhile.
     public_availability::recheck(server, Some(&authority))?;
     Ok(match outcome {
