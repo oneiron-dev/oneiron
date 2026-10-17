@@ -16,6 +16,9 @@ mod run;
 
 use crate::ArchiveLimits;
 use crate::docx_body::{DocxBlock, DocxChange, DocxRevision};
+use crate::pptx_comments::{
+    PptxAnchorOutcome, PptxCommentEdit, PptxCommentLimits, PptxSlideIdentity,
+};
 use crate::retained_opc::{Limits, XmlLimits};
 use crate::xlsx_body::{XlsxBook, XlsxChange};
 use schemars::JsonSchema;
@@ -88,6 +91,13 @@ pub enum Op {
     /// A new deck from a kept brief over a template.
     #[serde(rename = "deck.create")]
     DeckCreate(DeckCreateArgs),
+    /// Modern comment threads, replies and resolutions, written byte for byte.
+    #[serde(rename = "pptx.comments")]
+    PptxComments(PptxCommentsArgs),
+    /// The slide and shape identities a comment anchors to, and the threads
+    /// whose anchor is unknown.
+    #[serde(rename = "pptx.comments.inspect")]
+    PptxCommentsInspect(PptxCommentsInspectArgs),
 }
 
 impl Op {
@@ -107,6 +117,8 @@ impl Op {
             Self::DeckRead(_) => "deck.read",
             Self::DeckTransaction(_) => "deck.transaction",
             Self::DeckCreate(_) => "deck.create",
+            Self::PptxComments(_) => "pptx.comments",
+            Self::PptxCommentsInspect(_) => "pptx.comments.inspect",
         }
     }
 }
@@ -283,6 +295,45 @@ pub struct DeckCreateArgs {
     pub limits: PackageLimits,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PptxCommentsArgs {
+    /// Input index of the PPTX.
+    pub deck: u32,
+    /// Applied in order. None returns the deck unchanged.
+    pub edits: Vec<PptxCommentEdit>,
+    /// The slide creation IDs an earlier run of these edits minted, replayed
+    /// exactly. Absent, a commented slide that lacks one gets a fresh ID
+    /// drawn from `seed`.
+    #[serde(default)]
+    pub slide_creation_ids: Option<Vec<SlideCreationId>>,
+    pub seed: u64,
+    pub limits: PptxCommentLimits,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PptxCommentsInspectArgs {
+    /// Input index of the PPTX.
+    pub deck: u32,
+    pub limits: PptxCommentLimits,
+}
+
+/// A p14 creation ID written onto a slide that had none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SlideCreationId {
+    pub slide: u64,
+    pub creation_id: u32,
+}
+
+/// Where a new thread landed, by its root comment GUID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ThreadAnchor {
+    pub thread_id: String,
+    pub anchor: PptxAnchorOutcome,
+}
+
 /// The brief as the person kept it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -389,6 +440,20 @@ pub enum Reply {
         pages: Vec<String>,
     },
     DeckCreated(DeckCreated),
+    PptxComments {
+        /// The parts the edits changed, every one of them declared by an edit.
+        touched_parts: Vec<String>,
+        /// Replay these to write the same bytes again.
+        slide_creation_ids: Vec<SlideCreationId>,
+        anchors: Vec<ThreadAnchor>,
+    },
+    PptxCommentsInspected {
+        slides: Vec<PptxSlideIdentity>,
+        /// Parts that sign the package; a signed deck takes no comment edit.
+        signature_parts: Vec<String>,
+        /// Root comment GUIDs exported with no resolved anchor.
+        unknown_anchor_threads: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -827,6 +892,20 @@ const OPS: &[OpSpec] = &[
             ("assets.*.input", IMAGES, true),
         ],
         outputs: &[("deck", PPTX_MEDIA_TYPE)],
+        port: None,
+    },
+    OpSpec {
+        name: "pptx.comments",
+        summary: "Add, reply to and resolve modern comment threads; only comment parts change.",
+        inputs: &[("deck", PPTX, false)],
+        outputs: &[("deck", PPTX_MEDIA_TYPE)],
+        port: None,
+    },
+    OpSpec {
+        name: "pptx.comments.inspect",
+        summary: "The slide and shape identities comments anchor to, and unanchored threads.",
+        inputs: &[("deck", PPTX, false)],
+        outputs: &[],
         port: None,
     },
 ];

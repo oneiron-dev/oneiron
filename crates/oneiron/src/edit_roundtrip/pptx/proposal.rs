@@ -123,6 +123,22 @@ pub(crate) fn verify_comment_proposal_with_limits(
 }
 
 impl crate::Vault {
+    /// Measures the comment edits one proposal carries against
+    /// `limits.pptx_comment_patches`: past it the row asks, and the proposal
+    /// is served whole either way.
+    pub(crate) fn measure_pptx_comment_patches(&self, proposal: &EditProposal) {
+        let patches = proposal
+            .manifest
+            .ops
+            .iter()
+            .filter(|op| matches!(op, EditOp::PptxComment { .. }))
+            .count();
+        self.measure_limit(
+            crate::limit_ask::EngineLimit::PptxCommentPatches,
+            u64::try_from(patches).unwrap_or(u64::MAX),
+        );
+    }
+
     /// Binds a comment proposal to the artifact head. The caller owns managed
     /// annotation threads and settles through `settle_select_edit_proposal`.
     /// No version or annotation head is written while making this preview.
@@ -172,6 +188,7 @@ impl crate::Vault {
         let mut proposal =
             run_comment_roundtrip_with_limits(&bytes, patches, run_ref, limits, holder_limits)?;
         proposal.base_version = Some(head.version);
+        self.measure_pptx_comment_patches(&proposal);
         Ok(proposal)
     }
 }

@@ -6,10 +6,10 @@ use super::codec::{
     decode_thread_head, encode_brief_value, encode_comment_value, encode_thread_head_value,
     is_annotation_predicate, task_role_body, warn_malformed_annotation_claim,
 };
+use super::comment_parts::comment_parts;
 use super::model::{
-    ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_COMMENT_TEXT_MAX_BYTES,
-    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, AnnotationThread, TaskBrief,
-    ThreadState,
+    ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_THREAD_PREDICATE, Anchor,
+    AnnotationComment, AnnotationThread, TaskBrief, ThreadState,
 };
 use crate::Vault;
 use crate::agent_dispatch::{
@@ -43,7 +43,8 @@ impl Vault {
     ///
     /// Writes the thread head and the opening comment as CLAIMs on the blob
     /// artifact entity in one transaction. The anchor version must resolve to a
-    /// real version in the artifact's chain.
+    /// real version in the artifact's chain. An opening comment past one stored
+    /// comment's bound lands whole as linked parts in the same transaction.
     pub fn open_annotation_thread(
         &self,
         anchor: &Anchor,
@@ -56,7 +57,10 @@ impl Vault {
 
         let thread_id = self.store.clock.entity_id()?;
         let head_claim_id = self.store.clock.entity_id()?;
-        let comment_claim_id = self.store.clock.entity_id()?;
+        let parts = comment_parts(first_comment)
+            .into_iter()
+            .map(|body| Ok((self.store.clock.entity_id()?, body)))
+            .collect::<Result<Vec<_>>>()?;
         let head = ThreadHead {
             thread_id,
             origin_version: anchor.version,
@@ -71,32 +75,33 @@ impl Vault {
 
         self.with_write_txn_grouped(|wtxn| {
             self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
-            self.batch_in()
-                .claim_candidate(
-                    &head_claim_id,
-                    ClaimCandidate::new(
-                        ANNOTATION_THREAD_PREDICATE,
-                        ClaimSubject::Entity(anchor.artifact_id),
-                        encode_thread_head_value(&head),
-                        1.0,
-                    ),
-                    &head_envelope,
-                    occurred,
-                    learned_at,
-                )
-                .claim_candidate(
-                    &comment_claim_id,
+            let mut batch = self.batch_in().claim_candidate(
+                &head_claim_id,
+                ClaimCandidate::new(
+                    ANNOTATION_THREAD_PREDICATE,
+                    ClaimSubject::Entity(anchor.artifact_id),
+                    encode_thread_head_value(&head),
+                    1.0,
+                ),
+                &head_envelope,
+                occurred,
+                learned_at,
+            );
+            for (claim_id, body) in &parts {
+                batch = batch.claim_candidate(
+                    claim_id,
                     ClaimCandidate::new(
                         ANNOTATION_COMMENT_PREDICATE,
                         ClaimSubject::Entity(anchor.artifact_id),
-                        encode_comment_value(&thread_id, &author_id, first_comment, learned_at),
+                        encode_comment_value(&thread_id, &author_id, body, learned_at),
                         1.0,
                     ),
                     &comment_envelope,
                     occurred,
                     learned_at,
-                )
-                .apply(wtxn)
+                );
+            }
+            batch.apply(wtxn)
         })?;
 
         Ok(AnnotationThread {
@@ -109,7 +114,9 @@ impl Vault {
         })
     }
 
-    /// Appends a comment to an existing thread.
+    /// Appends a comment to an existing thread. A comment past one stored
+    /// comment's bound lands whole as linked parts in one transaction; the
+    /// first part is returned.
     pub fn add_annotation_comment(
         &self,
         artifact_id: &EntityId,
@@ -124,30 +131,42 @@ impl Vault {
         self.get_annotation_thread(artifact_id, thread_id)?
             .ok_or(Error::Artifact(ArtifactError::AnnotationThreadNotFound))?;
 
-        let claim_id = self.store.clock.entity_id()?;
+        let parts = comment_parts(text)
+            .into_iter()
+            .map(|body| Ok((self.store.clock.entity_id()?, body)))
+            .collect::<Result<Vec<_>>>()?;
         let envelope = annotation_envelope(author, "comment")?;
         let author_id = author.entity_ref();
         self.with_write_txn_grouped(|wtxn| {
-            self.batch_in()
-                .claim_candidate(
-                    &claim_id,
+            let mut batch = self.batch_in();
+            for (claim_id, body) in &parts {
+                batch = batch.claim_candidate(
+                    claim_id,
                     ClaimCandidate::new(
                         ANNOTATION_COMMENT_PREDICATE,
                         ClaimSubject::Entity(*artifact_id),
-                        encode_comment_value(thread_id, &author_id, text, learned_at),
+                        encode_comment_value(thread_id, &author_id, body, learned_at),
                         1.0,
                     ),
                     &envelope,
                     occurred,
                     learned_at,
-                )
-                .apply(wtxn)
+                );
+            }
+            batch.apply(wtxn)
         })?;
 
+        let (claim_id, text) =
+            parts
+                .into_iter()
+                .next()
+                .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(
+                    "comment text must be non-empty",
+                )))?;
         Ok(AnnotationComment {
             thread_id: *thread_id,
             author: author_id,
-            text: text.to_owned(),
+            text,
             at: learned_at,
             claim_id,
         })
@@ -738,11 +757,6 @@ fn validate_comment_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "comment text must be non-empty",
-        )));
-    }
-    if text.len() > ANNOTATION_COMMENT_TEXT_MAX_BYTES {
-        return Err(Error::Artifact(ArtifactError::InvalidAnchor(
-            "comment text is too long",
         )));
     }
     Ok(())

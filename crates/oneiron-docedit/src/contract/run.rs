@@ -4,8 +4,9 @@
 use super::{
     AssetMedia, AssetOrigin, ContractError, CreatedSlide, DOCX_MEDIA_TYPE, DeckAsset,
     DeckCreateArgs, DeckCreated, DeckPlaceholder, DeckRead, DeckShape, DeckSlide,
-    DeckTransactionArgs, Done, Editability, ErrorCode, Op, Output, PPTX_MEDIA_TYPE, Ports, Reply,
-    ShapeKind, UnverifiedUnit, XLSX_MEDIA_TYPE,
+    DeckTransactionArgs, Done, Editability, ErrorCode, Op, Output, PPTX_MEDIA_TYPE, Ports,
+    PptxCommentsArgs, Reply, ShapeKind, SlideCreationId, ThreadAnchor, UnverifiedUnit,
+    XLSX_MEDIA_TYPE,
 };
 use crate::deck::{self, DeckError, DeckView, ShapeView, SlideView};
 use crate::design_plan::{
@@ -20,6 +21,9 @@ use crate::edit::transaction::{
 use crate::emit::{EmitError, EmitInputs, Names, StoredAsset, emit};
 use crate::fonts::{FontBook, FontError};
 use crate::graphic::{AssetRecord, GraphicLimits, Origin};
+use crate::pptx_comments::{
+    PptxError, SlideMints, comment_patch, guid, inspect_pptx, unknown_anchor_threads,
+};
 use crate::retained_opc::{self, Package};
 use crate::xlsx_body::{XlsxBodyError, mark_full_calc, project_xlsx, read_xlsx_cells};
 use crate::{
@@ -128,7 +132,48 @@ pub(super) fn op(op: &Op, inputs: &[&[u8]], ports: Ports<'_>) -> Result<Done, Co
         }
         Op::DeckTransaction(args) => deck_transaction(args, inputs),
         Op::DeckCreate(args) => deck_create(args, inputs),
+        Op::PptxComments(args) => pptx_comments(args, inputs),
+        Op::PptxCommentsInspect(args) => {
+            let deck = input(inputs, args.deck)?;
+            let inspection = inspect_pptx(deck, &args.limits).map_err(pptx)?;
+            let unknown = unknown_anchor_threads(deck, &args.limits).map_err(pptx)?;
+            Ok(Done::reply(Reply::PptxCommentsInspected {
+                slides: inspection.slides,
+                signature_parts: inspection.signature_parts,
+                unknown_anchor_threads: unknown.into_iter().map(guid).collect(),
+            }))
+        }
     }
+}
+
+fn pptx_comments(args: &PptxCommentsArgs, inputs: &[&[u8]]) -> Result<Done, ContractError> {
+    let base = input(inputs, args.deck)?;
+    let replay: Option<Vec<(u64, u32)>> = args
+        .slide_creation_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|id| (id.slide, id.creation_id)).collect());
+    let seed = args.seed.to_le_bytes();
+    let mints = match &replay {
+        Some(ids) => SlideMints::Replay(ids),
+        None => SlideMints::Draw(&seed),
+    };
+    let effects = comment_patch(base, &args.edits, mints, &args.limits).map_err(pptx)?;
+    Ok(Done::with(
+        Reply::PptxComments {
+            touched_parts: effects.touched_parts.into_iter().collect(),
+            slide_creation_ids: effects
+                .minted_slide_creation_ids
+                .into_iter()
+                .map(|(slide, creation_id)| SlideCreationId { slide, creation_id })
+                .collect(),
+            anchors: effects
+                .anchors
+                .into_iter()
+                .map(|(thread_id, anchor)| ThreadAnchor { thread_id, anchor })
+                .collect(),
+        },
+        Output::new("deck", PPTX_MEDIA_TYPE, effects.new_bytes),
+    ))
 }
 
 fn input<'a>(inputs: &[&'a [u8]], index: u32) -> Result<&'a [u8], ContractError> {
@@ -430,6 +475,26 @@ fn package_code(error: &retained_opc::Error) -> ErrorCode {
 
 fn package(error: retained_opc::Error) -> ContractError {
     ContractError::new(package_code(&error), error.to_string())
+}
+
+fn pptx(error: PptxError) -> ContractError {
+    let code = match error {
+        PptxError::InvalidPackage | PptxError::InvalidXml | PptxError::InvalidReference => {
+            ErrorCode::InvalidDocument
+        }
+        PptxError::InvalidPatch => ErrorCode::BadRequest,
+        PptxError::SignedPackage => ErrorCode::NotEditable,
+        PptxError::SlideNotFound
+        | PptxError::AmbiguousAnchor
+        | PptxError::UnverifiedGeometry
+        | PptxError::ThreadNotFound
+        | PptxError::DuplicateComment
+        | PptxError::NotAuthor
+        | PptxError::AuthorConflict
+        | PptxError::PartDiffOutsideTransaction
+        | PptxError::AnchorReadBack => ErrorCode::Refused,
+    };
+    ContractError::new(code, error.to_string())
 }
 
 fn deck_error(error: DeckError) -> ContractError {

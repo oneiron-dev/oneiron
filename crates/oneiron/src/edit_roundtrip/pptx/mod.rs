@@ -1,16 +1,17 @@
 //! Narrow, byte-preserving modern PowerPoint comment edits.
 //!
+//! The writer and inspector are the docedit organ's
+//! (`oneiron_docedit::pptx_comments`, served on its contract as
+//! `pptx.comments`); this module is the engine's door onto them: engine
+//! identities, policy budgets, proposals and their replay.
 //! This module does not render slides or claim Office application validation.
 //! Callers retain the returned proposal and use the existing artifact settlement door.
 
-mod archive;
 mod comments;
 mod identities;
 mod limits;
-mod links;
 mod package;
 mod proposal;
-mod xml;
 
 pub use comments::comment_patch;
 #[cfg(test)]

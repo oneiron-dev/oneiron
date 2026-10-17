@@ -1160,7 +1160,11 @@ impl Vault {
             artifact: *artifact,
             package_limits: self.docedit_package_limits()?,
         };
-        review_slides(&base, &effective)
+        let run = review_slides(&base, &effective)?;
+        if let Some(proposal) = &run.proposal {
+            self.measure_pptx_comment_patches(proposal);
+        }
+        Ok(run)
     }
 }
 

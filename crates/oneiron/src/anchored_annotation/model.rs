@@ -15,7 +15,8 @@ pub const ANNOTATION_COMMENT_PREDICATE: &str = "annotation.comment";
 /// CLAIM predicate recording that a thread was assigned into a task-brief.
 pub const ANNOTATION_BRIEF_PREDICATE: &str = "annotation.brief";
 
-/// Maximum byte length of a single comment body.
+/// Maximum byte length of one stored comment body. A longer comment is
+/// stored whole as linked parts, each within it (`comment_parts`).
 pub const ANNOTATION_COMMENT_TEXT_MAX_BYTES: usize = 16 * 1024;
 
 /// Maximum byte length of a locator sheet / paragraph-path / shape-id field.

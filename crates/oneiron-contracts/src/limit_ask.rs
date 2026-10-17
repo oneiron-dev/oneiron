@@ -101,11 +101,15 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Comment edits one PowerPoint comment proposal carries: new threads,
+    /// replies and resolutions together. Past it the proposal is written
+    /// and served whole.
+    PptxCommentPatches,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -128,6 +132,7 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::PptxCommentPatches,
     ];
 
     /// The config key that sets the row.
@@ -155,6 +160,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::PptxCommentPatches => "limits.pptx_comment_patches",
         }
     }
 
@@ -184,6 +190,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::PptxCommentPatches => 10_000,
         }
     }
 }

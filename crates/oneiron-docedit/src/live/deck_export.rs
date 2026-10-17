@@ -123,6 +123,10 @@ pub struct ExportOutcome {
     pub opaque_parts: BTreeMap<String, [u8; 32]>,
     /// The allocation history joined with every id `bytes` holds.
     pub id_marks: IdMarks,
+    /// What the value edits declared beyond their own writes: a preset that
+    /// replaced a shape's custom geometry, or gave a shape that inherited
+    /// its geometry its own, as PowerPoint's Change Shape does.
+    pub effects: Vec<Effect>,
 }
 
 fn package_hash(package: &Package) -> Result<[u8; 32], LiveError> {
@@ -164,6 +168,8 @@ struct Work {
     /// slide) in `next`.
     at: BTreeMap<NodeId, (String, u32)>,
     changed: BTreeSet<String>,
+    /// The value edits' declared effects, in the order they ran.
+    effects: Vec<Effect>,
 }
 
 impl Work {
@@ -188,6 +194,7 @@ impl Work {
     fn value(&mut self, op: &ValueEdit<'_>) -> Result<(), LiveError> {
         let report = edit(&mut self.next, op)?;
         self.changed.extend(report.changed_parts);
+        self.effects.extend(report.effects);
         Ok(())
     }
 
@@ -303,6 +310,7 @@ pub fn project(
         marks,
         at: BTreeMap::new(),
         changed: BTreeSet::new(),
+        effects: Vec::new(),
     };
     // Every binding must name its retained element exactly as bound.
     for (id, node) in &deck.nodes {
@@ -702,6 +710,7 @@ pub fn project(
         bindings,
         opaque_parts,
         id_marks,
+        effects: work.effects,
     })
 }
 

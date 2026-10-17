@@ -1,8 +1,7 @@
 //! Namespace-aware XML spans for surgical edits. Unknown markup stays byte-identical.
 //! DTDs/entities, excessive depth and malformed XML fail closed; no resource is fetched.
 
-use super::limits::PptxOperationalLimits;
-use super::package::{PatchResult, PptxError};
+use super::model::{PatchResult, PptxCommentLimits, PptxError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -51,14 +50,9 @@ pub(super) struct Xml<'a> {
     pub nodes: Vec<Node>,
 }
 impl<'a> Xml<'a> {
-    #[cfg(test)]
-    pub(super) fn parse(text: &'a str) -> PatchResult<Self> {
-        Self::parse_with_limits(text, &PptxOperationalLimits::default())
-    }
-
     pub(super) fn parse_with_limits(
         text: &'a str,
-        limits: &PptxOperationalLimits,
+        limits: &PptxCommentLimits,
     ) -> PatchResult<Self> {
         if text.len() > limits.max_xml_bytes || text.chars().any(|c| !valid_char(c)) {
             return Err(PptxError::InvalidXml);

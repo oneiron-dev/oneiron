@@ -181,6 +181,12 @@ pub enum Effect {
     /// One native id of a copied shape (or member) and the id its copy
     /// holds on the destination slide.
     ShapeCopied { from: u32, id: u32 },
+    /// A preset replaced the shape's own custom geometry, as PowerPoint's
+    /// Change Shape does on a freeform.
+    CustomGeometryReplaced,
+    /// The shape inherited its geometry from its layout; the preset written
+    /// is now its own.
+    InheritedGeometryOwned,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
