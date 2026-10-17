@@ -120,7 +120,7 @@ pub use self::reveal::{
     REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RevealTarget, SECRET_REVEAL_REASON_ASKED,
     SECRET_REVEAL_REASON_OWNER, SecretHandleCard, SecretProvenance, SecretRevealAnswer,
     SecretRevealAnswered, SecretRevealAsk, SecretRevealDecision, SecretRevealReceipt,
-    SecretRevealState,
+    SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
 pub(crate) use self::reveal::{
     RevealAsker, RevealAuthority, parse_secret_handle, reveal_value_in_txn,

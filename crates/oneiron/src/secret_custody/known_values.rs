@@ -248,25 +248,6 @@ impl KnownValues {
         out.extend_from_slice(&data[from..end]);
         (out, end)
     }
-
-    /// `text` with each known value replaced by its handle's text, or `None`
-    /// when it holds none. A match is on whole UTF-8 values, so it never
-    /// splits a character.
-    pub(crate) fn replaced_text(&self, text: &str) -> Option<String> {
-        let spans = self.spans(text.as_bytes());
-        if spans.is_empty() {
-            return None;
-        }
-        let mut out = String::with_capacity(text.len());
-        let mut from = 0;
-        for known in spans {
-            out.push_str(text.get(from..known.span.start)?);
-            out.push_str(&handle_text(known.handle));
-            from = known.span.end;
-        }
-        out.push_str(text.get(from..)?);
-        Some(out)
-    }
 }
 
 impl Vault {
