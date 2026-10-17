@@ -4605,11 +4605,11 @@
     },
     {
       "name": "vault.artifacts.body.preview",
-      "description": "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands.",
+      "description": "The workbook an XLSX body's export would land now, recalculated at the caller's local time (utc_offset_minutes, iana_timezone; UTC when absent) and read back; nothing lands.",
       "refs": [
         "/artifact_ref"
       ],
-      "input": "crate::office_body::OfficeBodyArtifactRequest",
+      "input": "crate::office_body::OfficeBodyPreviewRequest",
       "output": "crate::office_body::XlsxPreview",
       "call": "memory.artifacts_body_preview(&input)?",
       "scope": "Read",

@@ -1256,8 +1256,8 @@ export_facade! {
     let output = client.vault_artifacts_body_export(&input)?;
     crate::codec::lift_record("vault.artifacts.body.export", &output)
 };
-"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyArtifactRequest) -> XlsxPreview = |client| {
-    let input: oneiron::office_body::OfficeBodyArtifactRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
+"vault.artifacts.body.preview" => fn vault_artifacts_body_preview(&self, input: OfficeBodyPreviewRequest) -> XlsxPreview = |client| {
+    let input: oneiron::office_body::OfficeBodyPreviewRequest = crate::codec::lower_record("vault.artifacts.body.preview", input)?;
     let output = client.vault_artifacts_body_preview(&input)?;
     crate::codec::lift_record("vault.artifacts.body.preview", &output)
 };
