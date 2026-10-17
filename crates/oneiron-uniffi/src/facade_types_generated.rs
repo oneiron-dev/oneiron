@@ -12896,6 +12896,42 @@ pub enum XlsxBodyOp {
         #[serde(rename = "sheet")]
         sheet: String,
     },
+    #[serde(rename = "insert_rows")]
+    InsertRows {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "at")]
+        at: u32,
+        #[serde(rename = "count")]
+        count: u32,
+    },
+    #[serde(rename = "delete_rows")]
+    DeleteRows {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "at")]
+        at: u32,
+        #[serde(rename = "count")]
+        count: u32,
+    },
+    #[serde(rename = "insert_columns")]
+    InsertColumns {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "at")]
+        at: u32,
+        #[serde(rename = "count")]
+        count: u32,
+    },
+    #[serde(rename = "delete_columns")]
+    DeleteColumns {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "at")]
+        at: u32,
+        #[serde(rename = "count")]
+        count: u32,
+    },
 }
 
 /// `oneiron_docedit::live::pptx::DeckOp`.
