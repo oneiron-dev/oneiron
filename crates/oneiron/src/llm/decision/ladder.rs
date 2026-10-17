@@ -1158,11 +1158,22 @@ impl DecisionLadder<'_> {
         dial: DecisionDial,
         images: &[DecisionImage],
     ) -> Option<DecisionRung> {
+        self.first_taking_media(question, dial, images, &[])
+    }
+
+    /// [`DecisionLadder::first_taking`] over `images` and `audio` both.
+    pub fn first_taking_media(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+    ) -> Option<DecisionRung> {
         let mut rung = dial.first;
         while rung <= dial.ceiling && rung != DecisionRung::Human {
             if self
                 .slot(rung)
-                .is_some_and(|provider| takes(provider, question, images, &[]))
+                .is_some_and(|provider| takes(provider, question, images, audio))
             {
                 return Some(rung);
             }
