@@ -63,6 +63,7 @@ impl HeldLadder {
             ask_to: None,
             person: self.person.as_ref(),
             presence: self.presence.as_ref(),
+            correlation: None,
         }
     }
 }

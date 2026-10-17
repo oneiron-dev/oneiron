@@ -1469,7 +1469,7 @@ export type ResolvedRole = { role: AskRole; holders: RoleHolder[] }
 /** `oneiron::llm::decision::asks::AskAnswer` */
 export type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean }
 /** `oneiron::llm::decision::asks::DecisionAsk` */
-export type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; role?: ResolvedRole | null; answer?: AskAnswer | null }
+export type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation?: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null }
 /** `oneiron::receipt::decision_asks::DecisionAskClimbRequest` */
 export type DecisionAskClimbRequest = { seq: number }
 /** `oneiron::task_verb::sdk_connector::ConnectorListRequest` */

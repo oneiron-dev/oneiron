@@ -3713,6 +3713,7 @@ class DecisionAsk(TypedDict):
     prior: NotRequired[AskPrior | None]
     queue_pin: ProviderPin
     to: AskTo
+    correlation: NotRequired[str | None]
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
 class DecisionAskClimbRequest(TypedDict):

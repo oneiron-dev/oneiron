@@ -10134,6 +10134,8 @@ pub struct DecisionAsk {
     pub queue_pin: ProviderPin,
     #[serde(rename = "to")]
     pub to: AskTo,
+    #[serde(rename = "correlation", default)]
+    pub correlation: Option<String>,
     #[serde(rename = "role", default, skip_serializing_if = "Option::is_none")]
     pub role: Option<ResolvedRole>,
     #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]

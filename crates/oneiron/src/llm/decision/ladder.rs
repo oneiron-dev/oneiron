@@ -352,6 +352,8 @@ pub struct HumanDecisionRequest {
     pub queue_pin: ProviderPin,
     /// Who the ask goes to, as the caller bound it ([`DecisionLadder::ask_to`]).
     pub to: AskTo,
+    /// The work the ask decides, as the caller named it ([`DecisionLadder::correlation`]).
+    pub correlation: Option<EntityId>,
 }
 
 impl HumanDecisionRequest {
@@ -543,6 +545,11 @@ pub struct DecisionLadder<'a> {
     /// The host's versioned presence question ("is the target in the image?"). A Box or
     /// Point call through [`Self::run_located`] asks it first.
     pub presence: Option<&'a DecisionQuestion>,
+    /// The work this call decides, as the caller names it (one conflict, one correction
+    /// pack). The ask its person rung queues carries it, so two calls over the same
+    /// question, principal and evidence that decide different work keep apart asks. The
+    /// caller binds it from trusted context, never the model.
+    pub correlation: Option<EntityId>,
 }
 
 impl DecisionLadder<'_> {
@@ -1033,6 +1040,7 @@ impl DecisionLadder<'_> {
                 prior,
                 queue_pin: self.human_pin.clone(),
                 to: self.ask_to.cloned().unwrap_or_else(AskTo::owner),
+                correlation: self.correlation,
             })?;
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
