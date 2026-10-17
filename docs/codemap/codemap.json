@@ -10195,7 +10195,7 @@
      "path": "src/claim/scoped_read/weave_correction.rs",
      "purpose": "Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 5,
       "struct": 2
