@@ -15,15 +15,17 @@
 //! `ai.options` from its model runtime. Its `tasks.wave` is its own wave,
 //! queued under its lease, where a credential's is the owner's root one. Its
 //! `connector.call` goes through the host's connector transports under the
-//! agent's own grant. An
-//! `ai.*` media call and a hook replay are the owner's, and refused. A browser or desktop row drives the
-//! run's own guest under the browser pack, its checked connection and the
-//! vault's standing grants. The board rows, `self.focus.*` and a keyed
+//! agent's own grant. Its `ai.speech` renders on the run's own line, the
+//! meter its entry's model calls spend on (FIX 3194), and its `ai.options`
+//! lists the speech rows that call could take. Any other `ai.*` media call
+//! and a hook replay are the owner's, and refused. A browser or desktop row
+//! drives the run's own guest under the browser pack, its checked
+//! connection and the vault's standing grants. The board rows, `self.focus.*` and a keyed
 //! `describe`, run the engine's board dispatcher over the agent's own board
 //! on the run's own STREAM connection, which goes when the door does. Each
 //! row's verb hooks fire once around it.
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::board_verb::BoardVerbCall;
 use oneiron::claim::{CallerLocality, ScopedRead, ScopedReadActorKey};
@@ -37,6 +39,7 @@ use oneiron::llm::decision::questions::{
     run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::media::{AiOperation, Modality};
+use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::memory::{
     HostWriteOrigin, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, Memory, MemoryError,
     MemoryResult, ProducerRows,
@@ -52,7 +55,7 @@ use oneiron::task_verb::sdk::{
     BoardSubscriptionRequest, DescribeRequest, TaskWaveRequest,
 };
 use oneiron::task_verb::verb_hook_boundary;
-use oneiron::{EntityId, WriteActor};
+use oneiron::{BudgetGuard, EntityId, WriteActor};
 use serde_json::Value;
 
 use super::{SyncServer, wave_plan, wave_receipt};
@@ -82,6 +85,11 @@ pub(super) struct RunHostDoor {
     guests: RunGuests,
     /// The run's own board STREAM connection, dropped with the door.
     board: StreamConnectionId,
+    /// The run's name on its model lines.
+    run: String,
+    /// The line the run's entry in flight spends on, which its `ai.speech`
+    /// is admitted on (FIX 3194); empty between entries.
+    line: Mutex<Option<RunAdmission>>,
 }
 
 impl RunHostDoor {
@@ -94,10 +102,25 @@ impl RunHostDoor {
         Self {
             guests: RunGuests::new(server, run_id),
             board: StreamConnectionId(format!("run:{}", run_id.to_hex())),
+            run: format!("agent-run:{}", run_id.to_hex()),
+            line: Mutex::new(None),
             server: Arc::clone(server),
             actor,
             runtime,
         }
+    }
+
+    /// Binds the meter the run's next entry makes its model calls on, and
+    /// the payer they bill, so its `ai.speech` spends there too, as its other
+    /// model calls do (FIX 3194). `None` clears it once the entry ends.
+    pub(super) fn bind_meter(&self, meter: Option<(BudgetGuard, Option<PayerPerson>)>) {
+        let line = meter.map(|(guard, payer)| {
+            self.server
+                .ai
+                .model_runtime()
+                .funded_run(self.run.clone(), guard, payer)
+        });
+        *self.line.lock().unwrap_or_else(PoisonError::into_inner) = line;
     }
 }
 
@@ -134,12 +157,26 @@ impl AgentVerbDoor for RunHostDoor {
         let origin = origin.clone();
         let verb = call.verb;
         let input = call.input.clone();
+        let line = self
+            .line
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         self.runtime.spawn_blocking(move || {
             let _ = sender.send(match board {
                 Some(board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
                 }
-                None => answer_as_agent(&server, actor, &origin, invocation, verb, input, held),
+                None => answer_as_agent(
+                    &server,
+                    actor,
+                    &origin,
+                    invocation,
+                    verb,
+                    input,
+                    held,
+                    line.as_ref(),
+                ),
             });
         });
         let Ok(answered) = receiver.recv() else {
@@ -248,8 +285,13 @@ fn board_as_agent(
 /// Answers one host row for `actor`, with its verb hooks once around it, on
 /// a fresh surface under the agent that carries `origin` and `invocation`.
 /// The rows it answers with are the ones that surface listed as served;
-/// `held` is the run's own screenshot an `ai.verdict` may name. Blocking:
-/// call it on a blocking thread of the server's runtime.
+/// `held` is the run's own screenshot an `ai.verdict` may name, and `line`
+/// the run's own line its `ai.speech` spends on. Blocking: call it on a
+/// blocking thread of the server's runtime.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the agent's call"
+)]
 pub(crate) fn answer_as_agent(
     server: &SyncServer,
     actor: WriteActor,
@@ -258,6 +300,7 @@ pub(crate) fn answer_as_agent(
     verb: AgentVerb,
     input: Value,
     held: Option<HeldImage>,
+    line: Option<&RunAdmission>,
 ) -> MemoryResult<(Value, Vec<EntityId>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does.
@@ -272,7 +315,7 @@ pub(crate) fn answer_as_agent(
     let output = if served_by_host(verb) {
         verb_hook_boundary::row(&memory, name, input, |input| {
             sdk::validate_input(name, &input)?;
-            HELD_IMAGE.sync_scope(held, || host_row(server, actor, &memory, verb, input))
+            HELD_IMAGE.sync_scope(held, || host_row(server, actor, &memory, verb, input, line))
         })?
     } else {
         sdk::invoke(&memory, name, input)?
@@ -340,6 +383,7 @@ fn host_row(
     memory: &Memory<'_>,
     verb: AgentVerb,
     input: Value,
+    line: Option<&RunAdmission>,
 ) -> MemoryResult<Value> {
     let (principal, class) = (actor.entity_ref(), actor.actor_class());
     let vault = server.vault();
@@ -478,7 +522,14 @@ fn host_row(
                 renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
             }),
         )?),
-        AgentVerb::AiOptions => encode(ai_options(server, decode(input)?)?),
+        AgentVerb::AiOptions => encode(ai_options(server, line, decode(input)?)?),
+        // The run's own speech, on the line its entry spends on (FIX 3194).
+        AgentVerb::AiSpeech => {
+            let line = line.ok_or_else(|| internal(verb))?;
+            encode(tokio::runtime::Handle::current().block_on(
+                crate::api::ai_speech_for_run(server, line, decode(input)?),
+            )?)
+        }
         // The run's own wave: planned for its agent and queued on its own
         // surface, whose bound lease is the wave's creator (OF-532).
         AgentVerb::TasksWave => {
@@ -507,9 +558,14 @@ fn host_row(
 }
 
 /// `ai.options` from the host's model runtime: the rows the agent could call
-/// now (FIX 2942). Each `ai.*` call door is the owner's and refuses the
-/// agent, so it lists none, and no meter.
-fn ai_options(server: &SyncServer, request: AiOptionsRequest) -> MemoryResult<AiOptions> {
+/// now (FIX 2942). Its `ai.speech` alone is admitted, on `line`, so it lists
+/// the speech rows, with what that line has left (FIX 3194); every other
+/// `ai.*` call door is the owner's and refuses the agent.
+fn ai_options(
+    server: &SyncServer,
+    line: Option<&RunAdmission>,
+    request: AiOptionsRequest,
+) -> MemoryResult<AiOptions> {
     let operation = request
         .operation
         .as_deref()
@@ -530,7 +586,8 @@ fn ai_options(server: &SyncServer, request: AiOptionsRequest) -> MemoryResult<Ai
             )
         })
         .collect::<MemoryResult<BTreeSet<_>>>()?;
-    let listed = crate::api::ai::caller_options(server, false, operation, &inputs);
+    let left = line.map(|line| line.read().remaining_units);
+    let listed = crate::api::ai::run_options(server, left, operation, &inputs);
     let options = listed
         .options
         .into_iter()
