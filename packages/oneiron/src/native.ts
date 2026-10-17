@@ -79,6 +79,8 @@ vaultWeaveDigest(input: unknown): unknown
 vaultWeaveLens(input: unknown): unknown
 vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
+vaultWeaveItemWrong(input: unknown): unknown
+vaultWeaveOwnerItemWrong(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksSetupPrepare(input: unknown): unknown
 vaultPacksSetupGet(input: unknown): unknown
