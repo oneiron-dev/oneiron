@@ -64,6 +64,13 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
             Value::from(SLIP_KEY_GRANT_REF),
             claims.grant_ref.as_deref().map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(SLIP_KEY_INVITATION_REF),
+            claims
+                .invitation_ref
+                .as_deref()
+                .map_or(Value::Nil, Value::from),
+        ),
     ])
 }
 
@@ -128,6 +135,10 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
         },
         grant_ref: {
             let value = required(entries, SLIP_KEY_GRANT_REF)?;
+            decode_optional_string(value)?
+        },
+        invitation_ref: {
+            let value = required(entries, SLIP_KEY_INVITATION_REF)?;
             decode_optional_string(value)?
         },
     };

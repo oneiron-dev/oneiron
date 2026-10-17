@@ -213,7 +213,7 @@ impl Vault {
             return Ok(None);
         };
         if self
-            .require_live_slip_grant_in_txn(&txn, verified.claims(), now)
+            .require_live_slip_refs_in_txn(&txn, verified.claims(), now)
             .is_err()
         {
             return Ok(None);

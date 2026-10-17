@@ -516,8 +516,8 @@ class Oneiron:
         def close_erase_ask(self, spec: Facade.SharedEraseAskCloseRequest) -> Facade.SharedEraseAsk:
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
     class _VaultMembersVerbs:
-        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedActExecutionReceipt:
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept."""
+        def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
         def change(self, spec: Facade.SharedMemberRoleRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin assigns another non-root role to a member who is not an Owner."""
         def remove(self, spec: Facade.SharedMemberRequest) -> Facade.SharedActExecutionReceipt:

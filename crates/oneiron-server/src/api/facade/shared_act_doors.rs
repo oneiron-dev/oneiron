@@ -29,8 +29,8 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
-    SharedMemberAddRequest, SharedMemberRequest, SharedMemberRoleRequest, SharedReceiptRequest,
-    SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
+    SharedMemberAddRequest, SharedMemberInvited, SharedMemberRequest, SharedMemberRoleRequest,
+    SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
 use super::host_doors::internal;
@@ -42,7 +42,8 @@ use crate::server::SyncServer;
 /// rechecks in the acting writer; any other person gets their own proof from
 /// their verified human slip, and the engine's roster, power and role checks
 /// decide. A managed vault is owned through its supervisor and refuses, as
-/// `/v1/owner` does there.
+/// `/v1/owner` does there. An invitee's own slip (FIX 1925) is a person's
+/// proof only at its invitation's doors (`auth::INVITEE_DOORS`).
 pub(super) fn person(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -68,7 +69,9 @@ pub(super) fn person(
     let principal = auth.principal_ref().ok_or_else(refused)?;
     let actor = oneiron::EntityId::from_hex(principal).map_err(|_| refused())?;
     // The slip is the person's own, as the owner's bound proof requires.
-    if slip.claims().holder_ref != actor.to_hex() {
+    if slip.claims().holder_ref != actor.to_hex()
+        || (slip.claims().invitation_ref.is_some() && !crate::auth::INVITEE_DOORS.contains(&verb))
+    {
         return Err(refused());
     }
     server
@@ -217,16 +220,22 @@ pub(crate) async fn vault_shared_deletion(
 }
 
 /// `vault.members.add`: an Admin's `add_member` power, checked by the engine
-/// against the live roster.
+/// against the live roster. Given the invitee's own device key, the host's
+/// slip issuer signs the invitee's slip for the invitation (FIX 1925).
 pub(crate) async fn vault_members_add(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedMemberAddRequest,
-) -> MemoryResult<SharedActExecutionReceipt> {
+) -> MemoryResult<SharedMemberInvited> {
     const VERB: &str = "vault.members.add";
     let admin = person(server, auth, VERB)?;
     off_runtime(server, VERB, move |server| {
-        sdk::add_shared_member_as(server.vault(), &admin, input)
+        if input.holder_key.is_none() {
+            return sdk::add_shared_member_as(server.vault(), &admin, None, input);
+        }
+        with_slips(server, VERB, |slips| {
+            sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
+        })
     })
     .await
 }

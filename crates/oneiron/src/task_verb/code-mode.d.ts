@@ -262,7 +262,7 @@ declare const vault: {
   };
   members: {
     accept(input: { invitation: string; vault_id: number }): Promise<unknown>;
-    add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
+    add(input: { holder_key?: string | null; member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
     decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
     invitations(input: { vault_id: number }): Promise<unknown>;

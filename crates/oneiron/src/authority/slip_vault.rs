@@ -262,6 +262,7 @@ impl Vault {
             actor_class: None,
             org_ref: None,
             grant_ref: None,
+            invitation_ref: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
@@ -323,7 +324,7 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let verified = slip.verify(host_public_key, &fold, now, challenge, signature)?;
-        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        self.require_live_slip_refs_in_txn(&txn, verified.claims(), now)?;
         Ok(verified)
     }
     /// Verify a slip and its holder-signed caveats against the logged issuing host key.
@@ -338,7 +339,7 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let verified = slip.verify_with_host_key(host_key, &fold, now, challenge, signature)?;
-        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        self.require_live_slip_refs_in_txn(&txn, verified.claims(), now)?;
         Ok(verified)
     }
     /// Verify a transport proof without consuming its nonce, using the same
@@ -360,7 +361,7 @@ impl Vault {
         )?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let verified = slip.verify(host_public_key, &fold, now, &challenge, signature)?;
-        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        self.require_live_slip_refs_in_txn(&txn, verified.claims(), now)?;
         Ok(verified)
     }
 
@@ -385,7 +386,7 @@ impl Vault {
             .ok_or_else(invalid_authority)?
             .signer;
         let verified = slip.verify(key, &fold, now, &challenge, signature)?;
-        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        self.require_live_slip_refs_in_txn(&txn, verified.claims(), now)?;
         if verified.claims().single_use {
             return Err(invalid_authority());
         }
@@ -423,7 +424,7 @@ impl Vault {
             .ok_or_else(invalid_authority)?
             .signer;
         let verified = slip.verify(key, &fold, now, &challenge, signature)?;
-        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        self.require_live_slip_refs_in_txn(&txn, verified.claims(), now)?;
         Ok(verified)
     }
 
@@ -582,7 +583,7 @@ impl Vault {
         let challenge =
             super::slip_replay::request_challenge(request_timestamp, request_nonce, request_now)?;
         let verified = slip.verify(&issuer.public_key(), &fold, now, &challenge, signature)?;
-        self.require_live_slip_grant_in_txn(&txn, verified.claims(), now)?;
+        self.require_live_slip_refs_in_txn(&txn, verified.claims(), now)?;
         super::slip_replay::record_nonce(
             self,
             &mut txn,

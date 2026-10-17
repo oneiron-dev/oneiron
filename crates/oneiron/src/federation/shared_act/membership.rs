@@ -12,7 +12,7 @@ use super::{
     Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
     invalid, live_owners, non_root,
 };
-use crate::authority::{HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
+use crate::authority::{CapabilitySlip, HostSlipIssuer, OwnerHandover, OwnerHandoverCause};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -315,8 +315,8 @@ impl Vault {
         if !crate::consent::person_is_live_in_txn(self, txn, &member)? {
             return Err(invalid());
         }
-        let effect =
-            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, now)?;
+        let (effect, _) =
+            self.issue_invitation_in_txn(txn, vault_id, creator, member, role, true, None, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         self.record_shared_change_in_txn(
             txn,
@@ -343,7 +343,25 @@ impl Vault {
         member: EntityId,
         role: Option<Role>,
     ) -> Result<SharedActExecutionReceipt> {
-        self.change_shared_membership(
+        self.invite_shared_member(admin, vault_id, member, role, None)
+            .map(|(receipt, _)| receipt)
+    }
+
+    /// [`Vault::add_shared_member`], and with `credential` (the host's slip
+    /// issuer and the public key `member` generated on their own device) the
+    /// invitee's own slip for this invitation (FIX 1925), minted in the same
+    /// writer: it reaches only the invitation's list, accept and decline, and
+    /// stands while the invitation is pending.
+    pub fn invite_shared_member(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        role: Option<Role>,
+        credential: Option<(&HostSlipIssuer, [u8; 32])>,
+    ) -> Result<(SharedActExecutionReceipt, Option<CapabilitySlip>)> {
+        let mut slip = None;
+        let receipt = self.change_shared_membership(
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
@@ -362,9 +380,14 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, false, now)
+                let (effect, minted) = self.issue_invitation_in_txn(
+                    txn, vault_id, inviter, member, role, false, credential, now,
+                )?;
+                slip = minted;
+                Ok(effect)
             },
-        )
+        )?;
+        Ok((receipt, slip))
     }
     /// Assign `member` another non-root role. An Owner's role changes only
     /// through the `transfer_ownership` and `remove_owner` acts.

@@ -94,6 +94,7 @@ impl Vault {
             actor_class: None,
             org_ref: None,
             grant_ref: Some(grant_ref.to_hex()),
+            invitation_ref: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;

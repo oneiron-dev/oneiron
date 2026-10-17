@@ -210,7 +210,7 @@ impl OneironClient {
                     Option<oneiron::federation::SharedVaultDeletion>,
                 >(client, verb, &input),
                 "vault.members.add" => remote_agent_verb_output::<
-                    oneiron::federation::SharedActExecutionReceipt,
+                    oneiron::task_verb::sdk::SharedMemberInvited,
                 >(client, verb, &input),
                 "vault.members.change" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
@@ -1437,7 +1437,7 @@ impl OneironClient {
     pub fn vault_members_add(
         &self,
         input: &oneiron::task_verb::sdk::SharedMemberAddRequest,
-    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::SharedMemberInvited, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

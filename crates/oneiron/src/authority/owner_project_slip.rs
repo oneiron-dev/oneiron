@@ -61,6 +61,7 @@ impl Vault {
                     actor_class: None,
                     org_ref: None,
                     grant_ref: None,
+                    invitation_ref: None,
                 };
                 let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
                 OWNER_PROJECT_SLIP_CACHE.put(
