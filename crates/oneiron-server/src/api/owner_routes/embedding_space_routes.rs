@@ -186,7 +186,10 @@ async fn declare(
     let space = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
-            server.vault().declare_embedding_space(space).map_err(invalid)?;
+            server
+                .vault()
+                .declare_embedding_space(space)
+                .map_err(invalid)?;
             spaces(server.vault())
         })
         .await?,

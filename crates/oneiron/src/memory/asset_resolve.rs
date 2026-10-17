@@ -700,7 +700,10 @@ fn audio_of(body: &[u8]) -> Option<(Vec<u8>, String)> {
             .find(|(key, _)| key.as_str() == Some(name))
             .map(|(_, value)| value)
     };
-    match (field(BODY_BYTES), field(BODY_MEDIA_TYPE).and_then(Value::as_str)) {
+    match (
+        field(BODY_BYTES),
+        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
+    ) {
         (Some(Value::Binary(bytes)), Some(media_type))
             if !bytes.is_empty() && media_type.starts_with("audio/") =>
         {

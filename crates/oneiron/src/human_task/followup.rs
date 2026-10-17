@@ -99,13 +99,25 @@ pub(super) fn resolve_native_human_route_with_sender_in(
             .port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
     {
         let channel_identity_ref = channel_identity_ref?;
+        // Channel and state are the identity's facts, read from its
+        // `channel_identity.*` heads (OF-272); whether it may send is custody,
+        // on the local row.
+        let Some(facts) = crate::channel_identity::channel_identity_facts_in_txn(
+            &vault.store,
+            txn,
+            &channel_identity_ref,
+        )?
+        else {
+            continue;
+        };
         let Some(identity) = vault.get_channel_identity_in_txn(txn, &channel_identity_ref)? else {
             continue;
         };
-        if identity.state() != ChannelIdentityState::Active {
+        if facts.state != ChannelIdentityState::Active {
             continue;
         }
-        if let Some(claims) = vetoed.get(identity.channel()) {
+        let channel = facts.channel.as_str();
+        if let Some(claims) = vetoed.get(channel) {
             vetoes.extend(claims.iter().copied());
             continue;
         }
@@ -117,7 +129,7 @@ pub(super) fn resolve_native_human_route_with_sender_in(
                 || crate::outbound::resolve_channel_identity_ref_for_connector(
                     &vault.store,
                     txn,
-                    identity.channel(),
+                    channel,
                     Some(&owner),
                 )? != Some(channel_identity_ref)
             {
@@ -126,7 +138,7 @@ pub(super) fn resolve_native_human_route_with_sender_in(
         }
         // A channel the connector manifest does not serve is not a route,
         // however well connected the person is on it.
-        if outbound_verb_contract(identity.channel(), HUMAN_FOLLOWUP_VERB).is_err() {
+        if outbound_verb_contract(channel, HUMAN_FOLLOWUP_VERB).is_err() {
             continue;
         }
         let Some((_, contact)) =
@@ -140,7 +152,7 @@ pub(super) fn resolve_native_human_route_with_sender_in(
         return Ok(NativeHumanRoute {
             person_ref,
             channel_identity_ref,
-            channel: identity.channel().to_owned(),
+            channel: facts.channel.clone(),
             target: contact.counterparty,
         });
     }
