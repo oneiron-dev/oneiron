@@ -1077,9 +1077,10 @@ whatever the fit says.
 
 A row applies to the vault, to one project, or to one task type (a type row matches its node at
 any tree version). A read takes the narrowest pin (project, then type, then vault). Without a
-pin, it takes the vault's fit once the fit has runs of its own. Failing that, it takes the
-narrowest seed, then the catalog seed. The catalog keeps each knob's bounds; a value outside
-them is refused.
+pin, it takes the project's seed, then the type's: those are your word for that scope alone,
+so a fit learned across the whole vault does not override them. Failing that, it takes the
+vault's fit once the fit has runs of its own, then the vault's seed (the fit's own prior), then
+the catalog seed. The catalog keeps each knob's bounds; a value outside them is refused.
 
 ```sh
 oneiron learning-settings list                                  # catalog, values now, your rows
@@ -1142,8 +1143,9 @@ path.
 ## Live agent runs
 
 The actions that act for one running agent need a live-run handle: `tasks.refuse`,
-`self.agents.spawn`, `self.team.start`, `self.team.record`, and the leader's
-`self.leader.advice` and `self.leader.pattern`. An outside harness gets and uses one like this:
+`self.agents.spawn`, `self.team.start`, `self.team.record`, `self.team.submit`, and the
+leader's `self.leader.advice` and `self.leader.pattern`. An outside harness gets and uses one
+like this:
 1. Pair a credential with write scope to that agent's AGENT_DEF: `POST /v1/core/pairing/links`
    with `principal.holder_ref` set to the AGENT_DEF id and `principal.actor_class` set to
    `agent`. The harness redeems the link at `POST /v1/core/pairing/redeem`.
