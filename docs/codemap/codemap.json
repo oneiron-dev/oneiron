@@ -13591,14 +13591,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ActorConnectorRegistration",
       "ConnectorCallRoute",
       "ConnectorDescription"
      ],
      "path": "src/connector_key/lifecycle/catalog_views.rs",
      "purpose": "Read lenses: HISTORY/EXECUTION/DISCOVERY views over the catalog plus key lookups",
      "surface": {
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
      }
     },
     {
