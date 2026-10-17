@@ -9,24 +9,31 @@
 //! `DeckFork`, reviewed by the merge preflight and landed by someone other than
 //! its proposer. Until the deck export gate opens for its profile, blob
 //! versions stay authoritative: an export is a proposal artifact, not a version.
+//! Once it opens, [`Vault::land_pptx_export`] lands the bytes as the next blob
+//! version and rebinds the deck to them, and later exports project over them.
+//!
+//! Every creation names its node identity before it is logged, so a fork's
+//! operations replay onto the head as the same nodes.
 
 use super::{
-    COMMITS, DOCS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyFork, OfficeBodyKind, bounded_ops,
-    check_made_by, invalid, source,
+    COMMITS, DOCS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyFork, OfficeBodyHead,
+    OfficeBodyKind, bounded_ops, check_made_by, invalid, source,
 };
 use crate::Vault;
+use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::provenance::text_commit::TextCommitReceipt;
 use crate::store::Store;
+use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate, Landing,
-    LandingReceipt, LiveDeck, LiveError, NodeId, PreflightReport, StampedOp, land, preflight,
-    project,
+    LandingReceipt, LiveDeck, LiveError, NodeId, PreflightReport, StampedOp, attach_evidence, land,
+    preflight, project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -40,6 +47,15 @@ pub(super) struct DeckState {
     log: Vec<StampedOp>,
     import_frontier: Vec<u8>,
     commits: u64,
+    /// The blob version a landed export bound the deck to; `None` while it
+    /// is bound to the imported source.
+    retained: Option<Retained>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct Retained {
+    version: u64,
+    hash: [u8; 32],
 }
 
 /// A typed read of the deck body at its head.
@@ -59,6 +75,10 @@ pub struct PptxReview {
     /// Units the fork touches that the head changed since its base: their
     /// answers are withdrawn (ARCH-0075 section 4), untouched units carry.
     pub stale_units: Vec<NodeId>,
+    /// Why the relationship and render components could not be attached
+    /// (the head or the candidate does not project); the diff then keeps its
+    /// conservative affected slides.
+    pub evidence_refusal: Option<String>,
 }
 
 /// A projected deck. `authoritative` only when the export gate is open for the
@@ -79,6 +99,7 @@ impl DeckState {
             log: Vec::new(),
             import_frontier: Vec::new(),
             commits: 0,
+            retained: None,
         };
         state.import_frontier = state.frontier();
         Ok(state)
@@ -154,13 +175,14 @@ impl Vault {
         }
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
+        let ops = self.name_creations(ops)?;
         self.with_write_txn_grouped(|wtxn| {
             let mut state = load_deck(&self.store, wtxn, artifact)?;
             if state.frontier() != expected_head {
                 return Err(invalid("the deck moved since it was read; read it again"));
             }
             let start = state.log.len();
-            let minted = state.apply(&actor.entity_ref().to_hex(), made_by.at, ops)?;
+            let minted = state.apply(&actor.entity_ref().to_hex(), made_by.at, &ops)?;
             let receipt = log_receipt(*artifact, start, state.log.len(), made_by)?;
             let mut commits = state.commits;
             self.record_commit(wtxn, artifact, &mut commits, &receipt)?;
@@ -186,6 +208,7 @@ impl Vault {
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
+        let ops = self.name_creations(ops)?;
         self.with_write_txn_grouped(|wtxn| {
             let key = (*artifact, *fork);
             let mut record = FORKS
@@ -200,9 +223,10 @@ impl Vault {
                 log: Vec::new(),
                 import_frontier: Vec::new(),
                 commits: 0,
+                retained: None,
             };
             let start = work.ops.len();
-            let minted = proposal.apply(&actor.entity_ref().to_hex(), made_by.at, ops)?;
+            let minted = proposal.apply(&actor.entity_ref().to_hex(), made_by.at, &ops)?;
             let frontier = proposal.frontier();
             work.ops.extend(proposal.log);
             let receipt = log_receipt(*artifact, start, work.ops.len(), made_by)?;
@@ -218,21 +242,43 @@ impl Vault {
     }
 
     /// The deck fork's merge preflight against the live head: the three-way
-    /// diff with its named conflicts, the replay onto the head, and the stale
-    /// units.
+    /// diff with its named conflicts, the replay onto the head, the stale
+    /// units, and the relationship and render components of the head's export
+    /// against the merged candidate's.
     pub fn pptx_body_fork_review(
         &self,
         artifact: &EntityId,
         fork: &EntityId,
     ) -> Result<PptxReview> {
-        let txn = self.store.env.read_txn()?;
-        let state = load_deck(&self.store, &txn, artifact)?;
-        open_record(&self.store, &txn, artifact, fork)?;
-        let work = load_fork(&self.store, &txn, fork)?;
+        let head = self
+            .office_body_head(artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        let (state, work) = {
+            let txn = self.store.env.read_txn()?;
+            let state = load_deck(&self.store, &txn, artifact)?;
+            open_record(&self.store, &txn, artifact, fork)?;
+            (state, load_fork(&self.store, &txn, fork)?)
+        };
+        let mut report = preflight(&state.deck, &work).map_err(live)?;
+        let package = Package::open(
+            &self.deck_source(artifact, &head, &state)?,
+            self.docedit_package_limits()?,
+        )
+        .map_err(|_| invalid("the PPTX package could not be read"))?;
+        let evidence_refusal = attach_evidence(
+            &mut report,
+            &state.deck,
+            &package,
+            &artifact.to_hex(),
+            &ExportProfile::default(),
+        )
+        .err()
+        .map(|error| error.to_string());
         Ok(PptxReview {
-            report: preflight(&state.deck, &work).map_err(live)?,
+            report,
             stale_units: work.stale_units(&state.deck),
             head: state.frontier(),
+            evidence_refusal,
         })
     }
 
@@ -291,7 +337,8 @@ impl Vault {
         })
     }
 
-    /// Project the deck at its head over the imported package. Until the
+    /// Project the deck at its head over its retained package (the imported
+    /// source, or the version the last landed export made). Until the
     /// profile's export gate opens the result is a proposal artifact: nothing
     /// lands, and the caller proposes the bytes through the edit rails.
     pub fn export_pptx_body(&self, artifact: &EntityId) -> Result<PptxExport> {
@@ -304,7 +351,7 @@ impl Vault {
         };
         let profile = ExportProfile::default();
         let package = Package::open(
-            &self.body_source(artifact, &head)?,
+            &self.deck_source(artifact, &head, &state)?,
             self.docedit_package_limits()?,
         )
         .map_err(|_| invalid("the PPTX package could not be read"))?;
@@ -314,6 +361,86 @@ impl Vault {
             authoritative: Gate::closed(&profile.name).is_open(),
             outcome,
         })
+    }
+
+    /// Land an authoritative export: its bytes become the artifact's next blob
+    /// version, the deck rebinds to them (the same node identities, the
+    /// exported native ids and fingerprints, the joined allocation history),
+    /// and the next export projects over them. A proposal export, or a head
+    /// that moved since the export, refuses.
+    pub fn land_pptx_export(
+        &self,
+        artifact: &EntityId,
+        export: &PptxExport,
+        actor: WriteActor,
+        provenance: &BlobVersionProvenance,
+    ) -> Result<BlobArtifactVersion> {
+        if !export.authoritative {
+            return Err(invalid(
+                "the deck export gate is closed for its profile; the export is a proposal",
+            ));
+        }
+        let at = self.now_recorded_at();
+        self.with_write_txn_grouped(|wtxn| {
+            let mut state = load_deck(&self.store, wtxn, artifact)?;
+            if state.frontier() != export.frontier {
+                return Err(invalid("the deck moved since the export; export again"));
+            }
+            let version = self.append_blob_artifact_version_in_txn(
+                wtxn,
+                artifact,
+                &export.outcome.bytes,
+                provenance,
+                actor,
+                TimeRange { start: at, end: at },
+                at,
+            )?;
+            state.deck.rebind(&export.outcome).map_err(live)?;
+            state.retained = Some(Retained {
+                version: version.version,
+                hash: *blake3::hash(&export.outcome.bytes).as_bytes(),
+            });
+            store_deck(&self.store, wtxn, artifact, &state)?;
+            Ok(version)
+        })
+    }
+
+    /// The package the deck is bound to, checked against its recorded hash.
+    fn deck_source(
+        &self,
+        artifact: &EntityId,
+        head: &OfficeBodyHead,
+        state: &DeckState,
+    ) -> Result<Vec<u8>> {
+        let Some(retained) = state.retained else {
+            return self.body_source(artifact, head);
+        };
+        let bytes = self
+            .read_blob_artifact_version(artifact, retained.version)?
+            .ok_or(Error::EntityNotFound)?;
+        if *blake3::hash(&bytes).as_bytes() != retained.hash {
+            return Err(Error::CorruptedIndex("deck retained version"));
+        }
+        Ok(bytes)
+    }
+
+    /// `ops` with every creation naming a fresh identity, so the log, a fork's
+    /// replay onto the head and a concurrent writer all make the same node.
+    /// Fresh identities set the top bit, above the import's sequential ones.
+    fn name_creations(&self, ops: &[DeckOp]) -> Result<Vec<DeckOp>> {
+        ops.iter()
+            .map(|op| {
+                let mut op = op.clone();
+                if matches!(
+                    op,
+                    DeckOp::AddSlide { id: None } | DeckOp::AddNode { id: None, .. }
+                ) {
+                    let entropy = self.new_entity_id()?;
+                    op.name_creation(|| fresh_node(&entropy));
+                }
+                Ok(op)
+            })
+            .collect()
     }
 
     /// Store an imported deck as the artifact's body; the import is an empty
@@ -434,6 +561,14 @@ fn log_receipt(
         end: span(end)?,
         made_by: made_by.clone(),
     })
+}
+
+/// A node identity drawn from fresh entity entropy, top bit set.
+fn fresh_node(entropy: &EntityId) -> NodeId {
+    let hash = blake3::hash(entropy.as_bytes());
+    let mut word = [0u8; 8];
+    word.copy_from_slice(&hash.as_bytes()[..8]);
+    NodeId(u64::from_le_bytes(word) | 1 << 63)
 }
 
 fn live(error: LiveError) -> Error {
