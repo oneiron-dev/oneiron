@@ -8117,7 +8117,7 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -8131,19 +8131,25 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "AuthoredCampaignProgram",
       "CampaignProgram",
       "CampaignProgramAudience",
+      "CampaignProgramDefinition",
+      "CampaignProgramDraft",
       "CampaignProgramOutbound",
-      "CampaignProgramStep"
+      "CampaignProgramStep",
+      "CampaignProgramStepDraft"
      ],
      "path": "src/campaign/enrollment/program.rs",
      "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
      "surface": {
-      "fn": 6,
-      "struct": 4
+      "const": 5,
+      "crate-vis": 1,
+      "fn": 10,
+      "struct": 8
      }
     },
     {
@@ -8405,6 +8411,7 @@
      "purpose": "Campaign record types, lifecycle operations, and vault storage",
      "surface": {
       "const": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 4
@@ -8444,7 +8451,8 @@
      "path": "src/campaign/surface/mod.rs",
      "purpose": "CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack",
      "surface": {
-      "re-export": 4
+      "crate-vis": 2,
+      "re-export": 5
      }
     },
     {
@@ -8458,6 +8466,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArchiveCampaignProgramRequest",
+      "CampaignProgramAudienceSpec",
+      "CampaignProgramDefinitionView",
+      "CampaignProgramLifecycle",
+      "CampaignProgramOutboundSpec",
+      "CampaignProgramReadRequest",
+      "CampaignProgramReadResult",
+      "CampaignProgramRecord",
+      "CampaignProgramStepSpec",
+      "CreateCampaignProgramRequest",
+      "UpdateCampaignProgramRequest"
+     ],
+     "path": "src/campaign/surface/program.rs",
+     "purpose": "Wire shapes of the four campaign program verbs (`vault.campaign.program.*`)",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "struct": 10
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -8466,7 +8498,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CampaignSurfaceVerb",
@@ -8476,7 +8508,7 @@
      "path": "src/campaign/surface/verbs.rs",
      "purpose": "Closed verb vocabulary and the single shared dispatch door",
      "surface": {
-      "const": 12,
+      "const": 18,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -29060,7 +29092,7 @@
      "path": "src/memory/campaign.rs",
      "purpose": "Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`…",
      "surface": {
-      "fn": 10
+      "fn": 14
      }
     },
     {
@@ -38160,7 +38192,7 @@
      "path": "src/saved_query/lifecycle.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4
      }
     },
@@ -46591,7 +46623,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 309
+      "fn": 313
      }
     },
     {
@@ -51580,9 +51612,9 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "CRM pack engine-side registration home"
     },
@@ -52945,9 +52977,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 162,
+   "over_bar": 163,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3206,
+   "source_files": 3207,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60933,7 +60965,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 263
+      "fn": 267
      }
     },
     {
@@ -61950,7 +61982,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 264
+      "fn": 268
      }
     },
     {
@@ -64055,13 +64087,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/campaign.rs",
      "purpose": "CA-07 campaign HTTP routes",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -72080,6 +72112,7 @@
       "AnswerRecord",
       "AnsweringAuthority",
       "ApproveScope",
+      "ArchiveCampaignProgramRequest",
       "ArtifactAskRecord",
       "ArtifactAskStanding",
       "ArtifactAskUnits",
@@ -72131,6 +72164,14 @@
       "CallReceiptRequest",
       "CallTransport",
       "CallableCardView",
+      "CampaignProgramAudienceSpec",
+      "CampaignProgramDefinitionView",
+      "CampaignProgramLifecycle",
+      "CampaignProgramOutboundSpec",
+      "CampaignProgramReadRequest",
+      "CampaignProgramReadResult",
+      "CampaignProgramRecord",
+      "CampaignProgramStepSpec",
       "CancelRejectionPathology",
       "Care",
       "ChangeKind",
@@ -72203,6 +72244,7 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
       "Criterion",
@@ -72841,6 +72883,7 @@
       "TypedDecision",
       "UndoneKeep",
       "UnsupportedCapability",
+      "UpdateCampaignProgramRequest",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
       "WeaveItemView",
@@ -72883,8 +72926,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 241,
-      "struct": 592
+      "enum": 242,
+      "struct": 602
      }
     },
     {
