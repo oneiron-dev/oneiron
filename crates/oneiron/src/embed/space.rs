@@ -405,7 +405,9 @@ pub(super) fn set_kind_slot_in_txn(
 ) -> Result<()> {
     match space_id {
         Some(space_id) => EMBEDDING_SLOT.put(store, txn, &[kind.byte()], &space_id.to_owned()),
-        None => EMBEDDING_SLOT.delete(store, txn, &[kind.byte()]).map(|_| ()),
+        None => EMBEDDING_SLOT
+            .delete(store, txn, &[kind.byte()])
+            .map(|_| ()),
     }
 }
 

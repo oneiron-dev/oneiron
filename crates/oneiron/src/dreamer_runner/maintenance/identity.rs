@@ -100,8 +100,7 @@ const STOP_WORDS: &[&str] = &[
 const ASKS: SideTable<[u8; 32], IdentityAsk, Named> =
     SideTable::new(&side_table::DREAMER_IDENTITY_ASK);
 /// The last turn the nightly pass read.
-const CURSOR: SideTable<(), EntityId, Named> =
-    SideTable::new(&side_table::DREAMER_IDENTITY_CURSOR);
+const CURSOR: SideTable<(), EntityId, Named> = SideTable::new(&side_table::DREAMER_IDENTITY_CURSOR);
 /// Context hints. Key: kind, the name's identity-hint digest, the entity.
 const HINTS: SideTable<([u8; 1], [u8; 32], EntityId), IdentityHint, Named> =
     SideTable::new(&side_table::DREAMER_IDENTITY_HINT);
@@ -455,8 +454,8 @@ fn label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<S
     if let Some(entity) = crate::tagging::provisional_in_txn(&vault.store, txn, id)? {
         return Ok(entity.name);
     }
-    let name = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.and_then(
-        |raw| {
+    let name =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?.and_then(|raw| {
             if crate::batch::EntityMetadataHeader::parse(&raw).is_none()
                 || raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN
             {
@@ -475,8 +474,7 @@ fn label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<S
                         .map(str::to_owned)
                 })
             })
-        },
-    );
+        });
     Ok(name.unwrap_or_else(|| id.to_hex().chars().take(8).collect()))
 }
 
@@ -1326,8 +1324,8 @@ impl Vault {
             let held = ASKS
                 .get(&self.store, txn, &key)?
                 .ok_or_else(|| invalid("no such open ask"))?;
-            let answer =
-                parse_choice(&held, choice).ok_or_else(|| invalid("not one of the ask's options"))?;
+            let answer = parse_choice(&held, choice)
+                .ok_or_else(|| invalid("not one of the ask's options"))?;
             let entity =
                 settle_ask_in_txn(self, txn, &key, &held, answer, ClaimSource::UserStated, now)?;
             Ok(IdentitySettled {
@@ -1438,8 +1436,8 @@ impl Memory<'_> {
                 }
                 return Ok(IdentityActNow::Deciding { ask: key_hex(&key) });
             }
-            let current = crate::tagging::tag_set_in_txn(&vault.store, txn, &hit.turn)?
-                .and_then(|tags| {
+            let current =
+                crate::tagging::tag_set_in_txn(&vault.store, txn, &hit.turn)?.and_then(|tags| {
                     tags.mentions.into_iter().find(|each| {
                         each.message == mention.message
                             && each.start == mention.start

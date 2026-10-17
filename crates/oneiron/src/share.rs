@@ -62,6 +62,10 @@ pub struct Share {
     pub revoked_at: Option<u64>,
     /// Exclusive expiry in Unix seconds.
     pub expires_at: Option<u64>,
+    /// The saved mention `recipient_ref` came from, when an agent named the
+    /// person (OF-123 act-now guard): admission refuses while that mention is
+    /// unsettled. Not stored with the grant; a share read back carries none.
+    pub mention: Option<crate::outbound::MentionProvenance>,
 }
 
 /// Optional request narrowing, never evidence of the recipient's current authority.
@@ -128,6 +132,7 @@ impl Share {
             created_at: grant.created_at,
             revoked_at: grant.revoked_at,
             expires_at: grant.expires_at,
+            mention: None,
         })
     }
 
@@ -569,6 +574,17 @@ impl Vault {
             }
         }
         verify_share_actor(&self.store, &txn, issuer)?;
+        // OF-123 act-now guard: a recipient taken from a saved mention waits
+        // until that mention is settled. Refused before the Gate records
+        // anything, so nothing is written.
+        if let Some(mention) = share.mention.as_ref()
+            && let Some(name) =
+                crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+                    self, &txn, mention,
+                )?
+        {
+            return Err(Error::Record(RecordError::IdentityUnsettled { name }));
+        }
         let (gate_id, decision) = crate::gate::check_share_create_policy(
             &self.store,
             &mut txn,

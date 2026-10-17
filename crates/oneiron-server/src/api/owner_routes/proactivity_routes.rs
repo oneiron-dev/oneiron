@@ -388,12 +388,9 @@ async fn answer_identity_ask(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let settled = blocking(move || -> OwnerResult<IdentitySettled> {
-        Ok(server.vault().answer_identity_ask(
-            &owner,
-            &request.ask,
-            &request.choice,
-            now_secs(),
-        )?)
+        Ok(server
+            .vault()
+            .answer_identity_ask(&owner, &request.ask, &request.choice, now_secs())?)
     })
     .await?;
     Ok(Json(settled))
