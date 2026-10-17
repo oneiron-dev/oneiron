@@ -165,6 +165,10 @@ pub(super) struct TaskVerbBody {
     /// OF-220: the typed brief and its revision. Engine-internal minters
     /// (consult, reconciliation) carry none.
     pub(super) brief: Option<super::brief::StoredBrief>,
+    /// OF-389: the subproject this TASK wraps, written once by
+    /// `Memory::spawn_task_subproject`. The parent still sees this one task;
+    /// the child PROJECT names it back as its `wrapper_task`.
+    pub(super) subproject_ref: Option<EntityId>,
 }
 
 impl TaskVerbBody {

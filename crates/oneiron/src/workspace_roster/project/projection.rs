@@ -80,6 +80,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     }
     refs.extend(body.goal.iter());
     refs.extend(body.born_from.iter());
+    refs.extend(body.wrapper_task.iter());
     refs.extend(body.budget.iter());
     for list in [
         &body.board,

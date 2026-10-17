@@ -367,6 +367,14 @@ pub(super) fn encode_task_verb_body(body: TaskVerbBody) -> Vec<u8> {
     if let Some(brief) = &body.brief {
         entries.push((Value::from("brief"), stored_brief_value(brief)));
     }
+    // OF-389: elided the same way, so a TASK that wraps no subproject keeps
+    // its bytes.
+    if let Some(subproject_ref) = body.subproject_ref {
+        entries.push((
+            Value::from("subproject_ref"),
+            entity_ref_value(subproject_ref),
+        ));
+    }
     canonical_bytes(&Value::Map(entries))
 }
 

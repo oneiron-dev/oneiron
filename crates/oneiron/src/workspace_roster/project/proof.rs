@@ -27,6 +27,10 @@ pub(crate) fn validate_transition(
     let next: ProjectRecord = decode(bytes).map_err(|_| refused("invalid project body"))?;
     let prior = stored(store, txn, id, kind)?;
     if let Some(old) = &prior {
+        // OF-389: a subproject's wrapper TASK is fixed at its spawn.
+        if old.wrapper_task != next.wrapper_task {
+            return Err(refused("a subproject's wrapper task never changes"));
+        }
         // Membership, goal and ask edits keep the authority and its proof.
         if old.authority() == next.authority() && old.write_proof == next.write_proof {
             return Ok(());
