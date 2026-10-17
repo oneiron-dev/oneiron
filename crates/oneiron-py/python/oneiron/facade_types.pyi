@@ -2014,6 +2014,7 @@ class PackInstallReceipt(TypedDict):
     predicates: list[str]
     kinds: list[str]
     skills: list[str]
+    agent: NotRequired[str | None]
     installed_at: int
 class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
