@@ -19652,7 +19652,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/miner/feedback.rs",
@@ -46376,8 +46376,38 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "mod": 6,
-      "re-export": 6
+      "crate-vis": 1,
+      "mod": 9,
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeamRunObservations"
+     ],
+     "path": "src/team/observations.rs",
+     "purpose": "OF-540: what the host measured of a team run, for its receipt",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeliverableReview",
+      "TeamDeliverableBinding"
+     ],
+     "path": "src/team/owner_outcome.rs",
+     "purpose": "OF-540: the owner's verdict on a team's deliverable settles the team",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -46428,6 +46458,7 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 8,
       "struct": 5
@@ -46449,9 +46480,22 @@
      "path": "src/team/run.rs",
      "purpose": "OF-540: a pattern-skill run's own team, from code mode",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeamRunBinding"
+     ],
+     "path": "src/team/run_binding.rs",
+     "purpose": "OF-540: what the host saw a team start do, and the team a run works in",
+     "surface": {
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -51896,7 +51940,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 7,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52052,7 +52096,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3148,
+   "source_files": 3151,
    "test_files": 903
   },
   "oneiron-android": {
