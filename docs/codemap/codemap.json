@@ -44698,8 +44698,27 @@
       "enum": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkBytes",
+      "TagBytesRow",
+      "WireCodecs",
+      "WireSocket"
+     ],
+     "path": "src/sync/transport/codec.rs",
+     "purpose": "The own-link codec frame (ARCH-0081 §7, OF-604): zstd-3 on our own sockets",
+     "surface": {
+      "const": 9,
+      "crate-vis": 1,
+      "fn": 15,
+      "mod": 1,
+      "struct": 4
      }
     },
     {
@@ -52536,7 +52555,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 156,
+     "files": 157,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52727,7 +52746,7 @@
    },
    "over_bar": 156,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3192,
+   "source_files": 3193,
    "test_files": 903
   },
   "oneiron-android": {
@@ -68134,7 +68153,7 @@
      "path": "src/handler/transport.rs",
      "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
