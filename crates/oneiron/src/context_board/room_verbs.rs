@@ -449,15 +449,17 @@ impl Vault {
 }
 
 /// The one refusal for a room the caller cannot read: missing, deleted, not
-/// a channel, or not the caller's. Nothing about the record leaks first.
+/// a Conversation, or not the caller's. Nothing about the record leaks first.
 fn unknown_room() -> MemoryError {
     MemoryError::bad_request_with("unknown room", &[])
 }
 
-/// A channel's members from its owning record in `txn`: a project home
-/// room's validated roster, or an ordinary channel's membership ledger. A
+/// A room's members from its owning record in `txn`: a project home room's
+/// validated roster, or an ordinary Conversation's membership ledger, of any
+/// kind (channel, direct, group, agent or mirror: one room substrate). A
 /// body's unchecked extension fields never stand in for either. `None` is a
-/// room that is missing, deleted, not a channel, or holds no valid roster.
+/// room that is missing, deleted, not a valid Conversation, or holds no valid
+/// roster.
 fn room_members_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -466,13 +468,14 @@ fn room_members_in(
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &room)?.is_live() {
         return Ok(None);
     }
-    let channel = vault
+    let conversation = vault
         .store
         .port_entity_record(txn, &room)?
         .filter(|record| record.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION)
-        .and_then(|record| crate::conversation::ConversationBody::from_bytes(&record.body).ok())
-        .is_some_and(|body| body.kind == crate::conversation::ConversationKind::Channel);
-    if !channel {
+        .is_some_and(|record| {
+            crate::conversation::ConversationBody::from_bytes(&record.body).is_ok()
+        });
+    if !conversation {
         return Ok(None);
     }
     // The owning writer bounds the membership; the Scope reads all of it.
@@ -586,10 +589,13 @@ pub(crate) fn room_roster_in(
 }
 
 /// Whether `caller` reads `room` as `txn` reads it: a member of the room's
-/// `members`, or an AGENT_DEF standing on an OF-531 Ready join for the room
-/// itself. A join opens the room's reads and takes no seat: the roster, and
-/// with it the audience every disclosure meets, stays the members alone, and
-/// the agent's own grants still bound each read.
+/// `members`; a person or an agent standing on a live OF-531 Ready join for
+/// the room itself, a person's through its own pen
+/// ([`crate::workspace_roster::room_join_audience_in`], OF-417); or the
+/// room's host, its owner or a delegate (OF-530). A join or host standing
+/// opens the room's reads and takes no seat: the roster, and with it the
+/// audience every disclosure meets, stays the members alone, and the
+/// caller's own grants still bound each read.
 pub(crate) fn room_reader_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -597,22 +603,13 @@ pub(crate) fn room_reader_in(
     members: &[EntityId],
     caller: EntityId,
 ) -> crate::Result<bool> {
-    if members.contains(&caller) {
+    if members.contains(&caller)
+        || crate::workspace_roster::room_join_audience_in(vault, txn, room, caller)?
+    {
         return Ok(true);
     }
-    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
-        return Ok(false);
-    }
-    let agent = crate::workspace_roster::JoinSubject::Agent(caller);
-    match crate::workspace_roster::require_join_for_branch_in_txn(
-        vault, txn, room, None, &agent, None,
-    ) {
-        Ok(_) => Ok(true),
-        Err(crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. })) => {
-            Ok(false)
-        }
-        Err(error) => Err(error),
-    }
+    let host = crate::WriteActor::new(caller, crate::EdgeActorClass::Human);
+    Ok(crate::conversation::room_host_in_txn(vault, txn, room, host)?.is_some())
 }
 
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room
