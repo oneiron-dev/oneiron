@@ -11054,7 +11054,7 @@
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
       "crate-vis": 5,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -16933,7 +16933,7 @@
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
       "crate-vis": 16,
-      "mod": 2,
+      "mod": 3,
       "re-export": 17
      }
     },
@@ -17203,8 +17203,9 @@
      "path": "src/dreamer_consolidation/selection.rs",
      "purpose": "Mechanical candidate selection",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -17247,6 +17248,21 @@
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConsolidationStrengthPolicy",
+      "ConsolidationStrengthSnapshot"
+     ],
+     "path": "src/dreamer_consolidation/strength.rs",
+     "purpose": "Consolidation strength observations and an archive-only lifecycle (OF-216)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -18089,7 +18105,7 @@
       "crate-vis": 7,
       "fn": 1,
       "mod": 10,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -18104,6 +18120,16 @@
      "surface": {
       "crate-vis": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/person_threshold.rs",
+     "purpose": "The accepted PersonThreshold row (Q3)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -18217,6 +18243,17 @@
       "crate-vis": 2,
       "fn": 4,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/strength.rs",
+     "purpose": "Nightly strength maintenance rides the existing wake recipe/run-tree lane",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2
      }
     },
     {
@@ -27019,7 +27056,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -35317,7 +35354,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PixelPull",
@@ -35329,7 +35366,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -44407,6 +44444,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/catalog_fragment_revision.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/consts.rs",
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
@@ -45069,8 +45116,21 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 33
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CatalogFragment"
+     ],
+     "path": "src/task_verb/sdk_catalog_fragment.rs",
+     "purpose": "The code-mode catalog fragment (ONE-2510 S2): the whole verb set code mode serves, as one TypeScript…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -48584,6 +48644,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 5,
       "struct": 6
      }
@@ -50139,7 +50200,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50167,7 +50228,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 44,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51007,7 +51068,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 115,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51163,7 +51224,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3090,
+   "source_files": 3095,
    "test_files": 903
   },
   "oneiron-android": {
@@ -65705,7 +65766,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DecisionHost"
@@ -65713,7 +65774,7 @@
      "path": "src/decision_host.rs",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 14,
       "struct": 1
      }
@@ -66938,7 +66999,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 7,
       "struct": 3,
@@ -67017,7 +67078,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "McpQuickJsProvider"
@@ -69203,7 +69264,7 @@
     "decision_host": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…"
     },
@@ -69432,7 +69493,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 34,
+   "over_bar": 35,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 539,
    "test_files": 182

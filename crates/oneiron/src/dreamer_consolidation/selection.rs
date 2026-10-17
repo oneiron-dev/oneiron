@@ -69,7 +69,8 @@ fn unit(n: f64) -> bool {
     n.is_finite() && (0.0..=1.0).contains(&n)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StrengthSignals {
     pub type_prior: f64,
     pub frequency: f64,
@@ -77,6 +78,24 @@ pub struct StrengthSignals {
     pub diversity: f64,
 }
 impl StrengthSignals {
+    /// Shared by live candidate ordering and the nightly archive recipe.
+    pub fn from_evidence(
+        predicate: &str,
+        count: usize,
+        latest_ms: u64,
+        diversity: usize,
+        now_ms: u64,
+        config: &SelectionConfig,
+    ) -> Self {
+        Self {
+            type_prior: config.type_priors.get(predicate).copied()
+                .unwrap_or(config.default_type_prior),
+            frequency: (count as f64 / config.frequency_scale as f64).min(1.0),
+            recency: 1.0 - (now_ms.saturating_sub(latest_ms) as f64
+                / config.recency_window_ms as f64).min(1.0),
+            diversity: (diversity as f64 / config.diversity_scale as f64).min(1.0),
+        }
+    }
     /// Only the four contract signals are accepted. Surprise/perplexity have no
     /// score input, even when a producer supplies them alongside its signals.
     pub fn from_named(values: &BTreeMap<String, f64>) -> Self {
@@ -171,7 +190,10 @@ impl Vault {
     }
     pub fn consolidation_selection(&self) -> Result<SelectionConfig> {
         let txn = self.store.env.read_txn()?;
-        let config = SELECTION.get(&self.store, &txn, &())?.unwrap_or_default();
+        self.consolidation_selection_in_txn(&txn)
+    }
+    pub(crate) fn consolidation_selection_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<SelectionConfig> {
+        let config = SELECTION.get(&self.store, txn, &())?.unwrap_or_default();
         config.validate()?;
         Ok(config)
     }
