@@ -10900,6 +10900,7 @@
       "ReaderRoute",
       "ReaderRunEnd",
       "ReaderSpawnReceipt",
+      "ReaderSpend",
       "RunDeadline",
       "SelfReaderReportCall",
       "SelfReaderSpawnCall",
@@ -10921,8 +10922,8 @@
      "surface": {
       "const": 6,
       "crate-vis": 12,
-      "enum": 7,
-      "fn": 16,
+      "enum": 8,
+      "fn": 18,
       "struct": 21,
       "trait": 1
      }
@@ -67697,7 +67698,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "struct": 1
      }
@@ -69002,7 +69003,7 @@
      "path": "src/server/reader_runner.rs",
      "purpose": "The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
