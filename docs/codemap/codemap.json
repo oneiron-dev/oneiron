@@ -64301,7 +64301,7 @@
      "path": "src/api/mcp_gateway/board_setup.rs",
      "purpose": "Board state, setup grammar, and page preflight",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
