@@ -17,7 +17,8 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
-pub(super) use history::delete_room_metadata;
+pub(crate) use history::erase_room_side_rows;
+pub(super) use history::{PAGE_LIMIT, delete_room_metadata};
 pub(in crate::workspace_roster) use history::thread_turns_in;
 pub use hosting::{
     HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
