@@ -524,6 +524,11 @@ impl SyncConnection {
                 UpdateVerdict::Withheld => continue,
                 UpdateVerdict::Uninspectable => break,
             }
+            // A window the home refused to grant again keeps its rows queued,
+            // unsent; they hold back no other window's clear.
+            if !client.residence_granted(&update.window_key) {
+                continue;
+            }
             // Re-encode as WindowSync wire message
             let msg = if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened {
                 residence_update_frame(update.seq, &update.window_key, &update.encoded)

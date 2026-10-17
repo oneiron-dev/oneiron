@@ -182,6 +182,9 @@ side_tables! {
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
+    /// One invitation of a person into the shared vault, pending until they accept, decline or an
+    /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
+    SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw;
     /// Retired presentation id alias. Key: string.
     SHORT_ID_ALIAS: VaultMeta b"short_id_alias:v1\0" Raw;
     /// Presentation-id grammar generation. Key: ().
@@ -580,6 +583,9 @@ side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
+    /// The blake3 of the escrow capsule each escrow wrap last handed to the host's outbound spool
+    /// (OF-570, CROSS-ARCH-0022 invariant 03). Key: string (wrap id).
+    VAULT_KEY_ESCROW_SPOOLED: VaultMeta b"vault_key:escrow_spooled:v1:" Named;
     /// The vault data key's commitment and birth (OF-570 E1). Never the key. Key: ().
     VAULT_KEY_STATE: VaultMeta b"vault_key:state:v1" Named;
     /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public
