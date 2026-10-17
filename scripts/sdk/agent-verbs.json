@@ -3125,6 +3125,7 @@
       "call": "memory.projects_confirm(&input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_session": true,
       "scope": "Write",
       "mcp_fields": {"spec": "$"},
       "mcp_scope": "unrestricted",

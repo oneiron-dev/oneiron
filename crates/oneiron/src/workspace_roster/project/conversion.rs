@@ -169,6 +169,7 @@ impl Vault {
         source_message: EntityId,
         project_id: EntityId,
         leader: Option<EntityId>,
+        tap_session: Option<EntityId>,
         now: u64,
     ) -> Result<ProjectRecord> {
         self.convert_thread_impl::<NoCardStep>(
@@ -179,6 +180,7 @@ impl Vault {
             leader,
             Some((owner, signer)),
             None,
+            tap_session,
             now,
         )
         .map(|(project, _)| project)
@@ -201,6 +203,7 @@ impl Vault {
         owner: &crate::consent::AuthenticatedOwner,
         signer: &OwnerProjectSigner<'_>,
         project_id: EntityId,
+        tap_session: Option<EntityId>,
         now: u64,
         after: impl FnOnce(&mut heed::RwTxn<'_>, &ProjectMintReceipt) -> Result<()>,
     ) -> Result<(ProjectRecord, ProjectMintReceipt)> {
@@ -231,6 +234,7 @@ impl Vault {
             None,
             None,
             Some(birth),
+            tap_session,
             now,
         ) {
             Ok((project, Some(receipt))) => Ok((project, receipt)),
@@ -274,6 +278,7 @@ impl Vault {
         leader: Option<EntityId>,
         bare: Option<(&crate::consent::AuthenticatedOwner, &OwnerProjectSigner<'_>)>,
         card: Option<CardBirth<'_, A>>,
+        tap_session: Option<EntityId>,
         now: u64,
     ) -> Result<(ProjectRecord, Option<ProjectMintReceipt>)>
     where
@@ -398,11 +403,13 @@ impl Vault {
                 }
                 tasks.push(id.to_hex());
             }
-            // The room host is resolved among the source message's sitting:
-            // its present participants, or none when the turn recorded no
-            // sitting (a stored pin still holds). The host passes the same
-            // leader check below, and a refusal stands. With no host, the
-            // source leader stands in.
+            // The room host is resolved among the present participants of
+            // the tapping sitting when the tap carries one; only an absent
+            // binding falls back to the source turn's sitting. An empty
+            // tapping sitting never falls back, and no sitting at all leaves
+            // none present (a stored pin still holds). The host passes the
+            // same leader check below, and a refusal stands. With no host,
+            // the source leader stands in.
             let fallback = if confirmed.or(leader).is_some() {
                 None
             } else {
@@ -411,16 +418,23 @@ impl Vault {
                     LeaderFallback::TaskHolderThenRoomHost => match holder {
                         Some(holder) => Some(holder),
                         None => {
-                            let source_turn = turns
-                                .iter()
-                                .find(|turn| turn.message_ids.contains(&source_message.to_hex()))
-                                .ok_or_else(invalid)?;
-                            let source_turn = EntityId::from_hex(&source_turn.turn_id)?;
-                            let session = crate::compaction::turn_session_membership_in_txn(
-                                &self.store,
-                                txn,
-                                &source_turn,
-                            )?;
+                            let session = match tap_session {
+                                Some(session) => Some(session),
+                                None => {
+                                    let source_turn = turns
+                                        .iter()
+                                        .find(|turn| {
+                                            turn.message_ids.contains(&source_message.to_hex())
+                                        })
+                                        .ok_or_else(invalid)?;
+                                    let source_turn = EntityId::from_hex(&source_turn.turn_id)?;
+                                    crate::compaction::turn_session_membership_in_txn(
+                                        &self.store,
+                                        txn,
+                                        &source_turn,
+                                    )?
+                                }
+                            };
                             let present = match session {
                                 Some(session) => self
                                     .conversation_presence

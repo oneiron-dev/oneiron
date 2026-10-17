@@ -449,51 +449,56 @@ impl Vault {
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
         let stale_sweep = crate::federation::StaleSweepWatch::begin(self);
-        let (result, approved_vad_ids, proactivity_changed, (task_ids, rows), retirement_staged) =
-            self.store.group_write_as(callback, None, |wtxn| {
-                let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
-                    Ok(staged) => staged,
+        let (
+            result,
+            approved_vad_ids,
+            proactivity_changed,
+            (task_ids, rows, room_joins),
+            retirement_staged,
+        ) = self.store.group_write_as(callback, None, |wtxn| {
+            let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
+                Ok(staged) => staged,
+                Err(err) => return Rows::Discard(Err(E::from(err))),
+            };
+            let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
+            let (result, postcommit) = {
+                let _active_write_txn = crate::store::active_write_txn_guard();
+                let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
+                // A key this write's mask found raises its notice here.
+                match f(wtxn).and_then(|result| {
+                    crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
+                        .map_err(E::from)?;
+                    Ok(result)
+                }) {
+                    Ok(result) => (result, vad_scope.finish()),
+                    Err(err) => return Rows::Discard(Err(err)),
+                }
+            };
+            if let Err(err) = rekeys.finish(&self.store, wtxn) {
+                return Rows::Discard(Err(E::from(err)));
+            }
+            if let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn) {
+                return Rows::Discard(Err(E::from(err)));
+            }
+            let approved =
+                match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
+                    Ok(approved) => approved,
                     Err(err) => return Rows::Discard(Err(E::from(err))),
                 };
-                let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-                let (result, postcommit) = {
-                    let _active_write_txn = crate::store::active_write_txn_guard();
-                    let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
-                    // A key this write's mask found raises its notice here.
-                    match f(wtxn).and_then(|result| {
-                        crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
-                            .map_err(E::from)?;
-                        Ok(result)
-                    }) {
-                        Ok(result) => (result, vad_scope.finish()),
-                        Err(err) => return Rows::Discard(Err(err)),
-                    }
-                };
-                if let Err(err) = rekeys.finish(&self.store, wtxn) {
-                    return Rows::Discard(Err(E::from(err)));
-                }
-                if let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn) {
-                    return Rows::Discard(Err(E::from(err)));
-                }
-                let approved =
-                    match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
-                        Ok(approved) => approved,
-                        Err(err) => return Rows::Discard(Err(E::from(err))),
-                    };
-                // A claim delete applied in this write staged its key's
-                // retirement; destroy the key after the commit, not at the
-                // next retention pass.
-                match self.store.gate_retirements_staged_in_txn(wtxn) {
-                    Ok(staged) => Rows::Commit((
-                        result,
-                        approved,
-                        postcommit.proactivity_changed,
-                        (postcommit.task_ids, postcommit.rows),
-                        staged != retirements_before,
-                    )),
-                    Err(err) => Rows::Discard(Err(E::from(err))),
-                }
-            })?;
+            // A claim delete applied in this write staged its key's
+            // retirement; destroy the key after the commit, not at the
+            // next retention pass.
+            match self.store.gate_retirements_staged_in_txn(wtxn) {
+                Ok(staged) => Rows::Commit((
+                    result,
+                    approved,
+                    postcommit.proactivity_changed,
+                    (postcommit.task_ids, postcommit.rows, postcommit.room_joins),
+                    staged != retirements_before,
+                )),
+                Err(err) => Rows::Discard(Err(E::from(err))),
+            }
+        })?;
         self.store.notify_attempt_observers();
         if proactivity_changed {
             self.store.notify_proactivity_changes();
@@ -504,7 +509,14 @@ impl Vault {
         #[cfg(feature = "sync")]
         self.note_committed_rows(rows);
         #[cfg(not(feature = "sync"))]
-        drop(rows);
+        drop((rows, room_joins));
+        // FIX 3321: a join this write filed reaches the live window of its
+        // room or thread, now that it is durable.
+        #[cfg(feature = "sync")]
+        if !room_joins.is_empty() {
+            let joins: Vec<&str> = room_joins.iter().map(String::as_str).collect();
+            self.refresh_room_rows_in_live_windows(&joins, &[]);
+        }
         if retirement_staged {
             self.finish_gate_decision_retirements_after_commit();
         }

@@ -25,6 +25,9 @@ pub(crate) struct PostcommitWork {
     /// Rows this transaction wrote (puts, and the sources of edges it wrote),
     /// mirrored into the live sync windows only after it commits.
     pub(crate) rows: BTreeSet<EntityId>,
+    /// Room joins this transaction filed, by their bare join refs, pushed to
+    /// the live windows of their rooms or threads only after it commits.
+    pub(crate) room_joins: BTreeSet<String>,
 }
 
 thread_local! {
@@ -110,6 +113,18 @@ pub(crate) fn queue_committed_rows(vault: &Vault, txn: &RwTxn<'_>, rows: BTreeSe
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
             queued.rows.extend(rows);
+        }
+    });
+}
+
+/// Mark a filed room join for the owner's post-commit live-window push. A
+/// rolled-back scope drops it, so no live window carries a join that did not
+/// land.
+#[cfg(feature = "sync")]
+pub(crate) fn queue_room_join(vault: &Vault, txn: &RwTxn<'_>, join_ref: &str) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.room_joins.insert(join_ref.to_owned());
         }
     });
 }

@@ -105,6 +105,10 @@ fn file_in_txn(
         intent_key: intent_key(purpose, room, &subject),
     };
     let outcome = rooms_join_in_txn(vault, txn, &request, caller, now)?;
+    // FIX 3321: the filed receipt, held and refused ones too, reaches the
+    // live window of its room or thread once this write commits.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_room_join(vault, txn, &outcome.join_ref);
     if outcome.decision.state != JoinDecision::Ready {
         return Ok(None);
     }
