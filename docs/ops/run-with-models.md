@@ -158,8 +158,9 @@ extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
 ```
 
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
-A `key_secret` provider answers whole replies only for now: a streamed call to it
-is refused before it starts.
+A `key_secret` provider answers whole chat replies only for now: a streamed chat
+call to it is refused before it starts. Its media calls go through the same
+broker (§10).
 
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
@@ -594,7 +595,7 @@ for it: a spent line is refused with `BUDGET_SPENT` (402; MCP kind
 `budget_spent`), and a reranker that refuses, fails or answers out of shape
 with `MODEL_UNAVAILABLE` (503; MCP kind `model_unavailable`). A route whose
 rungs cannot serve (a key variable unset, or a `key_secret` provider: the
-broker sends chat calls only for now) refuses the same way. The request
+broker has no rerank shape yet) refuses the same way. The request
 never names the model, the endpoint or the lease; the server holds them, for
 MCP, HTTP and WebSocket recall alike.
 
@@ -765,8 +766,8 @@ serving that model has `audio_input`. With no manifest, the seat's
 Image, video, speech, transcription and embedding calls have their own seats,
 outside the text tiers: one ladder per operation in `[models.media]`, each rung
 `"<provider>:<model>"` on an OpenAI-compatible provider (`openai-compat` or
-`local-openai-compat`, keyed by `key_env`; the credential broker sends chat
-calls only), or an image or video rung on a `gemini` provider (below). A
+`local-openai-compat`, keyed by `key_env` or `key_secret`), or an image or
+video rung on a `gemini` provider (below). A
 media call is admitted, sent and settled like a text call:
 each rung it reaches gets its own permit on the media meter, an offer refused
 for a limit rests and the call goes to the next rung, and the run's receipts
@@ -794,8 +795,22 @@ rungs = ["local:whisper-large-v3"]
 rungs = ["local:qwen3-embedding"]
 ```
 
+A media rung on a `key_secret` provider sends through the credential broker
+(§2), as a chat call does. The server builds each exchange's exact request,
+and the broker checks it against the exchange's own shape before the key is
+read at the custody door. That covers an image (JSON, or a form with
+references), an edit, speech, a transcription, an embedding, a video's start,
+poll, clip and removal, and the Gemini API's generate, job start, operation
+poll and file. The broker adds the key: Bearer on the OpenAI-compatible paths,
+`x-goog-api-key` on the Gemini API's. A JSON or form request is at most
+16 MiB. Speech, a video clip and a Gemini file stream back in 1 MiB frames,
+up to 512 MiB, and are checked for the key, never rewritten: a reply that
+holds it is cut, and the call fails. Each exchange must finish within the
+provider's `timeout_secs` (120 s by default), so raise it for long clips. A
+Gemini file's one redirect is followed only under the API's own origin.
+
 A `gemini` provider is Google's Gemini API, its origin as `base_url` and its
-key in `key_env` (sent as `x-goog-api-key`). It serves the image and video
+key in `key_env` or `key_secret` (sent as `x-goog-api-key`). It serves the image and video
 seats only. An image is `models/{model}:generateContent` asked for image
 output: the instruction and each reference image go inline, a `size`
 (`"WxH"`) or `width`/`height` becomes the nearest drawn `aspectRatio` and an
