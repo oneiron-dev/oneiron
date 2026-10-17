@@ -45,6 +45,7 @@ impl VaultBridge {
             vault: Arc::clone(&self.vault),
             actor_hex: actor.to_hex(),
             actor_class: actor_class as u8,
+            off_record_session: None,
         })
     }
 }
@@ -55,6 +56,32 @@ pub struct ActorScopedVault {
     vault: Arc<Vault>,
     actor_hex: String,
     actor_class: u8,
+    /// The off-record session every verb runs inside, when the app host
+    /// named one, bound to this handle's actor (OF-063, FIX 1668).
+    off_record_session: Option<String>,
+}
+
+#[napi]
+impl ActorScopedVault {
+    /// A NEW handle whose every verb runs inside the off-record session
+    /// `session_ref` names, for this handle's actor, the app host's
+    /// principal (OF-063, FIX 1668). It grants nothing: inside an anonymous
+    /// session that actor is verified in, a refusal writes no receipt.
+    #[napi]
+    pub fn in_off_record_session(&self, session_ref: String) -> napi::Result<ActorScopedVault> {
+        let session_ref = session_ref.trim();
+        if session_ref.is_empty() {
+            return Err(boundary_error(
+                "invalid off-record session reference".to_owned(),
+            ));
+        }
+        Ok(ActorScopedVault {
+            vault: Arc::clone(&self.vault),
+            actor_hex: self.actor_hex.clone(),
+            actor_class: self.actor_class,
+            off_record_session: Some(session_ref.to_owned()),
+        })
+    }
 }
 
 impl ActorScopedVault {
@@ -69,6 +96,10 @@ impl ActorScopedVault {
                 return Err(boundary_error(format!("invalid bound actor class {other}")));
             }
         };
-        Ok(self.vault.memory(actor, actor_class))
+        let memory = self.vault.memory(actor, actor_class);
+        Ok(match self.off_record_session.as_deref() {
+            Some(session) => memory.in_off_record_session(session),
+            None => memory,
+        })
     }
 }

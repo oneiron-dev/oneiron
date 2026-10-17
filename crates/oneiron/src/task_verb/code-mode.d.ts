@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 364 code-mode rows (344 host rows, 20 run rows), 1282 declarations.
-// Replies: 312 fully typed, 48 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 369 code-mode rows (349 host rows, 20 run rows), 1297 declarations.
+// Replies: 316 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -112,7 +112,8 @@ declare namespace Sdk {
   type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
   type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
   type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
-  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean };
+  type ShapeApplyRun = { run_id: string; root: string; items: string[] };
+  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean; run: ShapeApplyRun };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
   type ShapePresetMember = { member: string; role?: ShapeMemberRole | null };
   type ShapePresetPick = { preset: ShapePreset; vault_id: string; members?: ShapePresetMember[] };
@@ -249,7 +250,8 @@ declare namespace Sdk {
   type QuoteSpan = { message: EntityId; start: number; end: number };
   type WitnessAuthor = "user" | "companion" | "system";
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number };
-  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number };
+  type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
+  type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; quote?: QuoteSpan | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
@@ -491,6 +493,17 @@ declare namespace Sdk {
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
+  type ResidenceModeName = "opened" | "all";
+  type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
+  type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
+  type ResidenceOpenRequest = { machine: EntityId; window: string; item: EntityId };
+  type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number };
+  type ResidenceMachineRequest = { machine: EntityId };
+  type ResidenceIndexEntry = { entity_id: string; title?: string | null; learned_at: number };
+  type ResidenceIndexWindowView = { window: string; items: ResidenceIndexEntry[] };
+  type ResidenceIndex = { windows: ResidenceIndexWindowView[] };
+  type ResidencePruneRequest = { machine: EntityId; before: number };
+  type ResidencePruned = { dropped: number };
   type RecordEraseRequest = { record: EntityId };
   type EraseShare = { grant: string; recipient: string };
   type EraseHeldBytes = { content_hash: string; other_holders: string[] };
@@ -1019,6 +1032,8 @@ declare namespace Sdk {
   type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[] } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] };
   type ConnectorSchemaRequest = { name: string; tool: string };
   type ConnectorSchemaReply = { source: string; foreign: boolean; input_schema?: unknown | null; destructive?: boolean | null; reasons?: string[] };
+  type ConnectorCallStatusRequest = { call_ref: string };
+  type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[] } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply };
   type OpenInput = { url: string };
   type Row = { ref: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
   type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
@@ -1329,6 +1344,8 @@ declare function cancel(input: Sdk.TaskRequest): Promise<Sdk.TaskCancelReceipt |
 declare const connector: { readonly [name: string]: { readonly [tool: string]: (args?: object) => Promise<Sdk.ConnectorCallReply | StoredResult> } } & {
   /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
   call(input: Sdk.ConnectorCallRequest): Promise<Sdk.ConnectorCallReply | StoredResult>;
+  /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
+  call_status(input: Sdk.ConnectorCallStatusRequest): Promise<Sdk.ConnectorCallStatus | StoredResult>;
   /** Every live catalogued connector whose name or summary matches the query. */
   list(input: Sdk.ConnectorListRequest): Promise<Sdk.ConnectorEntry[] | StoredResult>;
   outbound: {
@@ -2014,6 +2031,16 @@ declare const vault: Sdk.VaultHost & {
     settle_work(input: Sdk.ResearchSettleWire): Promise<Sdk.ResearchReservation | StoredResult>;
     /** Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on. */
     weave(input: Sdk.ResearchWeaveWire): Promise<Sdk.ExperimentNode | StoredResult>;
+  };
+  residence: {
+    /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
+    index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndex | StoredResult>;
+    /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
+    mode(input: Sdk.ResidenceModeRequest): Promise<Sdk.ResidenceModeChanged | StoredResult>;
+    /** Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home. */
+    open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpened | StoredResult>;
+    /** Drops the opened-item caches one of the owner's machines last touched before a time. */
+    prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruned | StoredResult>;
   };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */

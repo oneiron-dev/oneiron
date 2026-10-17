@@ -1,4 +1,6 @@
-//! Evidence-citing user-voice proposals. Only owner resolution can arm OF-327.
+//! Evidence-citing user-voice plans. A plan is saved at once for the owner's
+//! send review (OF-023), or held in the run tray where the Gate parks it.
+//! Only the owner's own approval arms OF-327; the Dreamer never sends.
 mod approval;
 mod context;
 mod proposal;
@@ -76,6 +78,19 @@ struct Packet {
     content: OutputRef,
     evidence: Vec<RepresentationCitation>,
     voice: Vec<RepresentationCitation>,
+    /// The stewardship reach-out a follow-up drafts: the plan lands, is
+    /// reviewed and sends only while that reach-out stands at this pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reach_out: Option<ReachOutPin>,
+}
+
+/// A reach-out and the revision a follow-up was drafted from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReachOutPin {
+    #[serde(with = "crate::serialize::entity_ref")]
+    claim: EntityId,
+    revision: [u8; 32],
 }
 impl Packet {
     fn bytes(&self) -> Result<Vec<u8>> {
@@ -104,4 +119,4 @@ fn invalid() -> Error {
 }
 
 pub(crate) use approval::{representation_approval_is_live_in_txn, validate_dispatch};
-pub(super) use proposal::run;
+pub(super) use proposal::{review_revision, run, withdraw_follow_ups_in_txn};
