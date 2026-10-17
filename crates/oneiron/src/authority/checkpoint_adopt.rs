@@ -163,11 +163,6 @@ fn expectation_in_txn(
     })
 }
 
-/// Whether this vault holds an adoption row, read without verifying it.
-pub(super) fn checkpoint_adopted_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(ADOPTED.get(store, txn, &())?.is_some())
-}
-
 /// The image this vault adopted, verified again from the stored pin,
 /// attestations and image bytes. None when nothing was adopted; a stored
 /// adoption that no longer verifies is corruption, never "not adopted".
