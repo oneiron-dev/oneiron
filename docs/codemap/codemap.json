@@ -16983,7 +16983,7 @@
      "path": "src/deletion/erase/active_store.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17112,7 +17112,7 @@
      "path": "src/deletion/publish.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -45924,7 +45924,7 @@
      "path": "src/sync/window/tombstones.rs",
      "purpose": "Tombstone apply/export/replay plus window rebuild from updates",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -51351,9 +51351,9 @@
       "WorldKeyDestruction"
      ],
      "path": "src/world_keys/pads.rs",
-     "purpose": "A world key's erasable half, and the world delete that destroys it (world privacy fix 7)",
+     "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
       "fn": 1,
       "struct": 1
