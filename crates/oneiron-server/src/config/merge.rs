@@ -23,6 +23,7 @@ use super::lookup::{
 use super::models::{ModelsConfig, ModelsFile};
 use super::oneironer::{OneironerConfig, OneironerConfigOverride, lookup_oneironer_override};
 use super::recall::{RecallConfigOverride, lookup_recall_override};
+use super::self_heal::SelfHealConfigOverride;
 use super::serve_args::{ServeArgs, runtime_override_from_args};
 use super::server_config::ServeConfig;
 use super::skills::{SkillsConfigOverride, lookup_skills_override};
@@ -289,6 +290,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     config.backup.validate()?;
     config.feedback.validate()?;
     config.failure_signals.validate()?;
+    config.self_heal.validate()?;
     config.recall.validate()?;
     config.skills.validate()?;
     config.keystore.validate()?;
@@ -508,6 +510,7 @@ struct FileServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     failure_signals: Option<FailureSignalsConfigOverride>,
+    self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -566,6 +569,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             backup: value.backup,
             feedback: value.feedback,
             failure_signals: value.failure_signals,
+            self_heal: value.self_heal,
             recall: value.recall,
             skills: value.skills,
             keystore: value.keystore,
@@ -625,6 +629,7 @@ struct PartialServeConfig {
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
     failure_signals: Option<FailureSignalsConfigOverride>,
+    self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
@@ -700,6 +705,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
             .field("failure_signals", &self.failure_signals)
+            .field("self_heal", &self.self_heal)
             .field("recall", &self.recall)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
@@ -851,6 +857,9 @@ impl PartialServeConfig {
         if let Some(value) = self.failure_signals {
             resolved.failure_signals.apply_override(value);
         }
+        if let Some(value) = self.self_heal {
+            resolved.self_heal.apply_override(value);
+        }
         if let Some(value) = self.keystore {
             resolved.keystore.apply_override(value);
         }
@@ -945,6 +954,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             backup: None,
             feedback: None,
             failure_signals: None,
+            self_heal: None,
             recall: None,
             skills: None,
             keystore: value

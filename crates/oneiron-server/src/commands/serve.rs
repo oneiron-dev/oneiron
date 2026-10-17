@@ -244,6 +244,11 @@ pub(super) async fn serve_with_config(
         ),
         crate::server::admit_every_pass(),
     ));
+    // The owner's model-graded detectors read the retrieval telemetry (OF-418).
+    workers.extend(crate::ai_host::self_heal_detectors::spawn(
+        &sync_server,
+        &config.self_heal,
+    ));
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));

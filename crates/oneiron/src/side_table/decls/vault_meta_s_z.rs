@@ -66,6 +66,9 @@ side_tables! {
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
     SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
+    /// When a host detector graded one telemetry window under one wording. Key: bytes32
+    /// (blake3 of the tier, the detector policy and the window's run ids).
+    SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
     /// Owner-reviewed T3 finding by family string, colon and diagnostic id16.
     SELF_HEAL_DISTILL: VaultMeta b"self_heal:distill:" Named;
     /// Immutable attempt confession, audit draw and independently checked findings. Key: id16.
