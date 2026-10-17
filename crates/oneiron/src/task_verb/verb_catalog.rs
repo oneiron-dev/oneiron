@@ -67,6 +67,8 @@ pub enum AgentVerb {
     VaultLensesDefault,
     VaultDisclosureOffer,
     VaultSharesCreate,
+    VaultSharesRevoke,
+    VaultSharesView,
     VaultHooksReplay,
     VaultArtifactsView,
     VaultArtifactsExport,
@@ -249,6 +251,8 @@ impl AgentVerb {
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
         Self::VaultSharesCreate,
+        Self::VaultSharesRevoke,
+        Self::VaultSharesView,
         Self::VaultHooksReplay,
         Self::VaultArtifactsView,
         Self::VaultArtifactsExport,
@@ -436,6 +440,8 @@ impl AgentVerb {
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
             Self::VaultSharesCreate => "vault.shares.create",
+            Self::VaultSharesRevoke => "vault.shares.revoke",
+            Self::VaultSharesView => "vault.shares.view",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsExport => "vault.artifacts.export",
@@ -617,6 +623,8 @@ impl AgentVerb {
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::VaultSharesCreate
+                | Self::VaultSharesRevoke
+                | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -806,6 +814,8 @@ impl AgentVerb {
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::VaultSharesCreate
+                | Self::VaultSharesRevoke
+                | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -1032,6 +1042,8 @@ impl AgentVerb {
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::VaultSharesCreate
+                | Self::VaultSharesRevoke
+                | Self::VaultSharesView
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsExport
@@ -1181,6 +1193,7 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultDisclosureOffer
                 | Self::VaultSharesCreate
+                | Self::VaultSharesRevoke
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsProposeDeck
@@ -1326,6 +1339,8 @@ impl AgentVerb {
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::VaultSharesCreate => &["spec"],
+            Self::VaultSharesRevoke => &["spec"],
+            Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
@@ -1509,6 +1524,8 @@ impl AgentVerb {
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::VaultSharesCreate => &["spec"],
+            Self::VaultSharesRevoke => &["spec"],
+            Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsExport => &["spec"],

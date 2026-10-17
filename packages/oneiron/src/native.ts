@@ -90,6 +90,8 @@ vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
 vaultDisclosureOffer(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
+vaultSharesRevoke(input: unknown): unknown
+vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultArtifactsView(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string

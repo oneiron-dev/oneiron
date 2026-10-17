@@ -693,6 +693,8 @@ fn mcp_agent_verb_input(
         "vault.lenses.default" => a.spec.clone().ok_or_else(invalid),
         "vault.disclosure.offer" => a.spec.clone().ok_or_else(invalid),
         "vault.shares.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.shares.revoke" => a.spec.clone().ok_or_else(invalid),
+        "vault.shares.view" => a.spec.clone().ok_or_else(invalid),
         "vault.hooks.replay" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
@@ -1126,6 +1128,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shares.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shares.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shares.view" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.hooks.replay" => {
@@ -2369,6 +2377,30 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::ShareCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_shares_create(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shares.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shares.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ShareRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_shares_revoke(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shares.view" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shares.view", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ShareViewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_shares_view(server, auth, input)
+                .await
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
