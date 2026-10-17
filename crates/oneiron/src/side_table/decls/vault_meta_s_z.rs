@@ -72,6 +72,10 @@ side_tables! {
     /// Durable receipt written before a secret value is returned from materialization. Key:
     /// hex32(receipt id).
     SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw;
+    /// A carrier row the historical lift sweep marked (OF-067): the bytes it marked, by their
+    /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
+    /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
+    SECRET_LIFT_MARK: VaultMeta b"secret_lift:mark:v1:" Named Engine;
     /// A hit the historical lift sweep could not place, filed for the owner: the record or row
     /// that holds it, the detector's reason and why the sweep left it (OF-067). Holds no value.
     /// Key: the family's code, a zero byte, then the record's key.
