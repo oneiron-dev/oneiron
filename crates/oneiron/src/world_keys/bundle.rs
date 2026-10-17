@@ -26,7 +26,7 @@
 //!   does. Delete rewrites nothing; a deleted world restores from the bundles it is
 //!   in until they age out (DEC-0006: delete is backup-only undo).
 //! - A holder keeps [`SEALED_BUNDLE_KEEP`] generations, each bundle with its pad
-//!   object ([`retired_bundle_generations`]).
+//!   object, and never retires the newest by age ([`retired_bundle_generations`]).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -118,9 +118,10 @@ pub fn sealed_bundle_slot(unix_secs: u64) -> u64 {
 }
 
 /// The generations a holder retires from `kept` in slot `now_slot`: every one
-/// past the newest [`SEALED_BUNDLE_KEEP`], and every one that many slots old, so
-/// nothing outlives 90 days even when uploads stop. A retired generation's pad
-/// object goes with it.
+/// past the newest [`SEALED_BUNDLE_KEEP`], and every older one that many slots
+/// old, so nothing but the last copy outlives 90 days when uploads stop. The
+/// newest is never retired by age (owner ruling: spare the last copy). A retired
+/// generation's pad object goes with it.
 #[must_use]
 pub fn retired_bundle_generations(
     now_slot: u64,
@@ -134,7 +135,8 @@ pub fn retired_bundle_generations(
         .into_iter()
         .enumerate()
         .filter(|(rank, generation)| {
-            *rank >= SEALED_BUNDLE_KEEP || generation.slot.saturating_add(KEEP_SLOTS) <= now_slot
+            *rank >= SEALED_BUNDLE_KEEP
+                || (*rank > 0 && generation.slot.saturating_add(KEEP_SLOTS) <= now_slot)
         })
         .map(|(_, generation)| generation)
         .collect()
