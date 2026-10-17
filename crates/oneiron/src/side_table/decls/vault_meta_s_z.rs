@@ -277,6 +277,10 @@ side_tables! {
     /// Persisted audit report of a judge run against the held-out fixture set, keyed by run time then
     /// evidence sequence. Key: u64be + u64be.
     SKILL_ATTRIBUTION_AUDIT: VaultMeta b"skill_attribution:audit:v1:" Raw;
+    /// One matched-fork contribution check: the verdict and the pair it was read from (both fork
+    /// receipts and results, the anchor, the axis). Key: string (attempt receipt "\0" skill hex
+    /// "\0" axis).
+    SKILL_ATTRIBUTION_CONTRIBUTION_CHECK: VaultMeta b"skill_attribution:contribution_check:v1:" Named;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
     /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
