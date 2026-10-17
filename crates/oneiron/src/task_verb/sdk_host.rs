@@ -542,9 +542,15 @@ pub const AI_VERDICT_DEADLINE_MS: u64 = 10_000;
 pub struct AiVerdictRequest {
     /// The question, as the ladder's providers read it.
     pub question: String,
-    /// The labels the answer is one of; a yes/no question when empty.
-    #[serde(default)]
-    pub options: Vec<String>,
+    /// What the answer is (ARCH-0076): `{"kind": "noul"}`, yes or no with
+    /// P(yes), when absent; `{"kind": "choice", "options": [...]}`, one of
+    /// its labels; `{"kind": "score", "min": 1, "max": 5}`, one number in
+    /// that range, in the units and direction the question names;
+    /// `{"kind": "box"}` or `{"kind": "point"}`, where the question's target
+    /// sits in `image`, as fractions of it from its top left (none when the
+    /// target is absent, once the host's presence question says so).
+    #[serde(default = "yes_no")]
+    pub contract: crate::llm::decision::AnswerContract,
     /// Entity refs (short refs or 32-hex ids, each optionally `@<revision>`)
     /// the answer reads. Each must be readable by the caller; the providers
     /// read their views in the call's state.
@@ -563,10 +569,11 @@ pub struct AiVerdictRequest {
     /// [`AI_VERDICT_DEADLINE_MS`] when absent.
     #[serde(default)]
     pub deadline_ms: Option<u64>,
-    /// A routine driver step (OF-523, the CUA-S1 pattern): `options` are the
-    /// step's candidates (at most 61), and the ladder also offers NONE,
-    /// reobserve and "too complicated, ask up". The answer comes back as an
-    /// `outcome` the program acts on.
+    /// A routine driver step (OF-523, the CUA-S1 pattern): a Choice's
+    /// `options` are the step's candidates (at most 61), and the ladder also
+    /// offers NONE, reobserve and "too complicated, ask up"; a Box or a Point
+    /// acts where it finds the target. The answer comes back as an `outcome`
+    /// the program acts on.
     #[serde(default)]
     pub routine: bool,
     /// An image the question reads, by its view handle (`<asset>@<hash>`):
@@ -577,11 +584,6 @@ pub struct AiVerdictRequest {
     /// the run.
     #[serde(default)]
     pub image: Option<String>,
-    /// Find the question's target in `image`: a Box answer (none when the
-    /// target is absent). `options` stay empty; a routine Box acts at the
-    /// box's centre.
-    #[serde(default)]
-    pub locate: bool,
     /// NONE or reobserve outcomes the subgoal's steps gave in a row before
     /// this one: the answer says when the next observation takes a
     /// screenshot.
@@ -595,15 +597,25 @@ pub struct AiVerdictRequest {
     pub until_ms: Option<u64>,
 }
 
-/// `ai.verdict`'s answer: the ladder's answer, its probability, the rung
-/// whose answer stands (none when the call abstained), and the decision's
-/// receipt.
+fn yes_no() -> crate::llm::decision::AnswerContract {
+    crate::llm::decision::AnswerContract::Noul
+}
+
+/// `ai.verdict`'s answer: the ladder's answer on the request's contract, its
+/// probability (P(yes) for a yes/no, else the answer's confidence; none for a
+/// Box or a Point whose coordinates were not read), the rung whose answer
+/// stands (none when the call abstained), and the decision's receipt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AiVerdict {
     pub answer: crate::llm::decision::DecisionAnswer,
     pub p: Option<f64>,
     pub rung: Option<crate::llm::decision::DecisionRung>,
     pub receipt: crate::llm::decision::DecisionReceipt,
+    /// A Box or Point call's presence step, when the host asked it: its own
+    /// P(yes) and receipt. The receipt above is the coordinates' when they
+    /// were read, else this step's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<crate::llm::decision::TypedDecision>,
     /// A routine step's outcome: act on a candidate or at a point, NONE,
     /// reobserve, or ask up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -625,6 +637,7 @@ impl From<crate::llm::decision::TypedDecision> for AiVerdict {
             p: decision.probability,
             rung: decision.receipt.time.and_then(|time| time.answered),
             receipt: decision.receipt,
+            presence: None,
             outcome: None,
             screenshot: false,
             until_ms: None,

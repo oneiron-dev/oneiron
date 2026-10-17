@@ -5,14 +5,15 @@ use super::codec::deserialize_optional_u32;
 use super::codec::deserialize_optional_u64;
 use super::codec::{McpToolArguments, schema_normalized_arguments};
 use super::surface::{
-    MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_CODE_TOOL, MCP_READ_RESULT_TOOL, MCP_SETUP_TOOL,
-    McpEndpointTool, McpGeneratedVerbTool,
+    MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_CODE_TOOL, MCP_INVOKE_ACTION_TOOL, MCP_READ_RESULT_TOOL,
+    MCP_SETUP_TOOL, McpEndpointTool, McpGeneratedVerbTool,
 };
 use super::tool_catalog::{McpToolValidationError, McpValidatedToolArgs};
 use super::validators::{
     validate_nonblank, validate_optional_entity_ref, validate_optional_nonblank,
     validate_schema_version,
 };
+use oneiron::code_run::actions::ActionArgument;
 use oneiron::context_board::{BoardBudgetRequest, SubscriptionScope};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -194,6 +195,39 @@ impl McpReadResultToolArgs {
     }
 }
 
+/// `invoke_action` arguments: the action `verb`, and the body `POST
+/// /v1/core/actions/{verb}` takes, field for field: its typed `args`, its
+/// `idempotencyKey`, and the `liveRun` handle of the run it acts for. A
+/// handle is per call, and only the live-run resolver judges one.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpInvokeActionToolArgs {
+    pub schema_version: String,
+    pub actor: McpActorMetadata,
+    pub consent: McpConsentMetadata,
+    pub verb: String,
+    pub args: Vec<ActionArgument>,
+    #[serde(rename = "idempotencyKey")]
+    pub idempotency_key: String,
+    #[serde(default, rename = "liveRun")]
+    pub live_run: Option<String>,
+}
+
+impl McpInvokeActionToolArgs {
+    fn validate(&self) -> Result<(), McpToolValidationError> {
+        validate_schema_version(MCP_INVOKE_ACTION_TOOL, &self.schema_version)?;
+        self.actor.validate(MCP_INVOKE_ACTION_TOOL)?;
+        self.consent.validate(MCP_INVOKE_ACTION_TOOL)?;
+        validate_nonblank(MCP_INVOKE_ACTION_TOOL, "verb", &self.verb)?;
+        validate_nonblank(
+            MCP_INVOKE_ACTION_TOOL,
+            "idempotencyKey",
+            &self.idempotency_key,
+        )?;
+        Ok(())
+    }
+}
+
 /// The read `read_result` makes: a result's card, or one of its facets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -258,10 +292,25 @@ pub struct McpVerbArguments {
     /// `tasks.create`'s typed assignee (OF-532), decoded with the input.
     #[serde(default)]
     pub assignee: Option<Value>,
+    /// `tasks.create`'s post key (OF-220): with `brief`, a post.
+    #[serde(default)]
+    pub intent_key: Option<String>,
+    /// `tasks.create`'s typed brief (OF-220), decoded with the input.
+    #[serde(default)]
+    pub brief: Option<Value>,
+    /// `tasks.create`'s absolute expiry, decoded with the input.
+    #[serde(default)]
+    pub ttl: Option<Value>,
+    /// `describe`'s task highway handle (OF-220), decoded with the input.
+    #[serde(default)]
+    pub handle: Option<Value>,
+    /// `describe`'s last observed status digest for its handle.
+    #[serde(default)]
+    pub after: Option<String>,
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 13] {
+    fn present_fields(&self) -> [(&'static str, bool); 18] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -276,6 +325,11 @@ impl McpVerbArguments {
             ("request", self.request.is_some()),
             ("label", self.label.is_some()),
             ("assignee", self.assignee.is_some()),
+            ("intent_key", self.intent_key.is_some()),
+            ("brief", self.brief.is_some()),
+            ("ttl", self.ttl.is_some()),
+            ("handle", self.handle.is_some()),
+            ("after", self.after.is_some()),
         ]
     }
 
@@ -410,6 +464,16 @@ fn validate_endpoint_tool_args(
             )?;
             parsed.validate()?;
             Ok(McpValidatedToolArgs::ReadResult(Box::new(parsed)))
+        }
+        McpEndpointTool::InvokeAction => {
+            let parsed = decode_endpoint_args::<McpInvokeActionToolArgs>(
+                MCP_INVOKE_ACTION_TOOL,
+                &schema,
+                args,
+                actor,
+            )?;
+            parsed.validate()?;
+            Ok(McpValidatedToolArgs::InvokeAction(Box::new(parsed)))
         }
         McpEndpointTool::Verb(tool) => {
             let payload =
