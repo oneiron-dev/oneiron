@@ -836,6 +836,8 @@ fn mcp_agent_verb_input(
             Ok(input)
         }
         "vault.rooms.offer.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.offer.vote" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.offer.reopen" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.offers" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
             let map = input.as_object_mut().ok_or_else(invalid)?;
@@ -1330,6 +1332,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
         }
         "vault.rooms.offer.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.offer.vote" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.offer.reopen" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.offers" => {
@@ -2902,6 +2910,22 @@ async fn execute_agent_verb_row(
             server
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.offer.vote" => {
+            let input: oneiron::workspace_roster::OfferVoteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_offer_vote(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.offer.reopen" => {
+            let input: oneiron::workspace_roster::OfferReopenRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_offer_reopen(&memory, input)
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

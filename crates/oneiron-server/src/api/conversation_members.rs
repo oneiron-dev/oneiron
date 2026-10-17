@@ -63,6 +63,9 @@ pub(super) struct MemberWrite {
     history: HistoryChoice,
     #[serde(default)]
     from: Option<u64>,
+    /// Join's idempotency key: the same key replays the join.
+    #[serde(default)]
+    intent_key: Option<String>,
 }
 #[derive(Default, Deserialize)]
 pub(super) struct MemberQuery {
@@ -80,10 +83,37 @@ pub(super) async fn write_member(
     let actor = actor(&auth, req.actor)?;
     let at = req.at.unwrap_or_else(unix_seconds_now);
     let result = match req.action {
+        // A person takes a room seat only through the room's join door, which
+        // proves the caller stands for that person and seats it only once the
+        // join is Ready (#2008); a Hold or a refusal is returned as decided.
         MembershipAction::Join => {
-            server
+            if req.at.is_some() || !matches!(req.history, HistoryChoice::Inherit) {
+                return Err(ApiError::bad_request(
+                    "Join uses the current time and the room's own history rule",
+                    Some("join"),
+                )
+                .into());
+            }
+            let intent_key = req.intent_key.ok_or_else(|| {
+                ApiError::bad_request("intent_key is required for Join", Some("intent_key"))
+            })?;
+            let join = server
                 .vault
-                .join_member(room, req.person_id, actor, at, req.history)
+                .memory(actor.entity_ref(), actor.actor_class())
+                .rooms_join(&oneiron::workspace_roster::JoinRequest {
+                    room,
+                    branch: None,
+                    subject: oneiron::workspace_roster::JoinSubject::Person(req.person_id),
+                    paid: false,
+                    spend_scope: None,
+                    intent_key,
+                })
+                .map_err(join_error)?;
+            let members = server
+                .vault
+                .members(room)
+                .map_err(|e| core_engine_error("members read failed", e))?;
+            return Ok(Json(json!({"join": join, "member_ids": members})));
         }
         MembershipAction::Leave => server.vault.leave_member(room, req.person_id, actor, at),
         MembershipAction::History => server.vault.set_history_visibility(
@@ -102,6 +132,25 @@ pub(super) async fn write_member(
         .members(room)
         .map_err(|e| core_engine_error("members read failed", e))?;
     Ok(Json(json!({"member_ids":members})))
+}
+/// A refused room join, in the core error envelope.
+fn join_error(error: oneiron::memory::MemoryError) -> ApiError {
+    use oneiron::memory::{
+        MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
+        MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    };
+    match error.code.as_str() {
+        MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, Some("join")),
+        MEMORY_CODE_NOT_FOUND => ApiError::not_found("room", None),
+        MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            ApiError::forbidden_scope("room_join")
+        }
+        MEMORY_CODE_INVALID_STATE => ApiError::invalid_state(Some("room_join")),
+        _ => {
+            tracing::error!(code = %error.code, "room join failed");
+            ApiError::internal_server_error("room join failed")
+        }
+    }
 }
 pub(super) async fn read_members(
     auth: CoreAuth,

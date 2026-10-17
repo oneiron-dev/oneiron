@@ -559,6 +559,16 @@ export_facade! {
     let output = client.vault_rooms_offer_answer(&input)?;
     crate::codec::encode("vault.rooms.offer.answer", &output)
 };
+"vault.rooms.offer.vote" => fn vault_rooms_offer_vote(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::workspace_roster::OfferVoteRequest = crate::codec::decode("vault.rooms.offer.vote", &input)?;
+    let output = client.vault_rooms_offer_vote(&input)?;
+    crate::codec::encode("vault.rooms.offer.vote", &output)
+};
+"vault.rooms.offer.reopen" => fn vault_rooms_offer_reopen(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::workspace_roster::OfferReopenRequest = crate::codec::decode("vault.rooms.offer.reopen", &input)?;
+    let output = client.vault_rooms_offer_reopen(&input)?;
+    crate::codec::encode("vault.rooms.offer.reopen", &output)
+};
 "vault.rooms.offers" => fn vault_rooms_offers(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::workspace_roster::OffersRequest = crate::codec::decode("vault.rooms.offers", &input)?;
     let output = client.vault_rooms_offers(&input)?;

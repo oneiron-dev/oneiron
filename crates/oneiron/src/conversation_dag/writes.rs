@@ -361,6 +361,9 @@ pub(crate) fn append_in_txn(
         input.session,
     )?;
     joined.record_in_txn(vault, txn, vault.store.clock.now_recorded_at())?;
+    // OF-530 ruling A: a room-wide offer card the record names, or the
+    // record it answers, is engaged in this write.
+    crate::workspace_roster::record_offer_append_in_txn(vault, txn, input, reply_to)?;
     if input.advance {
         HEAD.put(&vault.store, txn, &input.conversation, &id)?;
         if let Some(parent) = input.parent {

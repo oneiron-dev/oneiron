@@ -116,6 +116,8 @@ pub enum AgentVerb {
     VaultRoomsConsent,
     VaultRoomsOffer,
     VaultRoomsOfferAnswer,
+    VaultRoomsOfferVote,
+    VaultRoomsOfferReopen,
     VaultRoomsOffers,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
@@ -328,6 +330,8 @@ impl AgentVerb {
         Self::VaultRoomsConsent,
         Self::VaultRoomsOffer,
         Self::VaultRoomsOfferAnswer,
+        Self::VaultRoomsOfferVote,
+        Self::VaultRoomsOfferReopen,
         Self::VaultRoomsOffers,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
@@ -545,6 +549,8 @@ impl AgentVerb {
             Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultRoomsOffer => "vault.rooms.offer",
             Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
+            Self::VaultRoomsOfferVote => "vault.rooms.offer.vote",
+            Self::VaultRoomsOfferReopen => "vault.rooms.offer.reopen",
             Self::VaultRoomsOffers => "vault.rooms.offers",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
@@ -756,6 +762,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
@@ -975,6 +983,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
@@ -1213,6 +1223,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
@@ -1369,6 +1381,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -1552,6 +1566,8 @@ impl AgentVerb {
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOfferVote => &["spec"],
+            Self::VaultRoomsOfferReopen => &["spec"],
             Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
@@ -1765,6 +1781,8 @@ impl AgentVerb {
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOfferVote => &["spec"],
+            Self::VaultRoomsOfferReopen => &["spec"],
             Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
@@ -2158,10 +2176,16 @@ impl AgentVerb {
                 "One party's answer to a join that waits on it, after which the join is decided again."
             }
             Self::VaultRoomsOffer => {
-                "Publishes an agent's offer card to join a room or one of its threads."
+                "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."
             }
             Self::VaultRoomsOfferAnswer => {
                 "The room's host answers an offer card: join, or not now."
+            }
+            Self::VaultRoomsOfferVote => {
+                "Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."
+            }
+            Self::VaultRoomsOfferReopen => {
+                "The room's owner or delegated host reopens its aged-out room-wide offer card."
             }
             Self::VaultRoomsOffers => {
                 "One page of the current offer cards in a room or one of its threads."
