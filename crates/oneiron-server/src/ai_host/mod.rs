@@ -44,6 +44,7 @@ mod local_vision;
 mod policy;
 pub(crate) mod self_heal_detectors;
 mod skill_author;
+mod skill_discovery;
 mod status;
 mod step;
 mod step_failure;
