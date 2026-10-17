@@ -130,6 +130,17 @@ fn decode_subscription(body: &crate::ClaimBody) -> Result<ConnectorSubscription>
     }
     Ok(row)
 }
+/// One wake decision's identity: its subscription and the event's id,
+/// domain-separated by [`DECISION_PREFIX`]. It keys the decision row and
+/// dedupes the wake attempt.
+fn wake_decision_identity(subscription: &EntityId, event_id: &str) -> blake3::Hash {
+    let mut hash = blake3::Hasher::new();
+    hash.update(DECISION_PREFIX);
+    hash.update(subscription.as_bytes());
+    hash.update(&(event_id.len() as u64).to_be_bytes());
+    hash.update(event_id.as_bytes());
+    hash.finalize()
+}
 fn subscriptions(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -206,6 +217,59 @@ impl Vault {
             .into_iter()
             .filter(|(_, row)| row.agent == agent)
             .collect())
+    }
+    /// The connector event `event_id` woke `agent` with (OF-519), read back
+    /// through the wake decision each of `agent`'s subscriptions recorded
+    /// for it and the wake attempt that froze the event. A reply's sink
+    /// follows its intent's trigger here to the event it answers. `None`
+    /// when no subscription of `agent` took the event, or its attempt is
+    /// gone.
+    ///
+    /// # Errors
+    /// The subscriptions or wake decisions could not be read.
+    pub fn connector_event_woken(
+        &self,
+        agent: EntityId,
+        event_id: &str,
+    ) -> Result<Option<ConnectorEvent>> {
+        let attempts = {
+            let txn = self.store.env.read_txn()?;
+            let mut attempts = Vec::new();
+            for (id, row) in subscriptions(&self.store, &txn)? {
+                if row.agent != agent {
+                    continue;
+                }
+                let key = *wake_decision_identity(&id, event_id).as_bytes();
+                if let Some(decision) = WAKE_DECISION.get(&self.store, &txn, &key)?
+                    && let Some(attempt) = decision.attempt_id
+                {
+                    attempts.push(attempt);
+                }
+            }
+            attempts
+        };
+        let runner = DreamerRunnerStore::new(self);
+        for attempt in attempts {
+            let Ok(Some(status)) = crate::attempt_queue::AttemptId::from_bytes(&attempt)
+                .and_then(|attempt| runner.status(attempt))
+            else {
+                continue;
+            };
+            let Value::Map(fields) = &status.payload.input else {
+                continue;
+            };
+            let frozen = fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("connector_event"))
+                .and_then(|(_, value)| value.as_str());
+            if let Some(event) =
+                frozen.and_then(|frozen| serde_json::from_str::<ConnectorEvent>(frozen).ok())
+                && event.event_id == event_id
+            {
+                return Ok(Some(event));
+            }
+        }
+        Ok(None)
     }
     pub fn revoke_connector_event_subscription(
         &self,
@@ -349,12 +413,7 @@ impl Vault {
             {
                 continue;
             }
-            let mut hash = blake3::Hasher::new();
-            hash.update(DECISION_PREFIX);
-            hash.update(id.as_bytes());
-            hash.update(&(event.event_id.len() as u64).to_be_bytes());
-            hash.update(event.event_id.as_bytes());
-            let identity = hash.finalize();
+            let identity = wake_decision_identity(&id, &event.event_id);
             let key = *identity.as_bytes();
             if let Some(old) = WAKE_DECISION.get(&self.store, &*txn, &key)? {
                 if old.event_hash != event_hash || old.subscription != id || old.agent != row.agent

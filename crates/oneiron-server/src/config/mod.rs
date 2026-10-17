@@ -2,6 +2,7 @@
 
 pub mod backup;
 pub mod browser;
+pub mod connectors;
 pub mod desktop;
 pub mod embedder;
 mod embedder_shape;
@@ -12,6 +13,7 @@ mod feedback;
 pub mod import;
 mod keystore;
 mod limits;
+mod line;
 mod lookup;
 pub mod merge;
 pub mod models;
@@ -27,6 +29,7 @@ mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
 pub use browser::BrowserConfig;
+pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
@@ -41,6 +44,7 @@ pub use feedback::{CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig}
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};
 pub use limits::LimitsConfig;
+pub use line::LineConfig;
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,

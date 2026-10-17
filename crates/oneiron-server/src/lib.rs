@@ -32,6 +32,7 @@ mod byte_line;
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod connector_call_host;
 pub mod control_keys;
 mod decision_artifact;
 mod decision_graph;
