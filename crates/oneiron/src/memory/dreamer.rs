@@ -128,9 +128,15 @@ impl Memory<'_> {
 
     /// Seed-write entry point (EF-301 consumer): every element is FORCED
     /// `proposed` regardless of source — cold-start claims land below the
-    /// auto-approve line, individually gated, each with a receipt.
-    pub fn seed_claims(&self, claims: &[ClaimInput]) -> MemoryResult<Vec<CommitReceipt>> {
-        Ok(self.commit_all(claims, false, Some(ClaimApprovalStatus::Proposed)))
+    /// auto-approve line, individually gated, each with its receipt or its
+    /// typed refusal (OF-063).
+    pub fn seed_claims(&self, claims: &[ClaimInput]) -> MemoryResult<Vec<CommitOutcome>> {
+        Ok(self.commit_all(
+            "vault.claims.seed",
+            claims,
+            false,
+            Some(ClaimApprovalStatus::Proposed),
+        ))
     }
 }
 

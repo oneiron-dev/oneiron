@@ -433,3 +433,80 @@ impl Leg {
         ran
     }
 }
+
+/// One of the owner's nodes, sent each call once (FIX 3229): the transport
+/// under a model the router learned from that node's catalog. It never tries
+/// another node and never sends a call again, so it may sit under a run's
+/// gate; a node that does not take the call fails it, and the ladder above
+/// decides whether the call waits.
+pub struct MeshPeerTransport {
+    leg: Arc<Leg>,
+    machine: MachineId,
+    runtime: Handle,
+}
+
+impl std::fmt::Debug for MeshPeerTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeshPeerTransport")
+            .field("machine", &self.machine.to_hex())
+            .finish_non_exhaustive()
+    }
+}
+
+impl MeshLlmTransport {
+    /// This transport's mesh, sending each call once to `machine` alone.
+    #[must_use]
+    pub fn peer(&self, machine: MachineId) -> MeshPeerTransport {
+        MeshPeerTransport {
+            leg: Arc::clone(&self.leg),
+            machine,
+            runtime: self.runtime.clone(),
+        }
+    }
+}
+
+impl oneiron::llm::SingleSend for MeshPeerTransport {}
+
+impl OwnServerTransport for MeshPeerTransport {
+    fn generate<'a>(
+        &'a self,
+        request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        let (leg, machine) = (Arc::clone(&self.leg), self.machine);
+        let task = self.runtime.spawn(async move {
+            match serde_json::to_vec(&request) {
+                // A node that does not take the call fails it; no other
+                // node runs it.
+                Ok(body) => leg
+                    .generate_on(machine, &body)
+                    .await
+                    .unwrap_or_else(|_| Err(RetryableLlmError::ServerError.into())),
+                Err(_) => Err(FatalLlmError::InvalidRequest.into()),
+            }
+        });
+        let guard = AbortOnDrop(task.abort_handle());
+        Box::pin(async move {
+            let _guard = guard;
+            task.await
+                .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
+        })
+    }
+
+    fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        let body = serde_json::to_vec(&request).map_err(|_| FatalLlmError::InvalidRequest)?;
+        let (leg, machine) = (Arc::clone(&self.leg), self.machine);
+        let (send, receive) = mpsc::unbounded_channel();
+        let task = self.runtime.spawn(async move {
+            // The node did not take the stream, or broke before its first
+            // event: nothing went out, and no other node runs it.
+            if leg.stream_on(machine, &body, &send).await.is_err() {
+                let _ = send.send(Err(RetryableLlmError::ServerError.into()));
+            }
+        });
+        Ok(LlmStream::new(Received {
+            receive,
+            _guard: AbortOnDrop(task.abort_handle()),
+        }))
+    }
+}
