@@ -810,7 +810,7 @@ impl OffRecordSession<'_> {
             } else {
                 table.put(&self.vault.store, wtxn, key, value)?;
                 counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
-                also(wtxn, RoutedDbs::Base(&self.vault.store))?;
+                also(wtxn, RoutedDbs::Base(self.vault))?;
             }
             Ok((segment, total))
         })?;
