@@ -565,14 +565,7 @@ pub(crate) fn restore_over_keyed(
     config: oneiron::VaultConfig,
     key: CheckpointKey,
 ) -> anyhow::Result<Restored> {
-    restore_over_with(
-        backup,
-        vault_path,
-        config,
-        |_| Ok(key),
-        exchange,
-        sync_dir,
-    )
+    restore_over_with(backup, vault_path, config, |_| Ok(key), exchange, sync_dir)
 }
 
 fn restore_over_syncing(
