@@ -9,7 +9,8 @@ use crate::deletion::{HydratedShortIdDeletion, MemoryTimelineRecordState};
 pub(super) use oneiron_contracts::code_run::vault_read::default_limit;
 pub use oneiron_contracts::code_run::vault_read::{
     AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest,
-    CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest, CountMode, View,
+    CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryAffect, CoreQueryRequest, CountMode,
+    View,
 };
 
 /// Maximum refs accepted by one batch short-id hydrate call. Copied from the

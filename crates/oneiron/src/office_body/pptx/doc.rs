@@ -11,7 +11,7 @@
 //! and shapes below them; sibling position is the only order, and the model
 //! root is implicit. Each tree node's meta map holds its model identity (`id`,
 //! decimal, kept apart from the Loro handle), its kind, name, binding,
-//! placeholder, a live-born node's preset and payload, and one key per
+//! placeholder, its preset and payload, and one key per
 //! geometry field, so concurrent writes of different fields merge. Root `texts` maps a text shape's identity to its
 //! body: `order`, a movable list of paragraph identities, and `paras`, each
 //! paragraph's level and one rich text whose run formatting rides as marks,

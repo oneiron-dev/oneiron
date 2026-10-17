@@ -203,7 +203,8 @@ async fn serve(
         Arc::clone(server.vault()) as Arc<dyn RevokedTokenJtis + Send + Sync>,
         session_jti,
         conn_id,
-    );
+    )
+    .with_inbound_cap(server.config.max_frame_size);
     match await_protocol_hello(&mut transport).await {
         HelloOutcome::Valid(version)
             if version >= oneiron::sync::transport::APP_TIER_PROTOCOL_VERSION_VERSION => {}

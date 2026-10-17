@@ -354,6 +354,8 @@ class Oneiron:
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
+        @property
+        def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
@@ -387,6 +389,8 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
+        @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs": ...
         @property
@@ -461,6 +465,13 @@ class Oneiron:
             """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
         def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
+    class _VaultFanoutVerbs:
+        def launch(self, spec: Facade.FanoutLaunchRequest) -> Facade.FanoutLaunchView | None:
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+        def resume(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
+            """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
+        def ack(self, spec: Facade.FanoutAckRequest) -> Facade.FanoutLaunchView:
+            """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
     class _VaultClaimsVerbs:
         def upsert(self, claim: ClaimInput) -> CommitReceipt: ...
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:
@@ -643,6 +654,9 @@ class Oneiron:
             """Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling."""
         def replace(self, spec: Facade.InferenceDefaultsReplaceRequest) -> Facade.PolicyActionOutcome:
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
+    class _VaultSecretsVerbs:
+        def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
     class _VaultWidenProposalsVerbs:
         def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
             """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""
@@ -659,8 +673,8 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
-        def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.GeneratedLens]:
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+        def default(self, spec: Facade.LensDefaultRequest) -> Facade.ScopedReadResult[Facade.LensFrameCard]:
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
     class _VaultDisclosureVerbs:
         def offer(self, spec: Facade.DisclosureOfferRequest) -> Facade.DisclosureOffered:
             """An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."""

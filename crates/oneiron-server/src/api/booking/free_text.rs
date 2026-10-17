@@ -39,11 +39,7 @@ pub(super) async fn parse_free_text(
     visitor_tz: String,
     now: u64,
 ) -> Result<(ConstraintObject, Option<String>), ApiError> {
-    let Some(settings) = server.decision_host().booking_parse().cloned() else {
-        return Err(ApiError::not_implemented(
-            "booking free-text constraint parsing requires [models.decisions.booking_parse]",
-        ));
-    };
+    let settings = parse_seat_settings(server)?;
     let server = Arc::clone(server);
     let principal = transport.principal;
     // The ladder's model rungs block on the server's runtime.
@@ -54,6 +50,20 @@ pub(super) async fn parse_free_text(
     .map_err(|_| ApiError::internal_server_error("booking free-text parse stopped"))?
 }
 
+/// The configured parse seat. Without one, free text is refused, never
+/// forwarded, on every door that parses it.
+pub(super) fn parse_seat_settings(server: &SyncServer) -> Result<BookingParseSettings, ApiError> {
+    server
+        .decision_host()
+        .booking_parse()
+        .cloned()
+        .ok_or_else(|| {
+            ApiError::not_implemented(
+                "booking free-text constraint parsing requires [models.decisions.booking_parse]",
+            )
+        })
+}
+
 fn parse_on_seat(
     server: &SyncServer,
     settings: &BookingParseSettings,
@@ -62,6 +72,44 @@ fn parse_on_seat(
     visitor_tz: String,
     now: u64,
 ) -> Result<(ConstraintObject, Option<String>), ApiError> {
+    let request = ConstraintParseRequest {
+        free_text,
+        detected_visitor_tz: visitor_tz,
+        now_utc: now,
+    };
+    on_parse_seat(
+        server,
+        settings,
+        principal,
+        now,
+        |backend, lease, config| match block_on(parse_constraint_with_backend(
+            backend, lease, &request, config,
+        ))
+        .map_err(booking_error)?
+        {
+            ConstraintParseDisposition::Constraint {
+                object,
+                visitor_tz_override,
+            } => Ok((object, visitor_tz_override)),
+            ConstraintParseDisposition::OffTopic => Err(ApiError::bad_request(
+                "the constraint text is not a scheduling preference",
+                Some("constraint"),
+            )),
+        },
+    )
+}
+
+/// Runs one admitted parse on the seat: `parse` gets the seat's backend, the
+/// carrier lease and the parse config, called from a blocking thread. The
+/// payer is `principal`, or the vault owner who publishes the page for an
+/// anonymous visitor.
+pub(super) fn on_parse_seat<T>(
+    server: &SyncServer,
+    settings: &BookingParseSettings,
+    principal: Option<WriteActor>,
+    now: u64,
+    parse: impl FnOnce(&dyn LlmBackend, &BudgetLease, &ConstraintParseConfig) -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
     let unserved = || ApiError::internal_server_error("the booking parse seat is not served");
     let vault = server.vault();
     let payer = match principal {
@@ -117,25 +165,9 @@ fn parse_on_seat(
         max_input_bytes: settings.max_input_bytes,
         decisions: server.decision_host().booking_decisions(payer.entity_ref()),
     };
-    let request = ConstraintParseRequest {
-        free_text,
-        detected_visitor_tz: visitor_tz,
-        now_utc: now,
-    };
-    let parsed = block_on(parse_constraint_with_backend(
-        &backend, &lease, &request, &config,
-    ));
+    let parsed = parse(&backend, &lease, &config);
     let _ = carrier.abort(&lease);
-    match parsed.map_err(booking_error)? {
-        ConstraintParseDisposition::Constraint {
-            object,
-            visitor_tz_override,
-        } => Ok((object, visitor_tz_override)),
-        ConstraintParseDisposition::OffTopic => Err(ApiError::bad_request(
-            "the constraint text is not a scheduling preference",
-            Some("constraint"),
-        )),
-    }
+    parsed
 }
 
 /// The parse seat under one run: each request the parse builds is admitted

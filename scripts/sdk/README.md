@@ -177,10 +177,13 @@ fragment (ONE-2510 S2, EIRI-ARCH-0002 §The contract). This script writes it
 from the table and the Rust types its rows name (`catalog_fragment.py`). It
 covers every row code mode serves, at its SDK path, and lays the verbs out as
 `code_mode_declarations` does. Each row has its typed input and its typed
-reply: `Sdk.Reply<T>`, the `{output}` envelope a code-mode call resolves with.
-Every type the rows reach is written out once in the `Sdk` namespace, nested
-types included. A row's reply is its `output`, or `Sdk.Reply<unknown>` when
-the table names none. `outputs_by_input` maps an input field (its wire name)
+reply, `Promise<T | StoredResult>`: the guest's verb import resolves with the
+output itself (`typed.rs` `self.verbs.call`), or with runtime.d.ts's
+`StoredResult` card past 512 KiB. A refusal throws its JSON text as a string,
+and a parked call throws `missing_host_response_field`; the fragment's header
+says so. Every type the rows reach is written out once in the `Sdk` namespace,
+nested types included. A row's reply is its `output`, or `Promise<unknown>`
+when the table names none. `outputs_by_input` maps an input field (its wire name)
 to the reply code mode answers when that field is present
 (`describe({fold})`, `tasks.update({resultRef})`): the fragment declares one
 overload per field, most specific first, then the row's own; no host door

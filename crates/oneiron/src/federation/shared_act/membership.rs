@@ -89,6 +89,21 @@ impl Vault {
         }
         Ok(role)
     }
+    /// Every member of shared vault `vault_id` at their role, delegates and
+    /// guests aside: the roster a vault shape reads (ARCH-0070).
+    pub(crate) fn shared_members_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+    ) -> Result<Vec<(EntityId, Role)>> {
+        let mut members = std::collections::BTreeMap::new();
+        for (_, grant) in self.vault_grants_in_txn(txn, vault_id)? {
+            if !matches!(grant.role, Role::Delegate | Role::Guest) {
+                members.insert(grant.member_ref, grant.role);
+            }
+        }
+        Ok(members.into_iter().collect())
+    }
     fn apply_grant_ops(&self, txn: &mut heed::RwTxn<'_>, ops: Vec<BatchOp>) -> Result<()> {
         apply_ops(
             &self.store,

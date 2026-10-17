@@ -40,12 +40,14 @@ mod legal_hold_doors;
 mod policy_doors;
 mod reaction_doors;
 pub(super) mod role_picks;
+mod secret_lift_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 #[cfg(test)]
 pub(super) mod tests;
+pub(super) mod ui_action_routes;
 mod vault_shape_doors;
 mod wave_doors;
 mod weave_doors;
@@ -342,7 +344,8 @@ async fn facade_call_receipt(
         let (head, body) = response.into_parts();
         response = match axum::body::to_bytes(body, usize::MAX).await {
             Ok(bytes) => {
-                result_digest = Some(oneiron::receipt::call_bytes_digest(&bytes));
+                // A `reveal.wait` reply is digested with its value masked.
+                result_digest = Some(oneiron::task_verb::sdk::call_reply_digest(&verb, &bytes));
                 Response::from_parts(head, Body::from(bytes))
             }
             Err(_) => {
