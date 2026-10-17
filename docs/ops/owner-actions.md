@@ -815,6 +815,24 @@ to trust a backup on, and a backup's own head is never trusted. Where no vault i
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
 install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
 
+A managed vault's escrow capsules live in the registry, one report per recipient (`managed` or
+`break-glass`). One of them opens a backup even when the backup is older than its wrap:
+
+```sh
+oneiron restore BACKUP --unlock escrow --capsule vault-key-escrow-managed.<fp>.json \
+  --secret-file recipient.secret --trust signer.json
+```
+
+The report is the registry's JSON row as the node spooled it. Unknown fields, another
+`schema_version` or `report_type`, and a `vault_id` or `key_commitment` other than the backup's
+(`--inspect` prints both) are refused before the secret is read. The recipient's secret comes from
+stdin, an owner-only `--secret-file` or the recovery box, never the command line: a 32-byte seed,
+or the key's 96 bytes of seeds (ML-KEM-1024's 64, then X25519's 32), raw, hex or base64url. A
+released recipient is never reused, and the restore says so on stderr. Retire it yourself: seal the
+vault key to a new recipient (`oneiron vault-key add-escrow`, or the managed node's fresh one at its
+next start), `oneiron vault-key remove escrow:<label>` if the restored vault still carries it, and
+have the registry delete its capsules.
+
 ### Maximum tier
 
 `oneiron init --maximum-tier` creates a vault whose every LMDB page is sealed under a key derived
