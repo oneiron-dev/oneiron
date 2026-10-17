@@ -333,7 +333,8 @@ impl Journal {
                 return false;
             }
             if *at < upto {
-                let made_final = usize::try_from(upto - *at).map_or(pcm.len(), |n| n.min(pcm.len()));
+                let made_final =
+                    usize::try_from(upto - *at).map_or(pcm.len(), |n| n.min(pcm.len()));
                 pcm.drain(..made_final);
                 *at = upto;
             }
@@ -354,7 +355,10 @@ impl Journal {
                 "live transcribe replay misses audio dropped past its queue limit"
             );
         }
-        (self.sent.into_iter().map(|(_, held)| held).collect(), self.bytes)
+        (
+            self.sent.into_iter().map(|(_, held)| held).collect(),
+            self.bytes,
+        )
     }
 
     /// The segment's millisecond at byte `at`.

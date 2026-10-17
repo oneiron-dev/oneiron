@@ -97,7 +97,7 @@ const HOST_FACETS: [&str; 6] = [
     COACH_TRADEOFF_ROUTE_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 7] = [
+const MAINTENANCE_FACETS: [&str; 8] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -105,6 +105,7 @@ const MAINTENANCE_FACETS: [&str; 7] = [
     COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
+    super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const READ_HARDENING_RUNS: usize = 256;
