@@ -928,7 +928,7 @@
     },
     {
       "name": "vault.members.add",
-      "description": "An Admin adds a live person to a shared vault at a non-root role.",
+      "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
       "output": "crate::federation::SharedActExecutionReceipt",
       "call": "crate::task_verb::sdk::add_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.add\")?, input)?",
@@ -971,10 +971,65 @@
       "section": false
     },
     {
+      "name": "vault.members.invitations",
+      "description": "The caller's own pending invitations into a shared vault.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::SharedInvitation>",
+      "call": "crate::task_verb::sdk::read_shared_invitations(memory.vault(), &memory.embedded_owner(\"vault.members.invitations\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.accept",
+      "description": "The invitee accepts their own invitation and joins the shared vault at its role.",
+      "input": "crate::task_verb::sdk::SharedInvitationRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::accept_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.accept\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.decline",
+      "description": "The invitee declines their own invitation; nothing is granted.",
+      "input": "crate::task_verb::sdk::SharedInvitationRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::decline_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.decline\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.members.withdraw_invitation",
+      "description": "An Admin with the add_member power takes back a pending invitation.",
+      "input": "crate::task_verb::sdk::SharedInvitationWithdrawRequest",
+      "output": "crate::federation::SharedActExecutionReceipt",
+      "call": "crate::task_verb::sdk::withdraw_shared_invitation_as(memory.vault(), &memory.embedded_owner(\"vault.members.withdraw_invitation\")?, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",
       "call": "crate::task_verb::sdk::revoke_guest_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.guests.mint_slip",
+      "description": "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device.",
+      "input": "crate::task_verb::sdk::GuestSlipMintRequest",
+      "output": "crate::task_verb::sdk::GuestSlipMinted",
+      "call": "crate::task_verb::sdk::mint_guest_slip_embedded(memory, input)?",
       "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
@@ -3339,11 +3394,39 @@
       "effect": "TasksRefuse"
     },
     {
+      "name": "self.leader.advice",
+      "input": "crate::code_run::LeaderAdviceInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
+    },
+    {
+      "name": "self.leader.pattern",
+      "input": "crate::code_run::LeaderPatternInput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "Leader"
+    },
+    {
       "name": "self.skills.call",
       "input": "crate::code_run::SkillCallInput",
       "scope": "Write",
       "context": "run",
       "effect": "SkillsCall"
+    },
+    {
+      "name": "self.team.start",
+      "input": "crate::team::TeamStartInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
+    },
+    {
+      "name": "self.team.record",
+      "input": "crate::team::TeamRecordInput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "Team"
     },
     {
       "name": "self.spawn",

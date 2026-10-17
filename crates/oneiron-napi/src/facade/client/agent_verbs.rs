@@ -524,9 +524,54 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_members_invitations(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.invitations", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_decline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.decline", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_withdraw_invitation(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.withdraw_invitation", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_guests_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.guests.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_guests_mint_slip(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.guests.mint_slip", input)
             .map_err(facade_error)
     }
     #[napi]

@@ -14,6 +14,7 @@ pub mod market;
 pub mod pattern;
 pub mod payoff;
 pub mod receipt;
+pub mod run;
 pub mod stack;
 
 pub use market::{
@@ -29,5 +30,9 @@ pub use payoff::{PatternCardEntry, PayoffRow, PlannerCard, payoff_table, planner
 pub use receipt::{
     Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape, record_team_receipt,
     settle_team_outcome, team_receipt, team_receipts,
+};
+pub use run::{
+    SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput,
+    TeamRecordInput, TeamRunAnswer, TeamStartInput,
 };
 pub use stack::{BranchResult, NodeComparison, compare_at_equal_budget};

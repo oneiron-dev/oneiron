@@ -264,10 +264,35 @@ export_facade! {
     let output = client.vault_members_leave(&input)?;
     crate::codec::encode("vault.members.leave", &output)
 };
+"vault.members.invitations" => fn vault_members_invitations(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::decode("vault.members.invitations", &input)?;
+    let output = client.vault_members_invitations(&input)?;
+    crate::codec::encode("vault.members.invitations", &output)
+};
+"vault.members.accept" => fn vault_members_accept(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationRequest = crate::codec::decode("vault.members.accept", &input)?;
+    let output = client.vault_members_accept(&input)?;
+    crate::codec::encode("vault.members.accept", &output)
+};
+"vault.members.decline" => fn vault_members_decline(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationRequest = crate::codec::decode("vault.members.decline", &input)?;
+    let output = client.vault_members_decline(&input)?;
+    crate::codec::encode("vault.members.decline", &output)
+};
+"vault.members.withdraw_invitation" => fn vault_members_withdraw_invitation(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::SharedInvitationWithdrawRequest = crate::codec::decode("vault.members.withdraw_invitation", &input)?;
+    let output = client.vault_members_withdraw_invitation(&input)?;
+    crate::codec::encode("vault.members.withdraw_invitation", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::decode("vault.guests.revoke", &input)?;
     let output = client.vault_guests_revoke(&input)?;
     crate::codec::encode("vault.guests.revoke", &output)
+};
+"vault.guests.mint_slip" => fn vault_guests_mint_slip(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::GuestSlipMintRequest = crate::codec::decode("vault.guests.mint_slip", &input)?;
+    let output = client.vault_guests_mint_slip(&input)?;
+    crate::codec::encode("vault.guests.mint_slip", &output)
 };
 "vault.authority.handoff_alarms" => fn vault_authority_handoff_alarms(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::decode("vault.authority.handoff_alarms", &input)?;

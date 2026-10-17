@@ -134,6 +134,13 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("task", entity_id_value(call.task)),
             ("result_ref", Value::from(call.result_ref.as_str())),
         ]),
+        SelfCall::Team(call) => request_map(vec![(
+            "call",
+            Value::from(
+                serde_json::to_string(call)
+                    .map_err(|_| invalid_code_run_replay("team call does not encode"))?,
+            ),
+        )]),
         SelfCall::TasksWaitSet(call) => request_map(vec![(
             "call",
             Value::from(
@@ -141,6 +148,14 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
                     .map_err(|_| invalid_code_run_replay("task wait set does not encode"))?,
             ),
         )]),
+        SelfCall::Leader(super::SelfLeaderCall::Advice { top }) => request_map(vec![
+            ("verb", Value::from("advice")),
+            ("top", top.map_or(Value::Nil, Value::from)),
+        ]),
+        SelfCall::Leader(super::SelfLeaderCall::Pattern { skill }) => request_map(vec![
+            ("verb", Value::from("pattern")),
+            ("skill", entity_id_value(*skill)),
+        ]),
     })
 }
 
@@ -330,6 +345,11 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
         SelfDispatchOutcome::ReaderSpawn(receipt) => json_outcome("reader_spawn", receipt)?,
         SelfDispatchOutcome::ReaderReport(receipt) => json_outcome("reader_report", receipt)?,
         SelfDispatchOutcome::TaskWaitSet(result) => json_outcome("task_wait_set", result)?,
+        SelfDispatchOutcome::Leader(json) => request_map(vec![
+            ("kind", Value::from("leader")),
+            ("json", Value::from(json.as_str())),
+        ]),
+        SelfDispatchOutcome::Team(answer) => json_outcome("team", answer)?,
     })
 }
 
@@ -359,12 +379,16 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "fold" => Ok(SelfDispatchOutcome::Fold(
             str_value(map_get(entries, "json")?)?.to_owned(),
         )),
+        "leader" => Ok(SelfDispatchOutcome::Leader(
+            str_value(map_get(entries, "json")?)?.to_owned(),
+        )),
         "reader_spawn" => Ok(SelfDispatchOutcome::ReaderSpawn(decode_json_outcome(
             entries,
         )?)),
         "reader_report" => Ok(SelfDispatchOutcome::ReaderReport(decode_json_outcome(
             entries,
         )?)),
+        "team" => Ok(SelfDispatchOutcome::Team(decode_json_outcome(entries)?)),
         "task_wait_set" => Ok(SelfDispatchOutcome::TaskWaitSet(decode_json_outcome(
             entries,
         )?)),
@@ -577,6 +601,8 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.spawn" => Ok(SelfEffect::ReaderSpawn),
         "tasks.update" => Ok(SelfEffect::ReaderReport),
         "tasks.wait_set" => Ok(SelfEffect::TasksWaitSet),
+        "self.leader" => Ok(SelfEffect::Leader),
+        "self.team" => Ok(SelfEffect::Team),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }
