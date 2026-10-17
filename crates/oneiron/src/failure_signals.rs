@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 mod code_fix;
 mod delivery;
+mod live;
 pub(crate) mod policy;
 mod verbatim;
 mod witness;
@@ -67,6 +68,9 @@ pub enum FailureClassV1 {
 pub enum AgentKind {
     System,
     Custom,
+    /// The observation names no affected agent (a detector's diagnostic).
+    /// Exported in clear as `unattributed`; it never carries an agent ref.
+    Unattributed,
 }
 
 /// The closed, content-free surface vocabulary. A new surface needs a reviewed
@@ -465,7 +469,17 @@ impl crate::Vault {
         // source check is complete; release its snapshot before resolving the
         // seeded AGENT_DEF through the ordinary vault reader.
         drop(rtxn);
-        let registered_agent = if input.agent_kind == AgentKind::System {
+        let registered_agent = if input.agent_kind == AgentKind::Unattributed {
+            if input.agent_ref.is_some() {
+                return Err(Error::InvalidConfig(
+                    "unattributed failure signal cannot name an agent".into(),
+                ));
+            }
+            Some(VersionedComponent {
+                name: live::UNATTRIBUTED.into(),
+                version: live::UNATTRIBUTED.into(),
+            })
+        } else if input.agent_kind == AgentKind::System {
             let id = input.agent_ref.ok_or(Error::InvalidConfig(
                 "system failure signal requires seeded agent id".into(),
             ))?;

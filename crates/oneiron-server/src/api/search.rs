@@ -1,4 +1,6 @@
 use super::check_api_auth;
+use super::context_pack::embed_semantic_text;
+use super::core_engine_error;
 use super::default_limit;
 use super::memory_reason::{
     DeepAdmission, admit_deep_retrieval, depth_search_error, minimal_effort,
@@ -21,6 +23,7 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::Effort;
 use oneiron::claim::ScopedRead;
+use oneiron::embed::InputKind;
 use oneiron::retrieval_depth::{
     DepthSearchRequest, DepthSearchResult, RetrievalDeadline, SearchProbe,
 };
@@ -601,7 +604,8 @@ pub(crate) fn search_response_with_revisions(
 }))]
 pub(crate) struct SemanticSearchRequest {
     /// Natural-language query. The server embeds it with the active provider,
-    /// prefixed by the model's query instruction.
+    /// prefixed by the model's query instruction; on the one-space preset,
+    /// through the text tower of the space the text kind slot binds.
     #[schema(example = "what did we decide about the embedder slot")]
     pub(crate) text: String,
     /// Maximum number of nearest entities to return. Defaults to `10`.
@@ -634,7 +638,9 @@ pub(crate) struct SemanticSearchRequest {
 /// caller owning a copy of the model. The embedding space is the vault's, so a
 /// caller cannot accidentally probe one space with another's vector — which is
 /// the whole reason this door exists beside the raw one rather than replacing
-/// it.
+/// it. On the one-space preset (the text kind slot bound to a declared space,
+/// OF-370) the query embeds through that space's `ai.embed` rung and searches
+/// that space, and `embedder` names the space.
 #[utoipa::path(
     post,
     path = "/api/search/semantic",
@@ -642,7 +648,7 @@ pub(crate) struct SemanticSearchRequest {
     responses(
         (
             status = 200,
-            description = "Semantic search results ordered by the vault retrieval engine, plus the embedder that produced the probe.",
+            description = "Semantic search results ordered by the vault retrieval engine, plus the embedder that produced the probe: the active provider, or `{\"space\": id}` when the text kind slot binds a declared space (the one-space preset).",
             body = Object,
             content_type = "application/json",
             example = json!({
@@ -689,7 +695,7 @@ pub(crate) struct SemanticSearchRequest {
         ),
         (
             status = 503,
-            description = "No embedder is serving, or deep retrieval is unavailable.",
+            description = "No embedder is serving (on the one-space preset, no `ai.embed` rung serves the text slot's space), or deep retrieval is unavailable.",
             body = ApiError,
             content_type = "application/json"
         )
@@ -720,20 +726,47 @@ pub(crate) async fn search_semantic(
             Some("text"),
         ));
     }
-    let descriptor = server
-        .embedder_descriptor()
-        .ok_or_else(ApiError::embedder_unavailable)?;
+    // On the one-space preset the text kind slot binds a declared space: the
+    // query embeds through that space's text tower and searches it, and the
+    // vault's own text index, which no text search reads then, is not asked.
+    let space = server
+        .vault
+        .kind_slot_bindings()
+        .map_err(|error| core_engine_error("kind slot bindings read failed", error))?
+        .text;
+    let embedder = match &space {
+        Some(space) => json!({ "space": space }),
+        None => {
+            let descriptor = server
+                .embedder_descriptor()
+                .ok_or_else(ApiError::embedder_unavailable)?;
+            json!({
+                "provider": descriptor.provider,
+                "modelId": descriptor.model_id,
+                "dimensions": descriptor.dimensions,
+            })
+        }
+    };
     let count_mode = params.count_mode.for_search_response();
     let (page_limit, clamped) = oneiron::memory::caps::clamp_search_limit(params.limit);
     let (depth, view) = (params.depth, params.view.unwrap_or(View::Summary));
     let page_auth = auth.clone();
+    let page_space = space.clone();
+    // Semantic search HAS the question, so a deep read over it needs no
+    // second argument from the caller: the text that produced the probe is
+    // the text the decomposition reads.
     let page = move |embedding, question| SearchPage {
-        probe: SearchProbe::Vector {
-            embedding,
-            // Semantic search HAS the question, so a deep read over it needs no
-            // second argument from the caller: the text that produced the
-            // probe is the text the decomposition reads.
-            query_text: Some(question),
+        probe: match page_space.clone() {
+            Some(space) => SearchProbe::Space {
+                space,
+                query_kind: InputKind::Text,
+                embedding,
+                query_text: Some(question),
+            },
+            None => SearchProbe::Vector {
+                embedding,
+                query_text: Some(question),
+            },
         },
         depth,
         view,
@@ -744,10 +777,13 @@ pub(crate) async fn search_semantic(
     let question = text.to_owned();
     let page = match deadline {
         None => {
-            let embedding = server
-                .embed_query_off_runtime(question.clone())
-                .await
-                .map_err(embed_query_error)?;
+            let embedding = match &space {
+                Some(space) => embed_semantic_text(&server, space.clone(), &question).await?,
+                None => server
+                    .embed_query_off_runtime(question.clone())
+                    .await
+                    .map_err(embed_query_error)?,
+            };
             let admission = admit_deep_retrieval(&server, depth)?;
             search_page(&server, page(embedding, question), admission.as_ref(), None)?
         }
@@ -756,6 +792,7 @@ pub(crate) async fn search_semantic(
         // leaves the page empty and partial. The request is admitted first.
         Some(budget) => {
             let admission = admit_deep_retrieval(&server, depth)?;
+            let runtime = tokio::runtime::Handle::current();
             read_by_deadline(
                 Arc::clone(&server),
                 arrived,
@@ -763,7 +800,12 @@ pub(crate) async fn search_semantic(
                 count_mode,
                 auth,
                 move |server, deadline| {
-                    let embedding = server.embed_query(&question).map_err(embed_query_error)?;
+                    let embedding = match space {
+                        Some(space) => {
+                            runtime.block_on(embed_semantic_text(server, space, &question))?
+                        }
+                        None => server.embed_query(&question).map_err(embed_query_error)?,
+                    };
                     search_page(
                         server,
                         page(embedding, question),
@@ -778,14 +820,7 @@ pub(crate) async fn search_semantic(
     let mut response = serde_json::to_value(page.limit_clamped(clamped))
         .map_err(|_| ApiError::internal_server_error("search projection failed"))?;
     if let Value::Object(object) = &mut response {
-        object.insert(
-            "embedder".to_owned(),
-            json!({
-                "provider": descriptor.provider,
-                "modelId": descriptor.model_id,
-                "dimensions": descriptor.dimensions,
-            }),
-        );
+        object.insert("embedder".to_owned(), embedder);
     }
     Ok(Json(response))
 }

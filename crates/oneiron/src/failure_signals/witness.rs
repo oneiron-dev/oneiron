@@ -70,6 +70,7 @@ impl Vault {
         }
         let observed_at = i64::try_from(event.valid_from)
             .map_err(|_| Error::ArithmeticOverflow("failure signal observation time"))?;
+        let count = super::live::diagnostic_input(&event);
         self.register_tier1_witness(
             id,
             WitnessKind::Diagnostic {
@@ -78,7 +79,11 @@ impl Vault {
                 detector_id: event.detector_id,
                 observed_at,
             },
-        )
+        )?;
+        match count {
+            Some(input) => self.count_tier1_diagnostic(id, input, event.valid_from),
+            None => Ok(()),
+        }
     }
 
     pub(crate) fn capture_tier1_point_producer(&self, ids: &[EntityId]) -> Result<()> {
