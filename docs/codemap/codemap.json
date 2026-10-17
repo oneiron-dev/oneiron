@@ -1033,7 +1033,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -4017,7 +4017,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_read.rs",
@@ -4130,7 +4130,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExportAdapterDescriptor",
@@ -4169,6 +4169,24 @@
      "purpose": "Import-time validation of the serializer's full document, not its claims",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddingSetupImport",
+      "EmbeddingSetupWithheld",
+      "PortableEmbeddingSpace",
+      "PortableEvidenceFloors",
+      "PortableSlotBindings"
+     ],
+     "path": "src/batch/export/embedding_setup.rs",
+     "purpose": "The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -4313,7 +4331,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 5,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -20861,7 +20879,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 27,
+      "crate-vis": 30,
       "enum": 1,
       "fn": 16,
       "struct": 3
@@ -31079,7 +31097,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 17,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 7
      }
     },
@@ -31096,6 +31114,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 9,
+      "re-export": 1,
       "struct": 3
      }
     },
@@ -31107,6 +31126,27 @@
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeckBodyView",
+      "DeckExportRequest",
+      "DeckExportView",
+      "DeckForkMergeRequest",
+      "DeckGateRequest",
+      "DeckGateView",
+      "DeckNodeView",
+      "DeckOracleRequest",
+      "DeckReviewView"
+     ],
+     "path": "src/office_body/pptx/verbs.rs",
+     "purpose": "`vault.artifacts.body.deck.*`: the deck doors the generic body verbs do not cover, as agent verbs (FIX 2284)",
+     "surface": {
+      "fn": 5,
+      "struct": 9
      }
     },
     {
@@ -31134,6 +31174,7 @@
      "path": "src/office_body/verbs.rs",
      "purpose": "`vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, \"An agent authors through…",
      "surface": {
+      "crate-vis": 3,
       "enum": 2,
       "fn": 12,
       "struct": 15
@@ -44870,7 +44911,7 @@
       "const": 9,
       "crate-vis": 1,
       "enum": 5,
-      "fn": 54,
+      "fn": 55,
       "re-export": 2,
       "struct": 6
      }
@@ -45997,7 +46038,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 295
+      "fn": 300
      }
     },
     {
@@ -50839,7 +50880,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 112,
+     "files": 113,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51630,7 +51671,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52269,7 +52310,7 @@
    },
    "over_bar": 150,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3160,
+   "source_files": 3162,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60179,7 +60220,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 249
+      "fn": 254
      }
     },
     {
@@ -61195,7 +61236,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 250
+      "fn": 255
      }
     },
     {
@@ -71099,6 +71140,7 @@
       "AiVideoTicket",
       "AnswerContract",
       "AnswerRecord",
+      "ApproveScope",
       "ArtifactAskRecord",
       "ArtifactAskStanding",
       "ArtifactAskUnits",
@@ -71116,6 +71158,7 @@
       "AskPrior",
       "AskRole",
       "AskTo",
+      "AssetRef",
       "AttemptId",
       "AuthorityAuditEventKind",
       "AuthorityAuditOrder",
@@ -71144,6 +71187,8 @@
       "CallableCardView",
       "CancelRejectionPathology",
       "ChangeKind",
+      "ChartKind",
+      "ChartSeries",
       "ClaimApprovalStatus",
       "CodeBlameView",
       "CodeChangeView",
@@ -71175,12 +71220,15 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "Conflict",
       "ConflictKind",
       "ConnectorCallReply",
       "ConnectorCallRequest",
+      "ConnectorEnd",
       "ConnectorEntry",
       "ConnectorListRequest",
       "ConnectorNameRequest",
+      "ConnectorPreset",
       "ConnectorQualificationReceipt",
       "ConnectorSchemaReply",
       "ConnectorSchemaRequest",
@@ -71222,8 +71270,19 @@
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
+      "DeckBodyView",
+      "DeckDiff",
+      "DeckExportRequest",
+      "DeckExportView",
+      "DeckForkMergeRequest",
+      "DeckGateRequest",
+      "DeckGateView",
+      "DeckNodeView",
+      "DeckOp",
+      "DeckOracleRequest",
       "DeckProposeOutcome",
       "DeckProposeRequest",
+      "DeckReviewView",
       "DeclaredMaximum",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
@@ -71275,6 +71334,7 @@
       "ForkState",
       "GateDecisionId",
       "GeneratedLens",
+      "GeometryProps",
       "GoalPreference",
       "GrantAskReceipt",
       "GrantAskRequest",
@@ -71342,6 +71402,8 @@
       "KindProbeCheck",
       "LabelReadFailure",
       "LadderTerminalDisposition",
+      "Landing",
+      "LandingReceipt",
       "LearningSettingClear",
       "LearningSettingMode",
       "LearningSettingPut",
@@ -71397,6 +71459,9 @@
       "MessageReactionRequest",
       "MutationIntent",
       "NativeOutputRequest",
+      "NodeKind",
+      "NodeMove",
+      "NodePayload",
       "NotWorse",
       "NoteAnchor",
       "NoteEdit",
@@ -71439,6 +71504,8 @@
       "OfficeBodyOps",
       "OfficeBodyReadRequest",
       "OfficeBodyView",
+      "OpaqueChange",
+      "OracleReceipt",
       "OrganWaitView",
       "OutcomeBinding",
       "OutcomeLabel",
@@ -71477,6 +71544,7 @@
       "PackSetupView",
       "PairedInterval",
       "PairedReading",
+      "Paragraph",
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
@@ -71493,6 +71561,7 @@
       "PersonRow",
       "PixelRegion",
       "PolicyActionOutcome",
+      "Preset",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
       "ProjectCardRecord",
@@ -71548,7 +71617,10 @@
       "RecordRef",
       "RecordRefPreview",
       "RefreshPolicy",
+      "RelationshipChange",
       "ReleasedWait",
+      "RenderPair",
+      "RenderSide",
       "ReplyStripsPage",
       "ReplyStripsRequest",
       "RepoProposalStatus",
@@ -71599,6 +71671,7 @@
       "RoomTurnRequest",
       "RoomWaitKind",
       "RoutineOutcome",
+      "Run",
       "RunSignalState",
       "RunTree",
       "RunTreeRepair",
@@ -71671,6 +71744,7 @@
       "SkillForkRequest",
       "SkillSaveRequest",
       "SkillSourceFile",
+      "SlideRender",
       "SlideReviewOutcome",
       "SlideReviewSubmit",
       "SlideReviewUnitInput",
@@ -71687,6 +71761,8 @@
       "StateFamilyRef",
       "SteerReceipt",
       "SteerRequest",
+      "StepAssetKind",
+      "StepOutcome",
       "StopCause",
       "StoredShapeSeed",
       "TaskAnswerRequest",
@@ -71746,6 +71822,7 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TextBody",
       "TextCommitReceipt",
       "TravelChoice",
       "TurnAction",
@@ -71797,8 +71874,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 204,
-      "struct": 522
+      "enum": 215,
+      "struct": 547
      }
     },
     {

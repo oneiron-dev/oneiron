@@ -174,7 +174,7 @@ pub struct NewShape<'a> {
 }
 
 /// The closed preset set `add_shape` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Preset {
     Rect,
@@ -197,7 +197,7 @@ impl Preset {
 }
 
 /// The closed connector geometry set `add_connector` writes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorPreset {
     Straight,
