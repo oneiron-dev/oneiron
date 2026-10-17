@@ -151,12 +151,18 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<CounterpartyContactRecord> {
+        if let Some(record) = live_counterparty_contact_heads_in_txn(self, wtxn, id)? {
+            return Ok(record);
+        }
         self.reject_non_contact_row_in_txn(wtxn, id)?;
-        live_counterparty_contact_heads_in_txn(self, wtxn, id)?.ok_or(Error::EntityNotFound)
+        Err(Error::EntityNotFound)
     }
 
     /// A row at `id` of any other entity type is not a contact. A deleted id
     /// is answered by the claims reader's deletion check, whatever its shell.
+    /// Asked only of an id with no live contact heads: a contact is its claims
+    /// (OF-272), so a live contact's type-132 cache row is never read to find
+    /// it.
     fn reject_non_contact_row_in_txn(&self, rtxn: &heed::RoTxn<'_>, id: &EntityId) -> Result<()> {
         if contact_deleted_in_txn(&self.store, rtxn, id)? {
             return Ok(());
@@ -309,8 +315,11 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<CounterpartyContactRecord>> {
+        if let Some(record) = counterparty_contact_in_claims_in_txn(self, rtxn, id)? {
+            return Ok(Some(record));
+        }
         self.reject_non_contact_row_in_txn(rtxn, id)?;
-        counterparty_contact_in_claims_in_txn(self, rtxn, id)
+        Ok(None)
     }
 
     /// Finds one contact record by `(identity_ref, counterparty)`, from claims.
