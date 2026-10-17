@@ -43967,6 +43967,7 @@
      "path": "src/task_verb/ask_band.rs",
      "purpose": "Owner-scoped, consume-once ask labels and the policy-owned question-class band",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -43989,6 +43990,16 @@
      "purpose": "Ask-scoped guest authority: reuse a person's owner-stamped bounds",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_limits.rs",
+     "purpose": "The ask rows of the engine's `[limits]` (ARCH-0044 C5, OF-520)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -44158,7 +44169,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AskAuthorityScope",
@@ -50851,7 +50862,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 114,
+     "files": 115,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51005,9 +51016,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 139,
+   "over_bar": 138,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3081,
+   "source_files": 3082,
    "test_files": 903
   },
   "oneiron-android": {
