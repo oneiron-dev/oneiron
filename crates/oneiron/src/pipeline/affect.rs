@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use heed::RoTxn;
 use rmpv::Value;
 
-use crate::affect::Vad;
+use crate::affect::{VAD_ANNOTATION_CLAIM_PREDICATE, Vad};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimLifecycleStatus, ClaimRetrievability, ClaimSubject};
 use crate::edge::EdgeKind;
@@ -170,10 +170,6 @@ pub(super) fn stored_claim_vad(
     Ok(None)
 }
 
-/// The predicate of a TURN's or MESSAGE's VAD annotation claim, as
-/// `crate::affect` writes it (`VAD_ANNOTATION_CLAIM_PREDICATE`).
-const VAD_ANNOTATION_PREDICATE: &str = "affect.vad";
-
 /// A candidate's stored VAD under the run's snapshot: a CLAIM's consolidated
 /// state ([`stored_claim_vad`]), or a TURN's or MESSAGE's active `affect.vad`
 /// annotation. `None` for any other kind, or when none is active and valid.
@@ -206,7 +202,7 @@ pub(super) fn stored_candidate_vad(
     else {
         return Ok(None);
     };
-    if body.predicate != VAD_ANNOTATION_PREDICATE
+    if body.predicate != VAD_ANNOTATION_CLAIM_PREDICATE
         || body.subject != ClaimSubject::Entity(*id)
         || body.lifecycle != ClaimLifecycleStatus::Active
     {
