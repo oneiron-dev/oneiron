@@ -35097,7 +35097,9 @@
      "notable": [],
      "path": "src/ports/lmdb_retrieval_inventory.rs",
      "purpose": "LMDB/session adapter of the retrieval-index inventory port, over the receiver's own tables",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -48371,7 +48373,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 7,
       "struct": 1
      }
@@ -48477,7 +48479,7 @@
      "path": "src/vault/transactions.rs",
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 26
      }
     },
