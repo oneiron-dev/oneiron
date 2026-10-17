@@ -37,6 +37,7 @@ mod reparent;
 mod resolution;
 mod result_header;
 mod revision;
+mod roster;
 mod validity;
 mod widen;
 pub use asks::ProjectAsk;
@@ -588,84 +589,90 @@ impl Vault {
         record: &ProjectRecord,
         now: u64,
     ) -> Result<ProjectWriteOutcome> {
-        self.with_write_txn_grouped(|txn| {
-            let body = record.clone();
-            let changed = read::stored(&self.store, txn, id, self.project_type_byte()?)?
-                .is_none_or(|old| {
-                    old.authority() != body.authority() || old.write_proof != body.write_proof
-                });
-            // A leader's signed spawn needs no owner birth; the shared door
-            // verifies its proof.
-            if EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &id)?.is_none()
-                && body.write_proof.is_none()
-            {
-                let posture = self.privacy_posture();
-                match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
-                    Some((_, birth))
-                        if birth.owner.is_none()
-                            && !crate::gate::project_depth::unsigned_birth_trusted(
-                                &self.store,
-                                txn,
-                                posture,
-                                &birth,
-                            )? =>
-                    {
-                        return Err(crate::error::RecordError::InvalidProjectBody(
-                            "unsigned remote project birth is not authorized",
-                        )
-                        .into());
-                    }
-                    Some(_) => {}
-                    None => {
-                        if !crate::gate::project_depth::implicit_birth_applies(
+        self.with_write_txn_grouped(|txn| self.write_project_in_txn(txn, id, record, now))
+    }
+
+    /// [`Self::write_project`] inside `txn`, for a door that does more in the
+    /// same commit.
+    pub(super) fn write_project_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        record: &ProjectRecord,
+        now: u64,
+    ) -> Result<ProjectWriteOutcome> {
+        let body = record.clone();
+        let changed =
+            read::stored(&self.store, txn, id, self.project_type_byte()?)?.is_none_or(|old| {
+                old.authority() != body.authority() || old.write_proof != body.write_proof
+            });
+        // A leader's signed spawn needs no owner birth; the shared door
+        // verifies its proof.
+        if EntityStoreRead::port_entity_raw_wiped(&self.store, txn, &id)?.is_none()
+            && body.write_proof.is_none()
+        {
+            let posture = self.privacy_posture();
+            match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
+                Some((_, birth))
+                    if birth.owner.is_none()
+                        && !crate::gate::project_depth::unsigned_birth_trusted(
                             &self.store,
                             txn,
                             posture,
-                            id,
-                        )? {
-                            return Err(crate::error::RecordError::InvalidProjectBody(
-                                "a new project requires an owner-signed birth",
-                            )
-                            .into());
-                        }
+                            &birth,
+                        )? =>
+                {
+                    return Err(crate::error::RecordError::InvalidProjectBody(
+                        "unsigned remote project birth is not authorized",
+                    )
+                    .into());
+                }
+                Some(_) => {}
+                None => {
+                    if !crate::gate::project_depth::implicit_birth_applies(
+                        &self.store,
+                        txn,
+                        posture,
+                        id,
+                    )? {
+                        return Err(crate::error::RecordError::InvalidProjectBody(
+                            "a new project requires an owner-signed birth",
+                        )
+                        .into());
                     }
                 }
             }
-            self.batch_in()
-                .put(
-                    &id,
-                    self.project_type_byte()?,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&body)?,
-                )
-                .apply(txn)?;
-            let frontier = ProjectReader::new(&self.store, txn, self.privacy_posture())?
-                .ok_or_else(invalid)?
-                .frontier(id)?
-                .ok_or_else(invalid)?;
-            let head = revision::revisions_of_row(id, &body)?
-                .last()
-                .map(|(hash, _)| *hash);
-            // A changed authority the frozen frontier neither serves nor
-            // applied as a narrowing is held.
-            if let ProjectDisposition::OverBudget { state, .. } = &frontier.disposition
-                && changed
-                && let Some(head) = head
-                && frontier.witness.as_ref().map(|witness| witness.head) != Some(head)
-                && !history_policy::PROJECT_FROZEN_APPLIED.contains(
-                    &self.store,
-                    txn,
-                    &(id, head),
-                )?
-            {
-                return Ok(ProjectWriteOutcome::Held(state.clone()));
-            }
-            Ok(ProjectWriteOutcome::Installed(frontier))
-        })
+        }
+        self.batch_in()
+            .put(
+                &id,
+                self.project_type_byte()?,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode(&body)?,
+            )
+            .apply(txn)?;
+        let frontier = ProjectReader::new(&self.store, txn, self.privacy_posture())?
+            .ok_or_else(invalid)?
+            .frontier(id)?
+            .ok_or_else(invalid)?;
+        let head = revision::revisions_of_row(id, &body)?
+            .last()
+            .map(|(hash, _)| *hash);
+        // A changed authority the frozen frontier neither serves nor
+        // applied as a narrowing is held.
+        if let ProjectDisposition::OverBudget { state, .. } = &frontier.disposition
+            && changed
+            && let Some(head) = head
+            && frontier.witness.as_ref().map(|witness| witness.head) != Some(head)
+            && !history_policy::PROJECT_FROZEN_APPLIED.contains(&self.store, txn, &(id, head))?
+        {
+            return Ok(ProjectWriteOutcome::Held(state.clone()));
+        }
+        Ok(ProjectWriteOutcome::Installed(frontier))
     }
     /// Attach an asset to a project collection with a low-weight `belongs_to`
     /// edge. CLAIMs never link to hubs: their sideways scope is the project id.
