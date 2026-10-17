@@ -37,7 +37,10 @@ class OneironError(RuntimeError):
     ``code`` is the engine's own stable string — ``BAD_REQUEST``,
     ``FORBIDDEN``, ``NOT_FOUND``, ``LEASE_REQUIRED``,
     ``VAULT_LOCKED_SINGLE_WRITER``, and any future code — carried verbatim.
-    ``suggestions`` is never empty.
+    ``suggestions`` is never empty. ``hook`` is the verb hook's stop when one
+    stopped the call: on ``PENDING_ASK`` it is ``{"status": "pending",
+    "invocation", "ask"}``, and :meth:`Oneiron.retry` resends the call under
+    that invocation.
     """
 
     def __init__(
@@ -46,6 +49,7 @@ class OneironError(RuntimeError):
         message: str,
         suggestions: list[str],
         wrong_root: dict[str, str] | None = None,
+        hook: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -53,6 +57,8 @@ class OneironError(RuntimeError):
         self.suggestions = tuple(suggestions)
         # A ``WRONG_ROOT`` refusal's ``{attempted, replacement, schemaRef}``.
         self.wrong_root = wrong_root
+        # The verb hook's stop (ARCH-0080 §3), as the engine's MemoryError names it.
+        self.hook = hook
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -76,7 +82,9 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         ]
         correction = {key: payload.get(key) for key in ("attempted", "replacement", "schemaRef")}
         wrong_root = correction if all(isinstance(value, str) for value in correction.values()) else None
-        return OneironError(payload["code"], payload["message"], suggestions, wrong_root)
+        hook = payload.get("hook")
+        hook = hook if isinstance(hook, dict) and isinstance(hook.get("status"), str) else None
+        return OneironError(payload["code"], payload["message"], suggestions, wrong_root, hook)
     return OneironError(
         "INTERNAL_SERVER_ERROR",
         fallback,
@@ -200,6 +208,31 @@ class Oneiron:
         reached no server, and for an anonymous off-record call.
         """
         return self._client.last_receipt_ref()
+
+    def retry(self, pending: OneironError, verb: str, input: Any) -> Any:
+        """Resends the call a ``PENDING_ASK`` refusal answered, under its invocation.
+
+        Pass the caught :class:`OneironError`, the verb's SDK name
+        (``vault.claims.upsert``) and the same input (ARCH-0080 §3). While the
+        ask is open it raises the same ``PENDING_ASK``; once the ask is
+        answered proceed, the saved call runs once and this returns its
+        result. Any other refusal is refused before a call is made. Run one
+        retry of a pending call at a time.
+
+        The reply is the verb's shared wire JSON, not the projection the
+        verb's own method returns (``vault.recall`` keeps
+        ``confidenceAdjustment``, for one).
+        """
+        refusal: dict[str, Any] = {
+            "code": pending.code,
+            "message": pending.message,
+            "suggestions": list(pending.suggestions),
+        }
+        if pending.hook is not None:
+            refusal["hook"] = pending.hook
+        return json.loads(
+            _translate(lambda: self._client.retry(json.dumps(refusal), verb, json.dumps(input)))
+        )
 
     # BEGIN GENERATED FACADE VERBS
     def report(self, spec):
@@ -972,12 +1005,60 @@ class Oneiron:
         def put(self, input: dict[str, Any]) -> Any:
             """Registers one blob artifact; its bytes ride vault.artifacts.append."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_put(json.dumps(input, allow_nan=False))))
+        @property
+        def body(self) -> "Oneiron._VaultArtifactsBodyVerbs":
+            return Oneiron._VaultArtifactsBodyVerbs(self._client)
         def append(self, input: dict[str, Any]) -> Any:
             """Appends one version of bytes to a blob artifact's append-only chain."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_append(json.dumps(input, allow_nan=False))))
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_read(json.dumps(input, allow_nan=False))))
+    class _VaultArtifactsBodyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def import_(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Imports one office version as the artifact's live body."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_import(json.dumps(request, allow_nan=False))))
+        def head(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """An artifact's live body head, or null."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_head(json.dumps(request, allow_nan=False))))
+        def read(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Reads a DOCX or XLSX live body, at its head or an earlier frontier."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_read(json.dumps(request, allow_nan=False))))
+        def commits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+            """Every commit receipt of a live body, in commit order."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_commits(json.dumps(request, allow_nan=False))))
+        def edit(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A person's typed operations on the live body."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_edit(json.dumps(request, allow_nan=False))))
+        @property
+        def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs":
+            return Oneiron._VaultArtifactsBodyForkVerbs(self._client)
+        def export(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Exports the live body as the artifact's next version."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_export(json.dumps(request, allow_nan=False))))
+        def preview(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The workbook an XLSX export would land now, recalculated."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_preview(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsBodyForkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def open(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Opens a fork of the live body for machine work."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_open(json.dumps(request, allow_nan=False))))
+        def edit(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The opener's typed operations on its fork."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_edit(json.dumps(request, allow_nan=False))))
+        def diff(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A fork's three-way diff against the live head."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_diff(json.dumps(request, allow_nan=False))))
+        def merge(self, request: dict[str, Any]) -> dict[str, Any]:
+            """A person lands a reviewed fork."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_merge(json.dumps(request, allow_nan=False))))
+        def discard(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Abandons an open fork's unlanded work."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_discard(json.dumps(request, allow_nan=False))))
     class _VaultCodeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1087,11 +1168,20 @@ class Oneiron:
             """The owner's tap that confirms a host-held project card; only the host's own door can complete it."""
             return json.loads(_translate(lambda: self._client.vault_projects_confirm(json.dumps(spec))))
         @property
+        def roster(self) -> "Oneiron._VaultProjectsRosterVerbs":
+            return Oneiron._VaultProjectsRosterVerbs(self._client)
+        @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs":
             return Oneiron._VaultProjectsGoalVerbs(self._client)
         def route_tradeoff(self, spec):
             """Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."""
             return json.loads(_translate(lambda: self._client.vault_projects_route_tradeoff(json.dumps(spec))))
+    class _VaultProjectsRosterVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def write(self, spec):
+            """Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."""
+            return json.loads(_translate(lambda: self._client.vault_projects_roster_write(json.dumps(spec))))
     class _VaultProjectsGoalVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1263,6 +1353,12 @@ class Oneiron:
         def edit(self, input: dict[str, Any]) -> Any:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
             return json.loads(_translate(lambda: self._client.vault_notes_edit(json.dumps(input, allow_nan=False))))
+        def seal(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Seals one NOTE: its document freezes, and a later edit opens a fork."""
+            return json.loads(_translate(lambda: self._client.vault_notes_seal(json.dumps(request, allow_nan=False))))
+        def lifecycle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."""
+            return json.loads(_translate(lambda: self._client.vault_notes_lifecycle(json.dumps(request, allow_nan=False))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1338,6 +1434,12 @@ class Oneiron:
         def status(self, spec):
             """One catalogued connector by name, removed ones included."""
             return json.loads(_translate(lambda: self._client.connector_status(json.dumps(spec))))
+        def call(self, spec):
+            """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
+            return json.loads(_translate(lambda: self._client.connector_call(json.dumps(spec))))
+        def schema(self, spec):
+            """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
+            return json.loads(_translate(lambda: self._client.connector_schema(json.dumps(spec))))
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs":
             return Oneiron._ConnectorOutboundVerbs(self._client)

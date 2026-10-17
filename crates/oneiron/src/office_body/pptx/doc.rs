@@ -10,9 +10,9 @@
 //! Root `tree`, one LoroTree, holds the slides as its roots and their groups
 //! and shapes below them; sibling position is the only order, and the model
 //! root is implicit. Each tree node's meta map holds its model identity (`id`,
-//! decimal, kept apart from the Loro handle), its kind, name, binding and
-//! placeholder, and one key per geometry field, so concurrent writes of
-//! different fields merge. Root `texts` maps a text shape's identity to its
+//! decimal, kept apart from the Loro handle), its kind, name, binding,
+//! placeholder, a live-born node's preset and payload, and one key per
+//! geometry field, so concurrent writes of different fields merge. Root `texts` maps a text shape's identity to its
 //! body: `order`, a movable list of paragraph identities, and `paras`, each
 //! paragraph's level and one rich text whose run formatting rides as marks,
 //! one mark key per run property, each written only where it changed.
@@ -60,6 +60,8 @@ const ID: &str = "id";
 const NAME: &str = "name";
 const BINDING: &str = "binding";
 const PLACEHOLDER: &str = "placeholder";
+const PRESET: &str = "preset";
+const PAYLOAD: &str = "payload";
 const OFFSET: &str = "offset";
 const EXTENT: &str = "extent";
 const ROTATION: &str = "rotation";
@@ -398,6 +400,8 @@ fn sync_meta(meta: &LoroMap, id: NodeId, node: &DeckNode) -> Result<()> {
     put_json(meta, NAME, &node.name)?;
     put_json(meta, BINDING, &node.binding)?;
     put_json(meta, PLACEHOLDER, &node.placeholder)?;
+    put_json(meta, PRESET, &node.preset)?;
+    put_json(meta, PAYLOAD, &node.payload)?;
     put_json(meta, OFFSET, &node.geometry.offset)?;
     put_json(meta, EXTENT, &node.geometry.extent)?;
     put_json(meta, ROTATION, &node.geometry.rotation)?;
@@ -578,6 +582,8 @@ fn root() -> DeckNode {
         binding: None,
         geometry: GeometryProps::default(),
         placeholder: None,
+        preset: None,
+        payload: None,
     }
 }
 
@@ -598,6 +604,8 @@ fn node_of(meta: &LoroMap, parent: NodeId) -> Result<(NodeId, DeckNode)> {
                 flip_v: json(meta, FLIP_V)?,
             },
             placeholder: json(meta, PLACEHOLDER)?,
+            preset: json(meta, PRESET)?,
+            payload: json(meta, PAYLOAD)?,
         },
     ))
 }

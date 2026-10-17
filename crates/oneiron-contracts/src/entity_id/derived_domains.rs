@@ -90,6 +90,10 @@ pub const SURFACE_PROVIDER_EVENT_BLOB: &[u8] = b"oneiron:surface-provider-event-
 /// (`surface_event::provider_payload`). No parts.
 pub const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inbound-actor:v1";
 
+/// The BLOB artifact holding one agent's reply body to one connector event
+/// (`outbound::reply_content`). Parts: event id, agent, reply ref.
+pub const CONNECTOR_REPLY_BODY_BLOB: &[u8] = b"oneiron:connector-reply-body-blob:v1:";
+
 /// An asking actor's origin (`task_verb::ask_record`). Parts: vault ask origin, actor.
 pub const TASK_ASK_ORIGIN: &[u8] = b"oneiron.tasks.ask.origin.v1";
 
@@ -128,6 +132,10 @@ pub const FIRST_PARTY_SKILL_HUB: &[u8] = b"oneiron/first-party-skill-hub/v1";
 /// A claim-class descriptor (`comm::descriptor`, ARCH-0057). Parts: the
 /// predicate the class describes.
 pub const CLAIM_CLASS_DESCRIPTOR: &[u8] = b"oneiron.comm.claim_class_descriptor.v1";
+
+/// An embedding setup row (`embed::space`, OF-370). Parts: `space` and the
+/// space id, or `slot` and the kind slot's byte.
+pub const EMBEDDING_SETUP: &[u8] = b"oneiron/embedding-setup/v1/";
 
 /// The engine hub of the built-in connector packs
 /// (`skill_hub::pack_catalog::builtin`). No parts.
@@ -169,7 +177,7 @@ pub const SIDE_ROW_MASK: &[u8] = b"oneiron.side_row.mask.v1\0";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 42] = [
+pub(crate) const ALL: [&[u8]; 44] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -192,6 +200,7 @@ pub(crate) const ALL: [&[u8]; 42] = [
     CALENDAR_ICS_FEED_BLOB,
     SURFACE_PROVIDER_EVENT_BLOB,
     SURFACE_PROVIDER_INBOUND_ACTOR,
+    CONNECTOR_REPLY_BODY_BLOB,
     TASK_ASK_ORIGIN,
     TASK_ASK_INTENT,
     TASK_ASK_MEMBER,
@@ -203,6 +212,7 @@ pub(crate) const ALL: [&[u8]; 42] = [
     OUTBOUND_RECEIPT_RECORD,
     FIRST_PARTY_SKILL_HUB,
     CLAIM_CLASS_DESCRIPTOR,
+    EMBEDDING_SETUP,
     BUILTIN_CONNECTOR_PACK_HUB,
     HISTORY_CONVERSATION,
     HISTORY_TURN,

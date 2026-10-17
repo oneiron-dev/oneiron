@@ -70,6 +70,9 @@ pub(crate) use self::storage::{
     ReceiptSource, ReceiptTree,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
+pub(crate) use self::storage::{
+    canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
@@ -82,7 +85,7 @@ pub use self::reader::{
     SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
     SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
     TaskWaitSetCall, TaskWaitSetResult, reader_task_brief, summary_exceeds_window,
-    summary_token_budget,
+    summary_exceeds_window_bytes, summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,

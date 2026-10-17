@@ -60,8 +60,9 @@ pub(crate) async fn vault_graph_ask(
         let ceiling = input.ceiling.unwrap_or(DecisionRung::Big);
         let budget = question_call_budget(server.vault(), input.unit_deadline_ms)?;
         let dial = server.decision_host().dial(ceiling);
-        let mut answerer =
-            LadderGraphAnswerer::new(&server, asker, dial, budget)?.with_posture(input.posture);
+        let mut answerer = LadderGraphAnswerer::new(&server, asker, dial, budget)?
+            .with_posture(input.posture)
+            .with_criteria(input.criteria.unwrap_or_default());
         match run_graph_ask_receipted(
             &lane,
             asker,

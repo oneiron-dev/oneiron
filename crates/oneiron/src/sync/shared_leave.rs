@@ -28,6 +28,10 @@ const QUEUED_TEXT_FRAMES: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&sid
 const QUEUED_NOTE_COMMANDS: SideTable<Vec<u8>, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_QN_E);
 
+/// Rows one purge pass of the left env deletes, a transaction each
+/// ([`crate::store::local_replica::purge_left_shared_env_in_txn`]).
+const LEAVE_PURGE_ROWS_PER_PASS: usize = 4096;
+
 /// How this member's membership ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +65,12 @@ pub struct SharedLeaveReceipt {
     pub discarded_note_commands: u64,
     /// Every unsynced edit the leave discarded: the three counts together.
     pub discarded_unsynced_edits: u64,
+    /// The env's replica rows the leave purged: entity, edge, index, side and
+    /// sync rows.
+    pub purged_rows: u64,
+    /// The entities the purge kept: authority log and machine rows, rows a
+    /// legal hold names, and the pinned pack map.
+    pub kept_entities: u64,
 }
 
 /// How `notice` ends `member`'s membership in shared vault `vault_id`, when
@@ -100,10 +110,13 @@ pub fn has_left(vault: &Vault) -> Result<bool> {
 
 /// Confirms, in `vault` (the env that holds shared vault `vault_id`), that
 /// `member` left it: discards every queued window update, text frame and NOTE
-/// command, and records the counts in one transaction. Idempotent: a notice
-/// already confirmed answers its first receipt. Stop the env's sync lane
-/// first (`SyncConnection::confirm_shared_leave` does), so no buffered update
-/// lands after the discard.
+/// command, records the counts and runs the first purge pass of the env's
+/// replica rows in one transaction, then purges the rest a pass at a time
+/// and records what went and what stayed. Idempotent: a notice already
+/// confirmed finishes any purge an interrupted call left and answers its
+/// receipt. Stop the env's sync lane first
+/// (`SyncConnection::confirm_shared_leave` does), so no buffered update lands
+/// after the discard and nothing refills the env.
 ///
 /// # Errors
 ///
@@ -119,9 +132,31 @@ pub fn confirm_shared_leave(
             "the notice is not this member's leave of this shared vault".into(),
         ));
     };
-    vault.with_write_txn_grouped(|wtxn| {
-        if let Some(receipt) = LEAVE_RECEIPTS.get(&vault.store, wtxn, &notice.receipt_id)? {
-            return Ok(receipt);
+    let purge = |wtxn: &mut heed::RwTxn<'_>, receipt: &mut SharedLeaveReceipt| -> Result<bool> {
+        let pass = crate::store::local_replica::purge_left_shared_env_in_txn(
+            &vault.store,
+            wtxn,
+            LEAVE_PURGE_ROWS_PER_PASS,
+        )?;
+        let rows = [
+            pass.entities,
+            pass.edges,
+            pass.index_rows,
+            pass.side_rows,
+            pass.sync_rows,
+        ]
+        .into_iter()
+        .fold(0_u64, |total, rows| total.saturating_add(count(rows)));
+        receipt.purged_rows = receipt.purged_rows.saturating_add(rows);
+        receipt.kept_entities = count(pass.kept_total);
+        LEAVE_RECEIPTS.put(&vault.store, wtxn, &notice.receipt_id, receipt)?;
+        Ok(pass.complete)
+    };
+    let (mut receipt, mut complete) = vault.with_write_txn_grouped(|wtxn| {
+        if let Some(mut receipt) = LEAVE_RECEIPTS.get(&vault.store, wtxn, &notice.receipt_id)? {
+            // Confirmed before: finish the purge an interrupted call left.
+            let complete = purge(wtxn, &mut receipt)?;
+            return Ok((receipt, complete));
         }
         let discarded_window_updates =
             crate::sync::queue::discard_updates_for_leave_in_txn(vault, wtxn)?;
@@ -129,7 +164,7 @@ pub fn confirm_shared_leave(
             count(QUEUED_TEXT_FRAMES.delete_from(&vault.store, wtxn, &[])?);
         let discarded_note_commands =
             count(QUEUED_NOTE_COMMANDS.delete_from(&vault.store, wtxn, &[])?);
-        let receipt = SharedLeaveReceipt {
+        let mut receipt = SharedLeaveReceipt {
             notice_receipt: notice.receipt_id.clone(),
             vault_id,
             member: member.to_owned(),
@@ -142,10 +177,16 @@ pub fn confirm_shared_leave(
             discarded_unsynced_edits: discarded_window_updates
                 .saturating_add(discarded_text_frames)
                 .saturating_add(discarded_note_commands),
+            purged_rows: 0,
+            kept_entities: 0,
         };
-        LEAVE_RECEIPTS.put(&vault.store, wtxn, &notice.receipt_id, &receipt)?;
-        Ok(receipt)
-    })
+        let complete = purge(wtxn, &mut receipt)?;
+        Ok((receipt, complete))
+    })?;
+    while !complete {
+        complete = vault.with_write_txn_grouped(|wtxn| purge(wtxn, &mut receipt))?;
+    }
+    Ok(receipt)
 }
 
 fn count(rows: usize) -> u64 {

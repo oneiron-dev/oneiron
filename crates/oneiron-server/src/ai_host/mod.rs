@@ -34,6 +34,7 @@ pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
 mod code_fix;
+mod connector_event;
 mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;
@@ -475,6 +476,7 @@ impl AiHost {
         if let Some(account) = account {
             runtime = runtime.with_host_account(account);
         }
+        runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
@@ -747,6 +749,15 @@ async fn start_dreamer(
 ) -> Result<DreamerHost, IdleReason> {
     if !models.dreamer.enabled {
         return Err(IdleReason::Disabled);
+    }
+    if models.dreamer.runner_seats.is_some() {
+        // The policy is validated and registered at config load (OF-137),
+        // but this host has no BYOA endpoint factory, egress port, or
+        // checkout service to execute runner seats with yet. Say so rather
+        // than silently pretend the BYO runner took the work.
+        tracing::warn!(
+            "models.dreamer.runner_seats is configured; this host cannot execute BYO runner seats yet, so Dreamer work stays on the internal model roles"
+        );
     }
     let seat = runtime
         .seat(DREAMER_ROLE)

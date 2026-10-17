@@ -182,6 +182,7 @@ vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown
 vaultProjectsConfirm(input: unknown): unknown
+vaultProjectsRosterWrite(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
@@ -228,6 +229,8 @@ vaultDecisionsAsksClimb(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
+connectorCall(input: unknown): unknown
+connectorSchema(input: unknown): unknown
 vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
@@ -251,6 +254,18 @@ vaultConversationsTurnsCreate(input: unknown): unknown
 vaultConversationsRecordsAppend(input: unknown): unknown
 vaultBatch(input: unknown): unknown
 vaultArtifactsPut(input: unknown): unknown
+vaultArtifactsBodyImport(requestJson: string): string
+vaultArtifactsBodyHead(requestJson: string): string
+vaultArtifactsBodyRead(requestJson: string): string
+vaultArtifactsBodyCommits(requestJson: string): string
+vaultArtifactsBodyEdit(requestJson: string): string
+vaultArtifactsBodyForkOpen(requestJson: string): string
+vaultArtifactsBodyForkEdit(requestJson: string): string
+vaultArtifactsBodyForkDiff(requestJson: string): string
+vaultArtifactsBodyForkMerge(requestJson: string): string
+vaultArtifactsBodyForkDiscard(requestJson: string): string
+vaultArtifactsBodyExport(requestJson: string): string
+vaultArtifactsBodyPreview(requestJson: string): string
 vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
@@ -260,11 +275,14 @@ connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown
+vaultNotesSeal(requestJson: string): string
+vaultNotesLifecycle(requestJson: string): string
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
   inRoomTurn(roomRef: string): NativeClient
   lastReceiptRef(): string | null
+  retry(pending: unknown, verb: string, input: unknown): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
