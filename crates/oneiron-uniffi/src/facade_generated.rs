@@ -291,6 +291,26 @@ export_facade! {
     let output = client.vault_packs_put(&input)?;
     crate::codec::lift_record("vault.packs.put", &output)
 };
+"vault.packs.remove" => fn vault_packs_remove(&self, input: PackRemoveRequest) -> PackInstallReceipt = |client| {
+    let input: oneiron::task_verb::sdk::PackRemoveRequest = crate::codec::lower_record("vault.packs.remove", input)?;
+    let output = client.vault_packs_remove(&input)?;
+    crate::codec::lift_record("vault.packs.remove", &output)
+};
+"vault.connectors.subscriptions.put" => fn vault_connectors_subscriptions_put(&self, input: ChannelSubscriptionRequest) -> ChannelMessageSubscription = |client| {
+    let input: oneiron::task_verb::sdk::ChannelSubscriptionRequest = crate::codec::lower_record("vault.connectors.subscriptions.put", input)?;
+    let output = client.vault_connectors_subscriptions_put(&input)?;
+    crate::codec::lift_record("vault.connectors.subscriptions.put", &output)
+};
+"vault.connectors.subscriptions.list" => fn vault_connectors_subscriptions_list(&self, input: ChannelSubscriptionsRequest) -> ChannelSubscriptions = |client| {
+    let input: oneiron::task_verb::sdk::ChannelSubscriptionsRequest = crate::codec::lower_record("vault.connectors.subscriptions.list", input)?;
+    let output = client.vault_connectors_subscriptions_list(&input)?;
+    crate::codec::lift_record("vault.connectors.subscriptions.list", &output)
+};
+"vault.connectors.subscriptions.revoke" => fn vault_connectors_subscriptions_revoke(&self, input: ChannelSubscriptionRevokeRequest) -> ChannelSubscriptionRevoked = |client| {
+    let input: oneiron::task_verb::sdk::ChannelSubscriptionRevokeRequest = crate::codec::lower_record("vault.connectors.subscriptions.revoke", input)?;
+    let output = client.vault_connectors_subscriptions_revoke(&input)?;
+    crate::codec::lift_record("vault.connectors.subscriptions.revoke", &output)
+};
 "vault.packs.setup.prepare" => fn vault_packs_setup_prepare(&self, input: PackSetupRequest) -> PackSetupReceipt = |client| {
     let input: oneiron::task_verb::sdk::PackSetupRequest = crate::codec::lower_record("vault.packs.setup.prepare", input)?;
     let output = client.vault_packs_setup_prepare(&input)?;
@@ -495,6 +515,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest = crate::codec::lower_record("vault.legal_holds.lift_and_erase", input)?;
     let output = client.vault_legal_holds_lift_and_erase(&input)?;
     crate::codec::lift_record("vault.legal_holds.lift_and_erase", &output)
+};
+"vault.courtesy_delete.send" => fn vault_courtesy_delete_send(&self, input: CourtesyDeleteSendRequest) -> CourtesyDeleteSent = |client| {
+    let input: oneiron::task_verb::sdk::CourtesyDeleteSendRequest = crate::codec::lower_record("vault.courtesy_delete.send", input)?;
+    let output = client.vault_courtesy_delete_send(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.send", &output)
+};
+"vault.courtesy_delete.sent" => fn vault_courtesy_delete_sent(&self) -> Vec<CourtesyDeleteSent> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.courtesy_delete.sent")?;
+    let output = client.vault_courtesy_delete_sent(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.sent", &output)
+};
+"vault.courtesy_delete.incoming" => fn vault_courtesy_delete_incoming(&self) -> Vec<CourtesyDeleteIncoming> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.courtesy_delete.incoming")?;
+    let output = client.vault_courtesy_delete_incoming(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.incoming", &output)
+};
+"vault.courtesy_delete.answer" => fn vault_courtesy_delete_answer(&self, input: CourtesyDeleteAnswerRequest) -> CourtesyDeleteIncoming = |client| {
+    let input: oneiron::task_verb::sdk::CourtesyDeleteAnswerRequest = crate::codec::lower_record("vault.courtesy_delete.answer", input)?;
+    let output = client.vault_courtesy_delete_answer(&input)?;
+    crate::codec::lift_record("vault.courtesy_delete.answer", &output)
 };
 "vault.embedding_spaces.list" => fn vault_embedding_spaces_list(&self) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.embedding_spaces.list")?;
