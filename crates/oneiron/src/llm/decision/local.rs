@@ -175,6 +175,7 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                 paired: Vec::new(),
                 person: Vec::new(),
                 time: None,
+                images: Vec::new(),
             },
         })
     }
@@ -185,7 +186,7 @@ fn labels(contract: &AnswerContract) -> Option<Vec<String>> {
         AnswerContract::Noul => Some(vec!["yes".into(), "no".into()]),
         AnswerContract::Choice { options } => Some(options.clone()),
         AnswerContract::Score { .. } => None, // Numeric verdicts require an exact arithmetic rule.
-        AnswerContract::Box => None,          // A box is found in an image, not a label.
+        AnswerContract::Box | AnswerContract::Point => None, // Found in an image, not a label.
     }
 }
 
@@ -194,6 +195,9 @@ fn rule_probability(answer: &DecisionAnswer) -> Option<f64> {
         DecisionAnswer::Noul(true) => Some(1.0),
         DecisionAnswer::Noul(false) => Some(0.0),
         DecisionAnswer::Choice(_) => Some(1.0),
-        DecisionAnswer::Score(_) | DecisionAnswer::Box(_) | DecisionAnswer::Abstain => None,
+        DecisionAnswer::Score(_)
+        | DecisionAnswer::Box(_)
+        | DecisionAnswer::Point(_)
+        | DecisionAnswer::Abstain => None,
     }
 }

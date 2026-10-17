@@ -370,8 +370,7 @@ fn validate_registered_entity_type(
     if validate_static_entity_type(entity_type).is_ok() {
         return Ok(());
     }
-    if zone_of(entity_type) == TypeByteZone::CompiledProduct
-        && registry.contains_key(&entity_type)
+    if zone_of(entity_type) == TypeByteZone::CompiledProduct && registry.contains_key(&entity_type)
     {
         return Ok(());
     }

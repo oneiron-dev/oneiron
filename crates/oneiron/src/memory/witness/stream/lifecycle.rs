@@ -311,6 +311,26 @@ fn commit_terminal(
         ),
     };
     let memory = vault.memory(seed.actor, seed.class()?);
+    // OF-063 prose links (Engine ruling 10-17): a continuation's appended
+    // text is read for the links its AI writer cannot resolve, receipt-only,
+    // before the writer opens; a new message's final witness reads its own
+    // through the witness program. A recovered stream is read the same way.
+    if seed.continuation
+        && seed.author == crate::memory::WitnessAuthor::Companion
+        && !state.pending.is_empty()
+        && let Ok(txn) = vault.store.env.read_txn()
+        && let Ok(Some(base)) = admission::committed_text(vault, &txn, seed)
+    {
+        drop(txn);
+        let text = format!("{base}{}", state.pending);
+        crate::gate::record_references::admit_prose_text(
+            &memory,
+            crate::gate::record_references::WITNESS_PROSE_ROW,
+            "/messages/0/content",
+            &text,
+            base.len(),
+        );
+    }
     // A host's gate is host code inside the transaction, so a gated write
     // takes the hosts' door: a group of its own.
     let callback = if gate.is_some() {

@@ -698,7 +698,7 @@ it: a failed send keeps it for the next one.
 
 When a typed decision climbs past every model rung (the dial reaches the
 owner, the read says "ask up?", or the clock cut an irreversible step), the
-server's decision ladder queues it for you (run-with-models.md, section 12).
+server's decision ladder queues it for you (run-with-models.md, section 13).
 The ask waits in the vault, through restarts, until you answer.
 
 `GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=true` lists them

@@ -62,6 +62,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.inbox.concern.move",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+                >(),
+            ),
+            (
                 "vault.people.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
             ),
@@ -1074,6 +1080,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.inbox.concern.outcome" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.concern.move" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2250,6 +2263,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest =
                 decode(value.clone())?;
         }
+        "self.inbox.concern.move" => {
+            let _input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
+                decode(value.clone())?;
+        }
         "vault.people.list" => {
             let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
         }
@@ -2897,6 +2914,7 @@ pub fn invoke(
         "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
         "self.inbox.concern" => encode(self_inbox_concern(memory, decode(value)?)?),
         "self.inbox.concern.outcome" => encode(self_inbox_concern_outcome(memory, decode(value)?)?),
+        "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
@@ -3347,6 +3365,12 @@ pub fn self_inbox_concern_outcome(
 ) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary> {
     memory.concern_outcome(&input)
 }
+pub fn self_inbox_concern_move(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
+) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome> {
+    memory.concern_move(&input)
+}
 pub fn vault_people_list(
     memory: &Memory<'_>,
     input: crate::memory::PeopleListRequest,
@@ -3382,6 +3406,7 @@ pub fn cancel(
     memory: &Memory<'_>,
     input: TaskRequest,
 ) -> MemoryResult<crate::task_verb::TaskCancelReceipt> {
+    crate::gate::record_references::admit_row_references(memory, "cancel", &input, &["/task_ref"])?;
     memory.cancel(crate::task_verb::TaskCancelTarget::Task(
         crate::EntityId::from_hex(&input.task_ref)?,
     ))
@@ -3434,6 +3459,12 @@ pub fn tasks_update(
     memory: &Memory<'_>,
     input: TaskUpdateRequest,
 ) -> MemoryResult<crate::task_verb::TaskUpdateReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.update",
+        &input,
+        &["/task_ref"],
+    )?;
     memory.tasks_update_request(&input)
 }
 pub fn vault_witness(
@@ -3441,12 +3472,6 @@ pub fn vault_witness(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     crate::memory::caps::check_witness_turn(&input)?;
-    crate::gate::record_references::admit_prose_links(
-        memory,
-        "vault.witness",
-        &input,
-        &["/messages/*[author=companion]/content"],
-    )?;
     memory.witness(&input)
 }
 pub fn vault_claims_upsert(
@@ -3520,6 +3545,7 @@ pub fn vault_kv_put(
     memory: &Memory<'_>,
     input: crate::memory::KeyValuePut,
 ) -> MemoryResult<crate::memory::KeyValuePutReceipt> {
+    crate::gate::record_references::admit_prose_links(memory, "vault.kv.put", &input, &["/value"])?;
     memory.key_value_put(&input)
 }
 pub fn vault_kv_delete(
@@ -3935,18 +3961,36 @@ pub fn vault_artifacts_keep(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::KeptProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.keep",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_keep(&input)
 }
 pub fn vault_artifacts_discard(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::DiscardedProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.discard",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_discard(&input)
 }
 pub fn vault_artifacts_undo(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ProposalSettleRequest,
 ) -> MemoryResult<crate::blob_artifact::UndoneKeep> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.undo",
+        &input,
+        &["/artifact_ref"],
+    )?;
     memory.artifacts_undo(&input)
 }
 pub fn can(
@@ -4096,12 +4140,6 @@ pub fn vault_rooms_speak(
     memory: &Memory<'_>,
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
-    crate::gate::record_references::admit_prose_links(
-        memory,
-        "vault.rooms.speak",
-        &input,
-        &["/messages/*[author=companion]/content"],
-    )?;
     memory.rooms_speak(&input)
 }
 pub fn vault_projects_propose(
@@ -4652,12 +4690,24 @@ pub fn vault_claims_retract(
     memory: &Memory<'_>,
     input: ClaimRefRequest,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.claims.retract",
+        &input,
+        &["/claim_ref"],
+    )?;
     memory.claim_retract(&input.claim_ref)
 }
 pub fn vault_forget(
     memory: &Memory<'_>,
     input: ForgetRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitReceipt>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.forget",
+        &input,
+        &["/claim_ref"],
+    )?;
     memory_requests::forget_claims(memory, input)
 }
 pub fn vault_claims_list(
@@ -4809,6 +4859,12 @@ pub fn vault_notes_create(
     memory: &Memory<'_>,
     input: CreateNoteRequest,
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.notes.create",
+        &input,
+        &["/markdown"],
+    )?;
     memory.create_note(&input.kind, &input.markdown)
 }
 pub fn vault_notes_from_entity(
@@ -4827,5 +4883,17 @@ pub fn vault_notes_edit(
     memory: &Memory<'_>,
     input: EditNoteRequest,
 ) -> MemoryResult<crate::note::NoteProgramEditOutcome> {
+    crate::gate::record_references::admit_prose_links(
+        memory,
+        "vault.notes.edit",
+        &input,
+        &["/edit/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.edit",
+        &input,
+        &["/note_ref"],
+    )?;
     memory.edit_note(&input.note_ref, &input.edit)
 }
