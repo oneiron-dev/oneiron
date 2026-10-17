@@ -147,6 +147,9 @@ impl OneironClient {
                 "vault.weave.digest" => remote_agent_verb_output::<
                     Option<oneiron::claim::WeaveDigestView>,
                 >(client, verb, &input),
+                "vault.weave.lens" => {
+                    remote_agent_verb_output::<oneiron::lens::GeneratedLens>(client, verb, &input)
+                }
                 "vault.weave.link.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveLinkCorrectionView,
                 >(client, verb, &input),
@@ -247,6 +250,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
+                >(client, verb, &input),
+                "vault.shares.revoke" => remote_agent_verb_output::<
+                    oneiron::receipt::ShareRevokeReceipt,
+                >(client, verb, &input),
+                "vault.shares.view" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::receipt::SharedBriefView>>,
                 >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::HookReplayRow>,
@@ -1029,6 +1038,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.weave.digest", value)
     }
+    pub fn vault_weave_lens(
+        &self,
+        input: &oneiron::claim::WeaveReportRequest,
+    ) -> Result<oneiron::lens::GeneratedLens, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.lens", value)
+    }
     pub fn vault_weave_link_wrong(
         &self,
         input: &oneiron::claim::WeaveWrongLinkRequest,
@@ -1424,6 +1445,33 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.shares.create", value)
+    }
+    pub fn vault_shares_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::ShareRevokeRequest,
+    ) -> Result<oneiron::receipt::ShareRevokeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shares.revoke", value)
+    }
+    pub fn vault_shares_view(
+        &self,
+        input: &oneiron::task_verb::sdk::ShareViewRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::receipt::SharedBriefView>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shares.view", value)
     }
     pub fn vault_hooks_replay(
         &self,

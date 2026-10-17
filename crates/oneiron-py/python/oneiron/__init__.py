@@ -492,6 +492,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_weave_report(json.dumps(spec))))
         def digest(self, spec):
             return json.loads(_translate(lambda: self._client.vault_weave_digest(json.dumps(spec))))
+        def lens(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_weave_lens(json.dumps(spec))))
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
             return Oneiron._VaultWeaveLinkVerbs(self._client)
@@ -603,6 +605,10 @@ class Oneiron:
             self._client = client
         def create(self, spec):
             return json.loads(_translate(lambda: self._client.vault_shares_create(json.dumps(spec))))
+        def revoke(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shares_revoke(json.dumps(spec))))
+        def view(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_shares_view(json.dumps(spec))))
     class _VaultHooksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

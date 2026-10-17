@@ -347,6 +347,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_weave_lens(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.lens", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_link_wrong(
         &self,
         input: serde_json::Value,
@@ -626,6 +632,18 @@ impl NativeClient {
     pub fn vault_shares_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.shares.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shares_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shares.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shares_view(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shares.view", input)
             .map_err(facade_error)
     }
     #[napi]

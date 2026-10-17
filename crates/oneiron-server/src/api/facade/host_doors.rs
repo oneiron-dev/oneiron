@@ -44,6 +44,8 @@ pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::weave_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
+// The share doors past create (OF-491), likewise.
+pub(crate) use super::share_doors::*;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -92,7 +94,11 @@ pub(crate) async fn vault_artifacts_review_slides(
         let host = server.decision_host();
         memory.artifacts_review_slides_through(
             &input,
-            &server.decision_ladder().ladder(),
+            &crate::decision_artifact::HostUnitDecider::new(
+                &server,
+                class,
+                "vault.artifacts.review_slides",
+            ),
             host.dial(oneiron::llm::decision::DecisionRung::Big),
             &host.bands(),
         )

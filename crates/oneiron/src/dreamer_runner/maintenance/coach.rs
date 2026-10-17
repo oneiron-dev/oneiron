@@ -71,6 +71,10 @@ pub const COACH_LEARNING_SWEEP_FACET: &str = "coach.learning_sweep";
 /// asked which fix its agent needs and filed as a proposed heal. A report
 /// wakes it at once; the nightly pass wakes it again while reports wait.
 pub const COACH_ISSUES_FACET: &str = "coach.issues";
+/// Code fixes (DEC-0005 FIX6, OF-380): for one failure case the Coach filed a
+/// heal for, an invented example of the failure and the shadow result of its
+/// own candidate fix, each verified in the vault before either may leave.
+pub const COACH_CODE_FIX_FACET: &str = "coach.code_fix";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
