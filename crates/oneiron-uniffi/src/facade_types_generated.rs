@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 259 facade rows, 823 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 219.
-// WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
+// UniFFI census: 259 facade rows, 822 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 218.
+// WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
@@ -6379,15 +6379,6 @@ pub struct LensDefaultRequest {
     pub as_of: Option<u64>,
 }
 
-/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `GeneratedLens`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadResultGeneratedLens {
-    #[serde(rename = "value")]
-    pub value: GeneratedLens,
-    #[serde(rename = "narrowing")]
-    pub narrowing: ScopedReadReceipt,
-}
-
 /// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `ScopeId`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "values")]
@@ -11361,6 +11352,12 @@ pub struct DecisionAsk {
     pub role: Option<ResolvedRole>,
     #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<AskAnswer>,
+    #[serde(
+        rename = "withdrawn_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub withdrawn_at: Option<u64>,
 }
 
 /// `oneiron::receipt::decision_asks::DecisionAskClimbRequest`.
@@ -12587,6 +12584,20 @@ pub enum DeckOp {
         #[serde(rename = "geometry")]
         geometry: GeometryProps,
     },
+    #[serde(rename = "set_preset")]
+    SetPreset {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "preset")]
+        preset: Preset,
+    },
+    #[serde(rename = "set_payload")]
+    SetPayload {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "payload")]
+        payload: NodePayload,
+    },
     #[serde(rename = "replace_opaque")]
     ReplaceOpaque {
         #[serde(rename = "part")]
@@ -12979,6 +12990,11 @@ pub enum Conflict {
         #[serde(rename = "part")]
         part: String,
     },
+    #[serde(rename = "payload_vs_payload")]
+    PayloadVsPayload {
+        #[serde(rename = "node")]
+        node: u64,
+    },
 }
 
 /// `oneiron_docedit::live::pptx::RelationshipChange`.
@@ -13052,6 +13068,8 @@ pub struct DeckDiff {
     pub formatting_changed: Vec<u64>,
     #[serde(rename = "geometry_changed")]
     pub geometry_changed: Vec<u64>,
+    #[serde(rename = "payload_changed")]
+    pub payload_changed: Vec<u64>,
     #[serde(rename = "opaque_changed")]
     pub opaque_changed: Vec<OpaqueChange>,
     #[serde(rename = "affected_slides")]
@@ -13181,6 +13199,8 @@ pub struct DeckExportView {
     pub changed_parts: Vec<String>,
     #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
     pub record: Option<OfficeBodyExportRecord>,
+    #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<PendingProposalView>,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckGateRequest`.
