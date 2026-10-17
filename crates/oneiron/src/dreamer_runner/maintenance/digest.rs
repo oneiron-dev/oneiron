@@ -915,7 +915,7 @@ fn apply_policy_in_txn(
     };
     CADENCE.put(&vault.store, txn, &(), &request.cadence)?;
     PRESENTATION.put(vault, txn, &(), &request.presentation)?;
-    Ok(MaintenanceInverse::ProactivityPolicy(inverse))
+    Ok(MaintenanceInverse::ProactivityPolicy(Box::new(inverse)))
 }
 
 /// Puts back each row the request applied that still holds what it applied;

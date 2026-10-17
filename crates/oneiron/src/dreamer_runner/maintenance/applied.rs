@@ -35,7 +35,7 @@ pub(super) enum MaintenanceInverse {
     /// One curator rung on its target.
     Curator(curator::CuratorInverse),
     /// The shared digest cadence and presentation rows.
-    ProactivityPolicy(digest::ProactivityPolicyInverse),
+    ProactivityPolicy(Box<digest::ProactivityPolicyInverse>),
 }
 
 impl MaintenanceInverse {
@@ -222,11 +222,7 @@ impl Vault {
                 reverted: row.reverted,
             });
         }
-        applied.sort_by(|a, b| {
-            b.applied_at
-                .cmp(&a.applied_at)
-                .then(b.finding.cmp(&a.finding))
-        });
+        applied.sort_by_key(|row| std::cmp::Reverse((row.applied_at, row.finding)));
         applied.truncate(limit);
         Ok(applied)
     }
