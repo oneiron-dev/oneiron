@@ -346,6 +346,8 @@ async fn spawn_fact_hooks(
             let runtime: Arc<dyn oneiron::runtime_hooks::HookBodyRuntime> = Arc::new(sandbox);
             // `vault.hooks.replay` replays on the runner's own sandbox.
             let _ = server.hook_runtime.set(Arc::clone(&runtime));
+            // Verb hooks run on it too: one sandbox per process.
+            server.vault().install_hook_runtime(Arc::clone(&runtime));
             // Generative fact hooks ask `ai.verdict` on serve's own ladder.
             let verdict: Arc<dyn oneiron::runtime_hooks::HookVerdict> =
                 Arc::new(crate::hook_verdict::ServerHookVerdict::new(server));
