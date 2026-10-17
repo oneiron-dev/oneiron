@@ -40910,7 +40910,7 @@
      "purpose": "Bounded, source-bound install rules for connector tool manifests",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -65094,6 +65094,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/connector_admission_routes.rs",
+     "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -67445,6 +67455,16 @@
       "crate-vis": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_admission_host.rs",
+     "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -71038,7 +71058,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 289,
+     "files": 290,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71099,6 +71119,13 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
+    },
+    "connector_admission_host": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
      "files": 1,
@@ -71402,9 +71429,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 41,
+   "over_bar": 42,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 572,
+   "source_files": 574,
    "test_files": 182
   },
   "oneiron-spawn": {
