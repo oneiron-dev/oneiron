@@ -268,7 +268,9 @@ impl SlackSharedPresenceAdapter {
                 },
                 "org_deploy_enabled": false,
                 "socket_mode_enabled": false,
-                "token_rotation_enabled": true,
+                // One long-lived bot token: rotation is the owner's own act
+                // through the custody door, never the engine's (ARCH-0069 S6).
+                "token_rotation_enabled": false,
             },
         })
     }

@@ -13,7 +13,7 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use base64::Engine;
 use hmac::{Hmac, Mac};
 use oneiron::Vault;
@@ -46,6 +46,7 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route(SLACK_EVENTS_PATH, post(slack_events))
         .layer(DefaultBodyLimit::max(MAX_SLACK_BODY_BYTES))
+        .route(SLACK_OAUTH_PATH, get(super::slack_app::slack_oauth))
         .merge(
             Router::new()
                 .route(LINE_WEBHOOK_PATH, post(line_webhook))

@@ -509,8 +509,10 @@ fn sources_live_in_txn(store: &Store, txn: &heed::RoTxn<'_>, report: &WeaveRepor
     for section in &report.sections {
         for item in &section.items {
             if let WeaveItem::Claim { id, .. } = item
-                && crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
-                    .is_none_or(|raw| raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN)
+                && crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, id, |raw| {
+                    Ok(raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN)
+                })?
+                .unwrap_or(true)
             {
                 return Ok(false);
             }
