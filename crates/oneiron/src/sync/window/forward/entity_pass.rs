@@ -47,7 +47,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
         let watched = EntityId::from_hex(key).ok().filter(|id| watches(vault, id));
         let step = match vault.with_write_txn_grouped(|wtxn| {
             let unborn = match &watched {
-                Some(id) => vault.store.entities.get(wtxn, id.as_bytes())?.is_none(),
+                Some(id) => crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, id)?
+                    .is_none(),
                 None => false,
             };
             let step = ingest_entity_in_savepoint(&ingest, wtxn, key, value)?;

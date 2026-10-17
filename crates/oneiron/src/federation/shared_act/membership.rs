@@ -41,13 +41,13 @@ impl Vault {
         vault_id: u64,
     ) -> Result<Vec<(EntityId, FederationGrant)>> {
         let mut grants = Vec::new();
-        for row in self
-            .store
-            .type_index
-            .prefix_iter(txn, &[ENTITY_TYPE_FEDERATION_GRANT])?
-        {
-            let (index, _) = row?;
-            let id = crate::vault::entity_id_from_type_index_key(&index)?;
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
             let raw = self.get_raw_in(txn, &id)?.ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&raw)
                 .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
