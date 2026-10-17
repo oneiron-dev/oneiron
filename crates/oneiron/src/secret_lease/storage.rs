@@ -2,7 +2,7 @@
 
 use zeroize::Zeroizing;
 
-use super::admission::admit_record_use;
+use super::admission::{admit_record_use, reveal_tier_admission};
 use super::codec::{SECRET_LEASE, SECRET_LOCAL_REGISTRATION, SECRET_MATERIALIZATION_RECEIPT};
 use super::files::remove_secret_file;
 use super::types::{
@@ -10,10 +10,10 @@ use super::types::{
     StoredLocalRegistration, VaultInstant,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SecretError};
+use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_custody::{
-    CustodyTier, SecretCustodyAdmission, SecretCustodyFloor, read_secret_custody_admission_in_txn,
-    resolve_secret_ref_in_txn,
+    CustodyTier, RevealAuthority, SecretCustodyAdmission, SecretCustodyFloor,
+    read_secret_custody_admission_in_txn, resolve_secret_ref_in_txn, reveal_value_in_txn,
 };
 use crate::side_table::HexId;
 use crate::store::Store;
@@ -279,6 +279,78 @@ pub(super) fn stamp_secret_lease_in_txn(
         Some(expires_at - now),
     )?;
     let value = read_value_for_ref_in_txn(vault, wtxn, &id, effector)?;
+    let lease = write_t1_lease_rows_in_txn(
+        vault,
+        wtxn,
+        secret_ref,
+        effector,
+        now,
+        expires_at,
+        rec.rotation_generation,
+    )?;
+    Ok(SecretLeaseMaterialization { lease, value })
+}
+
+/// The T1 lease a granted reveal is (OF-560, ARCH-0069 #reveal-check): the
+/// value leaves the vault once, to the model connection `authority` names,
+/// in the receipt-before-lease order every materialization keeps.
+///
+/// A reveal holds no binding (a masked secret has none), so the binding rule
+/// of [`stamp_secret_lease_in_txn`] does not apply. What admits it is the
+/// consent the reveal door settled in this same transaction, which only that
+/// door can carry here as a [`RevealAuthority`], and the reveal admission,
+/// read again under this transaction against the live floor.
+pub(crate) fn stamp_reveal_lease_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    authority: &RevealAuthority,
+    ttl_secs: u64,
+) -> Result<SecretLeaseMaterialization> {
+    let rec = read_secret_custody_admission_in_txn(&vault.store, wtxn, authority.secret())?
+        .ok_or_else(|| {
+            Error::Secret(SecretError::SecretRefNotFound {
+                name: authority.handle().to_owned(),
+            })
+        })?;
+    if rec.class != authority.class() {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "the secret's custody class changed since its reveal was asked",
+        )));
+    }
+    let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
+    reveal_tier_admission(&rec, &floor)?;
+    let now = VaultInstant(vault.store.clock.now_recorded_at()).secs();
+    let expires_at = now.saturating_add(ttl_secs);
+    crate::credential_door::admit_materialization_in_txn(
+        &vault.store,
+        wtxn,
+        authority.effector(),
+        Some(ttl_secs),
+    )?;
+    let value = reveal_value_in_txn(&vault.store, wtxn, authority)?;
+    let lease = write_t1_lease_rows_in_txn(
+        vault,
+        wtxn,
+        &rec.name,
+        authority.effector(),
+        now,
+        expires_at,
+        rec.rotation_generation,
+    )?;
+    Ok(SecretLeaseMaterialization { lease, value })
+}
+
+/// The rows every T1 materialization writes once its value is read: the
+/// materialization receipt, then the lease, then the expiry wake.
+fn write_t1_lease_rows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    secret_ref: &str,
+    effector: &str,
+    now: u64,
+    expires_at: u64,
+    value_generation: u32,
+) -> Result<SecretLease> {
     let lease = SecretLease {
         lease_id: vault.store.clock.entity_id()?,
         secret_ref: secret_ref.to_owned(),
@@ -288,7 +360,7 @@ pub(super) fn stamp_secret_lease_in_txn(
         expires_at,
         status: SecretLeaseStatus::Active,
         materialization_receipt: vault.store.clock.entity_id()?,
-        value_generation: rec.rotation_generation,
+        value_generation,
     };
     let receipt = SecretMaterializationReceipt {
         receipt_id: lease.materialization_receipt,
@@ -308,7 +380,7 @@ pub(super) fn stamp_secret_lease_in_txn(
         crate::housekeeping::HousekeepingSweep::SecretLeaseExpiry,
         expires_at,
     )?;
-    Ok(SecretLeaseMaterialization { lease, value })
+    Ok(lease)
 }
 
 /// Reads the value bytes through the ONE bound value door (ONE-1919), for
