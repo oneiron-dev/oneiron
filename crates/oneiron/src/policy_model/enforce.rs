@@ -237,6 +237,32 @@ impl Vault {
         self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
     }
 
+    /// [`Self::enforce_policy_model_with_backend`] for a caller that holds a
+    /// meter rather than a lease: each safeguard-model call is admitted on
+    /// `budget` when the pass needs one, and settled on what it spent. A
+    /// pattern-only or disabled pass reserves nothing; a refused admission
+    /// reads as the model being down.
+    pub async fn enforce_policy_model_with_budget(
+        &self,
+        request: PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        backend: &dyn LlmBackend,
+        budget: &crate::llm::BudgetGuard,
+    ) -> Result<PolicyModelEnforcement> {
+        let mut pass = self
+            .owner_plane_pass_with_budget(&request, config, backend, budget)
+            .await?;
+        if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
+            pass = self
+                .owner_plane_pass_with_budget(&request, config, backend, budget)
+                .await?;
+            if self.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
+                return self.stale_owner_plane_fail_open(request, config);
+            }
+        }
+        self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
+    }
+
     /// The owner plane could not pin a verdict to the policy in force, so it
     /// enforces nothing and says so. Sovereign planes fail open; what they do
     /// not do is enforce a rule they cannot name.

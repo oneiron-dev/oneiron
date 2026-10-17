@@ -221,6 +221,36 @@ fn replay_case<'a>(
     }
 }
 
+/// Score both versions on each offline axis over the held-out evidence: the
+/// offline part of [`measure_goal_axes`], and the preflight a proposal's
+/// floors pass before any live run is routed to it.
+///
+/// # Errors
+///
+/// Bad scores, or scorer errors.
+pub(super) fn score_offline_goal_axes(
+    skill: EntityId,
+    incumbent: &SkillRecord,
+    candidate: &SkillRecord,
+    axes: &[String],
+    held_out: &[String],
+    replay: &dyn super::HeldOutReplayNotes,
+) -> Result<Vec<(String, AxisScores)>> {
+    let before_case = replay_case(skill, incumbent, held_out);
+    let after_case = replay_case(skill, candidate, held_out);
+    let mut offline = Vec::with_capacity(axes.len());
+    for axis in axes {
+        offline.push((
+            axis.clone(),
+            AxisScores {
+                before: score(f64::from(replay.score_named_axis(&before_case, axis)?))?,
+                after: score(f64::from(replay.score_named_axis(&after_case, axis)?))?,
+            },
+        ));
+    }
+    Ok(offline)
+}
+
 /// Measure offline axes on the vault's held-out evidence FIRST. Only after
 /// every offline score validates may a live pull occur. The bandit observes a
 /// caller-funded, capped slice per online axis; overlapping intervals are
@@ -286,18 +316,14 @@ pub fn measure_goal_axes(
     if held_out.is_empty() {
         return Err(invalid("goal-axis measurement requires held-out evidence"));
     }
-    let before_case = replay_case(skill, incumbent, &held_out);
-    let after_case = replay_case(skill, candidate, &held_out);
-    let mut offline = Vec::with_capacity(plan.offline.len());
-    for axis in &plan.offline {
-        offline.push((
-            axis.clone(),
-            AxisScores {
-                before: score(f64::from(replay.score_named_axis(&before_case, axis)?))?,
-                after: score(f64::from(replay.score_named_axis(&after_case, axis)?))?,
-            },
-        ));
-    }
+    let offline = score_offline_goal_axes(
+        skill,
+        incumbent,
+        candidate,
+        &plan.offline,
+        &held_out,
+        replay,
+    )?;
     let mut spent = [0.0f64; 2];
     let mut timed = [0u32; 2];
     let mut online = Vec::with_capacity(plan.online.len());

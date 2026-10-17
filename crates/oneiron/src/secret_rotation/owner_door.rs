@@ -94,11 +94,11 @@ impl Vault {
         crate::secret_custody::write_custody_transition_in_txn(self, wtxn, id, &rec, at)
     }
 
-    /// Mirrors a committed transition into its live window.
+    /// Mirrors a committed transition into the live windows.
     fn mirror_transition(&self, transition: Option<&crate::secret_custody::CustodyTransition>) {
         #[cfg(feature = "sync")]
-        if let Some(transition) = transition {
-            self.refresh_custody_in_live_window(transition);
+        if transition.is_some() {
+            self.refresh_custody_in_live_windows();
         }
         #[cfg(not(feature = "sync"))]
         let _ = transition;
