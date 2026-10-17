@@ -386,7 +386,9 @@ impl Vault {
     /// this method is transition mechanics only.
     pub fn supersede_claim(&self, new_id: &EntityId, old_id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -629,6 +631,7 @@ impl Vault {
     /// reason: its own door has a contract this one cannot honour.
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         // The typed door does not merely AUTHORIZE an expression-preference
         // retraction; it restores the direct predecessor as part of closing the
         // head. Retracting one generically performs half of that contract and
@@ -642,6 +645,7 @@ impl Vault {
             ));
         }
         self.retract_claim_in_txn(&mut wtxn, id, now)?;
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         Ok(())
     }
