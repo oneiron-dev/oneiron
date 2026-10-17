@@ -372,7 +372,9 @@ fn host_row(
                 server.vault(),
                 request.unit_deadline_ms,
             )?;
-            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?;
+            let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?
+                .with_posture(request.posture)
+                .with_criteria(request.criteria.unwrap_or_default());
             encode(
                 match run_graph_ask_receipted(
                     &lane,

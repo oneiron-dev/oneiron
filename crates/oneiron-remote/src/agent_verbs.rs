@@ -390,6 +390,15 @@ impl OneironClient {
                 "vault.disclosure.offer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DisclosureOffered,
                 >(client, verb, &input),
+                "reveal" => remote_agent_verb_output::<oneiron::task_verb::sdk::RevealPending>(
+                    client, verb, &input,
+                ),
+                "reveal.wait" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RevealWaitAnswer,
+                >(client, verb, &input),
+                "reveal.describe" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RevealHandleCard,
+                >(client, verb, &input),
                 "vault.shares.create" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ShareCreated,
                 >(client, verb, &input),
@@ -706,6 +715,18 @@ impl OneironClient {
                 }
                 "vault.artifacts.create" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
+                >(client, verb, &input),
+                "vault.conversations.create" => remote_agent_verb_output::<
+                    oneiron::core_write::CoreEntityWriteReceipt,
+                >(client, verb, &input),
+                "vault.conversations.turns.create" => remote_agent_verb_output::<
+                    oneiron::core_write::CoreEntityWriteReceipt,
+                >(client, verb, &input),
+                "vault.conversations.records.append" => remote_agent_verb_output::<
+                    oneiron::core_write::DagRecordAppendReceipt,
+                >(client, verb, &input),
+                "vault.batch" => remote_agent_verb_output::<
+                    oneiron::core_write::CoreBatchWriteReceipt,
                 >(client, verb, &input),
                 "vault.artifacts.put" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
@@ -2181,6 +2202,42 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.disclosure.offer", value)
     }
+    pub fn reveal(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealRequest,
+    ) -> Result<oneiron::task_verb::sdk::RevealPending, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("reveal", value)
+    }
+    pub fn reveal_wait(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealWaitRequest,
+    ) -> Result<oneiron::task_verb::sdk::RevealWaitAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("reveal.wait", value)
+    }
+    pub fn reveal_describe(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealDescribeRequest,
+    ) -> Result<oneiron::task_verb::sdk::RevealHandleCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("reveal.describe", value)
+    }
     pub fn vault_shares_create(
         &self,
         input: &oneiron::task_verb::sdk::ShareCreateRequest,
@@ -3487,6 +3544,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.create", value)
+    }
+    pub fn vault_conversations_create(
+        &self,
+        input: &oneiron::core_write::ConversationCreateInput,
+    ) -> Result<oneiron::core_write::CoreEntityWriteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.conversations.create", value)
+    }
+    pub fn vault_conversations_turns_create(
+        &self,
+        input: &oneiron::core_write::ConversationTurnCreateInput,
+    ) -> Result<oneiron::core_write::CoreEntityWriteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.conversations.turns.create", value)
+    }
+    pub fn vault_conversations_records_append(
+        &self,
+        input: &oneiron::core_write::DagRecordAppendInput,
+    ) -> Result<oneiron::core_write::DagRecordAppendReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.conversations.records.append", value)
+    }
+    pub fn vault_batch(
+        &self,
+        input: &oneiron::core_write::CoreBatchWriteInput,
+    ) -> Result<oneiron::core_write::CoreBatchWriteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.batch", value)
     }
     pub fn vault_artifacts_put(
         &self,
