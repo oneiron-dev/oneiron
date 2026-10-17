@@ -51,7 +51,8 @@ pub const PERSON_ABOUT_INSTRUCTION: &str = "You write the one-line `about` of a 
 agent's roster of people. The facts below are everything you may use, one per line as \
 `predicate: value`. Write one plain sentence of at most 25 words that says who this person is. \
 Never add, guess or imply a fact that is not listed, and never say that facts are missing. \
-No markup and no quotes.";
+A fact marked (observed) was read from what the person did; where it disagrees with a fact \
+marked (stated), go by the stated one. No markup and no quotes.";
 
 /// One person's `about` lines and the facts they stand on. Key: id16 (PERSON).
 const PERSON_ABOUT: SideTable<EntityId, PersonAbout, Named> =
@@ -98,6 +99,10 @@ struct Fact {
     /// Content hash of the CLAIM body read.
     version: [u8; 32],
     readable: ScopeResource,
+    source: Option<crate::claim::ClaimSource>,
+    /// The fact's question, so a held observed fact sits below and beside
+    /// the stated one of its question.
+    question: Option<[u8; 32]>,
 }
 
 /// The facts about `person` the Dreamer reads, band order: active, surfaced
@@ -137,10 +142,47 @@ fn person_facts(
             line: one_line(&format!("{}: {value}", decoded.predicate), usize::MAX),
             version: super::swarm_evidence_content_hash(&body),
             readable: document_version(claim, &body),
+            source: decoded.source,
+            question: crate::context_pack::source_ranking::question_key(&decoded),
         });
     }
     facts.sort_by_key(|fact| (fact.band, fact.claim));
+    // ARCH-0003: an observed fact never sits above a stated one of its
+    // question.
+    crate::context_pack::source_ranking::clamp_order_by(&mut facts, &Default::default(), |fact| {
+        Some((fact.source?, fact.question?))
+    })?;
     Ok(facts)
+}
+
+/// The admitted facts as the model reads them, one per line. Where they hold
+/// an observed and a stated fact on one question, both say which they are,
+/// so the model goes by the stated one; a fact above this band is never
+/// hinted at.
+fn prompt_lines(admitted: &[&Fact]) -> String {
+    use crate::claim::ClaimSource;
+    let held = |source: ClaimSource| -> BTreeSet<[u8; 32]> {
+        admitted
+            .iter()
+            .filter(|fact| fact.source == Some(source))
+            .filter_map(|fact| fact.question)
+            .collect()
+    };
+    let (stated, observed) = (held(ClaimSource::UserStated), held(ClaimSource::Observed));
+    admitted
+        .iter()
+        .map(|fact| {
+            let pair = fact
+                .question
+                .is_some_and(|question| stated.contains(&question) && observed.contains(&question));
+            match fact.source {
+                Some(ClaimSource::UserStated) if pair => format!("{} (stated)", fact.line),
+                Some(ClaimSource::Observed) if pair => format!("{} (observed)", fact.line),
+                _ => fact.line.clone(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Digest of the facts at or below `band`.
@@ -516,11 +558,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     LlmMessage {
                         role: LlmMessageRole::User,
                         content: vec![ContentPart::Text {
-                            text: admitted
-                                .iter()
-                                .map(|fact| fact.line.as_str())
-                                .collect::<Vec<_>>()
-                                .join("\n"),
+                            text: prompt_lines(&admitted),
                         }],
                     },
                 ],
