@@ -155,7 +155,11 @@ pub(crate) fn enter(
     let rooms = vault.off_record_session_vault();
     let session = match request.mode {
         EnterMode::OffRecord => rooms.enter(&request.session_ref, request.backend),
-        EnterMode::Anonymous => rooms.enter_anonymous(&request.session_ref, request.backend),
+        // OF-063: the stretch keeps the owner as the one caller its
+        // no-record exception serves.
+        EnterMode::Anonymous => {
+            rooms.enter_anonymous_as(&request.session_ref, request.backend, owner)
+        }
     }
     .map_err(|error| session_error(error, &request.session_ref))?;
     record(vault, owner, session.session_ref())

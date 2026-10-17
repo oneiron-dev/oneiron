@@ -549,6 +549,7 @@ class MemoryProvenance(TypedDict):
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
+    record: NotRequired[RecordRef | None]
 class MemoryItem(TypedDict):
     short_id: str
     source_revision_ref: NotRequired[str | None]
