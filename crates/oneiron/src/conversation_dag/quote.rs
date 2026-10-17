@@ -313,10 +313,13 @@ pub(crate) fn pin_body_quotes_at_message_birth_in_txn(
     actor: WriteActor,
 ) -> Result<()> {
     let body_hash = *blake3::hash(text.as_bytes()).as_bytes();
-    let turns = vault
-        .store
-        .port_entity_ids_by_type(txn, ENTITY_TYPE_TURN, None)?
-        .collect::<Result<Vec<_>>>()?;
+    let turns = crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        ENTITY_TYPE_TURN,
+        None,
+    )?
+    .collect::<Result<Vec<_>>>()?;
     let mut spans = std::collections::BTreeMap::new();
     for turn in turns {
         let mut anchors = Vec::new();
@@ -330,8 +333,8 @@ pub(crate) fn pin_body_quotes_at_message_birth_in_txn(
                 anchors.extend(read_pointer(&body)?.map(|(_, anchor)| anchor));
             }
         }
-        if let Some(quote) = crate::workspace_roster::replicated_turn_in(vault, txn, turn)?
-            .and_then(|row| row.quote)
+        if let Some(quote) =
+            crate::workspace_roster::replicated_turn_in(vault, txn, turn)?.and_then(|row| row.quote)
         {
             anchors.push(quote.anchor);
         }
