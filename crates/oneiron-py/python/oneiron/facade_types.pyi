@@ -345,6 +345,10 @@ class ShapeTargetMember(TypedDict):
 class ShapeTargetWorld(TypedDict):
     kind: Literal["world"]
     name: str
+class ShapeTargetFacet(TypedDict):
+    kind: Literal["facet"]
+    person: str
+    name: str
 class ShapeTargetPack(TypedDict):
     kind: Literal["pack"]
     name: str
@@ -361,10 +365,13 @@ class ShapeTargetChannel(TypedDict):
 class ShapeTargetGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: str
+class ShapeTargetManifest(TypedDict):
+    kind: Literal["manifest"]
+    manifest_ref: str
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetFacet | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetManifest | ShapeTargetSync
 class ShapeRowShared(TypedDict):
     kind: Literal["shared"]
     vault_id: int
@@ -375,6 +382,10 @@ class ShapeRowMember(TypedDict):
     role: ShapeMemberRole
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
+    name: str
+class ShapeRowFacet(TypedDict):
+    kind: Literal["facet"]
+    person: str
     name: str
 class ShapeRowPack(TypedDict):
     kind: Literal["pack"]
@@ -399,6 +410,10 @@ class ShapeRowGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: NotRequired[str]
     bound: NotRequired[ShapeGrantBound | None]
+class ShapeRowManifest(TypedDict):
+    kind: Literal["manifest"]
+    manifest_ref: str
+    body: str
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -406,7 +421,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowFacet | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowManifest | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):
