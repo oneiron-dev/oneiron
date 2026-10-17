@@ -60,7 +60,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/booking/client_address_tests.rs` | test | m | — | — | Booking admission charges the client the connection proves (C7): its own peer, or the client a configured… |
 | `src/api/booking/constants.rs` | src | s | 14 crate-vis | — | — |
-| `src/api/booking/free_text.rs` | src | s | 1 crate-vis | — | A booking page's free-text constraint (ONE-1816), parsed on the cheap seat… |
+| `src/api/booking/free_text.rs` | src | s | 3 crate-vis | — | A booking page's free-text constraint (ONE-1816), parsed on the cheap seat… |
+| `src/api/booking/front.rs` | src | m | 4 crate-vis | — | ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front |
 | `src/api/booking/helpers.rs` | src | s | 5 crate-vis | — | — |
 | `src/api/booking/instructions.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking/lifecycle.rs` | src | s | 3 crate-vis | — | — |
