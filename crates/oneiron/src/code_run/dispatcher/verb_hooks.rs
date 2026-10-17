@@ -40,7 +40,7 @@ use crate::runtime_hooks::{
     InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
 };
 use crate::task_type::TaskTypeRef;
-use crate::task_verb::TaskAskStatus;
+use crate::task_verb::{TaskAskHoldReason, TaskAskStatus};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, TimeRange, Vault};
 
 /// The refusal a guest reads when a pre-hook skipped its call. Its reason
@@ -415,13 +415,13 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
             "kind": "task_ask",
             "group": value.handle.group_ref.to_hex(),
             "tasks": value.task_refs.iter().map(EntityId::to_hex).collect::<Vec<_>>(),
-            "hold": value.hold.as_ref().map(|_| "no_live_route"),
+            "hold": value.hold.as_ref().map(|hold| hold_name(*hold)),
             "replay": value.idempotent_replay,
         }),
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Pending { hold }) => json!({
             "kind": "task_ask_status",
             "state": "pending",
-            "hold": hold.as_ref().map(|_| "no_live_route"),
+            "hold": hold.as_ref().map(|hold| hold_name(*hold)),
         }),
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) => {
             json!({
@@ -1171,4 +1171,13 @@ fn guest_f32(value: f64) -> Rewritten<f32> {
         return Err("invalid guest number".to_owned());
     }
     Ok(value as f32)
+}
+
+/// A held ask's reason as a hook's JSON names it, as the run's replay
+/// records it: an ask the approval mode holds (OF-393) is no unroutable one.
+fn hold_name(hold: TaskAskHoldReason) -> &'static str {
+    match hold {
+        TaskAskHoldReason::NoLiveRoute => "no_live_route",
+        TaskAskHoldReason::ApprovalRequired => "approval_required",
+    }
 }
