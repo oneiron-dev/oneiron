@@ -48,9 +48,6 @@ use super::receipt::{
 };
 use super::run_binding::team_run_binding;
 
-/// Most members one start spawns or one receipt covers.
-const MAX_MEMBERS: usize = 64;
-
 /// Longest start key; a member's key is bounded the same way.
 const MAX_KEY_BYTES: usize = 64;
 
@@ -63,7 +60,8 @@ pub struct TeamStartInput {
     pub pattern: String,
     /// The start's own key, 1..=64 bytes: the same key opens the same team.
     pub intent_key: String,
-    /// The members, 1..=64, each spawned into the team as a child of the run.
+    /// The members, at least one, each spawned into the team as a child of
+    /// the run. No count caps them (ARCH-0079); spend caps bound the work.
     pub members: Vec<TeamMemberInput>,
     /// An autoreason tournament's run id: the id, as hex, of the campaign
     /// experiment the tournament runs as, which the leader must be or work
@@ -184,7 +182,6 @@ pub(crate) fn start_stamp(
     let mut keys = BTreeSet::new();
     if !key_ok(&input.intent_key)
         || input.members.is_empty()
-        || input.members.len() > MAX_MEMBERS
         || !input
             .members
             .iter()
@@ -227,7 +224,7 @@ pub(crate) fn record_led_team(
         return Ok(Err("team_record_not_led"));
     }
     let bound = team_run_binding(vault, leader, &input.team_ref)?;
-    if input.members.len() > MAX_MEMBERS || (input.members.is_empty() && bound.is_none()) {
+    if input.members.is_empty() && bound.is_none() {
         return Ok(Err("team_record_invalid_input"));
     }
     let mut models = BTreeSet::new();

@@ -64,6 +64,10 @@ both bindings and their export-census tests in one change.
 - `vault.weave.item.wrong`
 - `vault.weave.owner.item.wrong`
 - `vault.packs.put`
+- `vault.packs.remove`
+- `vault.connectors.subscriptions.put`
+- `vault.connectors.subscriptions.list`
+- `vault.connectors.subscriptions.revoke`
 - `vault.packs.setup.prepare`
 - `vault.packs.setup.get`
 - `vault.packs.setup.answer`
@@ -105,6 +109,10 @@ both bindings and their export-census tests in one change.
 - `vault.legal_holds.list`
 - `vault.legal_holds.log`
 - `vault.legal_holds.lift_and_erase`
+- `vault.courtesy_delete.send`
+- `vault.courtesy_delete.sent`
+- `vault.courtesy_delete.incoming`
+- `vault.courtesy_delete.answer`
 - `vault.embedding_spaces.list`
 - `vault.embedding_spaces.declare`
 - `vault.embedding_spaces.bind`

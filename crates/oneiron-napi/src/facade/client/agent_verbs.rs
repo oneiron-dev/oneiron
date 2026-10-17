@@ -562,6 +562,39 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_packs_remove(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.remove", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_subscriptions_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.subscriptions.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_subscriptions_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.subscriptions.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_subscriptions_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.subscriptions.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_packs_setup_prepare(
         &self,
         input: serde_json::Value,
@@ -916,6 +949,42 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.legal_holds.lift_and_erase", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_courtesy_delete_send(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.courtesy_delete.send", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_courtesy_delete_sent(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.courtesy_delete.sent", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_courtesy_delete_incoming(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.courtesy_delete.incoming", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_courtesy_delete_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.courtesy_delete.answer", input)
             .map_err(facade_error)
     }
     #[napi]

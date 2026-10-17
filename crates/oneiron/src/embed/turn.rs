@@ -111,14 +111,20 @@ fn mark_turns_in_txn(
 /// drop does not depend on this handle's embedding model; only the mark,
 /// which queues the replacement, does.
 ///
+/// What was derived from the turn's words (its epoch summaries) is withdrawn
+/// first, through `door`, the walk a TURN's own erase starts (OF-013); the
+/// turn itself stays live at the text left.
+///
 /// An edit only marks the turn ([`mark_on_publication_in_txn`]): the vector
 /// of its older text is stale, not erased, and serves until the new one lands.
 pub(crate) fn erase_turn_vectors_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     turns: Vec<EntityId>,
+    door: crate::ports::DependentWalkDoor,
 ) -> Result<()> {
     for turn in turns {
+        crate::ports::invalidate_source_in_txn(&vault.store, wtxn, &turn, door)?;
         crate::vault::entity_revision::drop_vector_state(vault, wtxn, &turn)?;
         mark_turn_in_txn(vault, wtxn, turn)?;
     }
