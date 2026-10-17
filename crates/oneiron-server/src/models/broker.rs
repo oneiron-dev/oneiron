@@ -171,7 +171,7 @@ impl BrokerSite {
         }
     }
 
-    fn client(&self, reply_timeout: Duration) -> anyhow::Result<BrokerClient> {
+    pub(super) fn client(&self, reply_timeout: Duration) -> anyhow::Result<BrokerClient> {
         match self {
             Self::User { socket, uid } => BrokerClient::new(
                 socket.clone(),
@@ -343,7 +343,11 @@ impl BrokerBackend {
                 reason: Failure::Send,
             } => return Err(RetryableLlmError::StreamCut.into()),
             Outcome::Failed {
-                reason: Failure::ReplyTooLarge | Failure::ReplyEncoded,
+                reason:
+                    Failure::ReplyTooLarge
+                    | Failure::ReplyEncoded
+                    | Failure::Redirect
+                    | Failure::ReplyHoldsKey,
             } => return Err(RetryableLlmError::ServerError.into()),
         };
         let parsed = serde_json::from_slice::<JsonValue>(body);
