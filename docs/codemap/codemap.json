@@ -28850,7 +28850,7 @@
      "path": "src/llm/run_admission/media.rs",
      "purpose": "The run's media backend: an `ai.*` media call (image, video, speech, transcription, embedding) starts its…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 15,
       "struct": 2
      }
@@ -28862,7 +28862,7 @@
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -28931,6 +28931,21 @@
      "purpose": "Local fakes for the research-connector fixture",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WireCallError",
+      "WireSeat"
+     ],
+     "path": "src/llm/run_admission/wire.rs",
+     "purpose": "A media rung whose wire the host drives itself, on its own thread: a local process or a loopback worker…",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -49083,6 +49098,7 @@
      "kind": "src",
      "notable": [
       "HostedBinding",
+      "HostedMediaQueue",
       "HostedProvider",
       "HostedRender",
       "HostedTransport",
@@ -49094,8 +49110,8 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 6,
-      "struct": 3,
+      "fn": 8,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -49129,6 +49145,7 @@
      "purpose": "The cascade's speech and hearing on the host's media seats (OF-410)",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 4,
       "fn": 18,
       "struct": 7,
@@ -49444,7 +49461,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VoxCpm2Event",
@@ -52839,7 +52856,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 96,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53534,7 +53551,7 @@
    },
    "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3250,
+   "source_files": 3251,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68819,9 +68836,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/embedder/admitted.rs",
-     "purpose": "A remote embedder's requests under run admission (ARCH-0053 `#run-admission`)",
+     "purpose": "An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
