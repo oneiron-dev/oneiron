@@ -129,6 +129,7 @@ declare namespace self {
     start(input: { intentKey: string; members: { agent: string; briefing?: string | null; intentKey: string }[]; pattern: string; tournament?: string | null }): Promise<unknown>;
   };
   const unfold: (input: { fold: string }) => Promise<unknown>;
+  const use: (input: { arguments?: unknown; handle: string; operation: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
 declare function summarize(input: { ref: string; effort?: "low" | "medium" | "high"; group?: string[]; defer?: true }): Promise<unknown>;
