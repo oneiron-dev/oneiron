@@ -1016,7 +1016,9 @@ Answer with `POST /v1/ai/quota/{id}`
     first.
 
   Setting it is the permission, paid models included. Once the offer is back,
-  calls use it again.
+  calls use it again. The choice is owner policy, kept in the vault's model
+  settings rather than with the deployment's cooldowns. A checkpoint keeps
+  it, and a restore over a live vault keeps the live vault's choice.
 
 ### When a provider is down
 
