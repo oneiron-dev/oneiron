@@ -28220,7 +28220,7 @@
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
       "crate-vis": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -36640,7 +36640,8 @@
       "QuestionEditRequest",
       "QuestionPauseRequest",
       "QuestionPaused",
-      "QuestionReadRequest"
+      "QuestionReadRequest",
+      "QuestionRefreshRequest"
      ],
      "path": "src/receipt/questions.rs",
      "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
@@ -36648,7 +36649,7 @@
       "const": 2,
       "enum": 2,
       "fn": 3,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -46913,7 +46914,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 20,
+      "re-export": 22,
       "struct": 36
      }
     },
@@ -47025,6 +47026,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ExplainGateNotice",
+      "ExplainGateReply",
+      "ExplainGateRequest",
+      "ExplainMemoryReply",
+      "ExplainMemoryRequest",
+      "ExplainScoreEvidence"
+     ],
+     "path": "src/task_verb/sdk_explain.rs",
+     "purpose": "The wire shapes of `vault.explain.memory` and `vault.explain.gate` (OF-278): why a memory appeared in the…",
+     "surface": {
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FanoutAckRequest",
       "FanoutLaunchHold",
       "FanoutLaunchRequest",
@@ -47048,7 +47066,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 317
+      "fn": 324
      }
     },
     {
@@ -47157,6 +47175,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MeshPathReceiptsRequest"
+     ],
+     "path": "src/task_verb/sdk_mesh.rs",
+     "purpose": "`vault.mesh.path_receipts` (OF-535): the owner reads this vault's mesh path receipts, newest first, through…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "EraseHeldBytes",
       "EraseLfsChunk",
       "EraseSameBytesRow",
@@ -47177,17 +47209,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
       "ScratchpadRecallReply",
       "ScratchpadRecallReplyLine",
-      "ScratchpadRecallRequest"
+      "ScratchpadRecallRequest",
+      "ScratchpadSealRequest",
+      "ScratchpadWriteReply"
      ],
      "path": "src/task_verb/sdk_scratchpad.rs",
      "purpose": "The door of `self.focus.scratchpad.recall` (OF-548, ARCH-0032 `#scratchpad-marks`: \"a recall searches the…",
      "surface": {
       "enum": 1,
-      "fn": 1,
-      "struct": 3
+      "fn": 3,
+      "struct": 6
      }
     },
     {
@@ -53286,7 +53321,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 125,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53449,7 +53484,7 @@
    },
    "over_bar": 173,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3245,
+   "source_files": 3247,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61516,7 +61551,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 271
+      "fn": 278
      }
     },
     {
@@ -62533,7 +62568,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 272
+      "fn": 279
      }
     },
     {
@@ -64807,7 +64842,7 @@
      "path": "src/api/context_board/explain.rs",
      "purpose": "Explain receipts (OF-278): GET /v1/core/explain/memory/{entity} answers why a memory appeared in the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -65343,7 +65378,7 @@
      "path": "src/api/facade/graph_ask_doors.rs",
      "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -65363,7 +65398,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 45
+      "crate-vis": 48
      }
     },
     {
@@ -69509,7 +69544,7 @@
      "path": "src/livequery/subscriptions/mod.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -72857,8 +72892,10 @@
       "AnsweringAuthority",
       "ApproveScope",
       "ArchiveCampaignProgramRequest",
+      "ArtifactAskOutcome",
       "ArtifactAskRecord",
       "ArtifactAskStanding",
+      "ArtifactAskSubmit",
       "ArtifactAskUnits",
       "ArtifactCreateRequest",
       "ArtifactExportFile",
@@ -73078,6 +73115,12 @@
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectedSpend",
+      "ExplainGateNotice",
+      "ExplainGateReply",
+      "ExplainGateRequest",
+      "ExplainMemoryReply",
+      "ExplainMemoryRequest",
+      "ExplainScoreEvidence",
       "ExportDiaryRead",
       "FactKind",
       "FactSource",
@@ -73225,6 +73268,11 @@
       "MembershipConsent",
       "MemoryExport",
       "MergedFinding",
+      "MeshPathDirection",
+      "MeshPathKind",
+      "MeshPathOutcome",
+      "MeshPathReceipt",
+      "MeshPathReceiptsRequest",
       "MessagePersonReceipt",
       "MessagePersonRequest",
       "MessageReactionExternal",
@@ -73383,6 +73431,7 @@
       "QuestionPaused",
       "QuestionReadRequest",
       "QuestionRecord",
+      "QuestionRefreshRequest",
       "QueueTaskBrief",
       "QuoteAnchor",
       "QuoteReplyGroup",
@@ -73417,6 +73466,8 @@
       "RequiredParty",
       "ResolveRecordRefRequest",
       "ResolvedRole",
+      "RetrievalScoreComponent",
+      "RetrievalSignal",
       "RetryableLlmError",
       "RevealDecision",
       "RevealDescribeRequest",
@@ -73469,10 +73520,13 @@
       "ScopedReadReceipt",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
+      "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
       "ScratchpadRecallReply",
       "ScratchpadRecallReplyLine",
       "ScratchpadRecallRequest",
+      "ScratchpadSealRequest",
+      "ScratchpadWriteReply",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -73653,6 +73707,8 @@
       "TypeRef",
       "TypedDecision",
       "UndoneKeep",
+      "UnitAbstention",
+      "UnitRefusal",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
       "WakePolicySetRequest",
@@ -73706,8 +73762,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 251,
-      "struct": 630
+      "enum": 255,
+      "struct": 647
      }
     },
     {
