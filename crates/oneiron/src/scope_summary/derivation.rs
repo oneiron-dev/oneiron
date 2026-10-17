@@ -183,6 +183,50 @@ pub(super) fn register_in_txn(
     )
 }
 
+/// Takes the projection back from `summary`, a Dreamer summary the owner's
+/// revert withdraws (owner ruling 10-18): the summary it replaced is current
+/// again while that one stands, and with none standing the projection goes,
+/// so the next request derives afresh. A projection a later summary holds is
+/// left as it is. Returns the summary current after it, and the
+/// `merge.summary` header that landed `summary`, if one did.
+pub(crate) fn roll_back_summary_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    summary: EntityId,
+) -> Result<(Option<EntityId>, Option<EntityId>)> {
+    let meta = crate::entity_doc::summary_meta_in_txn(vault, txn, &summary)?;
+    let attempt = crate::attempt_queue::AttemptId::from_bytes(&meta.derivation.trigger)?;
+    let header = super::status::result_in_txn(vault, txn, attempt)?
+        .and_then(|result| result.claim)
+        .map(|claim| EntityId::from_hex(&claim))
+        .transpose()?;
+    let input = decode(&meta.derivation.request)?;
+    let request = decode_request(&input)?;
+    let key = *blake3::hash(&encode(&declaration(&request, &meta.purpose.id, None))?).as_bytes();
+    let Some(projection) = PROJECTION.get(&vault.store, txn, &key)? else {
+        return Ok((None, header));
+    };
+    if projection.current != summary.to_hex() {
+        return Ok((Some(EntityId::from_hex(&projection.current)?), header));
+    }
+    let previous = meta
+        .derivation
+        .previous
+        .as_deref()
+        .map(EntityId::from_hex)
+        .transpose()?;
+    if let Some(previous) = previous {
+        let state =
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &previous)?;
+        if !state.deleted && vault.archive_tombstone_in_txn(txn, &previous)?.is_none() {
+            register_in_txn(vault, txn, &input, previous)?;
+            return Ok((Some(previous), header));
+        }
+    }
+    PROJECTION.delete(&vault.store, txn, &key)?;
+    Ok((None, header))
+}
+
 /// Called once at the commit boundary, after all source/HEAD/document edits.
 /// An exact unchanged input is the impact gate: it queues and spends nothing.
 /// A changed scope queues an ordinary Dreamer attempt, never writes prose.

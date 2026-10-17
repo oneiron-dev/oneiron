@@ -31,6 +31,7 @@ mod booking;
 mod claim_conflict;
 mod conflict_settle;
 mod diary_read;
+mod dreamer_revert;
 mod people_verbs;
 mod skill_authoring;
 pub(crate) use booking::booking_error;

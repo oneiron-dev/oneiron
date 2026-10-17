@@ -177,7 +177,7 @@ pub(crate) fn marker_ids<'v>(value: &'v Value, key: &str) -> impl Iterator<Item 
     })
 }
 
-fn string_at<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
+pub(super) fn string_at<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
     match value {
         Value::Map(rows) => rows
             .iter()
@@ -593,29 +593,107 @@ pub(crate) fn revert_settlement_in_txn(
         return Ok(reverted);
     };
     for loser in superseded {
-        if vault.restore_superseded_claim_in_txn(txn, &kept, &loser, now)? {
-            reverted.restored.push(loser);
-        } else if let Some(copy) =
-            restore_dreamer_member_in_txn(vault, txn, kept, loser, resolved, now)?
-        {
-            reverted.copied.push((loser, copy));
-        } else {
-            reverted.left_closed.push(loser);
+        match restore_member_in_txn(vault, txn, kept, loser, resolved, &SETTLEMENT_REVERT, now)? {
+            MemberRestore::Restored => reverted.restored.push(loser),
+            MemberRestore::Copied(copy) => reverted.copied.push((loser, copy)),
+            MemberRestore::LeftClosed => reverted.left_closed.push(loser),
         }
     }
     Ok(reverted)
 }
 
+/// Where a revert's fresh Dreamer copy says it came from: its provenance
+/// surface and its birth reason.
+pub(super) struct RevertSurface {
+    pub(super) surface: &'static str,
+    pub(super) birth: &'static str,
+}
+
+const SETTLEMENT_REVERT: RevertSurface = RevertSurface {
+    surface: "conflict_settlement_revert",
+    birth: "dreamer.settlement_revert",
+};
+
+/// How a member a reverted write superseded stands after the revert.
+pub(super) enum MemberRestore {
+    /// In place, its `supersedes` link gone.
+    Restored,
+    /// As the Dreamer's fresh copy of its own MACHINE member.
+    Copied(EntityId),
+    /// As it was: a later write closed it, or another standing claim
+    /// supersedes it too.
+    LeftClosed,
+}
+
+/// Stands `loser` again after `kept`, the write the owner took back (or the
+/// member a reverted answer kept), superseded it: in place, or, for a
+/// Dreamer-born MACHINE member whose signed history never reopens, as the
+/// Dreamer's fresh copy born of it and of `reverted`. A member another
+/// standing claim supersedes too stays closed, so the revert undoes no
+/// write but its own.
+pub(super) fn restore_member_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    kept: EntityId,
+    loser: EntityId,
+    reverted: EntityId,
+    surface: &RevertSurface,
+    now: u64,
+) -> Result<MemberRestore> {
+    if superseded_elsewhere_in_txn(vault, txn, kept, loser)? {
+        return Ok(MemberRestore::LeftClosed);
+    }
+    if vault.restore_superseded_claim_in_txn(txn, &kept, &loser, now)? {
+        return Ok(MemberRestore::Restored);
+    }
+    Ok(
+        restore_dreamer_member_in_txn(vault, txn, kept, loser, reverted, surface, now)?
+            .map_or(MemberRestore::LeftClosed, MemberRestore::Copied),
+    )
+}
+
+/// Whether a standing claim other than `kept` supersedes `loser` as well.
+fn superseded_elsewhere_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    kept: EntityId,
+    loser: EntityId,
+) -> Result<bool> {
+    use crate::ports::{EdgeDirection, EdgeStoreRead};
+    let mut seen = 0usize;
+    for peer in vault.port_edge_peers(
+        txn,
+        &loser,
+        EdgeDirection::In,
+        crate::edge::EdgeKind::Supersedes,
+    )? {
+        if seen >= crate::vault::MAX_EDGE_QUERY_RESULTS {
+            return Err(Error::IndexOverflow("superseding claims"));
+        }
+        seen += 1;
+        let peer = peer?;
+        if peer != kept
+            && vault
+                .get_claim_in_txn(txn, &peer)?
+                .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Stands a Dreamer-born MACHINE member `loser` again as the Dreamer's fresh
 /// copy of it, when `kept` superseded it and it is still closed: the copy
 /// carries its predicate, value, confidence, window and axes, and is born of
-/// the member and the reverted answer. `None` for any other member.
+/// the member and the reverted write. `None` for any other member.
 fn restore_dreamer_member_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     kept: EntityId,
     loser: EntityId,
-    resolved: EntityId,
+    reverted: EntityId,
+    surface: &RevertSurface,
     now: u64,
 ) -> Result<Option<EntityId>> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -664,17 +742,14 @@ fn restore_dreamer_member_in_txn(
         WriteActor::new(dreamer, crate::edge::EdgeActorClass::System),
         body.source.unwrap_or(ClaimSource::Generated),
         crate::write_envelope::WriteProvenance::new(Value::Map(vec![
-            (
-                Value::from("surface"),
-                Value::from("conflict_settlement_revert"),
-            ),
+            (Value::from("surface"), Value::from(surface.surface)),
             (
                 Value::from("restores"),
                 Value::Binary(loser.as_bytes().to_vec()),
             ),
             (
-                Value::from("revertedAnswer"),
-                Value::Binary(resolved.as_bytes().to_vec()),
+                Value::from("reverted"),
+                Value::Binary(reverted.as_bytes().to_vec()),
             ),
         ]))?,
         if body.approval == ClaimApprovalStatus::Proposed {
@@ -687,8 +762,8 @@ fn restore_dreamer_member_in_txn(
     let birth = RowBirth::written(
         envelope.actor(),
         MadeByClass::Concluded,
-        "dreamer.settlement_revert",
-        &[loser, resolved],
+        surface.birth,
+        &[loser, reverted],
         &[],
         now,
     );
