@@ -238,11 +238,9 @@ fn rescan(
         .filter(|file| std::fs::symlink_metadata(folder.join(&file.path)).is_err())
         .map(|file| file.path.clone())
         .collect::<Vec<_>>();
-    anyhow::ensure!(
-        !notes.is_empty() || missing.is_empty(),
-        "{} reads empty; nothing was retracted. Detach it to let its notes go",
-        source.folder
-    );
+    // A folder emptied of its last file retracts that file too (ARCH-0027).
+    // Retraction archives, and a returning file restores its note, so a
+    // mount point read empty loses nothing.
     let standings = vault.imported_note_standings(
         &source.folder,
         &notes
