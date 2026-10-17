@@ -49,6 +49,26 @@ impl SkillReliabilityQuery {
         Ok(())
     }
 
+    /// The query for `type_ref` on `tree`, its parents read off that tree;
+    /// `axis` omitted reads the skill-outcome axis. `None` when `tree` does
+    /// not hold `type_ref` at its version. Pure: the caller loads the tree.
+    pub fn on_tree(
+        tree: &crate::task_type::TypeTree,
+        type_ref: TypeRef,
+        axis: Option<String>,
+    ) -> Result<Option<Self>> {
+        if !tree.contains(&type_ref) {
+            return Ok(None);
+        }
+        let query = Self {
+            type_parents: tree.ancestors(&type_ref),
+            type_ref,
+            axis: axis.unwrap_or_else(|| super::SKILL_OUTCOME_AXIS.to_owned()),
+        };
+        query.validate()?;
+        Ok(Some(query))
+    }
+
     pub(super) fn cell(&self, skill: EntityId, executor: &str) -> Result<LearningCell> {
         self.validate()?;
         validate_executor(executor)?;

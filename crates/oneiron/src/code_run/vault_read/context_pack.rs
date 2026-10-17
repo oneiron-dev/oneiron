@@ -7,7 +7,8 @@ use serde_json::Value;
 
 pub use oneiron_contracts::code_run::vault_read::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery,
-    ContextPackRetrievalBudgetControls, CoreContextPackRequest, MediaQueryKind,
+    ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackRequest,
+    MediaQueryKind,
 };
 
 /// A media query's kind is the engine's input kind of the same name.

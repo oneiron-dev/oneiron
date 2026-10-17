@@ -238,6 +238,15 @@ pub(crate) struct ContextPackReaderControls {
     pub(super) task_family: Option<String>,
 }
 
+/// A task placement: a type-tree node and the tree version it is placed in.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(example = json!({"node_id": "root", "tree_version": 1}))]
+pub(crate) struct ContextPackTypeRef {
+    node_id: String,
+    tree_version: u32,
+}
+
 /// A query's affect: valence in -1..=1, arousal and dominance in 0..=1.
 #[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -298,6 +307,15 @@ pub(crate) struct CoreContextPackRequest {
     /// Executor model@revision for pair-specific skill reliability ranking.
     #[serde(default)]
     pub(super) executor_model: Option<String>,
+    /// The task type this pack's work is placed in, a node of the vault's
+    /// type tree at that tree's version: skills rank on their measured
+    /// reliability for that placement and `axis` (OF-184).
+    #[serde(default)]
+    pub(super) type_ref: Option<ContextPackTypeRef>,
+    /// The scored axis for `type_ref`; omitted, the skill-outcome axis.
+    /// Refused without `type_ref`.
+    #[serde(default)]
+    pub(super) axis: Option<String>,
     /// Optional BM25 text query.
     #[serde(default)]
     #[schema(example = "blue hallway")]
@@ -373,6 +391,44 @@ pub(crate) struct CoreContextPackRequest {
 }
 
 impl CoreContextPackRequest {
+    /// The typed skill-reliability query `type_ref` and `axis` name, its
+    /// parents read off the vault's type tree. A placement that tree does
+    /// not hold at that version, or an axis with no placement, is refused.
+    /// Only free reads: the caller runs it before any paid call.
+    pub(super) fn skill_reliability_query(
+        &self,
+        vault: &oneiron::Vault,
+    ) -> Result<Option<oneiron::skill_reliability::SkillReliabilityQuery>, crate::error::ApiError>
+    {
+        let refused = |message: &str, field: &'static str| {
+            crate::error::ApiError::bad_request(message.to_owned(), Some(field))
+        };
+        let Some(placed) = &self.type_ref else {
+            return match self.axis {
+                Some(_) => Err(refused("axis needs a type_ref", "axis")),
+                None => Ok(None),
+            };
+        };
+        let tree = oneiron::task_type::type_tree(vault, None)
+            .map_err(|error| super::super::core_engine_error("type tree read failed", error))?;
+        let type_ref = oneiron::learning::TypeRef {
+            node_id: placed.node_id.clone(),
+            tree_version: placed.tree_version,
+        };
+        match oneiron::skill_reliability::SkillReliabilityQuery::on_tree(
+            &tree,
+            type_ref,
+            self.axis.clone(),
+        ) {
+            Ok(Some(query)) => Ok(Some(query)),
+            Ok(None) => Err(refused(
+                "type_ref is not a node of the vault's type tree at that version",
+                "type_ref",
+            )),
+            Err(error) => Err(refused(&error.to_string(), "axis")),
+        }
+    }
+
     /// Serves `limit` and each per-kind retrieval budget at the ceiling
     /// (1,000 rows), remembering whether `limit` was lowered. Run before
     /// anything reads them; running it again changes nothing.

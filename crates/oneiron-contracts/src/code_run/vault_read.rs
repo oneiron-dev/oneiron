@@ -8,7 +8,8 @@ mod types;
 
 pub use self::context_pack::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery,
-    ContextPackRetrievalBudgetControls, CoreContextPackRequest, MediaQueryKind,
+    ContextPackRetrievalBudgetControls, ContextPackTypeRef, CoreContextPackRequest,
+    MediaQueryKind,
 };
 pub use self::contract::{
     MEMORY_VERBS, VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability,
