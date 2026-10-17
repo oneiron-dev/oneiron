@@ -10,11 +10,18 @@
 //! link carries the one-tap wrong control (`vault.weave.link.wrong`). The
 //! model mints no ref, handle or action. When the reader's next period
 //! renders, the previous one settles the skill's two axes as evidence.
+//!
+//! `vault.weave.lens` renders the reader's live report the same way, on
+//! demand: the host asks the model between [`WeaveLiveLens`]'s two reads, and
+//! nothing is saved, so a live render settles no axis.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReport};
+use super::{
+    PointRead, ScopedRead, StoredWeaveDigest, WeaveDigestReader, WeaveItem, WeaveReport,
+    WeaveSectionView,
+};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
@@ -35,6 +42,8 @@ pub const WEAVE_LENS_READ_RATE_AXIS: &str = "read_rate";
 pub const WEAVE_LENS_CORRECTIONS_AXIS: &str = "corrections";
 /// The verb a link's wrong control calls.
 const WRONG_LINK_VERB: &str = "vault.weave.link.wrong";
+/// The skill file whose body is the instruction.
+const SKILL_FILE: &str = "SKILL.md";
 /// The most sections a plan holds, and summary lines per section.
 const MAX_PLAN_SECTIONS: usize = 64;
 const MAX_SUMMARY_LINES: usize = 16;
@@ -161,7 +170,18 @@ pub(crate) fn weave_lens_model_input(vault: &Vault, stored: &StoredWeaveDigest) 
         .memory(id, class)
         .weave_sections(&stored.report.value)
         .map_err(|error| invalid(&error.to_string()))?;
-    let sections = sections
+    serde_json::to_string_pretty(&serde_json::json!({
+        "reader": reader,
+        "period": stored.scheduled_for,
+        "rendered_at": stored.rendered_at,
+        "sections": keyed_sections(&sections)?,
+    }))
+    .map_err(|_| invalid("the input is not JSON"))
+}
+
+/// The served sections with each item under its key.
+fn keyed_sections(sections: &[WeaveSectionView]) -> Result<Vec<serde_json::Value>> {
+    sections
         .iter()
         .enumerate()
         .map(|(s, section)| {
@@ -181,14 +201,77 @@ pub(crate) fn weave_lens_model_input(vault: &Vault, stored: &StoredWeaveDigest) 
                 .collect::<Result<Vec<_>>>()?;
             Ok(serde_json::json!({ "kind": section.kind, "items": items }))
         })
-        .collect::<Result<Vec<_>>>()?;
-    serde_json::to_string_pretty(&serde_json::json!({
-        "reader": reader,
-        "period": stored.scheduled_for,
-        "rendered_at": stored.rendered_at,
-        "sections": sections,
-    }))
-    .map_err(|_| invalid("the input is not JSON"))
+        .collect()
+}
+
+/// A live render of the bound reader's report (`vault.weave.lens`), read
+/// before its generate step: the report the model is shown, keyed as its
+/// input, and the skill revision whose SKILL.md is the instruction. Closing
+/// it after the step re-reads the report; nothing is saved.
+#[derive(Debug, Clone)]
+pub struct WeaveLiveLens {
+    pub(super) report: WeaveReport,
+    pub(super) skill_ref: String,
+    pub(super) skill_version: String,
+    /// The skill's SKILL.md: the step's instruction.
+    pub instruction: String,
+    /// The report's items under their keys: the step's input.
+    pub input: String,
+}
+
+impl WeaveLiveLens {
+    /// `report`, read for a reader in role `reader`, keyed as the step's
+    /// input. `None` when the weave-report skill does not load.
+    pub(super) fn prepare(
+        vault: &Vault,
+        reader: &str,
+        report: WeaveReport,
+        sections: &[WeaveSectionView],
+    ) -> Result<Option<Self>> {
+        let Some((skill, skill_version, instruction)) = weave_report_instruction(vault)? else {
+            return Ok(None);
+        };
+        // A live report has no period; its time is the step's own.
+        let input = serde_json::to_string_pretty(&serde_json::json!({
+            "reader": reader,
+            "period": serde_json::Value::Null,
+            "rendered_at": vault.store.clock.now_recorded_at(),
+            "sections": keyed_sections(sections)?,
+        }))
+        .map_err(|_| invalid("the input is not JSON"))?;
+        Ok(Some(Self {
+            report,
+            skill_ref: skill.to_hex(),
+            skill_version,
+            instruction,
+            input,
+        }))
+    }
+}
+
+/// The weave-report skill as a live render loads it. No attempt stamps the
+/// load, so the read runs the attempt load's own checks: a live shared skill,
+/// active and approved, read from its exact stored package. `None` for a
+/// retired, unapproved or deleted skill, or one with no SKILL.md.
+fn weave_report_instruction(vault: &Vault) -> Result<Option<(EntityId, String, String)>> {
+    let skill = weave_report_skill_id()?;
+    let txn = vault.store.env.read_txn()?;
+    if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, &skill)?.is_live() {
+        return Ok(None);
+    }
+    let record = match vault.read_skill_record_in_txn(&txn, &skill) {
+        Ok(record) => record,
+        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if crate::skill::resident_of(&record)?.is_some() || !crate::skill::skill_loadable(&record) {
+        return Ok(None);
+    }
+    let instruction = vault
+        .runtime_skill_package_in_txn(&txn, &skill, &record)?
+        .and_then(|package| package.files.into_iter().find(|file| file.path == SKILL_FILE))
+        .and_then(|file| String::from_utf8(file.content).ok());
+    Ok(instruction.map(|instruction| (skill, record.version, instruction)))
 }
 
 /// The JSON schema the generate step's answer must meet.

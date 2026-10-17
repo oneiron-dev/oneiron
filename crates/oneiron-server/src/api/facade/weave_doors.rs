@@ -1,9 +1,11 @@
-//! The weave lens's human doors (OF-499): the one-tap wrong control a person
-//! uses on a link in their own report. The generated HTTP facade handler and
-//! the MCP dispatcher both call these through `host_doors`.
+//! The weave lens's host doors (OF-499): the one-tap wrong control a person
+//! uses on a link in their own report, and the live report rendered into its
+//! lens on this server's model. The generated HTTP facade handler and the
+//! MCP dispatcher both call these through `host_doors`.
 use std::sync::Arc;
 
-use oneiron::claim::{WeaveLinkCorrectionView, WeaveWrongLinkRequest};
+use oneiron::claim::{WeaveLinkCorrectionView, WeaveReportRequest, WeaveWrongLinkRequest};
+use oneiron::lens::GeneratedLens;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
 use super::host_doors::internal;
@@ -38,4 +40,34 @@ pub(crate) async fn vault_weave_link_wrong(
     })
     .await
     .map_err(|_| internal(VERB))?
+}
+
+/// `vault.weave.lens`: the credential's own live weave report, rendered
+/// through the weave-report skill into its lens on this server's Dreamer
+/// narrative route. A person reads the person lens, an agent its own; the
+/// owner lens is `POST /v1/owner/weave/lens`. The step spends on the
+/// caller's own line.
+pub(crate) async fn vault_weave_lens(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WeaveReportRequest,
+) -> MemoryResult<GeneratedLens> {
+    const VERB: &str = "vault.weave.lens";
+    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{VERB} renders the credential's own lens"),
+            &["Present a person's or an agent's own credential."],
+        )
+    })?;
+    crate::ai_host::render_live_weave_lens(
+        server,
+        crate::ai_host::WeaveLensCaller::Credential {
+            auth: auth.clone(),
+            actor,
+            class,
+        },
+        input,
+    )
+    .await
 }

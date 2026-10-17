@@ -151,6 +151,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestRequest>(),
             ),
             (
+                "vault.weave.lens",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveReportRequest>(),
+            ),
+            (
                 "vault.weave.link.wrong",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
                 ),
@@ -1138,6 +1142,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.digest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.lens" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -2191,6 +2202,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.digest" => {
             let _input: crate::claim::WeaveDigestRequest = decode(value.clone())?;
         }
+        "vault.weave.lens" => {
+            let _input: crate::claim::WeaveReportRequest = decode(value.clone())?;
+        }
         "vault.weave.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
         }
@@ -2709,6 +2723,7 @@ pub fn invoke(
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
         "vault.weave.report" => encode(vault_weave_report(memory, decode(value)?)?),
         "vault.weave.digest" => encode(vault_weave_digest(memory, decode(value)?)?),
+        "vault.weave.lens" => encode(vault_weave_lens(memory, decode(value)?)?),
         "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
@@ -3249,6 +3264,12 @@ pub fn vault_weave_digest(
     input: crate::claim::WeaveDigestRequest,
 ) -> MemoryResult<Option<crate::claim::WeaveDigestView>> {
     memory.weave_digest(None, &input)
+}
+pub fn vault_weave_lens(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveReportRequest,
+) -> MemoryResult<crate::lens::GeneratedLens> {
+    crate::task_verb::sdk::host_only(memory, "vault.weave.lens", &input)
 }
 pub fn vault_weave_link_wrong(
     memory: &Memory<'_>,

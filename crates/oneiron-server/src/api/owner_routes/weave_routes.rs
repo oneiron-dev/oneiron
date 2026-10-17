@@ -1,7 +1,8 @@
 //! `/v1/owner/weave`: the owner's doors to the weave lens (OF-499). The
 //! owner sets each reader's digest schedule, reads the owner lens live,
-//! opens its own digest, which renders its due period first, and labels a
-//! link in the owner lens as wrong. A person's or agent's report and digests
+//! renders it through the weave-report skill on demand, opens its own
+//! digest, which renders its due period first, and labels a link in the
+//! owner lens as wrong. A person's or agent's report and digests
 //! are its own, through the `vault.weave.*` verbs; owning the vault reads
 //! none of them.
 
@@ -17,6 +18,7 @@ use oneiron::claim::{
     WeaveDigestRequest, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
     WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveWrongLinkRequest,
 };
+use oneiron::lens::GeneratedLens;
 use serde::Serialize;
 
 use super::{OwnerReply, blocking, owner};
@@ -30,6 +32,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/weave/schedules", get(schedules).put(set_schedule))
         .route("/weave/schedules/clear", post(clear_schedule))
         .route("/weave/report", post(report))
+        .route("/weave/lens", post(lens))
         .route("/weave/digest", get(digest))
         .route("/weave/link/wrong", post(wrong_link))
 }
@@ -121,6 +124,25 @@ async fn report(
     })
     .await?;
     Ok(Json(view))
+}
+
+/// `POST /v1/owner/weave/lens`: the owner lens, live, rendered through the
+/// weave-report skill on this server's Dreamer narrative route.
+async fn lens(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<WeaveReportRequest>, JsonRejection>,
+) -> OwnerReply<GeneratedLens> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let caller = crate::ai_host::WeaveLensCaller::Owner {
+        owner,
+        locality: auth.locality(),
+    };
+    let lens = crate::ai_host::render_live_weave_lens(&server, caller, request)
+        .await
+        .map_err(|error| super::owner_error(memory_refused(error)))?;
+    Ok(Json(lens))
 }
 
 /// `GET /v1/owner/weave/digest[?scheduled_for=]`: the owner's digest. The

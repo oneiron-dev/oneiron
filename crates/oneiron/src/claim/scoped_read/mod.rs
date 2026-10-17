@@ -42,7 +42,7 @@ mod weave_correction;
 mod weave_lens;
 pub use weave_lens::{
     WEAVE_LENS_CORRECTIONS_AXIS, WEAVE_LENS_READ_RATE_AXIS, WEAVE_REPORT_SKILL_NAME, WeaveLensPlan,
-    WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender, weave_report_skill_id,
+    WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRender, WeaveLiveLens, weave_report_skill_id,
 };
 pub(crate) use weave_lens::{
     weave_lens_attempt_input, weave_lens_attempt_period, weave_lens_model_input,

@@ -332,6 +332,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_weave_lens(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.lens", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_link_wrong(
         &self,
         input: serde_json::Value,

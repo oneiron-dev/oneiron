@@ -109,8 +109,19 @@ pub(super) fn bind_reasoning(
     backend: &dyn LlmBackend,
     request: &mut LlmRequest,
 ) -> Result<()> {
+    let takes_reasoning = backend.supports(&request.model, LlmCapability::Reasoning);
+    bind_reasoning_for(vault, takes_reasoning, request)
+}
+
+/// [`bind_reasoning`] for a host that calls its route itself and says
+/// whether the model takes reasoning controls.
+pub(super) fn bind_reasoning_for(
+    vault: &Vault,
+    takes_reasoning: bool,
+    request: &mut LlmRequest,
+) -> Result<()> {
     request.params.remove(REASONING_BUDGET_PARAM);
-    if !backend.supports(&request.model, LlmCapability::Reasoning) {
+    if !takes_reasoning {
         request.envelope.seat_effort = Some(ReasoningEffort::None);
         return Ok(());
     }
