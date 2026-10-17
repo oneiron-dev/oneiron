@@ -57,6 +57,23 @@ impl Memory<'_> {
         })
     }
 
+    /// A reviewer's preserved dissent on `target` (OF-352): an opinion like
+    /// [`Self::author_take`], but of the explicit-only dissent kind, so an
+    /// explicit read finds it and default context never carries it.
+    pub fn author_dissent(
+        &self,
+        target: TakeTarget,
+        markdown: impl Into<String>,
+    ) -> MemoryResult<EntityRefReceipt> {
+        self.author_note(&NoteWriteEnvelope {
+            kind: NoteKind::parse(crate::note::DISSENT_NOTE_KIND).expect("shipped kind"),
+            scope: NoteScope::About(target),
+            markdown: markdown.into(),
+            source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
+            mask: None,
+        })
+    }
+
     /// Writes an attributed NOTE through the existing NOTE transaction door.
     /// Diary requests are actor-private and owner-only to write. A scope/kind
     /// mismatch or a foreign owner is refused before any row is staged.
@@ -66,6 +83,16 @@ impl Memory<'_> {
                 (id, EdgeKind::About, false)
             }
             (NoteKind::OpinionTake, NoteScope::About(TakeTarget::Claim(id))) => {
+                (id, EdgeKind::ClaimOf, true)
+            }
+            (NoteKind::Registered(kind), NoteScope::About(TakeTarget::Subject(id)))
+                if kind == crate::note::DISSENT_NOTE_KIND =>
+            {
+                (id, EdgeKind::About, false)
+            }
+            (NoteKind::Registered(kind), NoteScope::About(TakeTarget::Claim(id)))
+                if kind == crate::note::DISSENT_NOTE_KIND =>
+            {
                 (id, EdgeKind::ClaimOf, true)
             }
             (NoteKind::Diary, NoteScope::ActorPrivate { owner_ref }) if owner_ref == self.actor => {

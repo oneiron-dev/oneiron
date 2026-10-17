@@ -25,7 +25,14 @@ pub enum ContextDefault {
     OwnerOnly,
     RelationshipScoped,
     VaultReadable,
+    /// Out of default context, not private: ordinary retrieval never returns
+    /// it, and an explicit read admits it to every reader its policy admits.
+    ExplicitOnly,
 }
+
+/// A reviewer's preserved dissent (OF-352): readable on an explicit read,
+/// kept out of default context and out of extraction.
+pub const DISSENT_NOTE_KIND: &str = "opinion/dissent";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionDefault {
@@ -98,6 +105,13 @@ const SHIPPED: &[(
         "opinion/take",
         ExtractionDefault::Allowed,
         ContextDefault::RelationshipScoped,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        DISSENT_NOTE_KIND,
+        ExtractionDefault::Disabled,
+        ContextDefault::ExplicitOnly,
         RetentionDefault::Durable,
         None,
     ),
