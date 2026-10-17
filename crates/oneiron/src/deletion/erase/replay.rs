@@ -32,6 +32,8 @@ impl Vault {
     ///   finds nothing, so re-application (every-boot forward
     ///   re-materialization, repeated delta delivery) is a receipt-free
     ///   no-op.
+    /// * A refusal a hold made is logged once its writer has ended, committed
+    ///   or dropped, before this returns.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn apply_replayed_tombstone(
         &self,
@@ -42,9 +44,14 @@ impl Vault {
         // first. A re-application is a receipt-free no-op, so an install that
         // cannot load it still replays; the in-txn signer refuses if it must sign.
         let _ = self.prepare_install_signing();
-        let mut wtxn = self.store.env.write_txn()?;
-        let (outcome, _changed) = self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
-        wtxn.commit()?;
+        let applied = self.store.env.write_txn().and_then(|mut wtxn| {
+            let (outcome, _changed) =
+                self.apply_replayed_tombstone_in_txn(&mut wtxn, id, raw_value)?;
+            wtxn.commit()?;
+            Ok(outcome)
+        });
+        self.store.flush_legal_hold_refusals_settled();
+        let outcome = applied?;
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;

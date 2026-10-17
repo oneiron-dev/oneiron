@@ -573,34 +573,18 @@ impl Vault {
         Ok(erased)
     }
 
-    /// Writes the refusals queued since the last flush to the hold logs: a
-    /// refusing transaction rolls back, so its refusal lands here. A refused
-    /// privacy erasure keeps its record under a use limit where Oneiron
-    /// hosts the bytes (C6). Returns how many were written.
+    /// Writes the refusals still queued to the hold logs. Each refusing door
+    /// logs its own before it returns, so this writes what a failed log write
+    /// left. A refused privacy erasure keeps its record under a use limit
+    /// where Oneiron hosts the bytes (C6). Returns how many were written.
     pub fn flush_legal_hold_refusals(&self) -> Result<u64> {
-        let notes = self.store.legal_hold_refusals.take();
-        if notes.is_empty() {
-            return Ok(0);
-        }
-        let hosted = self.legal_hold_hosted();
-        let written = self.with_write_txn_grouped(|txn| {
-            hold_store::flush_refusals_in_txn(&self.store, txn, &notes, hosted)
-        });
-        if written.is_err() {
-            self.store.legal_hold_refusals.restore(notes);
-        }
-        written
+        self.store.flush_legal_hold_refusals_now()
     }
 
     /// After a failed delete: its refusal, if a hold refused it, reaches the
     /// log. Never masks the delete's own error.
     pub(crate) fn flush_legal_hold_refusals_after_failure(&self) {
-        if let Err(error) = self.flush_legal_hold_refusals() {
-            tracing::warn!(
-                error = %error,
-                "legal hold refusals kept for the next flush"
-            );
-        }
+        self.store.flush_legal_hold_refusals_settled();
     }
 
     /// Drops hold-log rows and released holds 24 calendar months past the

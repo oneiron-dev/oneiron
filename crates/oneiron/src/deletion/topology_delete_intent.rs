@@ -312,9 +312,10 @@ pub(crate) fn complete_replayed_topology_delete_in_txn(
 /// Prepared with no published/propagation witness can be withdrawn. A
 /// persisted matching tombstone (or committed `pt:` intent) is completed under
 /// the caller's LMDB writer using the same reason-aware replay eraser; a
-/// refused completion keeps its reservation for the ordinary replay. No
-/// timeout or guessed-owner cleanup is allowed; ambiguous evidence fails
-/// open rather than releasing an interlock a peer might already obey.
+/// refused completion keeps its reservation for the ordinary replay, and its
+/// hold refusal is logged once that writer has ended. No timeout or
+/// guessed-owner cleanup is allowed; ambiguous evidence fails open rather
+/// than releasing an interlock a peer might already obey.
 pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> Result<()> {
     let mut intents = Vec::new();
     {
@@ -387,8 +388,8 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
         // or pending-tombstone replay completes it under its own fail-closed
         // handling. Failing the open would wedge the vault instead.
         let mut wtxn = vault.store.env.write_txn()?;
-        match vault.apply_replayed_tombstone_in_txn(&mut wtxn, &entity, &raw) {
-            Ok(_) => wtxn.commit()?,
+        let completed = match vault.apply_replayed_tombstone_in_txn(&mut wtxn, &entity, &raw) {
+            Ok(_) => wtxn.commit(),
             Err(error) => {
                 drop(wtxn);
                 tracing::warn!(
@@ -396,8 +397,12 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
                     kind = ?error.kind(),
                     "topology delete completion deferred to replay"
                 );
+                Ok(())
             }
-        }
+        };
+        // A hold's refusal is logged now this item's writer has ended.
+        vault.store.flush_legal_hold_refusals_settled();
+        completed?;
     }
     Ok(())
 }
