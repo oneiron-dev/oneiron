@@ -281,6 +281,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.members.invitation_slip",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::InvitationSlipRequest,
+                >(),
+            ),
+            (
                 "vault.members.change",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedMemberRoleRequest,
@@ -1779,6 +1785,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.members.invitation_slip" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.change" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3147,6 +3160,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.members.add" => {
             let _input: crate::task_verb::sdk::SharedMemberAddRequest = decode(value.clone())?;
         }
+        "vault.members.invitation_slip" => {
+            let _input: crate::task_verb::sdk::InvitationSlipRequest = decode(value.clone())?;
+        }
         "vault.members.change" => {
             let _input: crate::task_verb::sdk::SharedMemberRoleRequest = decode(value.clone())?;
         }
@@ -3880,6 +3896,9 @@ pub fn invoke(
         "vault.shared.outcomes" => encode(vault_shared_outcomes(memory, decode(value)?)?),
         "vault.shared.deletion" => encode(vault_shared_deletion(memory, decode(value)?)?),
         "vault.members.add" => encode(vault_members_add(memory, decode(value)?)?),
+        "vault.members.invitation_slip" => {
+            encode(vault_members_invitation_slip(memory, decode(value)?)?)
+        }
         "vault.members.change" => encode(vault_members_change(memory, decode(value)?)?),
         "vault.members.remove" => encode(vault_members_remove(memory, decode(value)?)?),
         "vault.members.leave" => encode(vault_members_leave(memory, decode(value)?)?),
@@ -4776,6 +4795,12 @@ pub fn vault_members_add(
         None,
         input,
     )
+}
+pub fn vault_members_invitation_slip(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::InvitationSlipRequest,
+) -> MemoryResult<crate::task_verb::sdk::InvitationSlip> {
+    crate::task_verb::sdk::mint_invitation_slip_embedded(memory, input)
 }
 pub fn vault_members_change(
     memory: &Memory<'_>,

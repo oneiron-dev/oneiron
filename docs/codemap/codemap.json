@@ -2379,7 +2379,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -4624,7 +4624,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "enum": 1
      }
     },
@@ -4635,7 +4635,17 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/admit.rs",
+     "purpose": "Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -10890,6 +10900,7 @@
       "ReaderRoute",
       "ReaderRunEnd",
       "ReaderSpawnReceipt",
+      "ReaderSpend",
       "RunDeadline",
       "SelfReaderReportCall",
       "SelfReaderSpawnCall",
@@ -10911,8 +10922,8 @@
      "surface": {
       "const": 6,
       "crate-vis": 12,
-      "enum": 7,
-      "fn": 16,
+      "enum": 8,
+      "fn": 18,
       "struct": 21,
       "trait": 1
      }
@@ -20356,6 +20367,7 @@
       "SlideAbstention",
       "SlideJudgment",
       "SlideLocation",
+      "SlideRenderer",
       "SlideReviewAnchor",
       "SlideReviewBase",
       "SlideReviewError",
@@ -20371,10 +20383,11 @@
      "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 5,
-      "struct": 11
+      "struct": 11,
+      "trait": 1
      }
     },
     {
@@ -20527,7 +20540,7 @@
      "path": "src/edit_settle/settle.rs",
      "purpose": "Settle Vault transactions",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -22009,15 +22022,16 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DeleteVaultPlan",
+      "RemovalExportCopy",
       "RemoveOwnerPlan",
       "SharedActExecution",
       "SharedActExecutionReceipt",
@@ -22031,12 +22045,12 @@
      "path": "src/federation/shared_act/mod.rs",
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "const": 2,
+      "crate-vis": 4,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "re-export": 2,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -28816,7 +28830,7 @@
      "path": "src/memory/entity_erase.rs",
      "purpose": "Owner erase that can also take every record in this vault holding the same bytes",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 2,
       "struct": 2
@@ -29334,7 +29348,7 @@
      "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
       "crate-vis": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -29846,7 +29860,7 @@
      "path": "src/memory/witness/stream/admission.rs",
      "purpose": "Begin, append and flush",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -30114,7 +30128,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 3,
       "fn": 4,
       "re-export": 9,
@@ -30236,7 +30250,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -30378,6 +30392,7 @@
      "path": "src/note/kinds.rs",
      "purpose": "Vault-resident PACK descriptor records; the shipped kinds are data, not variants",
      "surface": {
+      "const": 1,
       "crate-vis": 5,
       "enum": 3,
       "fn": 4,
@@ -45540,7 +45555,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 267
+      "fn": 268
      }
     },
     {
@@ -45717,6 +45732,7 @@
      "path": "src/task_verb/sdk_shared.rs",
      "purpose": "The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset…",
      "surface": {
+      "crate-vis": 1,
       "fn": 13,
       "struct": 12
      }
@@ -45727,6 +45743,7 @@
      "notable": [
       "GuestSlipMintRequest",
       "GuestSlipMinted",
+      "InvitationSlipRequest",
       "SharedEraseAskCloseRequest",
       "SharedEraseAskRequest",
       "SharedInvitationRequest",
@@ -45736,8 +45753,8 @@
      "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
-      "struct": 6
+      "fn": 15,
+      "struct": 7
      }
     },
     {
@@ -50280,7 +50297,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 107,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51701,9 +51718,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 144,
+   "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3125,
+   "source_files": 3126,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59575,7 +59592,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 222
+      "fn": 223
      }
     },
     {
@@ -60591,7 +60608,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 223
+      "fn": 224
      }
     },
     {
@@ -63322,13 +63339,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -67681,7 +67698,7 @@
      "path": "src/mcp/quickjs_provider.rs",
      "purpose": "Production MCP provider over the hash-pinned engine QuickJS component",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7,
       "struct": 1
      }
@@ -68986,7 +69003,7 @@
      "path": "src/server/reader_runner.rs",
      "purpose": "The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -69103,6 +69120,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/slide_render.rs",
+     "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -70082,6 +70109,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "slide_render": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's review renderer (ARCH-0077 \"Review images\"): LibreOffice Impress headless exports the deck to…"
+    },
     "test_credentials": {
      "files": 1,
      "impl_vault": false,
@@ -70134,7 +70168,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 552,
+   "source_files": 553,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70520,6 +70554,7 @@
       "InspectionResolved",
       "InspectionState",
       "InvitationSlip",
+      "InvitationSlipRequest",
       "IssueCategory",
       "JoinCause",
       "JoinDecision",
@@ -70942,7 +70977,7 @@
      "purpose": "—",
      "surface": {
       "enum": 179,
-      "struct": 455
+      "struct": 456
      }
     },
     {
