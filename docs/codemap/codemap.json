@@ -50825,6 +50825,27 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "OpenedBundleSection",
+      "OpenedKeyPads",
+      "OpenedVaultBundle",
+      "SealedBundleGeneration",
+      "SealedBundleSection",
+      "SealedKeyPads",
+      "SealedVaultBundle",
+      "SealedVaultUpload"
+     ],
+     "path": "src/world_keys/bundle.rs",
+     "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
+     "surface": {
+      "const": 3,
+      "fn": 33,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
       "OpenedSealedContent",
       "SealedContentBinding",
       "SealedContentId",
@@ -50911,7 +50932,7 @@
      "surface": {
       "crate-vis": 11,
       "fn": 3,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 2
      }
     },
@@ -50925,7 +50946,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world delete that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -53479,7 +53500,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53493,9 +53514,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 173,
+   "over_bar": 174,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3248,
+   "source_files": 3249,
    "test_files": 902
   },
   "oneiron-android": {
