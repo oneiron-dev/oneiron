@@ -14704,7 +14704,7 @@
      "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -30286,10 +30286,10 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 26,
+      "crate-vis": 28,
       "enum": 3,
       "fn": 4,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2
      }
     },
@@ -30560,6 +30560,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "NoteLifecycleStatus",
+      "NoteLifecycleView",
+      "NoteRefRequest",
+      "NoteSeal"
+     ],
+     "path": "src/note/lifecycle.rs",
+     "purpose": "The one NOTE seal (ARCH-0032: `Active → Sealed → Archived → Tombstoned`)",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/note/live_body.rs",
      "purpose": "Live NOTE read projection without rewriting the immutable birth record",
@@ -30722,6 +30740,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/write_gate.rs",
+     "purpose": "Stage 1 of the NOTE write gate (ARCH-0032 #write-gate): the cheap checks a NOTE write meets before it lands…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -45841,7 +45869,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 278
+      "fn": 280
      }
     },
     {
@@ -51456,7 +51484,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 38,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -52109,7 +52137,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3152,
+   "source_files": 3154,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60000,7 +60028,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 233
+      "fn": 235
      }
     },
     {
@@ -61016,7 +61044,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 234
+      "fn": 236
      }
     },
     {
@@ -71175,6 +71203,10 @@
       "NoteAnchor",
       "NoteEdit",
       "NoteEditOutcome",
+      "NoteLifecycleStatus",
+      "NoteLifecycleView",
+      "NoteRefRequest",
+      "NoteSeal",
       "NoteVersion",
       "NotificationKind",
       "NotificationMark",
@@ -71532,8 +71564,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 191,
-      "struct": 483
+      "enum": 192,
+      "struct": 486
      }
     },
     {
