@@ -9,13 +9,17 @@
 //! escalated role, `full-access` launches it. The threshold only marks the
 //! exceptional-width check: it rides a held launch's pause row, and on a
 //! launch that went out it is a non-blocking question row. A held launch
-//! waits for the owner; it has no expiry.
+//! waits for the owner; it has no expiry. A held ask on a project's TASK
+//! also waits for that project's live lead and board (ARCH-0067: the first
+//! answer lands); the project is bound at admission, its holders read again
+//! at each ruling.
 //!
 //! The owner rules on a hold by the digest they saw, with no replacement
 //! payload: an approval launches the frozen cut, records the ruling and any
 //! remembered standing row, and re-leases and completes the parked planning
 //! attempt, all in one transaction; a denial stays durable and visible. A
-//! width check is acknowledged, never denied, because nothing was held.
+//! lead or board holder approves once or denies; only the owner remembers.
+//! A width check is acknowledged, never denied, because nothing was held.
 
 use std::collections::BTreeMap;
 
@@ -29,6 +33,7 @@ use super::{
     TaskAskHandle, TaskAskHoldReason, TaskAskLaunchHold, TaskAskReceipt, TaskAskSpec,
 };
 use crate::Vault;
+use crate::WriteActor;
 use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptResumePoint,
@@ -46,9 +51,10 @@ use crate::fanout_auto::{
     FanoutAskContext, FanoutAskTrigger, FanoutDecisions, LearningFanoutAutoDecider,
 };
 use crate::gate::fanout_policy::ResolvedFanoutPolicy;
+use crate::llm::decision::{AskAct, AskRole, AskTo, HolderKind, RoleHolder, RoleRank};
 use crate::memory::{
-    MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn,
-    verify_actor_binding_in_txn,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
+    actor_is_vault_owner_in_txn, verify_actor_binding_in_txn,
 };
 use crate::outbound_chokepoint::{
     FanoutAdmission, FanoutApprovalChoice, FanoutApprovalError, FanoutApprovalRow,
@@ -98,6 +104,9 @@ pub struct FanoutLaunchReceipt {
     pub choice_receipt_ref: Option<String>,
     /// The TASKs it launched; none while it is held.
     pub task_refs: Vec<EntityId>,
+    /// The project whose live lead and board may rule on the hold beside the
+    /// owner; `None` leaves it to the owner.
+    pub approval_project: Option<EntityId>,
 }
 
 /// An answer to the width check of a fan-out that already went out. The
@@ -241,6 +250,9 @@ pub(super) struct StoredLaunch {
     actor: EntityId,
     /// The actor's [`EdgeActorClass`] byte: the launch runs as this actor.
     actor_class: u8,
+    /// The project whose live lead and board may rule on this launch beside
+    /// the owner, bound at admission; `None` leaves it to the owner.
+    approval_project: Option<EntityId>,
     payload: LaunchPayload,
     plan: FanoutPlan,
     estimate: FanoutEstimate,
@@ -298,6 +310,7 @@ impl StoredLaunch {
             check_row_ref: self.check_row.as_ref().map(|row| row.row_ref.clone()),
             choice_receipt_ref: self.choice_receipt_ref.clone(),
             task_refs: self.task_refs.clone(),
+            approval_project: self.approval_project,
         }
     }
 }
@@ -581,6 +594,7 @@ pub(super) fn admit_wave_launch_in(
         launch_ref,
         actor: input.actor,
         actor_class: input.actor_class as u8,
+        approval_project: None,
         payload,
         plan: plan.clone(),
         estimate,
@@ -664,14 +678,16 @@ fn record_hold_in(
     Ok(())
 }
 
-/// ASK-3: whether an ask waits for the owner's launch approval. Only the
-/// `manual` approval mode holds an ask, and an ask whose every recipient is
-/// a principal who would answer that approval, a live vault owner, goes
-/// straight out: holding it would ask the approver to approve asking them.
+/// ASK-3: whether an ask waits for its launch approval. Only the `manual`
+/// approval mode holds an ask, and an ask whose every recipient is a
+/// principal who would answer that approval, a live vault owner or a live
+/// holder of `approval_project`'s lead or board, goes straight out: holding
+/// it would ask the approver to approve asking them.
 pub(super) fn ask_launch_needs_approval(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     recipients: &[EntityId],
+    approval_project: Option<EntityId>,
 ) -> MemoryResult<bool> {
     if policy_in(vault, txn, &ConsultFanOutScope::default())?
         .policy
@@ -680,10 +696,12 @@ pub(super) fn ask_launch_needs_approval(
     {
         return Ok(false);
     }
+    let holders = launch_role_holders_in(vault, txn, approval_project)?;
     for recipient in recipients {
-        let approver = vault.get_entity_type_in_txn(txn, recipient)?
+        let approver = (vault.get_entity_type_in_txn(txn, recipient)?
             == Some(crate::registry::ENTITY_TYPE_PERSON)
-            && actor_is_vault_owner_in_txn(vault, txn, *recipient, EdgeActorClass::Human)?;
+            && actor_is_vault_owner_in_txn(vault, txn, *recipient, EdgeActorClass::Human)?)
+            || holders.iter().any(|holder| holder.actor == *recipient);
         if !approver {
             return Ok(true);
         }
@@ -691,9 +709,90 @@ pub(super) fn ask_launch_needs_approval(
     Ok(false)
 }
 
+/// The live holders of a launch's approval role beside the owner: the
+/// current lead of `project`, then that project's own board, as the decision
+/// ladder resolves them now. A parent's board and the owners are never
+/// collected here; no project holds no one.
+fn launch_role_holders_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+) -> MemoryResult<Vec<RoleHolder>> {
+    let Some(project) = project else {
+        return Ok(Vec::new());
+    };
+    let Some((_, effective)) = vault.effective_project_in_txn(txn, project)? else {
+        return Ok(Vec::new());
+    };
+    let to = AskTo {
+        role: AskRole::Responsible {
+            actor: EntityId::from_hex(&effective.leader)?,
+            project: Some(project),
+        },
+        ceiling: RoleRank::Board,
+        act: AskAct::Judgment,
+    };
+    let board = AskRole::Board { project };
+    let mut after: Option<AskRole> = None;
+    let mut holders = Vec::new();
+    while let Some(resolved) = vault.next_ask_role_in_txn(txn, &to, after.as_ref())? {
+        if resolved.role == to.role {
+            holders.extend(resolved.holders);
+            after = Some(resolved.role);
+        } else {
+            // The project's own board ends the walk; a parent's board is
+            // past it.
+            if resolved.role == board {
+                holders.extend(resolved.holders);
+            }
+            break;
+        }
+    }
+    Ok(holders)
+}
+
+/// Whether `actor`, as `class`, is a live holder of the launch role bound to
+/// `project`: a person as a human, a bound agent as an agent.
+fn launch_role_is_held_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    actor: EntityId,
+    class: EdgeActorClass,
+) -> MemoryResult<bool> {
+    Ok(launch_role_holders_in(vault, txn, project)?
+        .iter()
+        .any(|holder| {
+            holder.actor == actor
+                && matches!(
+                    (class, holder.kind),
+                    (EdgeActorClass::Human, HolderKind::Person)
+                        | (EdgeActorClass::Agent, HolderKind::Agent)
+                )
+        }))
+}
+
+/// The CALLS-row policy on a holder's launch ruling: a lead or board holder
+/// approves once or denies; only the owner remembers a standing cap.
+fn require_holder_launch_choice(
+    choice: ConsultFanOutChoice,
+    remembered_cap: Option<u64>,
+) -> MemoryResult<()> {
+    if choice == ConsultFanOutChoice::ApproveAndRemember || remembered_cap.is_some() {
+        return Err(consult_refusal(
+            MEMORY_CODE_FORBIDDEN,
+            "only the vault owner may remember a launch approval",
+            "Approve once or deny; ask the owner to remember a cap.",
+        ));
+    }
+    Ok(())
+}
+
 /// One ask the approval mode holds, as its admission froze it.
 pub(super) struct AskHold<'a> {
     pub(super) group_ref: EntityId,
+    /// The project whose lead and board may release it beside the owner.
+    pub(super) approval_project: Option<EntityId>,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
     pub(super) requested: &'a TaskAskSpec,
@@ -735,6 +834,7 @@ pub(super) fn hold_ask_in(
         launch_ref: hold.group_ref,
         actor: hold.actor,
         actor_class: hold.actor_class as u8,
+        approval_project: hold.approval_project,
         payload,
         estimate: fanout_estimate(&plan)?,
         plan: plan.clone(),
@@ -1022,6 +1122,7 @@ fn record_dispatched_check_in(
                 launch_ref: check.launch_ref,
                 actor: check.actor,
                 actor_class: check.actor_class as u8,
+                approval_project: None,
                 payload: check.payload,
                 estimate: fanout_estimate(&plan)?,
                 plan,
@@ -1118,8 +1219,9 @@ fn settle_held_attempts_in(
 }
 
 impl Memory<'_> {
-    /// One held or launched fan-out, for its own actor or the vault's
-    /// owner. Any other reader, and a ref that names nothing, read `None`.
+    /// One held or launched fan-out, for its own actor, the vault's owner or
+    /// a live holder of its bound lead or board role. Any other reader, and
+    /// a ref that names nothing, read `None`.
     pub fn task_fanout_launch(
         &self,
         launch_ref: EntityId,
@@ -1131,7 +1233,16 @@ impl Memory<'_> {
             return Ok(None);
         };
         let own = launch.actor == self.actor() && launch.actor_class == self.actor_class() as u8;
-        if !own && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())? {
+        if !own
+            && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?
+            && !launch_role_is_held_in(
+                vault,
+                &txn,
+                launch.approval_project,
+                self.actor(),
+                self.actor_class(),
+            )?
+        {
             return Ok(None);
         }
         Ok(Some(launch.receipt()))
@@ -1170,96 +1281,177 @@ impl Memory<'_> {
             .memory(owner_actor, EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
                 self.reauthenticate_fanout_owner(owner)?;
-                let (mut launch, plan) = self.frozen_launch_in(txn, launch_ref, expected_digest)?;
-                if launch.dispatched_at.is_some() {
-                    if choice == ConsultFanOutChoice::Deny {
-                        return Err(consult_refusal(
-                            MEMORY_CODE_INVALID_STATE,
-                            "a launched fan-out cannot be denied retroactively",
-                            "Use the TASK cancellation door.",
-                        ));
-                    }
-                    return Ok(launch.receipt());
-                }
-                let row = launch.pause.clone().ok_or_else(|| {
-                    consult_refusal(
-                        MEMORY_CODE_INVALID_STATE,
-                        "fan-out launch has no surfaced approval",
-                        "Apply the plan again.",
-                    )
-                })?;
-                let count = u64::from(launch.estimate.total_count);
-                if remembered_cap.is_some_and(|cap| cap < count) {
-                    return Err(consult_refusal(
-                        MEMORY_CODE_INVALID_STATE,
-                        "a standing cap cannot exclude the approved launch",
-                        "Set a cap at or above the approved estimate.",
-                    ));
-                }
-                let core_choice = match choice {
-                    ConsultFanOutChoice::ApproveOnce => FanoutApprovalChoice::ApproveOnce,
-                    ConsultFanOutChoice::ApproveAndRemember => {
-                        FanoutApprovalChoice::ApproveAndRememberBriefVerb
-                    }
-                    ConsultFanOutChoice::Deny => FanoutApprovalChoice::KeepPaused,
-                };
-                let action = core_choice.action_id();
-                let principal_ref = owner.principal_ref_in_txn(self.vault(), &*txn)?;
-                let resumed = approve_and_resume_fanout(
-                    &plan,
-                    &row,
-                    core_choice,
-                    action,
-                    principal_ref,
-                    &mut LaunchSurface {
-                        vault: self.vault(),
-                        txn,
-                        launch: &mut launch,
-                        clearance: None,
-                    },
-                    now.saturating_mul(1000),
-                )
-                .map_err(approval_error)?;
-                let approved = resumed.is_some();
-                record_explicit_ruling_in_txn(
-                    self.vault(),
+                self.resume_task_fanout_in(
                     txn,
-                    owner,
-                    EscalationReceipt {
-                        task_ref: launch_ref,
-                        scope: launch.scope.clone(),
-                        trigger: EscalationTrigger::Budget,
-                        question: launch.plan.brief_ref.clone(),
-                        ruling: if approved {
-                            EscalationRuling::Approve
-                        } else {
-                            EscalationRuling::Deny
-                        },
-                        rationale: launch.choice_receipt_ref.clone().unwrap_or_default(),
-                        // The launch's TASK count is the magnitude; the ED-06
-                        // ceiling comparison enforces <=, never an unbounded grant.
-                        budget_band: Some(remembered_cap.unwrap_or(count)),
-                    },
-                    choice == ConsultFanOutChoice::ApproveAndRemember,
+                    launch_ref,
+                    expected_digest,
+                    choice,
+                    remembered_cap,
+                    Some(owner),
+                    &WriteActor::new(owner_actor, EdgeActorClass::Human),
                     now,
-                )?;
-                launch.denied = !approved;
-                if let Some(resume) = resumed {
-                    if resume.plan_digest != expected_digest {
-                        return Err(stale_digest());
-                    }
-                    launch.choice_receipt_ref = Some(resume.choice_receipt_ref);
-                    // A remembered width approval is not an outbound grant:
-                    // the primitive's verb intent has no count cap and MUST
-                    // NOT widen the remembered cap.
-                    drop(resume.grant_mint_intent);
-                    self.launch_approved_in(txn, &mut launch, owner_actor, now)?;
-                }
-                save_launch(self.vault(), txn, &launch)?;
-                Ok(launch.receipt())
+                )
             })?;
         self.vault().store.notify_attempt_observers();
         Ok(receipt)
+    }
+
+    /// A live holder's ruling on a held launch whose bound project it leads
+    /// or sits on the board of, by the digest it saw: approve once or deny,
+    /// never remember. The holder is verified as the writer and its role
+    /// read again in the ruling's transaction; the launch commits as
+    /// [`Self::resume_task_fanout`]'s does, with the holder as the approver.
+    pub fn resume_task_fanout_as(
+        &self,
+        launch_ref: EntityId,
+        expected_digest: [u8; 32],
+        choice: ConsultFanOutChoice,
+        holder: &WriteActor,
+        remembered_cap: Option<u64>,
+    ) -> MemoryResult<FanoutLaunchReceipt> {
+        require_holder_launch_choice(choice, remembered_cap)?;
+        let now = self.vault().now_recorded_at();
+        let receipt = self.vault().try_with_write_txn_grouped(|txn| {
+            self.resume_task_fanout_in(
+                txn,
+                launch_ref,
+                expected_digest,
+                choice,
+                None,
+                None,
+                holder,
+                now,
+            )
+        })?;
+        self.vault().store.notify_attempt_observers();
+        Ok(receipt)
+    }
+
+    /// One ruling on a held launch in the approval's transaction, by the
+    /// owner (`owner` names its proof, revalidated by the caller) or by a
+    /// live holder of the launch's bound role, authorized here before any
+    /// replay or write. Only the owner's ruling is recorded as an explicit
+    /// escalation ruling: that record carries the owner's authentication.
+    #[expect(clippy::too_many_arguments)]
+    fn resume_task_fanout_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        launch_ref: EntityId,
+        expected_digest: [u8; 32],
+        choice: ConsultFanOutChoice,
+        remembered_cap: Option<u64>,
+        owner: Option<&AuthenticatedOwner>,
+        approver: &WriteActor,
+        now: u64,
+    ) -> MemoryResult<FanoutLaunchReceipt> {
+        let (mut launch, plan) = self.frozen_launch_in(txn, launch_ref, expected_digest)?;
+        let principal_ref = match owner {
+            Some(owner) => owner.principal_ref_in_txn(self.vault(), &*txn)?.to_owned(),
+            None => {
+                self.vault().verify_write_actor_in_txn(&*txn, approver)?;
+                if !launch_role_is_held_in(
+                    self.vault(),
+                    &*txn,
+                    launch.approval_project,
+                    approver.entity_ref(),
+                    approver.actor_class(),
+                )? {
+                    return Err(consult_refusal(
+                        MEMORY_CODE_FORBIDDEN,
+                        "actor does not hold this launch's approval role",
+                        "Ask a live project lead, its board, or the vault owner.",
+                    ));
+                }
+                approver.entity_ref().to_hex()
+            }
+        };
+        if launch.dispatched_at.is_some() {
+            if choice == ConsultFanOutChoice::Deny {
+                return Err(consult_refusal(
+                    MEMORY_CODE_INVALID_STATE,
+                    "a launched fan-out cannot be denied retroactively",
+                    "Use the TASK cancellation door.",
+                ));
+            }
+            return Ok(launch.receipt());
+        }
+        let row = launch.pause.clone().ok_or_else(|| {
+            consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "fan-out launch has no surfaced approval",
+                "Apply the plan again.",
+            )
+        })?;
+        let count = u64::from(launch.estimate.total_count);
+        if remembered_cap.is_some_and(|cap| cap < count) {
+            return Err(consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "a standing cap cannot exclude the approved launch",
+                "Set a cap at or above the approved estimate.",
+            ));
+        }
+        let core_choice = match choice {
+            ConsultFanOutChoice::ApproveOnce => FanoutApprovalChoice::ApproveOnce,
+            ConsultFanOutChoice::ApproveAndRemember => {
+                FanoutApprovalChoice::ApproveAndRememberBriefVerb
+            }
+            ConsultFanOutChoice::Deny => FanoutApprovalChoice::KeepPaused,
+        };
+        let action = core_choice.action_id();
+        let resumed = approve_and_resume_fanout(
+            &plan,
+            &row,
+            core_choice,
+            action,
+            &principal_ref,
+            &mut LaunchSurface {
+                vault: self.vault(),
+                txn,
+                launch: &mut launch,
+                clearance: None,
+            },
+            now.saturating_mul(1000),
+        )
+        .map_err(approval_error)?;
+        let approved = resumed.is_some();
+        if let Some(owner) = owner {
+            record_explicit_ruling_in_txn(
+                self.vault(),
+                txn,
+                owner,
+                EscalationReceipt {
+                    task_ref: launch_ref,
+                    scope: launch.scope.clone(),
+                    trigger: EscalationTrigger::Budget,
+                    question: launch.plan.brief_ref.clone(),
+                    ruling: if approved {
+                        EscalationRuling::Approve
+                    } else {
+                        EscalationRuling::Deny
+                    },
+                    rationale: launch.choice_receipt_ref.clone().unwrap_or_default(),
+                    // The launch's TASK count is the magnitude; the ED-06
+                    // ceiling comparison enforces <=, never an unbounded grant.
+                    budget_band: Some(remembered_cap.unwrap_or(count)),
+                },
+                choice == ConsultFanOutChoice::ApproveAndRemember,
+                now,
+            )?;
+        }
+        launch.denied = !approved;
+        if let Some(resume) = resumed {
+            if resume.plan_digest != expected_digest {
+                return Err(stale_digest());
+            }
+            launch.choice_receipt_ref = Some(resume.choice_receipt_ref);
+            // A remembered width approval is not an outbound grant:
+            // the primitive's verb intent has no count cap and MUST
+            // NOT widen the remembered cap.
+            drop(resume.grant_mint_intent);
+            self.launch_approved_in(txn, &mut launch, approver.entity_ref(), now)?;
+        }
+        save_launch(self.vault(), txn, &launch)?;
+        Ok(launch.receipt())
     }
 
     /// The owner's answer to the width check of a fan-out that went out
@@ -1455,26 +1647,36 @@ impl Memory<'_> {
     /// Every fan-out launch that waits on the owner, as the board shows it
     /// (OF-393): a held launch, denied or not, and a launched one whose width
     /// check is not yet answered. The vault's owner reads all of them; any
-    /// other actor reads only its own, as [`Self::task_fanout_launch`] does.
+    /// other actor reads its own and those whose bound lead or board role it
+    /// holds live, as [`Self::task_fanout_launch`] does.
     pub fn pending_task_fanout_launches(&self) -> MemoryResult<Vec<FanoutLaunchReceipt>> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
         let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        Ok(FANOUT_LAUNCHES
-            .scan(&vault.store, &txn)?
-            .into_iter()
-            .map(|(_, launch)| launch)
-            .filter(|launch| {
-                owner
-                    || (launch.actor == self.actor()
-                        && launch.actor_class == self.actor_class() as u8)
-            })
-            .map(|launch| launch.receipt())
-            .filter(|receipt| {
-                receipt.paused.is_some()
-                    || (receipt.check_row_ref.is_some() && receipt.choice_receipt_ref.is_none())
-            })
-            .collect())
+        let mut pending = Vec::new();
+        for (_, launch) in FANOUT_LAUNCHES.scan(&vault.store, &txn)? {
+            let own =
+                launch.actor == self.actor() && launch.actor_class == self.actor_class() as u8;
+            if !owner
+                && !own
+                && !launch_role_is_held_in(
+                    vault,
+                    &txn,
+                    launch.approval_project,
+                    self.actor(),
+                    self.actor_class(),
+                )?
+            {
+                continue;
+            }
+            let receipt = launch.receipt();
+            if receipt.paused.is_some()
+                || (receipt.check_row_ref.is_some() && receipt.choice_receipt_ref.is_none())
+            {
+                pending.push(receipt);
+            }
+        }
+        Ok(pending)
     }
 }
