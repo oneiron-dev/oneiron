@@ -328,6 +328,7 @@ impl Memory<'_> {
         budget: Option<Duration>,
         embedding: Option<&[f32]>,
         media: &[RecallMediaSeed<'_>],
+        query_affect: Option<crate::affect::Vad>,
         door: &RecallDoor<'_>,
         fallback: Option<&MemoryPack>,
         host: &dyn RecallRerankHost,
@@ -366,6 +367,7 @@ impl Memory<'_> {
                     embedding,
                     media,
                     as_of: Some(as_of),
+                    query_affect,
                     on_cut: cut_first
                         .as_ref()
                         .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
@@ -391,6 +393,7 @@ impl Memory<'_> {
                     embedding,
                     media,
                     as_of: Some(as_of),
+                    query_affect,
                     on_cut: cut_first
                         .as_ref()
                         .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
@@ -518,6 +521,7 @@ impl Memory<'_> {
                     embedding,
                     media,
                     as_of: Some(as_of),
+                    query_affect,
                     on_cut: on_cut
                         .as_ref()
                         .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),

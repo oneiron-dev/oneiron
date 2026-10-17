@@ -4,10 +4,10 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 307 code-mode rows (289 host rows, 18 run rows), 972 declarations.
-// Replies: 250 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 313 code-mode rows (295 host rows, 18 run rows), 1015 declarations.
+// Replies: 255 fully typed, 46 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 70; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
@@ -152,7 +152,8 @@ declare namespace Sdk {
   type RecallScope = { world_ref?: string | null; facet?: string | null; kinds?: string[] | null };
   type MediaQueryKind = "text" | "image" | "audio";
   type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null };
+  type QueryAffect = { valence: number; arousal: number; dominance: number };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
   type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
   type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
@@ -435,6 +436,10 @@ declare namespace Sdk {
   type RevealDescribeRequest = { handle: string };
   type RevealProvenance = { record: string; place: string; kind: string; masked_at: number };
   type RevealHandleCard = { handle: string; label: string; class: string; status: string; band: string; provenance?: RevealProvenance | null; reveal: string; grant_ref?: string | null; refusal?: string | null };
+  type SecretUseRequest = { handle: string; operation: string; arguments?: unknown };
+  type SecretUseStatus = "answered" | "failed" | "withheld";
+  type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number };
+  type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord };
   type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
   type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
@@ -885,11 +890,29 @@ declare namespace Sdk {
   type BodyName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxStyle = { num_fmt: number; format?: string | null };
   type XlsxBodyView = { date1904: boolean; sheets: XlsxSheetView[]; names: BodyName[]; styles: XlsxStyle[] };
-  type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView };
+  type NodeId = number;
+  type NodeKind = "root" | "slide" | "group" | "shape" | "picture" | "graphic_frame" | "connector";
+  type GeometryProps = { offset?: [number, number] | null; extent?: [number, number] | null; rotation?: number | null; flip_h?: boolean | null; flip_v?: boolean | null };
+  type Preset = "rect" | "round_rect" | "ellipse" | "triangle" | "right_arrow";
+  type Digest = string;
+  type StepAssetKind = "factual" | "illustration";
+  type AssetRef = { artifact: string; version: number; hash: Digest; kind: StepAssetKind; description: string };
+  type ChartKind = "bar" | "line" | "pie";
+  type ChartSeries = { name: string; values: (number | null)[] };
+  type ConnectorPreset = "straight" | "elbow" | "curved";
+  type ConnectorEnd = { node: NodeId; site: number };
+  type NodePayload = { picture: { image: AssetRef } } | { table: { header: string[]; rows: (string | null)[][] } } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[] } } | { connector: { preset: ConnectorPreset; start?: ConnectorEnd | null; end?: ConnectorEnd | null } };
+  type Run = { text: string; bold?: boolean | null; italic?: boolean | null; size?: number | null; latin?: string | null };
+  type Paragraph = { id: NodeId; level: number; runs: Run[] };
+  type TextBody = { paragraphs: Paragraph[] };
+  type DeckNodeView = { id: NodeId; kind: NodeKind; parent?: NodeId | null; name?: string | null; imported: boolean; geometry: GeometryProps; placeholder?: [string, number] | null; preset?: Preset | null; payload?: NodePayload | null; text?: TextBody | null; made_by?: string | null };
+  type DeckBodyView = { frontier: number[]; version: number; nodes: DeckNodeView[] };
+  type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView } | { format: "pptx"; body: DeckBodyView };
   type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null };
-  type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] };
+  type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
+  type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
   type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null };
@@ -911,6 +934,26 @@ declare namespace Sdk {
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
+  type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: NodeId | null; old_index?: number | null; new_index?: number | null; cross_slide: boolean };
+  type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null };
+  type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } };
+  type RelationshipChange = { source: string; id: string; kind: string; before?: string | null; after?: string | null };
+  type SlideRender = { slide: NodeId; part: string; fingerprint: number[] };
+  type RenderSide = { version: number; state_hash: number[]; export_key: number[]; slides: SlideRender[] };
+  type RenderPair = { head: RenderSide; candidate: RenderSide; changed: NodeId[] };
+  type DeckDiff = { base_version: number; head_version: number; proposal_version: number; added: NodeId[]; removed: NodeId[]; moved: NodeMove[]; text_changed: NodeId[]; formatting_changed: NodeId[]; geometry_changed: NodeId[]; opaque_changed: OpaqueChange[]; affected_slides: NodeId[]; head_only: NodeId[]; conflicts: Conflict[]; relationships: RelationshipChange[]; renders?: RenderPair | null };
+  type DeckReviewView = { head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null };
+  type ApproveScope = { this_actor: string } | { this_run_and_children: string } | { one_item: string };
+  type Landing = "merge" | "switch";
+  type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null };
+  type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] };
+  type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null };
+  type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; record?: OfficeBodyExportRecord | null };
+  type DeckGateRequest = { profile?: string | null };
+  type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run";
+  type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
+  type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
+  type DeckOracleRequest = { receipt: OracleReceipt };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
   type ReadBlobVersionRequest = { artifact_ref: string; version: number };
@@ -1195,6 +1238,8 @@ declare namespace self {
     start(input: Sdk.TeamStartInput): Promise<Sdk.Reply<Sdk.TeamRunAnswer>>;
   };
   const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldUnfolded>>>;
+  /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
+  const use: (input: Sdk.SecretUseRequest) => Promise<Sdk.Reply<Sdk.SecretUseAnswer>>;
 }
 /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
 declare function steer(input: Sdk.SteerRequest): Promise<Sdk.Reply<Sdk.SteerReceipt>>;
@@ -1221,16 +1266,28 @@ declare const vault: Sdk.VaultHost & {
     body: {
       /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
       commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.TextCommitReceipt[]>>;
-      /** A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head. */
+      deck: {
+        /** Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands. */
+        export(input: Sdk.DeckExportRequest): Promise<Sdk.Reply<Sdk.DeckExportView>>;
+        /** The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector. */
+        gate(input: Sdk.DeckGateRequest): Promise<Sdk.Reply<Sdk.DeckGateView>>;
+        /** A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses. */
+        merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.Reply<Sdk.LandingReceipt>>;
+        /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
+        oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.Reply<Sdk.DeckGateView>>;
+        /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
+        review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.DeckReviewView>>;
+      };
+      /** A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head. */
       edit(input: Sdk.OfficeBodyEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
-      /** Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator. */
+      /** Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export. */
       export(input: Sdk.OfficeBodyExportVerbRequest): Promise<Sdk.Reply<Sdk.OfficeBodyExportView>>;
       fork: {
         /** A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show. */
         diff(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
         /** Abandons an open fork's unlanded work and returns its record. */
         discard(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyFork>>;
-        /** The opener's typed DOCX or XLSX operations on its open fork of a live body. */
+        /** The opener's typed DOCX, XLSX or deck operations on its open fork of a live body. */
         edit(input: Sdk.OfficeBodyForkEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
         /** A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses. */
         merge(input: Sdk.OfficeBodyForkMergeRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
@@ -1243,7 +1300,7 @@ declare const vault: Sdk.VaultHost & {
       import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.Reply<Sdk.OfficeBodyHead>>;
       /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
       preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.XlsxPreview>>;
-      /** Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history. */
+      /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history. */
       read(input: Sdk.OfficeBodyReadRequest): Promise<Sdk.Reply<Sdk.OfficeBodyView>>;
     };
     /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
