@@ -10091,7 +10091,7 @@ pub struct ParticipantsRequest {
     pub limit: Option<u32>,
 }
 
-/// `oneiron::workspace_roster::join_consent::JoinSubject`.
+/// `oneiron_contracts::room_join::JoinSubject`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "id")]
 pub enum JoinSubject {
@@ -10549,7 +10549,7 @@ pub struct ProjectRosterWriteRequest {
     pub record: crate::WireJson,
 }
 
-/// `oneiron::workspace_roster::join_consent::ConsentPart`.
+/// `oneiron_contracts::room_join::ConsentPart`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConsentPart {
     #[serde(rename = "subject")]
@@ -10562,7 +10562,7 @@ pub enum ConsentPart {
     Admission,
 }
 
-/// `oneiron::workspace_roster::join_consent::RequiredParty`.
+/// `oneiron_contracts::room_join::RequiredParty`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RequiredParty {
     #[serde(rename = "subject")]
@@ -10583,7 +10583,7 @@ pub enum RequiredParty {
     },
 }
 
-/// `oneiron::workspace_roster::join_consent::ConsentNeed`.
+/// `oneiron_contracts::room_join::ConsentNeed`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentNeed {

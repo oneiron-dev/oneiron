@@ -56,9 +56,12 @@ impl EdgeKind {
             Self::ChildOf => None,
             Self::AssignedTo => None,
             Self::BlockedBy => None,
-            Self::SameAs | Self::Parent | Self::SpawnedBy | Self::AddressedTo | Self::RepliesTo => {
-                None
-            }
+            Self::SameAs
+            | Self::Parent
+            | Self::SpawnedBy
+            | Self::AddressedTo
+            | Self::RepliesTo
+            | Self::Regenerates => None,
             // Identity-plumbing prior mirroring `supersedes` (0.3).
             Self::MergedInto => Some(0.3),
             Self::SplitInto => Some(0.3),
@@ -172,6 +175,7 @@ pub(crate) fn edge_value_layout_for_kind(
         | EdgeKind::SpawnedBy
         | EdgeKind::AddressedTo
         | EdgeKind::RepliesTo
+        | EdgeKind::Regenerates
         | EdgeKind::SameAs => EdgeValueLayout::Structural,
         EdgeKind::Mentions
         | EdgeKind::About
