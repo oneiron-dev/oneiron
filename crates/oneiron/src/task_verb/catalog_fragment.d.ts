@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 306 code-mode rows (288 host rows, 18 run rows), 970 declarations.
-// Replies: 249 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 307 code-mode rows (289 host rows, 18 run rows), 973 declarations.
+// Replies: 250 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 70; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
@@ -152,7 +152,8 @@ declare namespace Sdk {
   type RecallScope = { world_ref?: string | null; facet?: string | null; kinds?: string[] | null };
   type MediaQueryKind = "text" | "image" | "audio";
   type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null };
+  type QueryAffect = { valence: number; arousal: number; dominance: number };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
   type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
   type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
@@ -752,6 +753,8 @@ declare namespace Sdk {
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinition };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
   type QuestionPaused = { id: EntityId; paused: boolean };
+  type QuestionBackfillRequest = { id: EntityId; expected_version: number; at?: number | null };
+  type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
   type QuestionAnswersRequest = { id: EntityId };
   type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" };
@@ -1543,6 +1546,7 @@ declare const vault: Sdk.VaultHost & {
   };
   questions: {
     answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.Reply<Sdk.QuestionAnswer[]>>;
+    backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.Reply<Sdk.ScheduledBackfill>>;
     create(input: Sdk.QuestionCreateRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
     pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.Reply<Sdk.QuestionPaused>>;
