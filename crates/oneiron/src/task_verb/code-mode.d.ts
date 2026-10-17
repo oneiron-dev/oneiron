@@ -80,7 +80,7 @@ declare namespace self {
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
 declare const tasks: {
   answer(input: { handle: object; word: object }): Promise<unknown>;
-  create(input: { label?: string | null; spec: unknown }): Promise<unknown>;
+  create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
@@ -142,6 +142,9 @@ declare const vault: {
   export(input: { format?: string | null }): Promise<unknown>;
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
+  graph: {
+    ask(input: { ceiling?: "rule" | "local" | "system_one" | "big" | "human" | "escalation" | null; question: unknown; select?: object | null; unit_deadline_ms?: number | null; units?: string[] }): Promise<unknown>;
+  };
   habits: {
     checkin(input: { data?: unknown; habit_ref: string; id?: string | null; learned_at?: number | null; occurred_at: number }): Promise<unknown>;
   };
@@ -213,6 +216,13 @@ declare const vault: {
     propose(input: { card_id: string; goal: object; picks: object; source_message_ref: string }): Promise<unknown>;
     route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
   };
+  questions: {
+    answers(input: { id: string }): Promise<unknown>;
+    create(input: { definition: unknown }): Promise<unknown>;
+    edit(input: { definition: unknown; expected_version: number; id: string }): Promise<unknown>;
+    pause(input: { id: string; paused: boolean }): Promise<unknown>;
+    read(input: { id: string; version?: number | null }): Promise<unknown>;
+  };
   recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
@@ -258,13 +268,17 @@ declare const vault: {
     receipt(input: { receipt_id: string }): Promise<unknown>;
   };
   shares: {
+    create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; mention?: { end: number; message: string; start: number; turn: string } | null; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
     create(input: { brief_ref: string; expires_at?: number | null; facet_refs?: string[]; include_unscoped?: boolean; recipient: string; share_id?: string | null; travel?: { born_with?: ("prompt" | "why" | "keep" | "intent_prompt")[] } | null; world_refs?: string[] }): Promise<unknown>;
+    revoke(input: { share_ref: string }): Promise<unknown>;
+    view(input: { narrowing?: { facet_refs?: string[]; include_unscoped?: boolean; world_refs?: string[] } | null; share_ref: string }): Promise<unknown>;
   };
   structural: {
     put(input: { body: unknown; edges?: object[] | null; id?: string | null; kind: string; learned_at?: number | null; occurred_at: number; text_fields?: object[] | null }): Promise<unknown>;
   };
   weave: {
     digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    lens(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
     link: {
       wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
     };

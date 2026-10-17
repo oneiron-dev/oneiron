@@ -260,6 +260,30 @@ pub struct DescribeRequest {
 pub struct TaskCreateRequest {
     pub spec: serde_json::Value,
     pub label: Option<String>,
+    /// Who realizes the TASK; absent is the Dreamer lane. The engine routes
+    /// from this alone. A creator, project or spend is never request text:
+    /// an agent run's TASK runs under its creator only by its host's
+    /// binding (OF-532).
+    #[serde(default)]
+    pub assignee: Option<super::TaskAssignee>,
+}
+
+/// The create spec one `tasks.create` request names, owned by the
+/// surface's actor.
+pub fn task_create_spec(
+    memory: &Memory<'_>,
+    input: TaskCreateRequest,
+) -> MemoryResult<super::TaskCreateSpec> {
+    let spec = super::TaskCreateSpec::new(
+        crate::msgpack_value_from_json(&input.spec)?,
+        input.label,
+        Some(memory.actor()),
+        Some(memory.vault().now_recorded_at()),
+    );
+    Ok(match input.assignee {
+        Some(assignee) => spec.with_assignee(assignee),
+        None => spec,
+    })
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

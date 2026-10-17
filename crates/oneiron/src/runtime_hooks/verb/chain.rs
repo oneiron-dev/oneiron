@@ -23,6 +23,7 @@ use crate::{EntityId, Error, Result, Vault};
 use super::state::{Carry, Entered, HookDepth, depth};
 use super::{
     InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, ask, redact,
+    served,
 };
 
 /// Receipts the input's tail carries.
@@ -214,6 +215,10 @@ struct Input<'i> {
     /// The caller's view of the verb's result so far; post only.
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<&'i Value>,
+    /// The rows that view serves, when it is a pack, as the hook's served
+    /// filter takes them; post only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    served: Option<Vec<served::ServedRow<'i>>>,
 }
 
 impl<'c> Chain<'c> {
@@ -265,7 +270,11 @@ impl<'c> Chain<'c> {
                 }),
                 Some(HookOutcome::Ask { question }) => {
                     let label = if question.trim().is_empty() {
-                        format!("Hook {} asks before {}.", hook_name(binding), self.call.verb)
+                        format!(
+                            "Hook {} asks before {}.",
+                            hook_name(binding),
+                            self.call.verb
+                        )
                     } else {
                         format!(
                             "Hook {} asks before {}: {question}",
@@ -325,6 +334,9 @@ impl<'c> Chain<'c> {
         let mut view = result;
         let mut hidden = None;
         for &(id, binding) in hooks {
+            if !served::admits(&binding.selector.served, &view) {
+                continue;
+            }
             match self.run(id, binding, args, Some(&view), None)? {
                 Some(HookOutcome::Redact { paths }) => {
                     for path in &paths {
@@ -515,6 +527,7 @@ impl<'c> Chain<'c> {
             receipt_tail: &self.tail,
             now: self.now,
             result,
+            served: result.and_then(|view| served::rows(view, &binding.selector.served)),
         };
         serde_json::to_string(&input).map_err(|_| Error::InvariantViolation("hook input encode"))
     }
