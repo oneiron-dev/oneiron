@@ -137,8 +137,10 @@ pub(crate) fn facets_admit_in(
         ENTITY_TYPE_MESSAGE => {
             let mut rooms = out_targets(view, txn, id, EdgeKind::BelongsTo)?;
             for part in out_targets(view, txn, id, EdgeKind::PartOf)? {
-                if crate::ports::EntityStoreRead::port_entity_raw(view, txn, &part)?
-                    .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+                if crate::ports::EntityStoreRead::port_entity_with_raw(view, txn, &part, |raw| {
+                    Ok(raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+                })?
+                .unwrap_or(false)
                 {
                     rooms.push(part);
                 } else {
