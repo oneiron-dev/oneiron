@@ -10964,7 +10964,7 @@
       "const": 6,
       "crate-vis": 12,
       "enum": 8,
-      "fn": 18,
+      "fn": 19,
       "struct": 21,
       "trait": 1
      }
@@ -11163,13 +11163,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -11183,7 +11183,7 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "enum": 1,
       "fn": 11,
       "struct": 2
@@ -30827,7 +30827,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 11,
       "struct": 2
      }
