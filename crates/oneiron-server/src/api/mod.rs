@@ -446,6 +446,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         // OF-181: the app's one action layer, for its buttons and its agents.
         .merge(self::facade::action_routes::routes())
+        // OF-181: a host-rendered lens card's events and close, on its held frame.
+        .merge(self::facade::ui_action_routes::routes())
         .nest("/v1/companion", companion_routes)
         .nest("/v1/owner", self::owner_routes::routes())
         .merge(self::operator_routes::routes())

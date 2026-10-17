@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 259 facade rows, 967 declarations.
+Census: 259 facade rows, 976 declarations.
 Inputs: 215 of 259 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 211 of 259 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Results: 209 of 259 fully typed, 41 typed down to an opaque serde_json::Value leaf, 9 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
 """
 
@@ -2615,6 +2615,25 @@ class LensDefaultRequest(TypedDict):
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
+GeneratedUiCatalog = Literal["lens_atom_kit"]
+GeneratedUiNode = TypedDict("GeneratedUiNode", {"id": str, "parent": NotRequired[str | None], "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "childRefs": NotRequired[list[str]]})
+GeneratedUiActionTier = Literal["local", "deterministic_tool", "model_round_trip"]
+class GeneratedUiActionDeclaration(TypedDict):
+    elementId: str
+    actionId: str
+    tier: GeneratedUiActionTier
+    action: SelfUiAction
+GeneratedUiCardPhase = Literal["generating", "active", "responded", "archived"]
+GeneratedUiArchiveReason = Literal["completed", "expired", "dismissed", "superseded"]
+class GeneratedUiCardLifecycle(TypedDict):
+    phase: GeneratedUiCardPhase
+    revision: int
+    archiveReason: NotRequired[GeneratedUiArchiveReason | None]
+GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+class LensFrameCard(TypedDict):
+    card_id: str
+    render: GeneratedUiRender
+    lens: GeneratedLens
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
@@ -4724,13 +4743,23 @@ class DeckOpSetGeometryBody(TypedDict):
     geometry: GeometryProps
 class DeckOpSetGeometry(TypedDict):
     set_geometry: DeckOpSetGeometryBody
+class DeckOpSetPresetBody(TypedDict):
+    node: NodeId
+    preset: Preset
+class DeckOpSetPreset(TypedDict):
+    set_preset: DeckOpSetPresetBody
+class DeckOpSetPayloadBody(TypedDict):
+    node: NodeId
+    payload: NodePayload
+class DeckOpSetPayload(TypedDict):
+    set_payload: DeckOpSetPayloadBody
 class DeckOpReplaceOpaqueBody(TypedDict):
     part: str
     expected: list[int]
     replacement: list[int]
 class DeckOpReplaceOpaque(TypedDict):
     replace_opaque: DeckOpReplaceOpaqueBody
-DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpReplaceOpaque
+DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpReplaceOpaque
 class OfficeBodyOpsDocx(TypedDict):
     format: Literal["docx"]
     ops: list[DocxBodyOp]
@@ -4876,7 +4905,11 @@ class ConflictBothReplacedOpaqueBody(TypedDict):
     part: str
 class ConflictBothReplacedOpaque(TypedDict):
     both_replaced_opaque: ConflictBothReplacedOpaqueBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque
+class ConflictPayloadVsPayloadBody(TypedDict):
+    node: NodeId
+class ConflictPayloadVsPayload(TypedDict):
+    payload_vs_payload: ConflictPayloadVsPayloadBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload
 class RelationshipChange(TypedDict):
     source: str
     id: str
@@ -4906,6 +4939,7 @@ class DeckDiff(TypedDict):
     text_changed: list[NodeId]
     formatting_changed: list[NodeId]
     geometry_changed: list[NodeId]
+    payload_changed: list[NodeId]
     opaque_changed: list[OpaqueChange]
     affected_slides: list[NodeId]
     head_only: list[NodeId]
@@ -4958,6 +4992,7 @@ class DeckExportView(TypedDict):
     noop: bool
     changed_parts: list[str]
     record: NotRequired[OfficeBodyExportRecord | None]
+    proposed: NotRequired[PendingProposalView | None]
 class DeckGateRequest(TypedDict):
     profile: NotRequired[str | None]
 class StepOutcomeFailed(TypedDict):

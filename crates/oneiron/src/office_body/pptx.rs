@@ -41,6 +41,7 @@ use super::{
 use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
 use crate::edit_roundtrip::VaultAssets;
+use crate::edit_settle::{NativeOutput, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
@@ -58,7 +59,7 @@ use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
     HeldAssets, Landing, LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt,
-    PreflightReport, StampedOp, attach_evidence, land, preflight, project,
+    PreflightReport, StampedOp, attach_evidence, check_picture, land, preflight, project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -153,6 +154,7 @@ impl Vault {
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
+        self.check_pictures(ops)?;
         let ops = self.name_creations(ops)?;
         let stamped: Vec<StampedOp> = ops
             .iter()
@@ -197,6 +199,7 @@ impl Vault {
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
+        self.check_pictures(ops)?;
         let ops = self.name_creations(ops)?;
         let stamped: Vec<StampedOp> = ops
             .iter()
@@ -499,6 +502,48 @@ impl Vault {
         })
     }
 
+    /// Offer a proposal export (its profile's gate closed) to the artifact as
+    /// a waiting proposal under `run_ref`, pinned to the blob head: the Keep
+    /// door lands its bytes as the next blob version under a person's
+    /// consent, and Discard drops it. The deck does not rebind, so its next
+    /// export still projects over its retained package.
+    pub fn propose_pptx_export(
+        &self,
+        artifact: &EntityId,
+        export: &PptxExport,
+        run_ref: &str,
+        actor: WriteActor,
+        made_by: &MadeBy,
+    ) -> Result<PendingProposalView> {
+        if export.authoritative {
+            return Err(invalid("an authoritative export lands; it is not proposed"));
+        }
+        let body = self
+            .get_blob_artifact(artifact)?
+            .ok_or(Error::EntityNotFound)?;
+        let key = &export.outcome.key;
+        self.propose_native_output(
+            artifact,
+            &NativeOutput {
+                run_ref: run_ref.to_owned(),
+                name: body.name,
+                media_type: body.media_type,
+                bytes: export.outcome.bytes.clone(),
+                report: serde_json::json!({
+                    "deck_export": {
+                        "profile": key.profile,
+                        "projector": key.projector,
+                        "document_version": export.outcome.document_version,
+                        "changed_parts": export.outcome.changed_parts,
+                    }
+                }),
+                made_by: Some(made_by.clone()),
+            },
+            actor,
+            self.now_recorded_at(),
+        )
+    }
+
     /// The deck at the head of its body, with the head.
     fn deck_head(
         &self,
@@ -545,6 +590,24 @@ impl Vault {
                 Ok(op)
             })
             .collect()
+    }
+
+    /// Refuse a picture an operation writes whose asset does not resolve, or
+    /// whose bytes do not match its reference, when the operation is made
+    /// rather than at the export that writes it.
+    fn check_pictures(&self, ops: &[DeckOp]) -> Result<()> {
+        if ops.iter().all(|op| op.picture().is_none()) {
+            return Ok(());
+        }
+        let txn = self.store.env.read_txn()?;
+        let assets = VaultAssets {
+            vault: self,
+            txn: &txn,
+        };
+        for image in ops.iter().filter_map(DeckOp::picture) {
+            check_picture(image, &assets).map_err(live)?;
+        }
+        Ok(())
     }
 
     /// Open a deck fork at the live head for `actor`'s machine work in the run
