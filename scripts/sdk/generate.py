@@ -661,7 +661,7 @@ def mcp_input_dispatch(row):
                      '    return execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
                      '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
-            body += ('if input.task_ref.is_none() && !input.self_target {\n'
+            body += ('if input.task_ref.is_none() && !input.self_target && !input.vault {\n'
                      '    // The section is narrowed to this credential before its\n'
                      "    // render cap, so its counts are the credential's rows alone.\n"
                      '    let rows = memory.describe_rows().map_err(mcp_facade_error)?;\n'

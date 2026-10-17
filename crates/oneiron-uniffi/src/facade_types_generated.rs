@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 270 facade rows, 851 generated types.
+// UniFFI census: 270 facade rows, 856 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 226.
 // WireJson rows: vault.weave.digest (result), vault.weave.lens (result), vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.lenses.default (result), vault.packs.setup.answer (input), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeneratedLens.root (the recursive type LensNode), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), RunTree.roots (the recursive type RunTreeNode), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple).
@@ -1444,6 +1444,62 @@ pub struct ShapePlanSummary {
     pub no_door: u32,
 }
 
+/// `oneiron::vault_shape::reach::ShapeReachVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShapeReachVerdict {
+    #[serde(rename = "can")]
+    Can,
+    #[serde(rename = "asks")]
+    Asks,
+}
+
+/// `oneiron::vault_shape::reach::ShapeReachFact`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeReachFact {
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(
+        rename = "actor_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub actor_name: Option<String>,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "sender")]
+    pub sender: String,
+    #[serde(rename = "identity")]
+    pub identity: String,
+    #[serde(rename = "class", default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<Vec<String>>,
+    #[serde(rename = "verdict")]
+    pub verdict: ShapeReachVerdict,
+}
+
+/// `oneiron::vault_shape::reach::ShapeReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeReach {
+    #[serde(rename = "facts")]
+    pub facts: Vec<ShapeReachFact>,
+}
+
+/// `oneiron::vault_shape::reach::ShapePlanReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapePlanReach {
+    #[serde(rename = "before")]
+    pub before: ShapeReach,
+    #[serde(rename = "after")]
+    pub after: ShapeReach,
+    #[serde(rename = "unresolved")]
+    pub unresolved: Vec<String>,
+    #[serde(rename = "line")]
+    pub line: String,
+}
+
 /// `oneiron::vault_shape::plan::ShapePlan`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ShapePlan {
@@ -1459,6 +1515,8 @@ pub struct ShapePlan {
     pub undeclared: Vec<ShapeRow>,
     #[serde(rename = "summary")]
     pub summary: ShapePlanSummary,
+    #[serde(rename = "reach", default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<ShapePlanReach>,
 }
 
 /// `oneiron::vault_shape::apply::ShapeApplyRequest`.
@@ -1877,6 +1935,21 @@ pub struct TasksSection {
     pub overflow: Option<TasksOverflow>,
 }
 
+/// `oneiron::vault_shape::card::ShapeCard`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeCard {
+    #[serde(rename = "seed_id", default, skip_serializing_if = "Option::is_none")]
+    pub seed_id: Option<String>,
+    #[serde(rename = "counts")]
+    pub counts: std::collections::HashMap<String, u32>,
+    #[serde(rename = "open_applies")]
+    pub open_applies: u32,
+    #[serde(rename = "reach")]
+    pub reach: ShapeReach,
+    #[serde(rename = "line")]
+    pub line: String,
+}
+
 /// `oneiron::task_verb::route_receipts::TaskDescription`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
@@ -1892,6 +1965,11 @@ pub enum TaskDescription {
     SelfCard {
         #[serde(rename = "tail")]
         tail: String,
+    },
+    #[serde(rename = "vault_card")]
+    VaultCard {
+        #[serde(rename = "card")]
+        card: ShapeCard,
     },
 }
 
