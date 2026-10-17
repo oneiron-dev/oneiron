@@ -60630,7 +60630,7 @@
      "purpose": "Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality",
      "surface": {
       "enum": 6,
-      "fn": 5,
+      "fn": 6,
       "struct": 5
      }
     },
