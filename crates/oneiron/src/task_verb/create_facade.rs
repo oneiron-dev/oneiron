@@ -375,6 +375,7 @@ impl Memory<'_> {
             type_ref: Some(validated.type_ref.clone()),
             refusal: None,
             brief,
+            subproject_ref: None,
         });
         self.put_task_body_in_txn(wtxn, task_ref, &body, now)?;
         // A TASK is born in its writer's world and facet (ARCH-0067 §5).

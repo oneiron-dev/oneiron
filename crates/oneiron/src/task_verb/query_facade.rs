@@ -89,9 +89,13 @@ impl Memory<'_> {
         if intent.is_acked_failure() {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
-        Ok(TaskDescription::Card {
-            lines: expand_task(&intent),
-        })
+        let mut lines = expand_task(&intent);
+        // OF-389: a wrapper stays one checkbox; its card names the subproject
+        // it holds.
+        if let Some(subproject) = self.vault().task_subproject(task_ref)? {
+            lines.push(format!("  subproject={}", subproject.to_hex()));
+        }
+        Ok(TaskDescription::Card { lines })
     }
 
     /// The rows `describe` renders its TASKS section from, before the render

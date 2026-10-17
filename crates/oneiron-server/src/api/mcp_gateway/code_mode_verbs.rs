@@ -34,17 +34,17 @@ use super::{McpCallContext, McpGatewayError};
 use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
+use oneiron::browser_library::{
+    WorkflowRecord, file_workflow, record_workflow_run, site_workflows,
+};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
+use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
 use oneiron::memory::HostWriteOrigin;
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::browser_library::{
-    WorkflowRecord, file_workflow, record_workflow_run, site_workflows,
-};
-use oneiron::llm::decision::{DecisionRung, RoutineOutcome};
 use oneiron::task_verb::sdk::{
     AgentVerb, AiVerdict, AiVerdictRequest, AiVerdictReversibility, RunVerb,
 };
@@ -159,9 +159,8 @@ impl RoutineDecider for LadderDecider {
         let actor = self.actor.clone();
         let origin = self.origin.clone();
         self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-            let _ = sender.send(
-                execute_code_mode_verb(&server, &actor, "ai.verdict", input, origin).await,
-            );
+            let _ = sender
+                .send(execute_code_mode_verb(&server, &actor, "ai.verdict", input, origin).await);
         }));
         let (output, _) = receiver
             .recv()
@@ -370,7 +369,12 @@ impl McpCodeModeVerbs {
             return refused(error);
         }
         // The browser runs as its connector pack: no installed pack, no browser.
-        if self.server.vault.require_builtin_channel_pack("browser").is_err() {
+        if self
+            .server
+            .vault
+            .require_builtin_channel_pack("browser")
+            .is_err()
+        {
             return Ok(Err(AgentVerbRefusal {
                 code: "browser_pack_not_installed".to_owned(),
             }));

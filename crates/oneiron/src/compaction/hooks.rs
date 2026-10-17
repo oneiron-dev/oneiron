@@ -64,8 +64,7 @@ impl Vault {
             board_epoch: None,
             domain: VerbDomain::Write,
         };
-        let check =
-            |rewritten: &Value| added_pins(&args, rewritten, window, fits).map(|_| ());
+        let check = |rewritten: &Value| added_pins(&args, rewritten, window, fits).map(|_| ());
         match self.pre_verb_hooks(call, args.clone(), &check) {
             Ok(Ok(pre)) => {
                 if let Ok(added) = added_pins(&args, &pre.args, window, fits) {
@@ -78,7 +77,10 @@ impl Vault {
                 CompactHooks(None)
             }
             Err(error) => {
-                tracing::warn!(?error, "host.compact pre-hooks failed; the pass keeps its own pins");
+                tracing::warn!(
+                    ?error,
+                    "host.compact pre-hooks failed; the pass keeps its own pins"
+                );
                 CompactHooks(None)
             }
         }
@@ -98,7 +100,10 @@ impl Vault {
             "last_turn": last,
         });
         if let Err(error) = self.post_verb_hooks(pre, result) {
-            tracing::warn!(?error, "host.compact post-hooks failed on a landed keyframe");
+            tracing::warn!(
+                ?error,
+                "host.compact post-hooks failed on a landed keyframe"
+            );
         }
     }
 }
