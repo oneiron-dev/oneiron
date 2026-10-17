@@ -326,6 +326,14 @@ pub struct QuestionAnswersRequest {
     pub id: EntityId,
 }
 
+/// `vault.questions.refresh`'s input: the caller's standing question to
+/// refresh by hand, now, over every unit its current version covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionRefreshRequest {
+    pub id: EntityId,
+}
+
 /// One entry of `vault.questions.answers`, tagged by `kind`: a graph
 /// question's answer receipt, or a standing artifact question's last ask of
 /// one artifact, whose answers wait as a proposal for Keep
