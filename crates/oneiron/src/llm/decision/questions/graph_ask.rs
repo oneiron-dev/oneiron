@@ -5,9 +5,10 @@ use super::super::types::paired_valid;
 use super::{records::AnswerRecord, store::encode};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey};
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt, DecisionRung,
-    EvidenceVersion, MAX_DECISION_IMAGE_BYTES, MAX_DECISION_IMAGES, MAX_DECISION_IMAGES_BYTES,
-    PairedAnswer, PairedReading, ProviderPin, TypedDecision,
+    DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
+    DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO, MAX_DECISION_AUDIO_BYTES,
+    MAX_DECISION_AUDIOS_BYTES, MAX_DECISION_IMAGE_BYTES, MAX_DECISION_IMAGES,
+    MAX_DECISION_IMAGES_BYTES, PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
@@ -52,8 +53,8 @@ pub struct GraphPrediction {
 /// What an answerer returns for one unit: a bare prediction the engine wraps
 /// in its own receipt, or a full decision from the decision ladder. The engine
 /// keeps a decision's providers, band, paired and person readings, clock and
-/// owner-ask reason, and sets its evidence to the sources and images it was
-/// shown.
+/// owner-ask reason, and sets its evidence to the sources, images and audio
+/// clips it was shown.
 #[derive(Debug, Clone)]
 pub enum GraphDecision {
     Prediction(GraphPrediction),
@@ -77,16 +78,24 @@ pub trait GraphAnswerer {
         false
     }
 
-    /// The unit's answer over its sources and `images`, each named in
-    /// [`GraphUnitContext::state`]. The default answers through
-    /// [`Self::answer`] and reads no image.
+    /// Whether it hears audio. When it does, the engine reads the clip each
+    /// ASSET source holds, under the asker's own read, and passes it to
+    /// [`Self::decide`] as audio, not as its text.
+    fn reads_audio(&self) -> bool {
+        false
+    }
+
+    /// The unit's answer over its sources, `images` and `audio`, each named
+    /// in [`GraphUnitContext::state`]. The default answers through
+    /// [`Self::answer`] and reads no image or clip.
     fn decide(
         &mut self,
         question: &DecisionQuestion,
         context: &GraphUnitContext,
         images: &[DecisionImage],
+        audio: &[DecisionAudio],
     ) -> Result<Option<GraphDecision>> {
-        let _ = images;
+        let _ = (images, audio);
         Ok(self
             .answer(question, context)?
             .map(GraphDecision::Prediction))
@@ -96,9 +105,9 @@ pub trait GraphAnswerer {
 impl GraphUnitContext {
     /// The unit and its sources as a decision's state: each body as the JSON
     /// a reader is served, all cut evenly to fit the ladder's state bound. A
-    /// source an image was read from names that image.
+    /// source an image or a clip was read from names it.
     #[must_use]
-    pub fn state(&self, images: &[DecisionImage]) -> Value {
+    pub fn state(&self, images: &[DecisionImage], audio: &[DecisionAudio]) -> Value {
         let texts: Vec<String> = self.sources.iter().map(|s| body_text(&s.body)).collect();
         let longest = texts.iter().map(String::len).max().unwrap_or(0);
         fit_state(longest, |cut| {
@@ -118,6 +127,10 @@ impl GraphUnitContext {
                             images.iter().find(|image| image.evidence.id == source.id)
                         {
                             view["image"] = json!(image.name);
+                        }
+                        if let Some(clip) = audio.iter().find(|clip| clip.evidence.id == source.id)
+                        {
+                            view["audio"] = json!(clip.name);
                         }
                         view
                     })
@@ -433,7 +446,12 @@ fn answer_unit(
     } else {
         Vec::new()
     };
-    let decision = match answerer.decide(question, &context, &images)? {
+    let audio = if answerer.reads_audio() {
+        unit_audio(scoped, &context)?
+    } else {
+        Vec::new()
+    };
+    let decision = match answerer.decide(question, &context, &images, &audio)? {
         None => return Ok(UnitOutcome::Abstain),
         Some(GraphDecision::Prediction(prediction)) => {
             if prediction.answer == DecisionAnswer::Abstain {
@@ -444,7 +462,7 @@ fn answer_unit(
         }
         Some(GraphDecision::Decision(decision)) => {
             validate_decision(question, principal, &decision)?;
-            let decision = decided(&context, &images, *decision);
+            let decision = decided(&context, &images, &audio, *decision);
             if decision.answer == DecisionAnswer::Abstain {
                 return Ok(UnitOutcome::Declined(Box::new(decision)));
             }
@@ -616,16 +634,19 @@ fn predicted(
 }
 
 /// A ladder decision with the engine's own evidence: every source it was
-/// shown at the version read, then each image at its pixels' hash.
+/// shown at the version read, then each image at its pixels' hash and each
+/// clip at its encoded bytes' hash.
 pub(super) fn decided(
     context: &GraphUnitContext,
     images: &[DecisionImage],
+    audio: &[DecisionAudio],
     mut decision: TypedDecision,
 ) -> TypedDecision {
     decision.evidence = context.sources.iter().map(|s| s.id).collect();
     decision.receipt.evidence_versions = source_versions(context)
         .into_iter()
         .chain(images.iter().map(|image| image.evidence.clone()))
+        .chain(audio.iter().map(|clip| clip.evidence.clone()))
         .collect();
     decision
 }
@@ -691,6 +712,52 @@ pub(super) fn unit_images(
         lane.commit_served_forms(&pulls)?;
     }
     Ok(images)
+}
+
+/// The audio clips the context's ASSET sources hold, read through `lane` (the
+/// asker's own read) for an answerer that hears them: WAV or MP3 only, inside
+/// a call's count and byte bounds, each named `audio_<n>` and pinned at its
+/// encoded bytes' hash. The clip goes to the model as audio, never as a
+/// transcript. An asset the lane withholds, or one past a bound, is read as
+/// text alone.
+pub(super) fn unit_audio(
+    lane: &ScopedRead<'_>,
+    context: &GraphUnitContext,
+) -> Result<Vec<DecisionAudio>> {
+    let mut audio: Vec<DecisionAudio> = Vec::new();
+    let mut total = 0usize;
+    for source in &context.sources {
+        if audio.len() == MAX_DECISION_AUDIO {
+            break;
+        }
+        if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            continue;
+        }
+        let Some((media_type, bytes)) = crate::memory::asset_audio_in_lane(lane, source.id)
+            .map_err(|_| Error::CorruptedIndex("graph ask audio"))?
+        else {
+            continue;
+        };
+        let clip = DecisionAudio {
+            name: format!("audio_{}", audio.len()),
+            evidence: EvidenceVersion {
+                id: source.id,
+                body_hash: *blake3::hash(&bytes).as_bytes(),
+            },
+            media_type,
+            bytes,
+        };
+        let size = clip.bytes.len();
+        if clip.format().is_none()
+            || size > MAX_DECISION_AUDIO_BYTES
+            || total.saturating_add(size) > MAX_DECISION_AUDIOS_BYTES
+        {
+            continue;
+        }
+        total += size;
+        audio.push(clip);
+    }
+    Ok(audio)
 }
 
 /// A full decision is for this question, asker and contract; an answer

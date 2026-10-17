@@ -567,6 +567,34 @@ impl Vault {
         Ok(())
     }
 
+    /// Every enabled binding of `pack` stops, each under the owner's
+    /// envelope for its own source. The CODE entities stay.
+    pub(super) fn disable_pack_hooks_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        pack: &str,
+    ) -> Result<()> {
+        let owner_id = owner.revalidate_in_txn(self, txn)?;
+        let at = crate::unix_seconds_now();
+        let occurred = TimeRange { start: at, end: at };
+        let mut batch = self.batch_in();
+        let mut stopped = false;
+        for (id, mut row) in bindings_in_txn(&self.store, txn)? {
+            if row.pack != pack || !row.enabled {
+                continue;
+            }
+            row.enabled = false;
+            let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
+            batch = batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
+            stopped = true;
+        }
+        if stopped {
+            batch.apply(txn)?;
+        }
+        Ok(())
+    }
+
     /// Each hook of `source` becomes a CODE entity, derived from the pack
     /// source, plus its owner-approved binding. A binding the source no
     /// longer carries, or whose body moved, stops.
@@ -632,6 +660,14 @@ impl Vault {
                 enabled,
             };
             batch = batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
+            // The body passed under this engine's contract (ARCH-0080 §8 regen).
+            crate::runtime_hooks::note_bound_hook_in_txn(
+                self,
+                txn,
+                id,
+                &row.body_hash,
+                hook.intent.as_deref(),
+            )?;
             bound.push(id);
         }
         for (id, mut row) in prior {

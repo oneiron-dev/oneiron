@@ -17,7 +17,9 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
+pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
+pub(crate) use history::erase_room_side_rows;
 pub(in crate::workspace_roster) use history::thread_turns_in;
 pub use hosting::{
     HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
@@ -36,7 +38,7 @@ pub(crate) use participation::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
     record_participation_in_txn, require_join_covering_in_txn,
 };
-use participation::{Claimant, require_reader};
+use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
