@@ -436,32 +436,72 @@ fn run_engine_native_code_mode(
     let gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs);
-    let mut runtime = provider.runtime();
-    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;
-    let has_seat = vault
-        .model_manifest()
-        .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
-        .is_some()
+    enter_engine_native_run(
+        vault,
+        provider,
+        &gated_write,
+        config,
+        format!("mcp-execute-code:{}", config.run_id.to_hex()),
+        compaction,
+        &reactor,
+    )
+    .map_err(|error| match error {
+        EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
+        EngineRunError::Run(error) => McpCodeExecutionError::Run(error),
+    })
+}
+
+/// Why one entry of an engine-native run did not end: its seat could not be
+/// bound, or the executor failed.
+#[derive(Debug)]
+pub(crate) enum EngineRunError {
+    Binding(String),
+    Run(String),
+}
+
+impl fmt::Display for EngineRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Binding(error) | Self::Run(error) => f.write_str(error),
+        }
+    }
+}
+
+/// One entry of an engine-native run through `bound`, the write door its
+/// host bound: `execute_code`'s credential-gated door, or a leased attempt's
+/// own dispatcher. A manifest-backed run is born on its model seat first,
+/// warm under `warm_scope`.
+pub(crate) fn enter_engine_native_run(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    bound: &GatedActorWrite<'_>,
+    config: &EngineExecutorConfig,
+    warm_scope: String,
+    compaction: Option<&mut RunCompaction>,
+    reactor: &tokio::runtime::Runtime,
+) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
+    let mut runtime = provider.runtime();
+    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+    let has_seat = vault.model_manifest().map_err(binding)?.is_some()
         || vault
             .model_seat_receipt(config.run_id)
-            .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
+            .map_err(binding)?
             .is_some();
     let seat = if has_seat {
         let decisions = provider.seat_decisions().ok_or_else(|| {
-            McpCodeExecutionError::RunBinding("manifest-backed run requires seat decisions".into())
+            EngineRunError::Binding("manifest-backed run requires seat decisions".into())
         })?;
         let facet = provider.seat_facet().ok_or_else(|| {
-            McpCodeExecutionError::RunBinding(
-                "manifest-backed run requires a capability profile".into(),
-            )
+            EngineRunError::Binding("manifest-backed run requires a capability profile".into())
         })?;
         let task = SeatTask {
             kind: SeatKind::Attempt,
-            warm_scope: format!("mcp-execute-code:{}", config.run_id.to_hex()),
+            warm_scope,
             task: config.task.clone(),
             purpose: oneiron::CallPurpose::Other {
                 name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
@@ -476,19 +516,14 @@ fn run_engine_native_code_mode(
         Some(
             vault
                 .birth_model_seat(config.run_id, &task, decisions)
-                .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?,
+                .map_err(binding)?,
         )
     } else {
         None
     };
     let mut routed_config = config.clone();
-    let mut executor = EngineNativeExecutor::new(
-        vault,
-        provider.backend(),
-        provider.lease(),
-        runtime,
-        &gated_write,
-    );
+    let mut executor =
+        EngineNativeExecutor::new(vault, provider.backend(), provider.lease(), runtime, bound);
     if let Some(seat) = &seat {
         routed_config.model = seat.model().clone();
         routed_config.model_locality = seat.locality();
@@ -503,7 +538,7 @@ fn run_engine_native_code_mode(
     }
     reactor
         .block_on(executor.run(&routed_config))
-        .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
+        .map_err(|error| EngineRunError::Run(error.to_string()))
 }
 
 /// A disconnected caller cannot release single-flight while its worker writes.

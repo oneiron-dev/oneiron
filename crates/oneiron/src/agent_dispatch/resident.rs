@@ -135,7 +135,7 @@ impl Vault {
         })
     }
 
-    fn resident_binding_for_effect_in_txn(
+    pub(super) fn resident_binding_for_effect_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         agent: EntityId,
@@ -483,14 +483,16 @@ impl AgentDispatcher<'_> {
 }
 
 /// The run id every inbox wake of `agent` carries.
-fn resident_run_id(agent: EntityId) -> String {
+pub(super) fn resident_run_id(agent: EntityId) -> String {
     format!("resident:{}", agent.to_hex())
 }
 
 /// A run a resident's host executes: a top-level dispatch of the resident,
 /// either a wake from its inbox or a TASK assigned to it. Workflow leaves and
 /// spawned children carry a parent attempt and are other hosts' work.
-fn resident_run_input(record: &AttemptRecord) -> Result<Option<(EntityId, AgentDispatchInput)>> {
+pub(super) fn resident_run_input(
+    record: &AttemptRecord,
+) -> Result<Option<(EntityId, AgentDispatchInput)>> {
     if record.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return Ok(None);
     }
