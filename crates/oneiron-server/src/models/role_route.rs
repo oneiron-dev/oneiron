@@ -184,4 +184,47 @@ impl ModelRuntime {
             ladder: route.ladder,
         })
     }
+
+    /// Admits `request`, whose model a durable seat bound (its envelope's
+    /// `seat_effort` set), as a call of `role` that keeps that model: its
+    /// own one-model ladder, under the policy a raw call naming it meets,
+    /// never swapped for the role's route. The role's live route still
+    /// clamps it: a seat served elsewhere, or wider than that route, is
+    /// refused.
+    pub fn admit_seat_bound(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: LlmRequest,
+    ) -> Result<RoleCall, RoleRefusal> {
+        let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
+        let route = self.route_role(vault, role, seat)?.locality;
+        let model = request.model.clone();
+        let refused = || RoleRefusal::RouteNotServed {
+            model: model.clone(),
+            route,
+        };
+        let (served, ladder) = self
+            .router
+            .as_ref()
+            .and_then(|router| router.served(&model))
+            .ok_or_else(refused)?;
+        if served != request.envelope.locality || served > route {
+            return Err(refused());
+        }
+        let request = vault
+            .authorize_raw_inference(
+                request,
+                &HostInferenceContext {
+                    binding: HostInferenceBinding::Advertised {
+                        model: model.clone(),
+                        locality: served,
+                    },
+                    extraction_egress: None,
+                },
+            )
+            .map_err(RoleRefusal::refused)?
+            .into_request();
+        Ok(RoleCall { request, ladder })
+    }
 }
