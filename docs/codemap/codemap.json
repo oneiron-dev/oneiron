@@ -28601,7 +28601,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "re-export": 2,
       "struct": 5
      }
@@ -70364,8 +70364,8 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 8,
-      "fn": 18,
-      "re-export": 13,
+      "fn": 19,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -70558,6 +70558,20 @@
      "purpose": "Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TokenRatios"
+     ],
+     "path": "src/models/token_ratio.rs",
+     "purpose": "Each catalog model's tokens per o200k token (OF-577): its tokenizer's count of one fixed passage over…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -72441,7 +72455,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72576,7 +72590,7 @@
    },
    "over_bar": 49,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 594,
+   "source_files": 595,
    "test_files": 182
   },
   "oneiron-spawn": {
