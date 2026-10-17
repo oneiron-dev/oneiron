@@ -83,6 +83,7 @@ pub(crate) fn bind_task_answer_in_txn(
             posture: None,
             media: QuestionMedia::default(),
             deadline_ms: None,
+            artifacts: Vec::new(),
         },
         created_at: input.now,
     };

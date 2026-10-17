@@ -911,6 +911,19 @@ impl Vault {
         Ok((proposed, reask_ref))
     }
 
+    /// The refs the wakes of `proposal_ref`'s withdrawn answers asked again under, for a
+    /// standing question that follows the artifact past them.
+    pub(crate) fn answer_reask_refs(
+        &self,
+        artifact: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<Vec<String>> {
+        Ok(self
+            .read_unit_withdrawal(&settlement_key_parts(artifact, proposal_ref))?
+            .map(|row| row.reask_refs)
+            .unwrap_or_default())
+    }
+
     fn read_unit_withdrawal(&self, key: &(EntityId, [u8; 32])) -> Result<Option<UnitWithdrawal>> {
         let rtxn = self.store.env.read_txn()?;
         WITHDRAWALS.get(&self.store, &rtxn, key)
