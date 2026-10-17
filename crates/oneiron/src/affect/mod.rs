@@ -3,6 +3,7 @@ mod claim_vad;
 mod consolidation;
 pub mod coping;
 pub mod state_index;
+pub mod state_inputs;
 mod trigger;
 
 pub(crate) use self::annotation::VadAnnotationCleanup;

@@ -5,6 +5,9 @@
 //! inbox and digest deliver; an answer records an intent and applies nothing.
 //! `/v1/owner/identity/asks` (OF-123) is the needs-you strip's identity asks,
 //! each with its one-tap choice card, and their answers.
+//! `/v1/owner/proactivity/action-mode` (OF-335) is the owner's action-mode
+//! policy: the state-index window with its targets and the mode bands the
+//! nightly refresh proposes from.
 //! Approving a draft approves its exact content, then schedules it through
 //! the ordinary outbound gate as the Dreamer on the owner's behalf; the
 //! gate's grants, consent and windows still decide the send.
@@ -16,6 +19,7 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigest;
 use oneiron::dreamer_runner::maintenance::identity::{
     IdentityAskView, IdentityCardCopy, IdentitySettled,
@@ -38,6 +42,10 @@ use crate::server::SyncServer;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/proactivity/digest", get(read_digest))
+        .route(
+            "/proactivity/action-mode",
+            get(action_mode).post(set_action_mode),
+        )
         .route("/stewardship", get(stewardship).post(set_stewardship))
         .route("/representation", get(review_representation))
         .route("/representation/approve", post(approve_representation))
@@ -105,6 +113,40 @@ async fn read_digest(
     })
     .await?;
     Ok(Json(view))
+}
+
+/// `GET /v1/owner/proactivity/action-mode`: the owner's action-mode policy.
+async fn action_mode(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Option<ActionModePolicy>> {
+    owner(&auth, &server)?;
+    let policy = blocking(move || Ok(server.vault().action_mode_policy()?)).await?;
+    Ok(Json(policy))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetActionMode {
+    /// None clears the policy, and no night refreshes an index for it.
+    policy: Option<ActionModePolicy>,
+}
+
+/// `POST /v1/owner/proactivity/action-mode`: replaces the whole policy.
+async fn set_action_mode(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<SetActionMode>, JsonRejection>,
+) -> OwnerReply<Option<ActionModePolicy>> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let policy = blocking(move || {
+        Ok(server
+            .vault()
+            .set_action_mode_policy(&owner, request.policy)?)
+    })
+    .await?;
+    Ok(Json(policy))
 }
 
 /// `GET /v1/owner/stewardship`: the owner's keep-in-touch rules.
