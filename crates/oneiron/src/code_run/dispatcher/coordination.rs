@@ -1,6 +1,7 @@
 //! Code-mode composition: host-bound agents.spawn / ask / wait.
 use std::sync::Arc;
 
+use super::fold_verbs::FoldLog;
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::EntityId;
 use crate::agent_def::{
@@ -96,15 +97,19 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// A host action for a live agent run (OF-181): the run's leased try,
     /// read live, under the action's own run reference, so the action's
-    /// replay and provenance stay its own.
+    /// replay and provenance stay its own. Its fold verbs reach the log of
+    /// `executor_run`, the run the host runs that try as; with none, they
+    /// refuse.
     pub(crate) fn for_action_attempt(
         vault: &'a Vault,
         actor: WriteActor,
         action_ref: String,
         leased: &AttemptRecord,
+        executor_run: Option<EntityId>,
     ) -> Result<Self> {
         let mut dispatcher = Self::for_leased_agent_attempt(vault, actor, leased)?;
         dispatcher.run_ref = action_ref;
+        dispatcher.fold_log = executor_run.map_or(FoldLog::Unbound, FoldLog::Run);
         Ok(dispatcher)
     }
 
@@ -294,15 +299,18 @@ impl<'a> HostSelfDispatcher<'a> {
             },
             context,
         )?;
+        let launch = result.launch().cloned();
         Ok(SelfDispatchOutcome::AgentSpawn(match result {
             AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {
                 SelfAgentSpawnResult::Queued {
                     attempt_ref: status.attempt.id,
+                    launch,
                 }
             }
             AgentDispatchOutcome::WorkflowDispatched(status)
             | AgentDispatchOutcome::WorkflowExisting(status) => SelfAgentSpawnResult::Queued {
                 attempt_ref: status.attempt.id,
+                launch,
             },
             AgentDispatchOutcome::ProposedWiden(proposal) => SelfAgentSpawnResult::ProposedWiden {
                 proposal_ref: proposal.proposal_id,
@@ -324,7 +332,15 @@ impl<'a> HostSelfDispatcher<'a> {
                 call.task_ref = Some(task);
             }
         }
-        let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        let mut memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        // The run's leased try is the ask's fan-out caller (OF-393): the ask
+        // states the count, expected spend and cap of that agent's spend
+        // tree. A run bound by its attempt id alone states none.
+        if self.agent_lease.is_some()
+            && let Some(binding) = self.task_host_binding()?
+        {
+            memory = memory.with_task_host(binding);
+        }
         Ok(match memory.tasks_ask(&call) {
             Ok(receipt) => SelfDispatchOutcome::TaskAsk(receipt),
             Err(error) => failed(SelfEffect::TasksAsk, error),

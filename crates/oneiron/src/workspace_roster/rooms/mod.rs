@@ -1,4 +1,5 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
+mod audience;
 mod history;
 mod hosting;
 mod liveness;
@@ -22,10 +23,16 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 #[cfg(test)]
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
+pub(crate) use audience::{
+    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, record_thread_admits_in,
+    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
+    thread_binding, thread_members_in, thread_root_readable_in, validate_private_audience_in,
+};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
 pub(crate) use history::erase_room_side_rows;
 pub(in crate::workspace_roster) use history::thread_turns_in;
+pub(in crate::workspace_roster) use hosting::room_host_in;
 pub(crate) use hosting::room_project_in;
 pub use hosting::{
     HostPin, HostPinKind, RoomHostHand, RoomHostPin, RoomHosting, RoomSpeakingRole, RoomStanding,
@@ -48,7 +55,12 @@ pub(crate) use participation::{
     record_participation_in_txn, require_join_covering_in_txn,
 };
 use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
-pub(crate) use replica::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
+pub(crate) use replica::{
+    RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
+    merge_replicated_responses_in_txn, merge_replicated_side_row_in_txn,
+    merge_replicated_turn_in_txn, replicated_side_carriers_in, replicated_side_rows_in,
+    replicated_turn_in,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use thread_projection::room_thread_turns_in_txn;
@@ -379,7 +391,11 @@ impl Vault {
             }
             HANDLES.put(&self.store, txn, &(room, handle.to_owned()), &actor)?;
             Ok(())
-        })
+        })?;
+        // FIX 1794: the binding reaches the room's live window.
+        #[cfg(feature = "sync")]
+        self.refresh_room_cell_in_live_window(room, Some(handle));
+        Ok(())
     }
 }
 impl Memory<'_> {
@@ -460,7 +476,7 @@ impl Memory<'_> {
         if self.admitted_turns(vec![claimed])?.is_empty() {
             return Err(MemoryError::from(invalid()));
         }
-        self.with_verified_actor_write_txn(|txn| {
+        let outcome = self.with_verified_actor_write_txn(|txn| {
             let addressed = turn_in(self.vault(), txn, turn)?;
             if addressed.room_id != room.to_hex() {
                 return Err(MemoryError::from(invalid()));
@@ -502,7 +518,12 @@ impl Memory<'_> {
             CLAIMS.put(&self.vault().store, txn, &turn, &receipt)?;
             claimant.record_in_txn(self.vault(), txn, turn, named, task)?;
             Ok(RoomClaimOutcome::Claimed(receipt))
-        })
+        })?;
+        // FIX 1794: the claim, and the facts it recorded, reach the live
+        // windows that carry them.
+        #[cfg(feature = "sync")]
+        self.vault().refresh_room_turn_facts_in_live_windows(turn);
+        Ok(outcome)
     }
     /// Uses the normal witness gate. The common witness transaction verifies
     /// the claim, membership, reply binding, and addressing before any message.

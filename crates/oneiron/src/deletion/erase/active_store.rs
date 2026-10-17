@@ -37,8 +37,10 @@ impl Vault {
         id: &EntityId,
         request_id: Option<&[u8; 16]>,
     ) -> Result<(bool, Vec<EntityId>)> {
-        // A held record keeps its bytes on every door that purges it.
+        // A held record keeps its bytes on every door that purges it, and a
+        // held world keeps its pads (OF-470).
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
@@ -112,7 +114,12 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
-        crate::embed::erase_turn_vectors_in_txn(self, wtxn, turns)?;
+        crate::embed::erase_turn_vectors_in_txn(
+            self,
+            wtxn,
+            turns,
+            crate::ports::DependentWalkDoor::Purge,
+        )?;
         Ok((
             existed || note_removed || had_refinement || had_merge_receipt || had_tags,
             citing,
@@ -126,6 +133,7 @@ impl Vault {
     ) -> Result<(bool, bool, bool)> {
         // A soft erase scrubs the body, so a hold refuses it too.
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         // Capture before the body is scrubbed (see the purge).
@@ -283,7 +291,12 @@ impl Vault {
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
-        crate::embed::erase_turn_vectors_in_txn(self, wtxn, turns)?;
+        crate::embed::erase_turn_vectors_in_txn(
+            self,
+            wtxn,
+            turns,
+            crate::ports::DependentWalkDoor::SoftErase,
+        )?;
         Ok((true, had_vector, ledger_changed))
     }
 }

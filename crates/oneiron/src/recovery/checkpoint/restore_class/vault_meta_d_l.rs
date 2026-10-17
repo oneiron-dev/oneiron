@@ -8,6 +8,7 @@ use crate::side_table::{self as t, SideTableDecl};
 
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DECISION_ASK, CONTENT),
+    (&t::DECISION_HOST_RULE, CONTENT),
     (&t::DECK_CREATION, CONTENT),
     (&t::DECK_DESIGN_SPEC, CONTENT),
     (&t::DECK_OUTLINE_KEEP, CONTENT),
@@ -230,6 +231,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::STRUCTURAL_KIND_REGISTRY, CONTENT),
     (&t::LEARNING_CELL, CONTENT),
     (&t::LEARNING_CELL_SUBJECT, CONTENT),
+    (&t::LEARNING_CHOICE, LIVE),
     (&t::LEARNING_COORDINATION, CONTENT),
     (&t::LEARNING_DUPLICATE_LABEL, CONTENT),
     (&t::LEARNING_EVIDENCE, CONTENT),

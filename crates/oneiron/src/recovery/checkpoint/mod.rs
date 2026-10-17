@@ -410,16 +410,9 @@ impl Vault {
         let mut databases = BTreeMap::new();
         let mut bodies = Vec::new();
         for entry in DB_MANIFEST {
-            let db = self
-                .store
-                .env
-                .open_database::<Bytes, Bytes>(&txn, Some(entry.name))?
-                .ok_or(codec_error())?;
-            let mut rows = Vec::new();
-            for row in db.iter(&txn)? {
-                let (key, value) = row?;
+            let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
                 if storage_tier(entry.name, key) != StorageTier::Canonical {
-                    continue;
+                    return Ok(None);
                 }
                 let excluded_row = match entry.name {
                     "entities" | "short_ids_reverse" => excluded.contains(key),
@@ -437,7 +430,7 @@ impl Vault {
                     _ => false,
                 };
                 if excluded_row {
-                    continue;
+                    return Ok(None);
                 }
                 if entry.name == "vault_meta"
                     && let Some(body) = crate::code_run::code_run_body_file_of_row(key, value)
@@ -449,7 +442,26 @@ impl Vault {
                 } else {
                     value.to_vec()
                 };
-                rows.push((key.to_vec(), value));
+                Ok(Some((key.to_vec(), value)))
+            };
+            let mut rows = Vec::new();
+            // A retrieval-index table is read through the inventory port, whose tables the open
+            // gate proved present; any other table opens by name, and a missing one is a corrupt
+            // image.
+            if let Some(index) = IndexRows::of_manifest_db(entry.name) {
+                for row in self.store.port_index_rows(&txn, index, &mut image_row)? {
+                    rows.extend(row??);
+                }
+            } else {
+                let db = self
+                    .store
+                    .env
+                    .open_database::<Bytes, Bytes>(&txn, Some(entry.name))?
+                    .ok_or(codec_error())?;
+                for row in db.iter(&txn)? {
+                    let (key, value) = row?;
+                    rows.extend(image_row(key, value)?);
+                }
             }
             databases.insert(entry.name.into(), rows);
         }

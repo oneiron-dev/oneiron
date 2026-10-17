@@ -3,7 +3,10 @@
 //! judgments hold. While the incumbent still answers, the Coach retests it on
 //! its own kept cases, so its retest noise is measured before a swap needs
 //! it. When another judge answers, that judge scores the incumbent's kept
-//! cases again. It takes over only when its divergence, grouped by source
+//! cases again. Each retest keeps both of the incumbent's answers beside its
+//! marker: a flip, one case answered two ways, is the judge's own uncertainty,
+//! and the Coach's calibration pass puts it to a person as an A/B ask. It
+//! takes over only when its divergence, grouped by source
 //! family, stays within the incumbent's noise or the owner's pinned rate; its
 //! overlap scores then fit the conversion that carries the incumbent's scored
 //! history onto its scale. Too few cases or no measured noise reads unknown,
@@ -102,6 +105,20 @@ pub struct JudgeShadowAnswer {
     /// The judge that answered, `model@version`.
     pub judge: String,
     pub answer: DecisionAnswer,
+}
+
+/// One retest, kept under its case's marker: the incumbent's kept answer and
+/// its answer when asked again. Two answers that do not agree are a flip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct JudgeRetestMark {
+    pub(crate) case_ref: String,
+    /// The skill the case judged, as hex: a pick on a flip is a label in that
+    /// skill's judge anchor.
+    pub(crate) skill: Option<String>,
+    pub(crate) kept: JudgeShadowAnswer,
+    pub(crate) rerun: JudgeShadowAnswer,
+    pub(crate) agreed: bool,
+    pub(crate) at: u64,
 }
 
 /// What the host lends the Coach: its kept judgments, the judge that answers
@@ -389,6 +406,7 @@ fn retest(
         if again.judge != incumbent {
             break;
         }
+        let agreed = agree(&case.answer, &again.answer);
         record_retest(
             vault,
             &Retest {
@@ -398,12 +416,26 @@ fn retest(
                 type_ref: None,
                 receipt: format!("judge-retest:{}", case.case_ref),
                 first: RetestScore::Pass(true),
-                second: RetestScore::Pass(agree(&case.answer, &again.answer)),
+                second: RetestScore::Pass(agreed),
                 at: now,
             },
             now,
         )?;
-        vault.sync_state_put(&key, &now.to_be_bytes())?;
+        save(
+            vault,
+            &key,
+            &JudgeRetestMark {
+                case_ref: case.case_ref.clone(),
+                skill: judged_skill(&case.state),
+                kept: JudgeShadowAnswer {
+                    judge: case.judge.clone(),
+                    answer: case.answer.clone(),
+                },
+                rerun: again,
+                agreed,
+                at: now,
+            },
+        )?;
         retests += 1;
     }
     Ok(JudgeSwapReport::Retested {
@@ -869,12 +901,15 @@ fn judged_floor(vault: &Vault, state: &Value) -> Result<bool> {
 struct Anchors {
     /// Each skill's held-out wins, by receipt.
     won: BTreeMap<String, BTreeMap<String, bool>>,
-    /// Each skill's swap labels between the pass's two judges.
-    labels: BTreeMap<EntityId, Vec<JudgeLabel>>,
+    /// Each skill's labels by campaign: swap picks between the pass's two
+    /// judges, and picks on the incumbent's retest flips.
+    labels: BTreeMap<(EntityId, String), Vec<JudgeLabel>>,
 }
 
 impl Anchors {
-    /// The judge the newest owner's pick on `case` names, if any.
+    /// The judge the newest owner's pick on `case` names, if any: a swap
+    /// pick, or a pick on the incumbent's retest flip of the same case that
+    /// matches one side's answer exactly.
     fn picked(
         &mut self,
         vault: &Vault,
@@ -898,22 +933,34 @@ impl Anchors {
             }
             return Ok(newest.map(|pick| pick.judge).filter(named));
         };
-        let labels = match self.labels.entry(skill) {
-            Entry::Occupied(kept) => kept.into_mut(),
-            Entry::Vacant(slot) => {
-                slot.insert(judge_label_anchor(vault, skill, &label_campaign(pair))?)
+        let mut sources = vec![(label_campaign(pair), None)];
+        if let Some(incumbent) = case.answers.first() {
+            sources.push((
+                retest_campaign(&incumbent.judge),
+                Some(incumbent.judge.as_str()),
+            ));
+        }
+        let mut newest: Option<(u64, &JudgeShadowAnswer)> = None;
+        for (campaign, retest) in sources {
+            let labels = match self.labels.entry((skill, campaign)) {
+                Entry::Occupied(kept) => kept.into_mut(),
+                Entry::Vacant(slot) => {
+                    let labels = judge_label_anchor(vault, skill, &slot.key().1)?;
+                    slot.insert(labels)
+                }
+            };
+            for label in labels
+                .iter()
+                .filter(|label| label.ask.evidence == case.case_ref)
+            {
+                if let Some(side) = label_side(label, retest, &case.answers)
+                    && newest.is_none_or(|(at, _)| label.picked_at > at)
+                {
+                    newest = Some((label.picked_at, side));
+                }
             }
-        };
-        Ok(labels
-            .iter()
-            .filter(|label| label.ask.evidence == case.case_ref)
-            .max_by_key(|label| label.picked_at)
-            .and_then(|label| {
-                case.answers
-                    .iter()
-                    .find(|answer| label_option(answer) == label.chosen)
-            })
-            .map(|answer| answer.judge.clone()))
+        }
+        Ok(newest.map(|(_, side)| side.judge.clone()))
     }
 
     /// `link`'s settled outcome, as an answer shaped like `like`; `None`
@@ -1056,7 +1103,11 @@ fn tradeoff_answer(vault: &Vault, proposal: &str, digest: &str) -> Result<Option
                 return None;
             }
             match verdict.disposition {
-                SkillEditDisposition::AcceptedTradeoff => Some("approve".to_owned()),
+                // A deferral carries a resolution only when it deferred an
+                // approval.
+                SkillEditDisposition::AcceptedTradeoff
+                | SkillEditDisposition::DeferredCycleCap
+                | SkillEditDisposition::DeferredJudgeCadence => Some("approve".to_owned()),
                 SkillEditDisposition::RejectedTradeoff => Some("reject".to_owned()),
                 _ => None,
             }
@@ -1166,8 +1217,9 @@ pub fn set_judge_swap_policy(
 /// that contradicts a takeover can re-pin it back. On a skill's case the pick
 /// is a label in that skill's judge anchor, delivered by the swap's notice.
 /// Like every calibration label it is final: the same pick again returns it,
-/// and another one fails. Each owner picks once; the newest owner's pick
-/// decides.
+/// and another one fails, as does one against the side this owner's pick on
+/// the incumbent's retest flip of the case named. Each owner picks once; the
+/// newest owner's pick decides.
 ///
 /// # Errors
 ///
@@ -1209,15 +1261,19 @@ pub fn pick_judge_swap_case(
     {
         let campaign = label_campaign(&pair);
         let options = [label_option(first), label_option(second)];
-        if judge_label_anchor(vault, skill, &campaign)?
-            .iter()
-            .any(|label| {
-                label.ask.responsible == by
-                    && label.ask.evidence == case.case_ref
-                    && label.chosen != options[chosen]
-            })
-        {
-            return Err(Error::InvalidClaimBody("a hand-test pick is final"));
+        let flips = retest_campaign(&first.judge);
+        for (source, retest) in [(&campaign, None), (&flips, Some(first.judge.as_str()))] {
+            if judge_label_anchor(vault, skill, source)?
+                .iter()
+                .any(|label| {
+                    label.ask.responsible == by
+                        && label.ask.evidence == case.case_ref
+                        && label_side(label, retest, &case.answers)
+                            .is_some_and(|side| side.judge != judge)
+                })
+            {
+                return Err(Error::InvalidClaimBody("a hand-test pick is final"));
+            }
         }
         let label = super::labels::record_judge_swap_label(
             vault,
@@ -1259,10 +1315,35 @@ fn label_campaign(pair: &str) -> String {
     format!("judge_swap:{pair}")
 }
 
+/// The label campaign picks on `judge`'s retest flips are kept under.
+fn retest_campaign(judge: &str) -> String {
+    let judge = blake3::hash(judge.as_bytes()).to_hex();
+    format!("judge_retest:{}", &judge[..32])
+}
+
 /// One judge's answer as a label option: the judge and its answer.
 fn label_option(answer: &JudgeShadowAnswer) -> String {
-    let said = serde_json::to_string(&answer.answer).unwrap_or_default();
-    format!("{}: {said}", answer.judge)
+    option_text(&answer.judge, &answer.answer)
+}
+
+fn option_text(judge: &str, answer: &DecisionAnswer) -> String {
+    let said = serde_json::to_string(answer).unwrap_or_default();
+    format!("{judge}: {said}")
+}
+
+/// The answer of a swap case's `answers` that `label` picks. A swap label
+/// names one by its option. A pick on the incumbent `retest`'s flip names
+/// one of its own two answers, so it picks the side whose answer is that
+/// one exactly, whichever judge gave it. `None` when it names neither.
+fn label_side<'a>(
+    label: &JudgeLabel,
+    retest: Option<&str>,
+    answers: &'a [JudgeShadowAnswer],
+) -> Option<&'a JudgeShadowAnswer> {
+    answers.iter().find(|answer| match retest {
+        None => label_option(answer) == label.chosen,
+        Some(judge) => option_text(judge, &answer.answer) == label.chosen,
+    })
 }
 
 /// The calibration ask a pick on `case` answers, the question its hand-test
@@ -1282,6 +1363,78 @@ pub(crate) fn swap_case_ask(
     };
     let campaign = label_campaign(&pair_tag(&swap.from_judge, &swap.to_judge));
     Some((skill, campaign, [label_option(first), label_option(second)]))
+}
+
+/// The judge a label option names: the inverse of [`label_option`]. `None`
+/// for an option no judge answer wrote.
+pub(crate) fn label_judge(option: &str) -> Option<&str> {
+    option.split_once(": ").map(|(judge, _)| judge)
+}
+
+/// The incumbent's retest flips, newest first: each a kept case it answered
+/// one way and, asked again, another.
+///
+/// # Errors
+///
+/// Storage errors; a kept marker that does not decode.
+pub(crate) fn judge_retest_flips(vault: &Vault) -> Result<Vec<JudgeRetestMark>> {
+    let mut flips = Vec::new();
+    for key in vault.sync_state_keys_with_prefix(RETESTED_PREFIX)? {
+        if let Some(mark) = load::<JudgeRetestMark>(vault, &key)?
+            && !mark.agreed
+        {
+            flips.push(mark);
+        }
+    }
+    flips.sort_by_key(|mark| std::cmp::Reverse(mark.at));
+    Ok(flips)
+}
+
+/// The calibration ask a retest flip raises, the judge's uncertainty on one
+/// case: the skill whose anchor the pick joins, the judge's retest campaign,
+/// and its two answers as options, the kept one first. Its evidence is the
+/// case's ref. `None` for an agreeing retest or a case that names no skill.
+pub(crate) fn retest_flip_ask(flip: &JudgeRetestMark) -> Option<(EntityId, String, [String; 2])> {
+    if flip.agreed {
+        return None;
+    }
+    let skill = flip
+        .skill
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())?;
+    Some((
+        skill,
+        retest_campaign(&flip.kept.judge),
+        [label_option(&flip.kept), label_option(&flip.rerun)],
+    ))
+}
+
+/// Whether a pick on the incumbent's retest flip of `case` already names
+/// one of the case's answers: the label the next swap pass settles it by.
+/// `false` for a case that names no skill or no answers.
+///
+/// # Errors
+///
+/// Storage errors reading the skill's judge anchor.
+pub(crate) fn swap_case_retest_picked(vault: &Vault, case: &JudgeSwapDisagreement) -> Result<bool> {
+    let Some(skill) = case
+        .skill
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(incumbent) = case.answers.first() else {
+        return Ok(false);
+    };
+    Ok(
+        judge_label_anchor(vault, skill, &retest_campaign(&incumbent.judge))?
+            .iter()
+            .any(|label| {
+                label.ask.evidence == case.case_ref
+                    && label_side(label, Some(incumbent.judge.as_str()), &case.answers).is_some()
+            }),
+    )
 }
 
 /// The same answer, or two scores within [`SCORE_AGREEMENT`].

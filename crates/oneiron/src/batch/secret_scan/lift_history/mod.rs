@@ -15,11 +15,20 @@
 //! clean. A run pauses while the switch is off. It ends with one owner
 //! receipt: counts per family, never a value or a digest.
 //!
+//! The owner hears of the proposals a run leaves open through one needs-you
+//! notice ([`notice`]), and closes each with a reason, or it closes on its
+//! own once its row reads clean ([`proposals`]).
+//!
 //! What a run cannot reach is the owner's: a checkpoint, a backup or a peer
 //! copy already sent keeps the raw value, and only a HardErase reaches it.
 
+mod attempts;
 mod authored;
 mod carriers;
+mod loro_blocks;
+mod notice;
+mod proposals;
+mod record_text;
 mod records;
 mod retained;
 mod side_rows;
@@ -68,9 +77,13 @@ const PROPOSALS: SideTable<Vec<u8>, SecretLiftHistoryProposal, Named> =
 )]
 #[serde(rename_all = "snake_case")]
 pub enum LiftFamily {
-    /// The entity table: a record's body and the text it was indexed with,
-    /// a NOTE's live text, a file's bytes.
+    /// The entity table: a record's body, the text it was indexed with and
+    /// the text it staged for idle publication, a NOTE's live text, title and
+    /// pin quotes, a file's bytes.
     Records,
+    /// The attempt records (`job_records`), with the intake events their rows
+    /// carry: an inbound surface event is queued inside its attempt's row.
+    Attempts,
     /// The rows of each side table the catalog classes as authored.
     SideRows,
     /// Carriers no door rewrites: receipt ledgers, op logs, snapshots,
@@ -79,12 +92,18 @@ pub enum LiftFamily {
 }
 
 impl LiftFamily {
-    const ALL: [Self; 3] = [Self::Records, Self::SideRows, Self::Carriers];
+    const ALL: [Self; 4] = [
+        Self::Records,
+        Self::Attempts,
+        Self::SideRows,
+        Self::Carriers,
+    ];
 
     /// The family's stable code.
     pub const fn code(self) -> &'static str {
         match self {
             Self::Records => "records",
+            Self::Attempts => "attempts",
             Self::SideRows => "side_rows",
             Self::Carriers => "carriers",
         }
@@ -125,6 +144,61 @@ pub enum LiftCause {
     NoDoor,
     /// The record's retained history still holds the value.
     History,
+}
+
+impl LiftCause {
+    /// The cause's stable code.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Unplaceable => "unplaceable",
+            Self::Immutable => "immutable",
+            Self::Held => "held",
+            Self::File => "file",
+            Self::NoDoor => "no_door",
+            Self::History => "history",
+        }
+    }
+}
+
+/// Why a proposal closed. The owner closes one as `not_a_secret`, `rotated`
+/// or `accepted`; the others close it on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LiftCloseReason {
+    /// The owner: what the sweep found is no secret.
+    NotASecret,
+    /// The owner rotated or revoked the value where it is issued.
+    Rotated,
+    /// The owner keeps the row as it stands.
+    Accepted,
+    /// A later run read the row again and found no hit there.
+    ReadClean,
+    /// The owner answered each key the sweep lifted out of the record
+    /// through a found-key door: rotate, delete or not a secret.
+    Answered,
+    /// The row was deleted.
+    Deleted,
+}
+
+impl LiftCloseReason {
+    /// The reason's stable code.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotASecret => "not_a_secret",
+            Self::Rotated => "rotated",
+            Self::Accepted => "accepted",
+            Self::ReadClean => "read_clean",
+            Self::Answered => "answered",
+            Self::Deleted => "deleted",
+        }
+    }
+}
+
+/// How many open proposals one cause holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LiftCauseCount {
+    pub cause: LiftCause,
+    pub open: u64,
 }
 
 /// One family's counts in a run.
@@ -197,9 +271,13 @@ pub struct SecretLiftReceipt {
     pub failed: u64,
 }
 
-/// A hit the sweep left for the owner, with why.
+/// A hit the sweep left for the owner, with why. A closed one keeps its
+/// cause and says when, by whom and why it closed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SecretLiftHistoryProposal {
+    /// The proposal's id, as hex: what the owner's close names.
+    #[serde(default)]
+    pub id: String,
     pub family: LiftFamily,
     pub cause: LiftCause,
     /// The record or row (`record:<id>`, `side:<table>:<key>`,
@@ -208,6 +286,23 @@ pub struct SecretLiftHistoryProposal {
     pub proposal: SecretLiftProposal,
     pub run_id: String,
     pub filed_at: u64,
+    /// When it closed; none while it is open.
+    pub closed_at: Option<u64>,
+    /// Who closed it: the owner, as hex, or `sweep` when it closed on its
+    /// own.
+    pub closed_by: Option<String>,
+    pub close_reason: Option<LiftCloseReason>,
+    /// The owner's close's Gate receipt, `gate:<hex>`; none for one that
+    /// closed on its own.
+    pub close_receipt: Option<String>,
+}
+
+impl SecretLiftHistoryProposal {
+    /// Whether the proposal is still open.
+    #[must_use]
+    pub const fn is_open(&self) -> bool {
+        self.closed_at.is_none()
+    }
 }
 
 /// Where a run stands.
@@ -233,17 +328,35 @@ pub struct SecretLiftStatus {
     pub running: Option<SecretLiftProgress>,
     pub last: Option<SecretLiftReceipt>,
     pub open_proposals: u64,
+    /// The open proposals, counted by why the sweep left each.
+    pub open_by_cause: Vec<LiftCauseCount>,
+    /// The proposals closed, by the owner or on their own.
+    pub closed_proposals: u64,
     /// The first open proposals, in key order.
     pub proposals: Vec<SecretLiftHistoryProposal>,
 }
 
-/// `vault.secrets.lift_history`'s input: the status, or a run started first.
+/// `vault.secrets.lift_history`'s input: the status, after closing one
+/// proposal or queueing a run when asked.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SecretLiftRequest {
     /// Queue a run now. A run already queued walks again from the start.
     #[serde(default)]
     pub start: bool,
+    /// Close one open proposal first, with the owner's reason.
+    #[serde(default)]
+    pub close: Option<SecretLiftClose>,
+}
+
+/// The owner's close of one lift proposal.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretLiftClose {
+    /// The proposal's `id`.
+    pub proposal: String,
+    /// `not_a_secret`, `rotated` or `accepted`.
+    pub reason: LiftCloseReason,
 }
 
 /// What one housekeeping run of the sweep did.
@@ -312,6 +425,8 @@ struct Page {
 /// no run, a paused run, or a finished one.
 pub(crate) fn run_lift_pass(vault: &Vault, passed: impl Fn() -> bool) -> Result<(LiftPass, bool)> {
     let mut pass = LiftPass::default();
+    // Proposals whose rows were deleted or answered close between runs too.
+    proposals::review(vault)?;
     loop {
         let (run, mode) = {
             let txn = vault.store.env.read_txn()?;
@@ -342,16 +457,26 @@ pub(crate) fn run_lift_pass(vault: &Vault, passed: impl Fn() -> bool) -> Result<
 /// One page of the run's walk; `false` when the switch went off under it.
 fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> {
     let family = run.family;
-    let page = {
+    let (mut page, cleared) = {
         let txn = vault.store.env.read_txn()?;
-        match family {
+        let page = match family {
             LiftFamily::Records => records::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
+            LiftFamily::Attempts => attempts::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
             LiftFamily::SideRows => side_rows::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
             LiftFamily::Carriers => carriers::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
-        }
+        };
+        // A row an open proposal names that this page read without a hit
+        // is settled too, so its proposal closes.
+        let cleared =
+            proposals::open_in_page(vault, &txn, family, &run.after, page.next.as_deref())?;
+        (page, cleared)
     };
     pass.read += page.read;
-    for key in &page.hits {
+    let mut keys = std::mem::take(&mut page.hits);
+    keys.extend(cleared);
+    keys.sort_unstable();
+    keys.dedup();
+    for key in &keys {
         if !settle(vault, run, family, key, true, pass)? {
             pass.paused = true;
             return Ok(false);
@@ -429,6 +554,13 @@ fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<boo
     };
     RECEIPTS.put(&vault.store, &mut txn, &ended.run_id, &receipt)?;
     RUN.delete(&vault.store, &mut txn, &())?;
+    notice::after_run_in_txn(
+        vault,
+        &mut txn,
+        ended.run_id,
+        receipt.proposals,
+        finished_at,
+    )?;
     txn.commit()?;
     pass.finished = true;
     tracing::info!(
@@ -461,8 +593,9 @@ fn settle(
     }
     let lifted = match family {
         LiftFamily::Records => records::lift(vault, &mut txn, key),
+        LiftFamily::Attempts => attempts::lift(vault, &mut txn, key),
         LiftFamily::SideRows => side_rows::lift(vault, &mut txn, key),
-        LiftFamily::Carriers => carriers::lift(vault, &mut txn, key),
+        LiftFamily::Carriers => lift_carrier(vault, &mut txn, key),
     };
     let done = match lifted {
         Ok(done) => done,
@@ -496,6 +629,16 @@ fn settle(
             }
         }
     };
+    // A row that reads clean now closes the proposal it holds open.
+    let closed = match done {
+        Done::Clean | Done::Masked { .. } => {
+            proposals::close_clean_in_txn(vault, &mut txn, family, key)?
+        }
+        Done::Propose(..) => false,
+    };
+    if closed {
+        notice::settle_in_txn(vault, &mut txn)?;
+    }
     let filed = match done {
         Done::Clean => None,
         Done::Masked { history, reason } => {
@@ -567,7 +710,22 @@ fn progress_in_txn(
     RUN.put(&vault.store, txn, &(), &current)
 }
 
-/// Files a proposal for `key` unless one is open for it; `true` when filed.
+/// A carrier row read by its door, then by its Loro blocks decompressed: a
+/// hit only a block holds files a `no_door` proposal.
+fn lift_carrier(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
+    match carriers::lift(vault, txn, key)? {
+        Done::Clean => Ok(
+            loro_blocks::hit_at(vault, txn, key)?.map_or(Done::Clean, |reason| {
+                Done::Propose(LiftCause::NoDoor, reason)
+            }),
+        ),
+        done => Ok(done),
+    }
+}
+
+/// Files a proposal for `key` unless one is open for it, or the owner closed
+/// it; `true` when filed. An open one takes the door's word on its cause; one
+/// that closed because its row read clean or was gone opens again.
 fn file_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -578,11 +736,18 @@ fn file_in_txn(
     reason: &'static str,
 ) -> Result<bool> {
     let row_key = proposal_key(family, cause, key);
-    if PROPOSALS.contains(&vault.store, txn, &row_key)? {
-        return Ok(false);
+    if let Some(held) = PROPOSALS.get_lenient(&vault.store, txn, &row_key)? {
+        if held.is_open() {
+            proposals::refresh_in_txn(vault, txn, &row_key, held, cause, reason)?;
+            return Ok(false);
+        }
+        if !proposals::reopens(&held) {
+            return Ok(false);
+        }
     }
     let path = match family {
         LiftFamily::Records => records::path(key),
+        LiftFamily::Attempts => attempts::path(key),
         LiftFamily::SideRows => side_rows::path(key),
         LiftFamily::Carriers => carriers::path(key),
     };
@@ -592,6 +757,7 @@ fn file_in_txn(
         txn,
         &row_key,
         &SecretLiftHistoryProposal {
+            id: hex(&row_key),
             family,
             cause,
             proposal: SecretLiftProposal {
@@ -602,6 +768,10 @@ fn file_in_txn(
             },
             run_id: run.run_id.to_hex(),
             filed_at,
+            closed_at: None,
+            closed_by: None,
+            close_reason: None,
+            close_receipt: None,
         },
     )?;
     Ok(true)
@@ -747,11 +917,28 @@ impl Vault {
             .transpose()?
             .map(|(_, receipt)| receipt);
         let mut open_proposals = 0_u64;
+        let mut closed_proposals = 0_u64;
+        let mut open_by_cause: Vec<LiftCauseCount> = Vec::new();
         let mut proposals = Vec::new();
         for row in PROPOSALS.iter_from(&self.store, &txn, &[])? {
-            let (_, proposal) = row?;
+            let (key, mut proposal) = row?;
+            if !proposal.is_open() {
+                closed_proposals += 1;
+                continue;
+            }
             open_proposals += 1;
+            match open_by_cause
+                .iter_mut()
+                .find(|count| count.cause == proposal.cause)
+            {
+                Some(count) => count.open += 1,
+                None => open_by_cause.push(LiftCauseCount {
+                    cause: proposal.cause,
+                    open: 1,
+                }),
+            }
             if proposals.len() < STATUS_PROPOSALS {
+                proposal.id = hex(&key);
                 proposals.push(proposal);
             }
         }
@@ -761,8 +948,35 @@ impl Vault {
             running,
             last,
             open_proposals,
+            open_by_cause,
+            closed_proposals,
             proposals,
         })
+    }
+
+    /// The owner closes one open lift proposal with a reason: `not_a_secret`,
+    /// `rotated` or `accepted`. The close keeps the proposal's cause, stamps
+    /// when and by whom, and writes a Gate receipt naming the proposal, its
+    /// row, its cause and the reason, never a value. The lift notice resolves
+    /// once no proposal is open.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not a
+    /// live owner of this vault. [`Error::EntityNotFound`] for an id no
+    /// proposal has. [`GateError::InvalidConsentBound`] for a reason the owner
+    /// does not give, or a proposal already closed.
+    pub fn close_secret_lift_proposal(
+        &self,
+        owner: &AuthenticatedOwner,
+        proposal: &str,
+        reason: LiftCloseReason,
+    ) -> Result<SecretLiftHistoryProposal> {
+        let mut txn = self.store.env.write_txn()?;
+        let actor = live_owner_in_txn(self, owner, &txn)?;
+        let closed = proposals::dismiss_in_txn(self, &mut txn, actor, proposal, reason)?;
+        notice::settle_in_txn(self, &mut txn)?;
+        txn.commit()?;
+        Ok(closed)
     }
 }
 
@@ -782,15 +996,19 @@ fn live_owner_in_txn(
 }
 
 /// `vault.secrets.lift_history`: the sweep's state for the owner, after
-/// queueing a run when `input.start` asks for one.
+/// closing the proposal `input.close` names and queueing a run when
+/// `input.start` asks for one.
 ///
 /// # Errors
-/// As [`Vault::start_secret_lift`].
+/// As [`Vault::close_secret_lift_proposal`] and [`Vault::start_secret_lift`].
 pub fn secret_lift_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &SecretLiftRequest,
 ) -> Result<SecretLiftStatus> {
+    if let Some(close) = &input.close {
+        vault.close_secret_lift_proposal(owner, &close.proposal, close.reason)?;
+    }
     if input.start {
         return vault.start_secret_lift(owner, vault.now_recorded_at());
     }

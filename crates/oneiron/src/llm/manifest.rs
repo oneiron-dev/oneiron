@@ -459,6 +459,33 @@ impl Vault {
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)
     }
+    /// The model a call of `role` binds in the caller's snapshot: the
+    /// manifest's pin at the slot's effective route, or `fallback` (the
+    /// role's seat) when no manifest is set. A candidate to price, not
+    /// serving authority: whether a host serves it is the host's to say.
+    pub fn price_model_for_role_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        role: ModelRole,
+        fallback: &ModelId,
+    ) -> Result<ModelId> {
+        let Some(manifest) = read_manifest(&self.store, txn)? else {
+            return Ok(fallback.clone());
+        };
+        let binding = manifest.binding(role)?;
+        let widest = *manifest
+            .routes
+            .get(&binding.slot)
+            .ok_or_else(|| invalid("missing slot route"))?;
+        let route = read_routes(&self.store, txn)?
+            .get(&binding.slot)
+            .copied()
+            .unwrap_or(widest);
+        if route_rank(route) > route_rank(widest) {
+            return Err(invalid("resident route cannot widen manifest pin"));
+        }
+        Ok(model_for_route(binding, route, widest)?.clone())
+    }
     /// Effective per-vault route, including a resident narrowing if present.
     pub fn model_route(&self, slot: ModelSlot) -> Result<Option<ModelLocality>> {
         let txn = self.store.env.read_txn()?;

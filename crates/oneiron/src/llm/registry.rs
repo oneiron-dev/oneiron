@@ -45,6 +45,11 @@ pub struct ModelRegistryRow {
     pub scores: BTreeMap<String, BTreeMap<String, f64>>,
     #[serde(default)]
     pub fetched_at: BTreeMap<String, u64>,
+    /// Tokens this model's tokenizer counts per o200k token of the same
+    /// text, measured by the host on one fixed passage (OF-577); `None`
+    /// until measured. A refresh that changes the catalog entry clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_per_o200k: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,6 +107,9 @@ impl ModelRegistryRow {
             || entry.display_name.trim().is_empty()
             || entry.context_window_tokens == 0
             || entry.max_output_tokens == Some(0)
+            || self
+                .tokens_per_o200k
+                .is_some_and(|ratio| !(ratio.is_finite() && ratio > 0.0))
         {
             return Err(invalid("invalid model registry row"));
         }
@@ -192,6 +200,29 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
+    /// Stores `ratio`, the host's measured [`ModelRegistryRow::tokens_per_o200k`],
+    /// on `measured`'s stored row while that row still holds the catalog entry
+    /// it was measured on. `Ok(false)` when there is no such row: none is
+    /// stored, or a refresh changed it since.
+    ///
+    /// # Errors
+    ///
+    /// A ratio that is not finite and positive, or storage errors.
+    pub fn set_model_token_ratio(&self, measured: &ModelRegistryRow, ratio: f64) -> Result<bool> {
+        let key = measured.catalog.model.as_str().to_owned();
+        let mut txn = self.store.env.write_txn()?;
+        let Some(mut row) = REGISTRY_ROW.get(&self.store, &txn, &key)? else {
+            return Ok(false);
+        };
+        if row.catalog != measured.catalog {
+            return Ok(false);
+        }
+        row.tokens_per_o200k = Some(ratio);
+        row.validate()?;
+        REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
+        txn.commit()?;
+        Ok(true)
+    }
     pub fn model_registry_row(&self, model: &ModelId) -> Result<Option<ModelRegistryRow>> {
         let stored = {
             let txn = self.store.env.read_txn()?;
@@ -205,6 +236,27 @@ impl Vault {
             .is_some()
         {
             return Ok(CatalogSeed::from_installed_pack(self)?
+                .rows
+                .into_iter()
+                .find(|row| &row.catalog.model == model));
+        }
+        Ok(None)
+    }
+    /// [`Self::model_registry_row`] in the caller's snapshot, for a reader
+    /// that already holds a transaction (a launch statement's USD quote).
+    pub fn model_registry_row_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        model: &ModelId,
+    ) -> Result<Option<ModelRegistryRow>> {
+        if let Some(row) = read_model_registry_row(&self.store, txn, model)? {
+            return Ok(Some(row));
+        }
+        if self
+            .installed_pack_in_txn(txn, crate::skill_hub::MODEL_PACK_NAME)?
+            .is_some()
+        {
+            return Ok(CatalogSeed::from_installed_pack_in_txn(self, txn)?
                 .rows
                 .into_iter()
                 .find(|row| &row.catalog.model == model));
@@ -278,10 +330,18 @@ impl Vault {
                         old.wire == existing.wire && old.catalog == existing.catalog
                     }) =>
                 {
+                    // A changed entry may name another tokenizer: its ratio
+                    // is measured again.
+                    let tokens_per_o200k = if row.catalog == existing.catalog {
+                        existing.tokens_per_o200k
+                    } else {
+                        row.tokens_per_o200k
+                    };
                     let refreshed = ModelRegistryRow {
                         version: row.version,
                         wire: row.wire,
                         catalog: row.catalog,
+                        tokens_per_o200k,
                         ..existing
                     };
                     REGISTRY_ROW.put(&self.store, txn, &key, &refreshed)?;

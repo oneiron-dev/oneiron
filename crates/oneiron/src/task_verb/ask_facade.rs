@@ -13,12 +13,14 @@ use crate::side_table::{self, Named, SideTable};
 
 /// What an ask's admission composes with the asker's own write.
 enum AskThen<F> {
-    /// A closure run in the admission's transaction. The closure cannot
-    /// wait, so this ask is never held for launch approval.
+    /// A closure run in the admission's transaction, whether the ask goes
+    /// out or is held for launch approval: it writes nothing a member TASK
+    /// must exist for, and the group it is handed is the one a release mints.
     Now(F),
-    /// A typed effect, or none. In `manual` mode the ask may be held for the
-    /// owner's launch approval (ASK-3); the effect is kept on its hold and
-    /// runs as the approval releases the ask.
+    /// A typed effect, or none. In `manual` mode the ask may be held for a
+    /// launch approval (ASK-3) by the owner, or its project's lead or board;
+    /// the effect is kept on its hold and runs as the approval releases the
+    /// ask.
     Typed(Option<AskEffect>),
 }
 
@@ -58,8 +60,9 @@ impl Memory<'_> {
     }
 
     /// Compose a closure into the same ask admission transaction. A replay
-    /// has already committed its effect and does not execute it twice. A
-    /// closure cannot wait for a launch approval, so this ask is never held.
+    /// has already committed its effect and does not execute it twice. In
+    /// `manual` mode the ask may be held (ASK-3); the closure runs at
+    /// admission all the same, on the group the release mints.
     pub(crate) fn tasks_ask_with_txn_effect(
         &self,
         input: &TaskAskSpec,
@@ -140,11 +143,23 @@ impl Memory<'_> {
             now,
             super::TaskCreateRateLimit::default(),
         )?;
-        // Stated after the census and before any grant or member TASK.
-        // An ask holds no spend context, so it states no cap.
+        // Stated after the census and before any grant or member TASK. An
+        // ask from an agent's run the host bound states its count, expected
+        // spend and cap under that agent's spend tree (OF-393), the lease
+        // re-proved here; over the cap is stated, never refused. Any other
+        // ask states no cap.
+        let caller = FanoutCaller {
+            parent_attempt: super::create_origin::task_create_origin_in_txn(
+                self,
+                txn,
+                self.task_host(),
+            )?
+            .and_then(|origin| origin.parent_attempt()),
+            ..FanoutCaller::default()
+        };
         let mut statement = AgentDispatcher::new(self.vault()).plan_fanout_in_txn(
             txn,
-            &FanoutCaller::default(),
+            &caller,
             &census.work,
             now,
         )?;
@@ -154,38 +169,49 @@ impl Memory<'_> {
         let question_digest =
             super::ask_settlement::question_digest(self.vault(), txn, &census.effective.what)?
                 .ok_or(crate::Error::EntityNotFound)?;
-        let then = match then {
-            AskThen::Typed(effect)
-                if super::fanout_launch::ask_launch_needs_approval(
-                    self.vault(),
-                    txn,
-                    &census.holders,
-                )? =>
-            {
-                // Held: no guest grant, no member TASK and no group exist
-                // until the owner approves; the effect waits on the hold.
-                return super::fanout_launch::hold_ask_in(
-                    self.vault(),
-                    txn,
-                    super::fanout_launch::AskHold {
-                        group_ref,
-                        actor: self.actor(),
-                        actor_class: self.actor_class(),
-                        requested: input,
-                        effective: census.effective,
-                        holders: census.holders,
-                        context_class: census.context_class,
-                        question_digest,
-                        request_digest: digest,
-                        statement,
-                        scope: check_scope,
-                        effect,
-                        now,
-                    },
-                );
-            }
-            then => then,
+        // The project whose lead and board may release a hold, bound now
+        // from the asked TASK or the project effect; none leaves the owner.
+        let approval_project = match &then {
+            AskThen::Typed(effect) => self.ask_launch_project_in(txn, input, effect.as_ref())?,
+            AskThen::Now(_) => self.ask_launch_project_in(txn, input, None)?,
         };
+        if super::fanout_launch::ask_launch_needs_approval(
+            self.vault(),
+            txn,
+            &census.holders,
+            approval_project,
+        )? {
+            // Held: no guest grant, no member TASK and no group exist until
+            // an approver releases it; a typed effect waits on the hold, and
+            // a closure runs now.
+            let effect = match then {
+                AskThen::Now(effect) => {
+                    effect(txn, group_ref)?;
+                    None
+                }
+                AskThen::Typed(effect) => effect,
+            };
+            return super::fanout_launch::hold_ask_in(
+                self.vault(),
+                txn,
+                super::fanout_launch::AskHold {
+                    group_ref,
+                    approval_project,
+                    actor: self.actor(),
+                    actor_class: self.actor_class(),
+                    requested: input,
+                    effective: census.effective,
+                    holders: census.holders,
+                    context_class: census.context_class,
+                    question_digest,
+                    request_digest: digest,
+                    statement,
+                    scope: check_scope,
+                    effect,
+                    now,
+                },
+            );
+        }
         // Width is a check on an ask that goes out, never a hold.
         let width_asked = super::fanout_check::raise_unheld_width_check(
             self.vault(),
@@ -239,6 +265,33 @@ impl Memory<'_> {
         }
         receipt.idempotent_replay = false;
         Ok(receipt)
+    }
+
+    /// The project a held launch of this ask binds its approvers to: the
+    /// asked TASK's served project, else a project effect's project, read
+    /// again here, else none. A TASK placed in two projects refuses, as its
+    /// project route does.
+    fn ask_launch_project_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+        effect: Option<&AskEffect>,
+    ) -> MemoryResult<Option<EntityId>> {
+        if let Some(task) = input.task_ref
+            && let Some(project) = self.vault().task_served_project_in_txn(txn, task)?
+        {
+            return Ok(Some(project));
+        }
+        if let Some(AskEffect::Project { project, task, .. }) = effect {
+            let (current, _) = self.vault().project_ask_route_in_txn(txn, *task)?;
+            if current != *project {
+                return Err(MemoryError::bad_request(
+                    "project ask placement changed; ask again",
+                ));
+            }
+            return Ok(Some(*project));
+        }
+        Ok(None)
     }
 
     /// An actor that may not ask is refused before any census runs.

@@ -62,6 +62,8 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 pub use self::reader_table::ReaderTableShortfall;
 #[cfg(test)]
 pub(crate) use self::retrieval_trace_key::unkeyed_for_test;
+#[cfg(feature = "sync")]
+pub(crate) use self::transactions::MAX_SYNC_STATE_KEYS;
 pub(crate) use self::vector_evidence::NoMatchFloors;
 
 /// Main vault API wrapping LMDB storage and configuration.
@@ -123,6 +125,10 @@ pub struct Vault {
     pub(crate) wake_policy_timer_owned: std::sync::atomic::AtomicBool,
     pub(crate) conversation_presence:
         std::sync::Mutex<std::collections::BTreeMap<crate::EntityId, Vec<crate::EntityId>>>,
+    /// The host's USD quote for launch statements (OF-532), installed once
+    /// by [`Vault::install_launch_usd_prices`]. Empty: dollars are unknown.
+    pub(crate) launch_usd_prices:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::agent_dispatch::LaunchUsdPrices>>,
     /// Live-window delete-routing seam (M4-10 / ONE-1135): a `Weak` to the
     /// production [`crate::sync::manager::WindowManager`], set by
     /// [`crate::sync::manager::WindowManager::attach_to_vault`]. When a

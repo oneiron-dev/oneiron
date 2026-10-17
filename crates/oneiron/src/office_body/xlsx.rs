@@ -1,29 +1,44 @@
-//! The XLSX body inside its Loro document, schema 1 (ARCH-0075: "XLSX is a map
+//! The XLSX body inside its Loro document, schema 2 (ARCH-0075: "XLSX is a map
 //! keyed by sheet and address").
 //!
-//! Root `office` holds the kind, schema and date system, and what the import
-//! fixes: the worksheet names in workbook order, each sheet's read-only ranges
-//! and the workbook's cell formats. Root `cells` maps each sheet to a map from
-//! A1 address to one cell value: its content (`t` type, `v` value, `f`
-//! formula), its format `s` and its import lock. A cell is one value, so
-//! concurrent writes to it resolve last-writer-wins and a three-way read names
-//! them. Clearing a cell keeps its entry. Root `names` maps `sheet!name` (lower
-//! case; an empty sheet for a workbook name) to a defined name.
+//! Root `office` holds the kind, schema and date system, the worksheets in
+//! workbook order as `[key, name]` pairs, each sheet's read-only ranges by key
+//! and the workbook's cell formats. A sheet's key is its imported name, or one
+//! minted when the body adds it, so renaming or moving a sheet changes only the
+//! list. Root `cells` maps each sheet key to a map from A1 address to one cell
+//! value: its content (`t` type, `v` value, `f` formula), its format `s` and
+//! its import lock. A cell is one value, so concurrent writes to it resolve
+//! last-writer-wins and a three-way read names them. Clearing a cell keeps its
+//! entry; a deleted sheet's cells stay under its key, which is never reused.
+//! Root `names` maps `key!name` (lower case; an empty key for a workbook name)
+//! to a defined name. Root `formats` maps the id of a cell format the body
+//! composed to its JSON, one immutable value; a cell names one as `fmt` in
+//! place of its imported format `s`.
+//!
+//! `office.axes` logs the body's row and column inserts and deletes in order,
+//! each `[key, "row"|"col", at, count, delete]`. An address names a cell as the
+//! log leaves its sheet, so an export replays the log on the imported package
+//! first, then writes only the cells and names that differ from the import
+//! moved by the same log.
 
 use super::fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 use super::invalid;
 use crate::error::Result;
 use loro::{Container, LoroDoc, LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 use oneiron_docedit::xlsx_body::{
-    XlsxArea, XlsxBook, XlsxChange, XlsxLock, XlsxStyle, XlsxValue, a1, check_cell, check_name,
-    parse_a1,
+    SheetFate, XlsxArea, XlsxAxis, XlsxAxisEdit, XlsxBook, XlsxChange, XlsxFormat, XlsxLock,
+    XlsxSheetPlan, XlsxStyle, XlsxValue, a1, check_cell, check_format, check_name,
+    check_sheet_name, parse_a1, retarget_sheets, shift_axis,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const OFFICE: &str = "office";
 const CELLS: &str = "cells";
 const NAMES: &str = "names";
-pub(super) const SCHEMA: u32 = 1;
+const FORMATS: &str = "formats";
+/// The longest id of a cell format the body composes.
+const MAX_FORMAT_ID: usize = 64;
+pub(super) const SCHEMA: u32 = 2;
 /// The most stored cells a live body holds.
 const MAX_CELLS: usize = 200_000;
 
@@ -32,15 +47,23 @@ const MAX_CELLS: usize = 200_000;
 pub struct XlsxBody {
     pub date1904: bool,
     pub sheets: Vec<BodySheet>,
-    /// Defined names by key: `sheet!name` in lower case, the sheet empty for a
-    /// workbook name.
+    /// Defined names by key: the sheet's key and the name in lower case,
+    /// `key!name`, the key empty for a workbook name.
     pub names: BTreeMap<String, BodyName>,
     /// The workbook's cell formats, by index.
     pub styles: Vec<XlsxStyle>,
+    /// The row and column inserts and deletes since import, in order, by
+    /// sheet key.
+    pub axes: Vec<(String, XlsxAxisEdit)>,
+    /// The cell formats the body composed, by id; each is immutable.
+    pub formats: BTreeMap<String, XlsxFormat>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BodySheet {
+    /// The sheet's key in the body: its imported name, or one minted when the
+    /// body added it. A rename keeps it.
+    pub key: String,
     pub name: String,
     /// `(row, col)` to cell, in row-major order.
     pub cells: BTreeMap<(u32, u32), BodyCell>,
@@ -56,7 +79,16 @@ pub struct BodyCell {
     pub value: XlsxValue,
     pub formula: Option<String>,
     pub style: Option<u32>,
+    /// A cell format the body composed, by id, in place of `style`.
+    pub format: Option<String>,
     pub locked: Option<XlsxLock>,
+}
+
+/// A cell format the body composed, by its id.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BodyFormat {
+    pub id: String,
+    pub format: XlsxFormat,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -85,11 +117,26 @@ pub enum XlsxBodyOp {
         cell: String,
         formula: String,
     },
-    /// Apply one of the workbook's cell formats, or none.
+    /// Apply one of the workbook's cell formats, or none; a composed format
+    /// the cell had goes.
     SetStyle {
         sheet: String,
         cell: String,
         style: Option<u32>,
+    },
+    /// Compose a cell format under `id` (1 to 64 letters, digits, `_`, `-`
+    /// or `.`): one of the workbook's with its font, fill, border or number
+    /// format changed. A format is immutable: composing an id again with
+    /// another format refuses, so a changed look takes a new id.
+    DefineFormat {
+        id: String,
+        format: XlsxFormat,
+    },
+    /// Apply a format the body composed; the cell's imported format goes.
+    SetFormat {
+        sheet: String,
+        cell: String,
+        format: String,
     },
     /// Empty a cell's content; its format stays.
     Clear {
@@ -106,6 +153,55 @@ pub enum XlsxBodyOp {
     DeleteName {
         name: String,
         sheet: Option<String>,
+    },
+    /// Add an empty worksheet at `at` in the workbook's order (0 is first),
+    /// or last.
+    AddSheet {
+        sheet: String,
+        at: Option<u32>,
+    },
+    /// Rename a worksheet; every formula and defined name that names it
+    /// follows. Text in a string literal stays.
+    RenameSheet {
+        sheet: String,
+        name: String,
+    },
+    /// Move a worksheet to `at` in the workbook's order (0 is first).
+    MoveSheet {
+        sheet: String,
+        at: u32,
+    },
+    /// Delete a worksheet with its cells and its own defined names; formulas
+    /// that named it read `#REF!`. A workbook keeps one worksheet.
+    DeleteSheet {
+        sheet: String,
+    },
+    /// Insert `count` empty rows before row `at` (1-based). The rows below
+    /// move down, and every formula, defined name and read-only range that
+    /// reaches them follows.
+    InsertRows {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    /// Delete `count` rows from row `at` (1-based). A reference to a deleted
+    /// cell reads `#REF!`; a range that loses some of its rows shrinks.
+    DeleteRows {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    /// Insert `count` empty columns before column `at` (1-based: C is 3).
+    InsertColumns {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    /// Delete `count` columns from column `at` (1-based: C is 3).
+    DeleteColumns {
+        sheet: String,
+        at: u32,
+        count: u32,
     },
 }
 
@@ -124,30 +220,21 @@ pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
     office.insert("kind", "xlsx").map_err(loro)?;
     office.insert("schema", i64::from(SCHEMA)).map_err(loro)?;
     office.insert("date1904", book.date1904).map_err(loro)?;
-    let names: Vec<LoroValue> = book
+    let sheets: Vec<(String, String)> = book
         .sheets
         .iter()
-        .map(|sheet| sheet.name.as_str().into())
+        .map(|sheet| (sheet.name.clone(), sheet.name.clone()))
         .collect();
-    office.insert("sheets", names).map_err(loro)?;
+    set_sheet_list(doc, &sheets)?;
     let locked: HashMap<String, LoroValue> = book
         .sheets
         .iter()
-        .map(|sheet| {
-            let areas: Vec<LoroValue> = sheet
-                .locked
-                .iter()
-                .map(|area| {
-                    LoroValue::from(vec![
-                        LoroValue::from(area.reference()),
-                        LoroValue::from(lock_token(area.lock)),
-                    ])
-                })
-                .collect();
-            (sheet.name.clone(), areas.into())
-        })
+        .map(|sheet| (sheet.name.clone(), encode_areas(&sheet.locked)))
         .collect();
     office.insert("locked", locked).map_err(loro)?;
+    office
+        .insert("axes", Vec::<LoroValue>::new())
+        .map_err(loro)?;
     let styles: Vec<LoroValue> = book
         .styles
         .iter()
@@ -176,6 +263,7 @@ pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
                 value: cell.value.clone(),
                 formula: cell.formula.clone(),
                 style: cell.style,
+                format: None,
                 locked: cell.locked,
             };
             grid.insert(&body.address, encode_cell(&body))
@@ -215,12 +303,9 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
         Some(LoroValue::List(list)) => Ok(list.clone()),
         _ => Err(invalid("XLSX body metadata")),
     };
-    let sheet_names = list("sheets")?
+    let sheet_list = list("sheets")?
         .iter()
-        .map(|name| match name {
-            LoroValue::String(name) => Ok(name.to_string()),
-            _ => Err(invalid("XLSX body sheet name")),
-        })
+        .map(decode_sheet)
         .collect::<Result<Vec<_>>>()?;
     let Some(LoroValue::Map(locked)) = meta.get("locked") else {
         return Err(invalid("XLSX body locks"));
@@ -242,9 +327,9 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
         })
         .collect::<Result<Vec<_>>>()?;
     let grids = doc.get_map(CELLS);
-    let mut sheets = Vec::with_capacity(sheet_names.len());
-    for name in sheet_names {
-        let grid = child_map(&grids, &name).ok_or_else(|| invalid("XLSX body sheet"))?;
+    let mut sheets = Vec::with_capacity(sheet_list.len());
+    for (key, name) in sheet_list {
+        let grid = child_map(&grids, &key).ok_or_else(|| invalid("XLSX body sheet"))?;
         let LoroValue::Map(entries) = grid.get_value() else {
             return Err(invalid("XLSX body sheet"));
         };
@@ -253,7 +338,8 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             let (col, row) = parse_a1(address).ok_or_else(|| invalid("XLSX body cell address"))?;
             cells.insert((row, col), decode_cell(address, value)?);
         }
-        let areas = match locked.get(&name) {
+        let areas = match locked.get(&key) {
+            None => Vec::new(),
             Some(LoroValue::List(areas)) => areas
                 .iter()
                 .map(|area| match area {
@@ -270,19 +356,45 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             _ => return Err(invalid("XLSX body locks")),
         };
         sheets.push(BodySheet {
+            key,
             name,
             cells,
             locked: areas,
         });
+    }
+    let axes = match meta.get("axes") {
+        None => Vec::new(),
+        Some(LoroValue::List(list)) => list.iter().map(decode_axis).collect::<Result<Vec<_>>>()?,
+        Some(_) => return Err(invalid("XLSX body row and column edits")),
+    };
+    let LoroValue::Map(composed) = doc.get_map(FORMATS).get_value() else {
+        return Err(invalid("XLSX body formats"));
+    };
+    let mut formats = BTreeMap::new();
+    for (id, value) in composed.iter() {
+        let LoroValue::String(json) = value else {
+            return Err(invalid("XLSX body format"));
+        };
+        let format = serde_json::from_str::<XlsxFormat>(&json.to_string())
+            .map_err(|_| invalid("XLSX body format"))?;
+        formats.insert(id.clone(), format);
     }
     let LoroValue::Map(entries) = doc.get_map(NAMES).get_value() else {
         return Err(invalid("XLSX body names"));
     };
     let mut names = BTreeMap::new();
     for (key, value) in entries.iter() {
-        let name = decode_name(value)?;
+        let mut name = decode_name(value)?;
         if *key != name_key(&name.name, name.sheet.as_deref()) {
             return Err(invalid("XLSX body name key"));
+        }
+        // A local name reads its sheet's name; one whose sheet a concurrent
+        // edit deleted is gone with it.
+        if let Some(scope) = &name.sheet {
+            let Some(sheet) = sheets.iter().find(|sheet| sheet.key == *scope) else {
+                continue;
+            };
+            name.sheet = Some(sheet.name.clone());
         }
         names.insert(key.clone(), name);
     }
@@ -291,6 +403,8 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
         sheets,
         names,
         styles,
+        axes,
+        formats,
     })
 }
 
@@ -328,6 +442,60 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
             }
             write_cell(doc, sheet, cell, |held| BodyCell {
                 style: *style,
+                format: None,
+                ..held
+            })
+        }
+        XlsxBodyOp::DefineFormat { id, format } => {
+            if id.is_empty()
+                || id.len() > MAX_FORMAT_ID
+                || !id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            {
+                return Err(invalid(
+                    "a format id is 1 to 64 letters, digits, '_', '-' or '.'",
+                ));
+            }
+            let count = read_styles_len(doc)?;
+            if count == 0 {
+                return Err(invalid(
+                    "the workbook has no cell format to compose one from",
+                ));
+            }
+            check_format(format, count).map_err(|error| invalid(&error.to_string()))?;
+            let formats = doc.get_map(FORMATS);
+            match formats.get(id) {
+                None => {
+                    let json =
+                        serde_json::to_string(format).map_err(|_| invalid("XLSX body format"))?;
+                    formats.insert(id, json).map_err(loro)
+                }
+                Some(ValueOrContainer::Value(LoroValue::String(json))) => {
+                    let held = serde_json::from_str::<XlsxFormat>(&json.to_string())
+                        .map_err(|_| invalid("XLSX body format"))?;
+                    if held == *format {
+                        Ok(())
+                    } else {
+                        Err(invalid(
+                            "a format id is immutable; compose the new look under a new id",
+                        ))
+                    }
+                }
+                Some(_) => Err(invalid("XLSX body format")),
+            }
+        }
+        XlsxBodyOp::SetFormat {
+            sheet,
+            cell,
+            format,
+        } => {
+            if doc.get_map(FORMATS).get(format).is_none() {
+                return Err(invalid("no such cell format in the body"));
+            }
+            write_cell(doc, sheet, cell, |held| BodyCell {
+                style: None,
+                format: Some(format.clone()),
                 ..held
             })
         }
@@ -346,16 +514,16 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
             let formula = formula.strip_prefix('=').unwrap_or(formula);
             check_cell(&XlsxValue::Blank, Some(formula))
                 .map_err(|_| invalid("a name's formula is 1 to 8,192 characters"))?;
-            if let Some(sheet) = sheet {
-                child_map(&doc.get_map(CELLS), sheet)
-                    .ok_or_else(|| invalid("no such worksheet in the body"))?;
-            }
+            let scope = sheet
+                .as_deref()
+                .map(|sheet| sheet_key(doc, sheet))
+                .transpose()?;
             let names = doc.get_map(NAMES);
-            let key = name_key(name, sheet.as_deref());
+            let key = name_key(name, scope.as_deref());
             writable_name(&names, &key)?;
             let body = BodyName {
                 name: name.clone(),
-                sheet: sheet.clone(),
+                sheet: scope,
                 formula: formula.to_owned(),
                 hidden: *hidden,
                 locked: None,
@@ -363,25 +531,373 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
             names.insert(&key, encode_name(&body)).map_err(loro)
         }
         XlsxBodyOp::DeleteName { name, sheet } => {
+            let scope = sheet
+                .as_deref()
+                .map(|sheet| sheet_key(doc, sheet))
+                .transpose()?;
             let names = doc.get_map(NAMES);
-            let key = name_key(name, sheet.as_deref());
+            let key = name_key(name, scope.as_deref());
             if !writable_name(&names, &key)? {
                 return Err(invalid("no such defined name in the body"));
             }
             names.delete(&key).map_err(loro)
         }
+        XlsxBodyOp::AddSheet { sheet, at } => {
+            check_sheet_name(sheet).map_err(|_| invalid("not a valid worksheet name"))?;
+            let mut list = sheet_list(doc)?;
+            free_name(&list, sheet, None)?;
+            let at = at.map_or(list.len(), |at| at as usize);
+            if at > list.len() {
+                return Err(invalid("a sheet position past the last sheet"));
+            }
+            let cells = doc.get_map(CELLS);
+            let mut key = format!("+{sheet}");
+            let mut n = 1;
+            while cells.get(&key).is_some() {
+                n += 1;
+                key = format!("+{sheet}#{n}");
+            }
+            cells.insert_container(&key, LoroMap::new()).map_err(loro)?;
+            list.insert(at, (key, sheet.clone()));
+            set_sheet_list(doc, &list)
+        }
+        XlsxBodyOp::RenameSheet { sheet, name } => {
+            check_sheet_name(name).map_err(|_| invalid("not a valid worksheet name"))?;
+            let mut list = sheet_list(doc)?;
+            let at = sheet_at(&list, sheet)?;
+            free_name(&list, name, Some(at))?;
+            list[at].1.clone_from(name);
+            set_sheet_list(doc, &list)?;
+            let old = sheet.to_lowercase();
+            retarget_body(doc, &|held: &str| {
+                if held.to_lowercase() == old {
+                    SheetFate::Rename(name.clone())
+                } else {
+                    SheetFate::Keep
+                }
+            })
+        }
+        XlsxBodyOp::MoveSheet { sheet, at } => {
+            let mut list = sheet_list(doc)?;
+            let from = sheet_at(&list, sheet)?;
+            let at = *at as usize;
+            if at >= list.len() {
+                return Err(invalid("a sheet position past the last sheet"));
+            }
+            let held = list.remove(from);
+            list.insert(at, held);
+            set_sheet_list(doc, &list)
+        }
+        XlsxBodyOp::DeleteSheet { sheet } => {
+            let mut list = sheet_list(doc)?;
+            let at = sheet_at(&list, sheet)?;
+            if list.len() == 1 {
+                return Err(invalid("a workbook keeps at least one worksheet"));
+            }
+            let (key, _) = list.remove(at);
+            set_sheet_list(doc, &list)?;
+            let names = doc.get_map(NAMES);
+            let LoroValue::Map(entries) = names.get_value() else {
+                return Err(invalid("XLSX body names"));
+            };
+            for held in entries.keys() {
+                if held.rsplit_once('!').is_some_and(|(scope, _)| scope == key) {
+                    names.delete(held).map_err(loro)?;
+                }
+            }
+            let old = sheet.to_lowercase();
+            retarget_body(doc, &|held: &str| {
+                if held.to_lowercase() == old {
+                    SheetFate::Delete
+                } else {
+                    SheetFate::Keep
+                }
+            })
+        }
+        XlsxBodyOp::InsertRows { sheet, at, count } => shift(
+            doc,
+            sheet,
+            XlsxAxisEdit {
+                axis: XlsxAxis::Row,
+                at: *at,
+                count: *count,
+                delete: false,
+            },
+        ),
+        XlsxBodyOp::DeleteRows { sheet, at, count } => shift(
+            doc,
+            sheet,
+            XlsxAxisEdit {
+                axis: XlsxAxis::Row,
+                at: *at,
+                count: *count,
+                delete: true,
+            },
+        ),
+        XlsxBodyOp::InsertColumns { sheet, at, count } => shift(
+            doc,
+            sheet,
+            XlsxAxisEdit {
+                axis: XlsxAxis::Column,
+                at: *at,
+                count: *count,
+                delete: false,
+            },
+        ),
+        XlsxBodyOp::DeleteColumns { sheet, at, count } => shift(
+            doc,
+            sheet,
+            XlsxAxisEdit {
+                axis: XlsxAxis::Column,
+                at: *at,
+                count: *count,
+                delete: true,
+            },
+        ),
     }
 }
 
+/// Insert or delete rows or columns in one sheet, and log the edit.
+fn shift(doc: &LoroDoc, sheet: &str, edit: XlsxAxisEdit) -> Result<()> {
+    if !edit.fits() {
+        return Err(invalid("rows or columns off the sheet"));
+    }
+    let before = read(doc)?;
+    let held = before
+        .sheets
+        .iter()
+        .find(|held| held.name == sheet)
+        .ok_or_else(|| invalid("no such worksheet in the body"))?;
+    let (key, name) = (held.key.clone(), held.name.clone());
+    let mut after = before.clone();
+    axis(&mut after, &key, &name, &edit, true)?;
+    after.axes.push((key, edit));
+    write_back(doc, &before, &after)
+}
+
+/// Insert or delete rows or columns in the sheet keyed `key`, which formulas
+/// name `name`: its cells and read-only ranges move or go, and every formula
+/// and defined name that reaches it follows. A deleted reference reads
+/// `#REF!` and a range that loses part of itself shrinks; a formula that
+/// moves loses its cached value. A table's header and totals rows widen and
+/// narrow with the columns inserted or deleted inside the table; the export
+/// adds or removes the table's columns. With `check`, refuse what an export
+/// could not write: a shared formula the body cannot write out, a read-only
+/// range the edit would split or cut, a table's header or totals row or all
+/// of its columns deleted, a cell pushed off the sheet.
+fn axis(
+    body: &mut XlsxBody,
+    key: &str,
+    name: &str,
+    edit: &XlsxAxisEdit,
+    check: bool,
+) -> Result<()> {
+    if check
+        && body
+            .sheets
+            .iter()
+            .flat_map(|sheet| sheet.cells.values())
+            .any(|cell| cell.locked == Some(XlsxLock::SharedFormula))
+    {
+        return Err(invalid(
+            "the workbook holds a shared formula the body cannot write out, so rows and columns stay",
+        ));
+    }
+    if let Some(sheet) = body.sheets.iter_mut().find(|sheet| sheet.key == key) {
+        let end = edit.at + edit.count - 1;
+        let mut locked = Vec::with_capacity(sheet.locked.len());
+        for area in &sheet.locked {
+            let (low, high) = match edit.axis {
+                XlsxAxis::Row => (area.first.1, area.last.1),
+                XlsxAxis::Column => (area.first.0, area.last.0),
+            };
+            let table = area.lock == XlsxLock::TableRow;
+            let columns = table && edit.axis == XlsxAxis::Column;
+            let split = !edit.delete && low < edit.at && edit.at <= high && !columns;
+            let whole = edit.at <= low && high <= end;
+            // A table's header or totals row never goes, nor all of its
+            // columns; other ranges go only whole.
+            let cut = edit.delete
+                && low <= end
+                && edit.at <= high
+                && if columns { whole } else { table || !whole };
+            if check && cut && columns {
+                return Err(invalid("the columns would delete a table"));
+            }
+            if check && (split || cut) {
+                return Err(invalid(
+                    "the rows or columns would split or cut a read-only range",
+                ));
+            }
+            if let Some((first, last)) = edit.area(area.first, area.last) {
+                locked.push(XlsxArea {
+                    first,
+                    last,
+                    ..*area
+                });
+            }
+        }
+        sheet.locked = locked;
+        let mut cells = BTreeMap::new();
+        for ((row, col), cell) in std::mem::take(&mut sheet.cells) {
+            match edit.cell((col, row)) {
+                Some((col, row)) => {
+                    cells.insert(
+                        (row, col),
+                        BodyCell {
+                            address: a1(col, row),
+                            ..cell
+                        },
+                    );
+                }
+                None if check && !edit.delete && !same_cell(Some(&cell), None) => {
+                    return Err(invalid("the insert would push a cell off the sheet"));
+                }
+                None => {}
+            }
+        }
+        sheet.cells = cells;
+    }
+    for sheet in &mut body.sheets {
+        let home = sheet.name.as_str();
+        for cell in sheet.cells.values_mut() {
+            if let Some(formula) = cell
+                .formula
+                .as_deref()
+                .and_then(|formula| shift_axis(formula, Some(home), name, edit))
+            {
+                cell.formula = Some(formula);
+                cell.value = XlsxValue::Blank;
+            }
+        }
+    }
+    for held in body.names.values_mut() {
+        if let Some(formula) = shift_axis(&held.formula, None, name, edit) {
+            held.formula = formula;
+        }
+    }
+    Ok(())
+}
+
+/// Retarget every formula and defined name in the body's sheets that names a
+/// renamed or deleted sheet.
+fn retarget_body(doc: &LoroDoc, fate: &dyn Fn(&str) -> SheetFate) -> Result<()> {
+    let before = read(doc)?;
+    let mut after = before.clone();
+    retarget(&mut after, fate);
+    write_back(doc, &before, &after)
+}
+
+/// Retarget every formula and defined name that names a renamed or deleted
+/// sheet, read-only ones too, as an export's sheet layout does. A formula
+/// loses its cached value.
+fn retarget(body: &mut XlsxBody, fate: &dyn Fn(&str) -> SheetFate) {
+    for cell in body
+        .sheets
+        .iter_mut()
+        .flat_map(|sheet| sheet.cells.values_mut())
+    {
+        if let Some(formula) = cell
+            .formula
+            .as_deref()
+            .and_then(|formula| retarget_sheets(formula, fate))
+        {
+            cell.formula = Some(formula);
+            cell.value = XlsxValue::Blank;
+        }
+    }
+    for held in body.names.values_mut() {
+        if let Some(formula) = retarget_sheets(&held.formula, fate) {
+            held.formula = formula;
+        }
+    }
+}
+
+/// Write what differs between two typed reads of the document: cells,
+/// read-only ranges, defined names and the row and column log.
+fn write_back(doc: &LoroDoc, before: &XlsxBody, after: &XlsxBody) -> Result<()> {
+    let grids = doc.get_map(CELLS);
+    for sheet in &after.sheets {
+        let old = before.sheets.iter().find(|held| held.key == sheet.key);
+        let grid = child_map(&grids, &sheet.key).ok_or_else(|| invalid("XLSX body sheet"))?;
+        for at in old.iter().flat_map(|old| old.cells.keys()) {
+            if !sheet.cells.contains_key(at) {
+                grid.delete(&a1(at.1, at.0)).map_err(loro)?;
+            }
+        }
+        for (at, cell) in &sheet.cells {
+            if old.and_then(|old| old.cells.get(at)) != Some(cell) {
+                grid.insert(&a1(at.1, at.0), encode_cell(cell))
+                    .map_err(loro)?;
+            }
+        }
+    }
+    let office = doc.get_map(OFFICE);
+    let moved: Vec<&BodySheet> = after
+        .sheets
+        .iter()
+        .filter(|sheet| {
+            before
+                .sheets
+                .iter()
+                .find(|held| held.key == sheet.key)
+                .is_none_or(|held| held.locked != sheet.locked)
+        })
+        .collect();
+    if !moved.is_empty() {
+        let Some(ValueOrContainer::Value(LoroValue::Map(held))) = office.get("locked") else {
+            return Err(invalid("XLSX body locks"));
+        };
+        let mut locked: HashMap<String, LoroValue> = held
+            .iter()
+            .map(|(key, areas)| (key.clone(), areas.clone()))
+            .collect();
+        for sheet in moved {
+            locked.insert(sheet.key.clone(), encode_areas(&sheet.locked));
+        }
+        office.insert("locked", locked).map_err(loro)?;
+    }
+    let names = doc.get_map(NAMES);
+    for (key, name) in &after.names {
+        if before.names.get(key) != Some(name) {
+            // The document holds a local name's sheet by key.
+            let scope = scope_of(key);
+            let stored = BodyName {
+                sheet: (!scope.is_empty()).then(|| scope.to_owned()),
+                ..name.clone()
+            };
+            names.insert(key, encode_name(&stored)).map_err(loro)?;
+        }
+    }
+    for key in before.names.keys() {
+        if !after.names.contains_key(key) {
+            names.delete(key).map_err(loro)?;
+        }
+    }
+    if before.axes != after.axes {
+        office
+            .insert("axes", encode_axes(&after.axes))
+            .map_err(loro)?;
+    }
+    Ok(())
+}
+
 /// Refuse operations read at `base` that write a cell or name `head` has
-/// changed since: one of the two writes would be silently lost.
+/// changed since: one of the two writes would be silently lost. Once rows or
+/// columns moved, every address read at `base` may name another cell.
 pub(super) fn admit_at(base: &LoroDoc, head: &LoroDoc, ops: &[XlsxBodyOp]) -> Result<()> {
     let (base, head) = (read(base)?, read(head)?);
+    if !ops.is_empty() && base.axes != head.axes {
+        return Err(invalid(
+            "rows or columns moved since the base; read it again",
+        ));
+    }
     for op in ops {
         let moved = match op {
             XlsxBodyOp::SetValue { sheet, cell, .. }
             | XlsxBodyOp::SetFormula { sheet, cell, .. }
             | XlsxBodyOp::SetStyle { sheet, cell, .. }
+            | XlsxBodyOp::SetFormat { sheet, cell, .. }
             | XlsxBodyOp::Clear { sheet, cell } => {
                 let (col, row) = parse_a1(cell).ok_or_else(|| invalid("not a cell address"))?;
                 let find = |body: &XlsxBody| {
@@ -394,38 +910,103 @@ pub(super) fn admit_at(base: &LoroDoc, head: &LoroDoc, ops: &[XlsxBodyOp]) -> Re
                 !same_cell(find(&base).as_ref(), find(&head).as_ref())
             }
             XlsxBodyOp::SetName { name, sheet, .. } | XlsxBodyOp::DeleteName { name, sheet } => {
-                let key = name_key(name, sheet.as_deref());
-                base.names.get(&key) != head.names.get(&key)
+                let lower = name.to_lowercase();
+                let find = |body: &XlsxBody| {
+                    body.names
+                        .values()
+                        .find(|held| held.name.to_lowercase() == lower && held.sheet == *sheet)
+                        .cloned()
+                };
+                find(&base) != find(&head)
             }
+            // A format is immutable, so only another one under this id since
+            // the base is lost.
+            XlsxBodyOp::DefineFormat { id, format } => {
+                base.formats.get(id) != head.formats.get(id) && head.formats.get(id) != Some(format)
+            }
+            XlsxBodyOp::AddSheet { .. }
+            | XlsxBodyOp::RenameSheet { .. }
+            | XlsxBodyOp::MoveSheet { .. }
+            | XlsxBodyOp::DeleteSheet { .. }
+            | XlsxBodyOp::InsertRows { .. }
+            | XlsxBodyOp::DeleteRows { .. }
+            | XlsxBodyOp::InsertColumns { .. }
+            | XlsxBodyOp::DeleteColumns { .. } => layout(&base) != layout(&head),
         };
         if moved {
             return Err(invalid(
-                "a cell or name changed since the base; read it again",
+                "a cell, name or sheet changed since the base; read it again",
             ));
         }
     }
     Ok(())
 }
 
-/// The changes that turn the imported `base` into `current`: each cell whose
-/// content or format differs, then each defined name.
+/// The body's worksheets in order, by key and name.
+fn layout(body: &XlsxBody) -> Vec<(&str, &str)> {
+    body.sheets
+        .iter()
+        .map(|sheet| (sheet.key.as_str(), sheet.name.as_str()))
+        .collect()
+}
+
+/// A defined name's sheet key, from its body key; empty for a workbook name.
+fn scope_of(key: &str) -> &str {
+    key.rsplit_once('!').map_or("", |(scope, _)| scope)
+}
+
+/// The changes that turn the imported `base` into `current`: the sheet layout
+/// when a sheet was added, renamed, moved or deleted, the row and column
+/// edits in order, the composed formats the changed cells use, then each cell
+/// whose content or format differs and each defined name, against `base`
+/// moved by the same edits. A cell's composed format is named by the
+/// workbook's format count plus its place among those formats.
 pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxChange>> {
-    if base.sheets.len() != current.sheets.len() {
-        return Err(invalid("the body's sheets changed"));
-    }
+    let entries = current
+        .axes
+        .strip_prefix(base.axes.as_slice())
+        .ok_or_else(|| invalid("the body's row and column edits do not follow its base's"))?;
     let mut changes = Vec::new();
-    for (before, after) in base.sheets.iter().zip(&current.sheets) {
-        if before.name != after.name {
-            return Err(invalid("the body's sheets changed"));
+    if layout(base) != layout(current) {
+        changes.push(XlsxChange::Sheets {
+            sheets: current
+                .sheets
+                .iter()
+                .map(|sheet| XlsxSheetPlan {
+                    name: sheet.name.clone(),
+                    source: base
+                        .sheets
+                        .iter()
+                        .find(|held| held.key == sheet.key)
+                        .map(|held| held.name.clone()),
+                })
+                .collect(),
+        });
+    }
+    // An edit to a sheet the body later deleted leaves with the sheet.
+    for (key, edit) in entries {
+        if let Some(sheet) = current.sheets.iter().find(|sheet| sheet.key == *key) {
+            changes.push(XlsxChange::Shift {
+                sheet: sheet.name.clone(),
+                edit: *edit,
+            });
         }
-        let addresses: BTreeSet<(u32, u32)> = before
-            .cells
-            .keys()
-            .chain(after.cells.keys())
-            .copied()
-            .collect();
+    }
+    let base = &moved(base, current, entries)?;
+    let imported = u32::try_from(current.styles.len()).map_err(|_| invalid("XLSX body styles"))?;
+    let mut used: Vec<&str> = Vec::new();
+    let mut cells = Vec::new();
+    let empty = BTreeMap::new();
+    for after in &current.sheets {
+        let before = base
+            .sheets
+            .iter()
+            .find(|held| held.key == after.key)
+            .map_or(&empty, |held| &held.cells);
+        let addresses: BTreeSet<(u32, u32)> =
+            before.keys().chain(after.cells.keys()).copied().collect();
         for key in addresses {
-            let (old, new) = (before.cells.get(&key), after.cells.get(&key));
+            let (old, new) = (before.get(&key), after.cells.get(&key));
             if same_cell(old, new) {
                 continue;
             }
@@ -433,10 +1014,23 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
                 return Err(invalid("a read-only cell changed"));
             }
             let (value, formula, style) = match new {
-                Some(cell) => (cell.value.clone(), cell.formula.clone(), cell.style),
+                Some(cell) => {
+                    let style = match cell.format.as_deref() {
+                        Some(id) => {
+                            let at =
+                                used.iter().position(|held| *held == id).unwrap_or_else(|| {
+                                    used.push(id);
+                                    used.len() - 1
+                                });
+                            Some(imported + at as u32)
+                        }
+                        None => cell.style,
+                    };
+                    (cell.value.clone(), cell.formula.clone(), style)
+                }
                 None => (XlsxValue::Blank, None, None),
             };
-            changes.push(XlsxChange::Cell {
+            cells.push(XlsxChange::Cell {
                 sheet: after.name.clone(),
                 col: key.1,
                 row: key.0,
@@ -446,10 +1040,34 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
             });
         }
     }
-    let keys: BTreeSet<&String> = base.names.keys().chain(current.names.keys()).collect();
+    if !used.is_empty() {
+        changes.push(XlsxChange::Formats {
+            formats: used
+                .iter()
+                .map(|id| {
+                    current
+                        .formats
+                        .get(*id)
+                        .cloned()
+                        .ok_or_else(|| invalid("a cell names a format the body does not have"))
+                })
+                .collect::<Result<_>>()?,
+        });
+    }
+    changes.extend(cells);
+    // A name local to a deleted sheet leaves with the sheet's layout.
+    let keys: BTreeSet<&String> = base
+        .names
+        .keys()
+        .chain(current.names.keys())
+        .filter(|key| {
+            let scope = scope_of(key);
+            scope.is_empty() || current.sheets.iter().any(|sheet| sheet.key == scope)
+        })
+        .collect();
     for key in keys {
         let (old, new) = (base.names.get(key), current.names.get(key));
-        if old == new {
+        if same_name(old, new) {
             continue;
         }
         if old.is_some_and(|name| name.locked.is_some()) {
@@ -464,7 +1082,11 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
             },
             (Some(name), None) => XlsxChange::DeleteName {
                 name: name.name.clone(),
-                sheet: name.sheet.clone(),
+                sheet: current
+                    .sheets
+                    .iter()
+                    .find(|sheet| sheet.key == scope_of(key))
+                    .map(|sheet| sheet.name.clone()),
             },
             (None, None) => continue,
         });
@@ -472,9 +1094,70 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
     Ok(changes)
 }
 
-/// A fork's proposal against the live body. Units are `Sheet!A1` cells and
-/// `name:<key>` names. A cell or name both sides set differently is a
-/// conflict: last-writer-wins would drop one side's write silently.
+/// `base` as `current`'s structural edits leave it: moved by the row and
+/// column edits `entries`, each matched by the sheet's name in `base` (an
+/// added sheet's in `current`), then retargeted to `current`'s sheet layout.
+/// What differs from `current` after that is cell and name writes.
+fn moved(
+    base: &XlsxBody,
+    current: &XlsxBody,
+    entries: &[(String, XlsxAxisEdit)],
+) -> Result<XlsxBody> {
+    let mut moved = base.clone();
+    for (key, edit) in entries {
+        let name = base
+            .sheets
+            .iter()
+            .chain(&current.sheets)
+            .find(|sheet| sheet.key == *key)
+            .map(|sheet| sheet.name.clone());
+        if let Some(name) = name {
+            // The live body checked each edit as it made it.
+            axis(&mut moved, key, &name, edit, false)?;
+        }
+    }
+    let fates: HashMap<String, SheetFate> = base
+        .sheets
+        .iter()
+        .filter_map(|sheet| {
+            let fate = match current.sheets.iter().find(|held| held.key == sheet.key) {
+                None => SheetFate::Delete,
+                Some(held) if held.name != sheet.name => SheetFate::Rename(held.name.clone()),
+                Some(_) => return None,
+            };
+            Some((sheet.name.to_lowercase(), fate))
+        })
+        .collect();
+    if !fates.is_empty() {
+        retarget(&mut moved, &|name: &str| {
+            fates
+                .get(&name.to_lowercase())
+                .cloned()
+                .unwrap_or(SheetFate::Keep)
+        });
+    }
+    Ok(moved)
+}
+
+/// Whether two reads of one name key hold the same name; the sheet it is
+/// local to may have been renamed in between.
+fn same_name(old: Option<&BodyName>, new: Option<&BodyName>) -> bool {
+    match (old, new) {
+        (Some(old), Some(new)) => {
+            old.name == new.name && old.formula == new.formula && old.hidden == new.hidden
+        }
+        (old, new) => old.is_none() && new.is_none(),
+    }
+}
+
+/// A fork's proposal against the live body. Units are `key!A1` cells (a
+/// sheet's key is its imported name), `name:<key>` names, `format:<id>`
+/// composed formats, the `sheets` layout and the `axes` row and column log.
+/// A unit both sides set differently is a conflict: last-writer-wins would
+/// drop one side's write silently. So is a cell or name one side wrote in a
+/// sheet the other side deleted, and every cell or name one side wrote while
+/// the other moved rows or columns, since its address may now name another
+/// cell.
 pub(super) fn diff(
     base: &XlsxBody,
     current: &XlsxBody,
@@ -500,6 +1183,44 @@ pub(super) fn diff(
             },
         });
     }
+    let gone = |body: &XlsxBody| -> BTreeSet<String> {
+        base.sheets
+            .iter()
+            .filter(|sheet| !body.sheets.iter().any(|held| held.key == sheet.key))
+            .map(|sheet| sheet.key.clone())
+            .collect()
+    };
+    for (written, deleted) in [(&ours, gone(current)), (&theirs, gone(proposal))] {
+        for unit in written.keys() {
+            let scope = scope_of(unit.strip_prefix("name:").unwrap_or(unit));
+            if deleted.contains(scope) && !conflicts.iter().any(|held| held.block == *unit) {
+                conflicts.push(BodyConflict {
+                    block: unit.clone(),
+                    kind: ConflictKind::DeleteEdit,
+                });
+            }
+        }
+    }
+    let (our_axes, their_axes) = (
+        ours.get("axes").map(|(_, state)| state),
+        theirs.get("axes").map(|(_, state)| state),
+    );
+    if our_axes != their_axes {
+        for (moved, written) in [(&ours, &theirs), (&theirs, &ours)] {
+            if !moved.contains_key("axes") {
+                continue;
+            }
+            // A composed format names no cell.
+            for unit in written.keys().filter(|unit| !unit.starts_with("format:")) {
+                if !conflicts.iter().any(|held| held.block == *unit) {
+                    conflicts.push(BodyConflict {
+                        block: unit.clone(),
+                        kind: ConflictKind::BothSet,
+                    });
+                }
+            }
+        }
+    }
     let list = |changes: BTreeMap<String, (ChangeKind, State<'_>)>| {
         changes
             .into_iter()
@@ -521,19 +1242,36 @@ pub(super) fn diff(
 enum State<'a> {
     Cell(Option<&'a BodyCell>),
     Name(Option<&'a BodyName>),
+    Sheets(Vec<(&'a str, &'a str)>),
+    Axes(&'a [(String, XlsxAxisEdit)]),
+    Format(&'a XlsxFormat),
 }
 
 fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKind, State<'a>)> {
     let mut changes = BTreeMap::new();
-    for (before, after) in base.sheets.iter().zip(&other.sheets) {
-        let addresses: BTreeSet<(u32, u32)> = before
-            .cells
-            .keys()
-            .chain(after.cells.keys())
-            .copied()
-            .collect();
+    if layout(base) != layout(other) {
+        changes.insert(
+            "sheets".to_owned(),
+            (ChangeKind::Moved, State::Sheets(layout(other))),
+        );
+    }
+    if base.axes != other.axes {
+        changes.insert(
+            "axes".to_owned(),
+            (ChangeKind::Moved, State::Axes(&other.axes)),
+        );
+    }
+    let empty = BTreeMap::new();
+    for after in &other.sheets {
+        let before = base
+            .sheets
+            .iter()
+            .find(|held| held.key == after.key)
+            .map_or(&empty, |held| &held.cells);
+        let addresses: BTreeSet<(u32, u32)> =
+            before.keys().chain(after.cells.keys()).copied().collect();
         for key in addresses {
-            let (old, new) = (before.cells.get(&key), after.cells.get(&key));
+            let (old, new) = (before.get(&key), after.cells.get(&key));
             if same_cell(old, new) {
                 continue;
             }
@@ -542,7 +1280,7 @@ fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKin
             } else {
                 ChangeKind::Cells
             };
-            let unit = format!("{}!{}", after.name, a1(key.1, key.0));
+            let unit = format!("{}!{}", after.key, a1(key.1, key.0));
             changes.insert(unit, (kind, State::Cell(new)));
         }
     }
@@ -550,12 +1288,20 @@ fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKin
     for key in keys {
         let (old, new) = (base.names.get(key), other.names.get(key));
         let kind = match (old, new) {
-            (old, new) if old == new => continue,
+            (old, new) if same_name(old, new) => continue,
             (None, _) => ChangeKind::Added,
             (_, None) => ChangeKind::Deleted,
             _ => ChangeKind::Text,
         };
         changes.insert(format!("name:{key}"), (kind, State::Name(new)));
+    }
+    for (id, format) in &other.formats {
+        if base.formats.get(id) != Some(format) {
+            changes.insert(
+                format!("format:{id}"),
+                (ChangeKind::Added, State::Format(format)),
+            );
+        }
     }
     changes
 }
@@ -565,12 +1311,18 @@ fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> BTreeMap<String, (ChangeKin
 fn same_cell(old: Option<&BodyCell>, new: Option<&BodyCell>) -> bool {
     let empty = |cell: Option<&BodyCell>| {
         cell.is_none_or(|cell| {
-            cell.value == XlsxValue::Blank && cell.formula.is_none() && cell.style.is_none()
+            cell.value == XlsxValue::Blank
+                && cell.formula.is_none()
+                && cell.style.is_none()
+                && cell.format.is_none()
         })
     };
     match (old, new) {
         (Some(old), Some(new)) => {
-            old.value == new.value && old.formula == new.formula && old.style == new.style
+            old.value == new.value
+                && old.formula == new.formula
+                && old.style == new.style
+                && old.format == new.format
         }
         _ => empty(old) && empty(new),
     }
@@ -586,14 +1338,14 @@ fn write_cell(
 ) -> Result<()> {
     let (col, row) = parse_a1(cell).ok_or_else(|| invalid("not a cell address"))?;
     let address = a1(col, row);
-    let grid = child_map(&doc.get_map(CELLS), sheet)
-        .ok_or_else(|| invalid("no such worksheet in the body"))?;
+    let key = sheet_key(doc, sheet)?;
+    let grid = child_map(&doc.get_map(CELLS), &key).ok_or_else(|| invalid("XLSX body sheet"))?;
     let office = doc.get_map(OFFICE);
     let locked = match office.get("locked") {
         Some(ValueOrContainer::Value(LoroValue::Map(locked))) => locked,
         _ => return Err(invalid("XLSX body locks")),
     };
-    if let Some(LoroValue::List(areas)) = locked.get(sheet) {
+    if let Some(LoroValue::List(areas)) = locked.get(&key) {
         for area in areas.iter() {
             if let LoroValue::List(pair) = area
                 && let [LoroValue::String(reference), _] = pair.as_slice()
@@ -611,6 +1363,7 @@ fn write_cell(
             value: XlsxValue::Blank,
             formula: None,
             style: None,
+            format: None,
             locked: None,
         },
         Some(_) => return Err(invalid("XLSX body cell")),
@@ -634,6 +1387,66 @@ fn writable_name(names: &LoroMap, key: &str) -> Result<bool> {
         }
         Some(_) => Err(invalid("XLSX body name")),
     }
+}
+
+/// The body's worksheets in workbook order, as `(key, name)`.
+fn sheet_list(doc: &LoroDoc) -> Result<Vec<(String, String)>> {
+    match doc.get_map(OFFICE).get("sheets") {
+        Some(ValueOrContainer::Value(LoroValue::List(list))) => {
+            list.iter().map(decode_sheet).collect()
+        }
+        _ => Err(invalid("XLSX body metadata")),
+    }
+}
+
+fn set_sheet_list(doc: &LoroDoc, sheets: &[(String, String)]) -> Result<()> {
+    let list: Vec<LoroValue> = sheets
+        .iter()
+        .map(|(key, name)| {
+            LoroValue::from(vec![
+                LoroValue::from(key.as_str()),
+                LoroValue::from(name.as_str()),
+            ])
+        })
+        .collect();
+    doc.get_map(OFFICE).insert("sheets", list).map_err(loro)
+}
+
+fn decode_sheet(value: &LoroValue) -> Result<(String, String)> {
+    match value {
+        LoroValue::List(pair) => match pair.as_slice() {
+            [LoroValue::String(key), LoroValue::String(name)] => {
+                Ok((key.to_string(), name.to_string()))
+            }
+            _ => Err(invalid("XLSX body sheet")),
+        },
+        _ => Err(invalid("XLSX body sheet")),
+    }
+}
+
+fn sheet_at(sheets: &[(String, String)], name: &str) -> Result<usize> {
+    sheets
+        .iter()
+        .position(|(_, held)| held == name)
+        .ok_or_else(|| invalid("no such worksheet in the body"))
+}
+
+fn sheet_key(doc: &LoroDoc, name: &str) -> Result<String> {
+    let sheets = sheet_list(doc)?;
+    Ok(sheets[sheet_at(&sheets, name)?].0.clone())
+}
+
+/// Refuse a sheet name another sheet holds, in any case.
+fn free_name(sheets: &[(String, String)], name: &str, except: Option<usize>) -> Result<()> {
+    let lower = name.to_lowercase();
+    if sheets
+        .iter()
+        .enumerate()
+        .any(|(at, (_, held))| Some(at) != except && held.to_lowercase() == lower)
+    {
+        return Err(invalid("another sheet has that name"));
+    }
+    Ok(())
 }
 
 fn read_styles_len(doc: &LoroDoc) -> Result<usize> {
@@ -666,6 +1479,9 @@ fn encode_cell(cell: &BodyCell) -> LoroValue {
     if let Some(style) = cell.style {
         map.insert("s".into(), i64::from(style).into());
     }
+    if let Some(format) = &cell.format {
+        map.insert("fmt".into(), format.as_str().into());
+    }
     if let Some(lock) = cell.locked {
         map.insert("lock".into(), lock_token(lock).into());
     }
@@ -695,8 +1511,70 @@ fn decode_cell(address: &str, value: &LoroValue) -> Result<BodyCell> {
         value,
         formula: string(map, "f"),
         style,
+        format: string(map, "fmt"),
         locked: string(map, "lock").as_deref().map(parse_lock).transpose()?,
     })
+}
+
+fn encode_areas(areas: &[XlsxArea]) -> LoroValue {
+    areas
+        .iter()
+        .map(|area| {
+            LoroValue::from(vec![
+                LoroValue::from(area.reference()),
+                LoroValue::from(lock_token(area.lock)),
+            ])
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn encode_axes(axes: &[(String, XlsxAxisEdit)]) -> Vec<LoroValue> {
+    axes.iter()
+        .map(|(key, edit)| {
+            LoroValue::from(vec![
+                LoroValue::from(key.as_str()),
+                LoroValue::from(match edit.axis {
+                    XlsxAxis::Row => "row",
+                    XlsxAxis::Column => "col",
+                }),
+                LoroValue::from(i64::from(edit.at)),
+                LoroValue::from(i64::from(edit.count)),
+                LoroValue::from(edit.delete),
+            ])
+        })
+        .collect()
+}
+
+fn decode_axis(value: &LoroValue) -> Result<(String, XlsxAxisEdit)> {
+    let bad = || invalid("XLSX body row or column edit");
+    let LoroValue::List(entry) = value else {
+        return Err(bad());
+    };
+    let [
+        LoroValue::String(key),
+        LoroValue::String(axis),
+        LoroValue::I64(at),
+        LoroValue::I64(count),
+        LoroValue::Bool(delete),
+    ] = entry.as_slice()
+    else {
+        return Err(bad());
+    };
+    let edit = XlsxAxisEdit {
+        axis: match axis.to_string().as_str() {
+            "row" => XlsxAxis::Row,
+            "col" => XlsxAxis::Column,
+            _ => return Err(bad()),
+        },
+        at: u32::try_from(*at).map_err(|_| bad())?,
+        count: u32::try_from(*count).map_err(|_| bad())?,
+        delete: *delete,
+    };
+    if !edit.fits() {
+        return Err(bad());
+    }
+    Ok((key.to_string(), edit))
 }
 
 fn encode_name(name: &BodyName) -> LoroValue {

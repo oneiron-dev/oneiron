@@ -613,6 +613,9 @@ fn scrub_for_export(
     let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
     let generations_scrubbed =
         super::withdrawn::scrub_withdrawn_generation_carriers(vault, key, doc)?;
+    let rooms_scrubbed = crate::sync::room_turns::scrub_deleted_room_turns(vault, doc, Some(key))?;
+    // FIX 1794: and their side rows, with an erased thread's facts.
+    let room_facts_scrubbed = crate::sync::room_facts::scrub_room_facts(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -623,6 +626,8 @@ fn scrub_for_export(
         || authors_scrubbed
         || withdrawn_scrubbed
         || generations_scrubbed
+        || rooms_scrubbed
+        || room_facts_scrubbed
         || history_free_window_required(vault, key)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)

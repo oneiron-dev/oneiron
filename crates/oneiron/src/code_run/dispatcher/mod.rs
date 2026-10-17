@@ -97,6 +97,9 @@ pub struct HostSelfDispatcher<'a> {
     /// and every verb call's origin carries it. `None` when no ladder
     /// stamped the turn.
     pub(super) model_provider: RefCell<Option<String>>,
+    /// Whose log the fold verbs reach (OF-181): the executor call's own run,
+    /// unless a host action bound the live run it acts for.
+    fold_log: fold_verbs::FoldLog,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -216,6 +219,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_child: None,
             planner: None,
             model_provider: RefCell::new(None),
+            fold_log: fold_verbs::FoldLog::Site,
         })
     }
 
@@ -385,6 +389,11 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<SelfDispatchOutcome> {
         // A hook's view of an earlier call is never this call's.
         *self.hook_view.borrow_mut() = None;
+        // A leased run's writes in this call are its own derivations (OF-540).
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
         // The descriptor bridge answers before the policy probe and the door:
         // a descriptor is no effect, so neither rules on it. Its own verb
         // hooks run around it on canonical storage, reading as the run's

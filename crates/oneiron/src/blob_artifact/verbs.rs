@@ -411,7 +411,7 @@ impl Memory<'_> {
             return Ok(None);
         };
         let born_with = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact)
-            .project(vault.born_with_text(&file.artifact_id, Some(&file.made_by))?);
+            .project(vault.born_with_text_for_another(&file.artifact_id, Some(&file.made_by))?);
         let content_hash = super::hash_hex(&file.content_hash);
         vault.record_export_travel(
             file.artifact_id.to_hex(),

@@ -11,6 +11,14 @@
  *
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.
+ *
+ * Embedded engine (OF-237): oneiron_engine_start runs the full server in this
+ * process with the app's OneironAppHost callbacks; oneiron_engine_request
+ * sends it one buffered HTTP/1.1 request, oneiron_engine_vault shares its
+ * open vault with the storage functions, and oneiron_engine_free stops it in
+ * order. Engine calls block: make them from app threads, never from a
+ * callback. The library exports these only when built with the `engine`
+ * cargo feature.
  */
 
 
@@ -64,11 +72,75 @@ typedef enum OneironStatus {
 } OneironStatus;
 
 /**
+ * Opaque embedded-engine handle returned by `oneiron_engine_start`.
+ *
+ * Release the handle with `oneiron_engine_free` exactly once.
+ */
+typedef struct OneironEngine OneironEngine;
+
+/**
+ * Where a `keychain` callback answers, through `oneiron_secret_sink_write`.
+ */
+typedef struct OneironSecretSink OneironSecretSink;
+
+/**
  * Opaque vault handle returned by `oneiron_vault_open`.
  *
  * Release the handle with `oneiron_vault_free` exactly once.
  */
 typedef struct OneironVault OneironVault;
+
+/**
+ * The app's side of an embedded engine, handed to `oneiron_engine_start`:
+ * its keychain, its wake timer and its readiness signal.
+ *
+ * The engine calls these from threads of its own, so `user_data` and every
+ * callback must be safe to use from any thread until `release`. A callback
+ * must not call back into the engine; such a call fails `EngineError`. A
+ * null callback does nothing, and a null `keychain` holds no secret.
+ */
+typedef struct OneironAppHost {
+  /**
+   * Handed back to every callback unchanged.
+   */
+  void *user_data;
+  /**
+   * One secret from the app keychain by its exact UTF-8 name, borrowed for
+   * the call. Answer with `oneiron_secret_sink_write(sink, ...)` before
+   * returning, which copies the bytes at once; return without writing when
+   * the keychain holds no such secret. `sink` is valid only for the call.
+   */
+  void (*keychain)(void *user_data,
+                   const uint8_t *name_ptr,
+                   size_t name_len,
+                   struct OneironSecretSink *sink);
+  /**
+   * Arms the app's timer for `at_unix_ms` when `has_at` is 1, or clears
+   * it when `has_at` is 0. When the timer fires the app calls
+   * `oneiron_engine_wake`.
+   */
+  void (*schedule_wake)(void *user_data, uint8_t has_at, uint64_t at_unix_ms);
+  /**
+   * The engine opened its vault and takes requests.
+   */
+  void (*ready)(void *user_data);
+  /**
+   * Called exactly once, when the engine holds no copy of this table,
+   * whatever `oneiron_engine_start` returned: free `user_data` here.
+   */
+  void (*release)(void *user_data);
+} OneironAppHost;
+
+/**
+ * Borrowed byte/string input for arrays such as `dict_search_paths`.
+ *
+ * Each element is caller-owned and is only borrowed for the duration of the
+ * call. String uses are UTF-8 validated by the receiving function.
+ */
+typedef struct OneironByteSlice {
+  const uint8_t *ptr;
+  size_t len;
+} OneironByteSlice;
 
 /**
  * Rust-owned byte buffer returned by variable-size byte outputs.
@@ -83,6 +155,23 @@ typedef struct OneironBuffer {
   size_t len;
   size_t cap;
 } OneironBuffer;
+
+/**
+ * Rust-owned reply of `oneiron_engine_request`. Free it with
+ * `oneiron_engine_reply_free`.
+ */
+typedef struct OneironReply {
+  /**
+   * The HTTP status; a 4xx or 5xx is a reply, not an error.
+   */
+  uint16_t status;
+  /**
+   * Every reply header as one `name: value` line ended by CRLF, repeats
+   * kept.
+   */
+  struct OneironBuffer headers;
+  struct OneironBuffer body;
+} OneironReply;
 
 /**
  * C representation of an edge returned by `edges_out` and `edges_in`.
@@ -145,17 +234,6 @@ typedef struct OneironSubtreeEntryArray {
 } OneironSubtreeEntryArray;
 
 /**
- * Borrowed byte/string input for arrays such as `dict_search_paths`.
- *
- * Each element is caller-owned and is only borrowed for the duration of the
- * call. String uses are UTF-8 validated by the receiving function.
- */
-typedef struct OneironByteSlice {
-  const uint8_t *ptr;
-  size_t len;
-} OneironByteSlice;
-
-/**
  * Borrowed entity input for `oneiron_vault_batch_put_entities`.
  *
  * Each payload is caller-owned and borrowed only for the duration of the
@@ -174,6 +252,138 @@ typedef struct OneironEntityInput {
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
+
+/**
+ * Answer a `keychain` callback: copy `len` bytes at `ptr` into `sink` at
+ * once.
+ *
+ * Call it before the callback returns; a second call replaces the first.
+ * `ptr` may be null only when `len` is 0, an empty secret.
+ *
+ * # Safety
+ *
+ * `sink` is the one the running `keychain` callback was handed. A non-null
+ * `ptr` covers `len` readable bytes for the call.
+ */
+enum OneironStatus oneiron_secret_sink_write(struct OneironSecretSink *sink,
+                                             const uint8_t *ptr,
+                                             size_t len);
+
+/**
+ * Open the vault at `path` and serve it in this process: the full server
+ * `oneiron serve` runs, with `host` as the app's side.
+ *
+ * The config is the one `oneiron serve --config <config_path>` resolves for
+ * this path (`config_path` null with length 0 for none), with `dimensions`
+ * when it is not 0. A relay host's config is refused before anything
+ * opens. A `memory_bytes` or `cpu_millis_per_second` of 0 is unbounded.
+ * Returns once `host.ready` has run. On success `out_engine` receives a
+ * handle to release with `oneiron_engine_free` exactly once. `host.release`
+ * runs exactly once, whatever this returns, when the engine holds no copy
+ * of `host`.
+ *
+ * # Safety
+ *
+ * `path_ptr` covers `path_len` readable bytes, and a non-null
+ * `config_path_ptr` covers `config_path_len`. `host`'s `user_data` and
+ * callbacks are safe to use from any thread until its `release`. A
+ * non-null `out_engine` is writable.
+ */
+enum OneironStatus oneiron_engine_start(const uint8_t *path_ptr,
+                                        size_t path_len,
+                                        size_t dimensions,
+                                        const uint8_t *config_path_ptr,
+                                        size_t config_path_len,
+                                        struct OneironAppHost host,
+                                        uint64_t memory_bytes,
+                                        uint32_t cpu_millis_per_second,
+                                        struct OneironEngine **out_engine);
+
+/**
+ * Send the engine one buffered HTTP/1.1 request and collect the whole
+ * reply.
+ *
+ * `method` and `path` (origin form, such as `/.well-known/oneiron`) are UTF-8.
+ * `headers` holds zero or more `name: value` lines, each ended by CRLF, sent
+ * as given: bring your own auth. A request without `Host` is sent with
+ * `Host: localhost`. `headers` and `body` may be empty with a null
+ * pointer. A 4xx or 5xx status is a reply. A stopped engine, a reply body
+ * over 64 MiB, and `/ws` or any other upgrade fail `EngineError`. On
+ * success `out_reply` receives a reply to release with
+ * `oneiron_engine_reply_free`.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call. Each non-null slice covers its length in readable bytes
+ * and a non-null `out_reply` is writable, for the whole call.
+ */
+enum OneironStatus oneiron_engine_request(struct OneironEngine *engine,
+                                          struct OneironByteSlice method,
+                                          struct OneironByteSlice path,
+                                          struct OneironByteSlice headers,
+                                          struct OneironByteSlice body,
+                                          struct OneironReply *out_reply);
+
+/**
+ * Free a reply returned by `oneiron_engine_request`.
+ *
+ * # Safety
+ *
+ * `reply` is the empty value or one this crate returned, unchanged and not
+ * yet freed.
+ */
+enum OneironStatus oneiron_engine_reply_free(struct OneironReply reply);
+
+/**
+ * The app's timer fired, or a push arrived: run what is due. A stopped
+ * engine serves again first, over the same open vault.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call.
+ */
+enum OneironStatus oneiron_engine_wake(struct OneironEngine *engine);
+
+/**
+ * The app is backgrounding: stop taking requests, drain, stop every worker
+ * and return once they have. The vault stays open for the next
+ * `oneiron_engine_wake`.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call.
+ */
+enum OneironStatus oneiron_engine_stop(struct OneironEngine *engine);
+
+/**
+ * A storage handle over the engine's SAME open vault, so every
+ * `oneiron_vault_*` function works on it; the path is never opened again.
+ * Release it with `oneiron_vault_free`. It keeps the vault open, not the
+ * engine serving.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start`, not freed
+ * during the call. A non-null `out_vault` is writable.
+ */
+enum OneironStatus oneiron_engine_vault(struct OneironEngine *engine,
+                                        struct OneironVault **out_vault);
+
+/**
+ * Stop the engine in order, release its runtime, and free the handle.
+ * Storage handles from `oneiron_engine_vault` keep the vault until each is
+ * freed. From inside a `host` callback the stop finishes on a thread of its
+ * own and this returns `EngineError`.
+ *
+ * # Safety
+ *
+ * `engine` is null or a live handle from `oneiron_engine_start` that no
+ * other call is using and that is never used again.
+ */
+enum OneironStatus oneiron_engine_free(struct OneironEngine *engine);
 
 /**
  * Free a Rust-owned byte buffer returned by this crate.

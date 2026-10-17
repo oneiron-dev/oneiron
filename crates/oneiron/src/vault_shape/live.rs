@@ -1,10 +1,13 @@
 //! The live arrangement read as a shape: every setup-plane row the vault
 //! holds now, under the names a seed declares. Entity-backed rows and the
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
+use super::reach::{ReachActor, ReachRows, ReachSender};
 use super::seed::hex;
 use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, invalid};
 use crate::agent_def::decode_agent_definition;
-use crate::channel_identity::{ChannelIdentityState, decode_channel_identity_body};
+use crate::channel_identity::{
+    ChannelIdentityState, channel_identity_send_holder_in_txn, decode_channel_identity_body,
+};
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::gate::manifest_authenticity::manifest_is_quarantined;
@@ -23,6 +26,9 @@ pub(super) struct LiveShape {
     pub(super) rows: Vec<(ShapeRow, Option<EntityId>)>,
     /// The resolved policy frontier the same snapshot read (ARCH-0040).
     pub(super) policy_frontier: [u8; 32],
+    /// The rows the reach line joins, read on the same snapshot and before
+    /// any visibility filter: the join runs over the whole set.
+    pub(super) reach: ReachRows,
 }
 
 /// A WORLD body's name: its `label` leaf, else its `name` leaf.
@@ -86,6 +92,7 @@ impl Vault {
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<LiveShape> {
         let mut rows = Vec::new();
+        let mut reach = ReachRows::default();
         let policy_frontier = {
             let txn = self.store.env.read_txn()?;
             let policy_frontier =
@@ -143,6 +150,11 @@ impl Vault {
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_AGENT_DEF)? {
                 let def = decode_agent_definition(&body)?;
+                reach.actors.push(ReachActor {
+                    entity: id,
+                    agent_id: def.agent_id.clone(),
+                    enabled: def.enabled,
+                });
                 rows.push((
                     ShapeRow::Actor {
                         agent_id: def.agent_id,
@@ -179,6 +191,17 @@ impl Vault {
                 ) {
                     continue;
                 }
+                if let Some((actor, may_send)) =
+                    channel_identity_send_holder_in_txn(&self.store, &txn, &id)?
+                {
+                    reach.senders.push(ReachSender {
+                        entity: id,
+                        actor,
+                        channel: identity.channel().to_owned(),
+                        address: identity.address_or_handle().to_owned(),
+                        may_send,
+                    });
+                }
                 rows.push((
                     ShapeRow::Channel {
                         channel: identity.channel().to_owned(),
@@ -202,6 +225,7 @@ impl Vault {
                 ));
             }
             for grant in self.active_standing_consent_grants_in_txn(&txn)? {
+                reach.grants.push(grant.bound().clone());
                 rows.push((
                     ShapeRow::Grant {
                         grant_ref: grant.bound().digest().to_hex(),
@@ -240,6 +264,7 @@ impl Vault {
         Ok(LiveShape {
             rows: kept,
             policy_frontier,
+            reach,
         })
     }
 }

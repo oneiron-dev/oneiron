@@ -47,6 +47,9 @@ pub(super) enum BaseGuards {
         /// The room thread reply's quote the room guard proved (OF-460): the
         /// TURN is minted with it, or a stored one must already carry it.
         quoted: Option<crate::conversation_dag::QuotedReply>,
+        /// The thread binding the room guard proved (FIX 2951): a minted
+        /// TURN is born with it; a stored one already holds it.
+        thread: Option<crate::workspace_roster::ThreadBinding>,
     },
 }
 
@@ -376,7 +379,7 @@ impl Memory<'_> {
         }
         let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
         super::reject_erased_person_in_txn(self.vault, wtxn, plan.conversation_id, person_author)?;
-        let quoted = crate::workspace_roster::admit_room_witness(
+        let witnessed = crate::workspace_roster::admit_room_witness(
             self.vault,
             wtxn,
             self.actor,
@@ -423,7 +426,8 @@ impl Memory<'_> {
             mint_conversation: current_conversation.is_none(),
             person_author,
             leader_project,
-            quoted,
+            quoted: witnessed.quoted,
+            thread: witnessed.thread,
         })
     }
 

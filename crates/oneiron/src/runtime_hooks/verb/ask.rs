@@ -24,6 +24,9 @@ use crate::{EntityId, Error, MemoryError, Result, Vault};
 
 use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
 
+/// Leads a verb hook's ask intent key, `hook.verb/<invocation>/<binding>`:
+/// settlement parses the rest, and an ask's Changed deliveries skip it.
+pub(crate) const VERB_HOOK_INTENT: &str = "hook.verb/";
 /// Calls stopped on a hook's ask, by invocation.
 const ASKS: SideTable<[u8; 16], VerbAsk, Named> = SideTable::new(&side_table::HOOKS_VERB_ASK);
 /// The answer that lets the verb run.
@@ -340,8 +343,11 @@ fn completed(invocation: InvocationId, outcome: &SavedOutcome) -> Result<VerbHoo
 /// chain's own rows (`write`), in the ask's write. `write` runs first, so a
 /// resumed chain uses up its old answer before the new ask's row takes the
 /// key. `resume` is saved with the call; a credential call's witness, the
-/// one its pre chain carries on this thread, is pinned beside it. `Err(reason)`
-/// when the ask door refused: nothing was saved.
+/// one its pre chain carries on this thread, is pinned beside it. An ask the
+/// approval mode holds (ASK-3; never one to the owner alone) saves the same
+/// in its admission: a retry reads the hold's Pending, and the release mints
+/// the group the row names. `Err(reason)` when the ask door refused: nothing
+/// was saved.
 #[expect(
     clippy::too_many_arguments,
     reason = "the call, the hook, its place, the args, the label, the resume target and the chain's write"
@@ -369,7 +375,7 @@ pub(super) fn open(
     }
     let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);
     spec.intent_key = format!(
-        "hook.verb/{}/{}",
+        "{VERB_HOOK_INTENT}{}/{}",
         call.invocation.to_hex(),
         binding_id.to_hex()
     );
