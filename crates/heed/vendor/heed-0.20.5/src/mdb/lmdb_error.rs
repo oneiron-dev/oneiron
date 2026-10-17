@@ -4,7 +4,7 @@ use std::os::raw::c_char;
 use std::{fmt, str};
 
 use libc::c_int;
-use lmdb_master_sys as ffi;
+use lmdb_master3_sys as ffi;
 
 /// An LMDB error kind.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

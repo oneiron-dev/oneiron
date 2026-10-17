@@ -11,9 +11,13 @@
 #
 # ONEIRON VENDORED FORK (ONE-218). The published heed 0.20.5 manifest with
 # this comment block and packaging-only exclusions (ONE-1441): package name,
-# version, edition, dependency requirements, features and targets are all
-# UNCHANGED, so the `[patch.crates-io]` entry in the repository root manifest
-# substitutes this tree for the registry copy without moving any version.
+# version, edition and targets are unchanged, so the `[patch.crates-io]` entry
+# in the repository root manifest substitutes this tree for the registry copy.
+#
+# OF-570 (page AEAD): the C library is mdb.master3 (`lmdb-master3-sys`, data
+# format 3) instead of `lmdb-master-sys`, every LMDB feature forwards to it,
+# and the page cipher a sealed environment uses adds `chacha20poly1305`,
+# `getrandom` and `zeroize`, all already in the workspace lock.
 #
 # This package is vendored inside the repository's `crates/` directory but is
 # deliberately NOT a member of the Oneiron workspace — the root manifest
@@ -102,8 +106,18 @@ default-features = false
 [dependencies.libc]
 version = "0.2.155"
 
-[dependencies.lmdb-master-sys]
-version = "0.2.4"
+[dependencies.lmdb-master3-sys]
+version = "0.2.6"
+
+[dependencies.chacha20poly1305]
+version = "0.11.0"
+default-features = false
+
+[dependencies.getrandom]
+version = "0.4.3"
+
+[dependencies.zeroize]
+version = "1.9.0"
 
 [dependencies.once_cell]
 version = "1.19.0"
@@ -133,17 +147,17 @@ default = [
     "serde-bincode",
     "serde-json",
 ]
-longer-keys = ["lmdb-master-sys/longer-keys"]
-mdb_idl_logn_10 = ["lmdb-master-sys/mdb_idl_logn_10"]
-mdb_idl_logn_11 = ["lmdb-master-sys/mdb_idl_logn_11"]
-mdb_idl_logn_12 = ["lmdb-master-sys/mdb_idl_logn_12"]
-mdb_idl_logn_13 = ["lmdb-master-sys/mdb_idl_logn_13"]
-mdb_idl_logn_14 = ["lmdb-master-sys/mdb_idl_logn_14"]
-mdb_idl_logn_15 = ["lmdb-master-sys/mdb_idl_logn_15"]
-mdb_idl_logn_16 = ["lmdb-master-sys/mdb_idl_logn_16"]
-mdb_idl_logn_8 = ["lmdb-master-sys/mdb_idl_logn_8"]
-mdb_idl_logn_9 = ["lmdb-master-sys/mdb_idl_logn_9"]
-posix-sem = ["lmdb-master-sys/posix-sem"]
+longer-keys = ["lmdb-master3-sys/longer-keys"]
+mdb_idl_logn_10 = ["lmdb-master3-sys/mdb_idl_logn_10"]
+mdb_idl_logn_11 = ["lmdb-master3-sys/mdb_idl_logn_11"]
+mdb_idl_logn_12 = ["lmdb-master3-sys/mdb_idl_logn_12"]
+mdb_idl_logn_13 = ["lmdb-master3-sys/mdb_idl_logn_13"]
+mdb_idl_logn_14 = ["lmdb-master3-sys/mdb_idl_logn_14"]
+mdb_idl_logn_15 = ["lmdb-master3-sys/mdb_idl_logn_15"]
+mdb_idl_logn_16 = ["lmdb-master3-sys/mdb_idl_logn_16"]
+mdb_idl_logn_8 = ["lmdb-master3-sys/mdb_idl_logn_8"]
+mdb_idl_logn_9 = ["lmdb-master3-sys/mdb_idl_logn_9"]
+posix-sem = ["lmdb-master3-sys/posix-sem"]
 preserve_order = ["heed-types/preserve_order"]
 raw_value = ["heed-types/raw_value"]
 read-txn-no-tls = []

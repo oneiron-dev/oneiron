@@ -3,10 +3,13 @@ use std::{marker, mem, ptr};
 
 use crate::mdb::error::mdb_result;
 use crate::mdb::ffi;
+use crate::txn::Stash;
 use crate::*;
 
 pub struct RoCursor<'txn> {
     cursor: *mut ffi::MDB_cursor,
+    /// ONEIRON FORK (OF-570): the transaction's stash when its env is sealed.
+    stash: Option<&'txn Stash>,
     _marker: marker::PhantomData<&'txn ()>,
 }
 
@@ -16,8 +19,18 @@ impl<'txn> RoCursor<'txn> {
         unsafe { mdb_result(ffi::mdb_cursor_open(txn.txn, dbi, &mut cursor))? }
         Ok(RoCursor {
             cursor,
+            stash: txn.stash(),
             _marker: marker::PhantomData,
         })
+    }
+
+    /// ONEIRON FORK (OF-570): what the cursor returned, made to last the whole
+    /// transaction (copied when the env is sealed; see `Stash`).
+    unsafe fn stable(&self, bytes: &'txn [u8]) -> &'txn [u8] {
+        match self.stash {
+            None => bytes,
+            Some(stash) => unsafe { stash.keep(bytes) },
+        }
     }
 
     pub fn current(&mut self) -> Result<Option<(&'txn [u8], &'txn [u8])>> {
@@ -36,8 +49,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { crate::from_val(key_val.assume_init()) };
-                let data = unsafe { crate::from_val(data_val.assume_init()) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -80,8 +93,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { crate::from_val(key_val.assume_init()) };
-                let data = unsafe { crate::from_val(data_val.assume_init()) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -124,8 +137,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { crate::from_val(key_val.assume_init()) };
-                let data = unsafe { crate::from_val(data_val.assume_init()) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -175,8 +188,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { crate::from_val(key_val) };
-                let data = unsafe { crate::from_val(data_val.assume_init()) };
+                let key = unsafe { self.stable(crate::from_val(key_val)) };
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -206,8 +219,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { crate::from_val(key_val.assume_init()) };
-                let data = unsafe { crate::from_val(data_val.assume_init()) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),
@@ -237,8 +250,8 @@ impl<'txn> RoCursor<'txn> {
 
         match result {
             Ok(()) => {
-                let key = unsafe { crate::from_val(key_val.assume_init()) };
-                let data = unsafe { crate::from_val(data_val.assume_init()) };
+                let key = unsafe { self.stable(crate::from_val(key_val.assume_init())) };
+                let data = unsafe { self.stable(crate::from_val(data_val.assume_init())) };
                 Ok(Some((key, data)))
             }
             Err(e) if e.not_found() => Ok(None),

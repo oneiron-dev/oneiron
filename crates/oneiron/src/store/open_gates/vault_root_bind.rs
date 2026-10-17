@@ -355,45 +355,50 @@ pub(super) fn bound_vault_root_entry(
     }))
 }
 
-/// `MDB_MAGIC` (mdb.c:661). Stamps the head of BOTH LMDB files.
+// Line numbers below are lmdb-master3-sys 0.2.6's mdb.c (mdb.master3, the
+// C library the vendored heed links since OF-570).
+
+/// `MDB_MAGIC` (mdb.c:664). Stamps the head of BOTH LMDB files.
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_MAGIC: u32 = 0xBEEF_C0DE;
 
-/// `MDB_DATA_VERSION` (mdb.c:664), with `MDB_DEVEL == 0` (mdb.c:299).
-/// `mdb_env_read_header` refuses anything else (mdb.c:4330).
+/// `MDB_DATA_VERSION` (mdb.c:667), with `MDB_DEVEL == 0` (mdb.c:302).
+/// `mdb_env_read_header` refuses anything else (mdb.c:4703).
 #[cfg(target_os = "linux")]
-pub(super) const LMDB_DATA_VERSION: u32 = 1;
+pub(super) const LMDB_DATA_VERSION: u32 = 3;
 
-/// `MDB_LOCK_VERSION` (mdb.c:666), with `MDB_DEVEL == 0`.
+/// `MDB_LOCK_VERSION` (mdb.c:669), with `MDB_DEVEL == 0`.
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_LOCK_VERSION: u32 = 2;
 
-/// `MDB_LOCK_VERSION_BITS` (mdb.c:670): `MDB_LOCK_FORMAT` (mdb.c:936) puts the
+/// `MDB_LOCK_VERSION_BITS` (mdb.c:673): `MDB_LOCK_FORMAT` puts the
 /// lock version in the low 12 bits of `mti_format` and the build-specific
 /// `MDB_lock_desc` above them. Only the version is portable, so only the
 /// version is compared — `mdb_env_setup_locks` compares the whole word
-/// (mdb.c:5618) but it is the one this build wrote.
+/// (mdb.c:6038) but it is the one this build wrote.
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_LOCK_VERSION_MASK: u32 = (1 << 12) - 1;
 
-/// `P_META` (mdb.c:1021): page 0 of a real `data.mdb` is a meta page, which
-/// `mdb_env_read_header` checks before reading the meta (mdb.c:4319).
+/// `P_META` (mdb.c:1048): page 0 of a real `data.mdb` is a meta page, which
+/// `mdb_env_read_header` checks before reading the meta.
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_PAGE_META_FLAG: u16 = 0x08;
 
-/// `PAGEHDRSZ` = `offsetof(MDB_page, mp_ptrs)` (mdb.c:1060). `MDB_page` is a
-/// `pgno_t`/pointer union (`MDB_ID` = `mdb_size_t` = `size_t`; midl.h:46,
-/// lmdb.h:196), then `uint16_t mp_pad`, `uint16_t mp_flags`, then a 4-byte
-/// union — 16 bytes on a 64-bit build, 12 on a 32-bit one.
+/// `PAGEHDRSZ` = `sizeof(MDB_page_header)` (mdb.c:1098). The header is a
+/// `pgno_t`/pointer union, then `txnid_t mh_txnid` (both `size_t`), then
+/// `uint16_t mh_pad`, `uint16_t mh_flags` and a 4-byte union (mdb.c:1009) —
+/// 24 bytes on a 64-bit build, 16 on a 32-bit one.
 #[cfg(target_os = "linux")]
-pub(super) const LMDB_PAGE_HEADER_LEN: usize = std::mem::size_of::<usize>() + 8;
+pub(super) const LMDB_PAGE_HEADER_LEN: usize = 2 * std::mem::size_of::<usize>() + 8;
 
-/// `offsetof(MDB_page, mp_flags)`: after the pointer-sized union and `mp_pad`.
+/// `offsetof(MDB_page_header, mh_flags)`: after the page number, the txn id
+/// and `mh_pad`.
 #[cfg(target_os = "linux")]
-pub(super) const LMDB_PAGE_FLAGS_OFFSET: usize = std::mem::size_of::<usize>() + 2;
+pub(super) const LMDB_PAGE_FLAGS_OFFSET: usize = 2 * std::mem::size_of::<usize>() + 2;
 
 /// `MDB_meta.mm_magic`: `METADATA(p)` is the first byte after the page header
-/// (mdb.c:1063) and `mm_magic` is the meta's first field (mdb.c:1255-1258).
+/// and `mm_magic` is the meta's first field (mdb.c:1336-1339). A sealed env's
+/// meta pages stay clear, so this holds for both tiers.
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_META_MAGIC_OFFSET: usize = LMDB_PAGE_HEADER_LEN;
 
@@ -401,7 +406,7 @@ pub(super) const LMDB_META_MAGIC_OFFSET: usize = LMDB_PAGE_HEADER_LEN;
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_META_VERSION_OFFSET: usize = LMDB_META_MAGIC_OFFSET + 4;
 
-/// `MDB_meta.mm_psize` = `mm_dbs[FREE_DBI].md_pad` (mdb.c:1273), the first
+/// `MDB_meta.mm_psize` = `mm_dbs[FREE_DBI].md_pad` (mdb.c:1354), the first
 /// field of `mm_dbs`. `mm_dbs` follows `mm_magic` (4) + `mm_version` (4) +
 /// `void *mm_address` + `mdb_size_t mm_mapsize`, both pointer-sized; at either
 /// pointer width that packs with no padding.
@@ -413,10 +418,11 @@ pub(super) const LMDB_META_PAGE_SIZE_OFFSET: usize =
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_META_PREFIX_LEN: usize = LMDB_META_PAGE_SIZE_OFFSET + 4;
 
-/// `MAX_PAGESIZE` (mdb.c:641), with `PAGEBASE == 0` because `MDB_DEVEL == 0`.
-/// A host with larger OS pages is clamped to this at creation (mdb.c:5078).
+/// `MAX_PAGESIZE` (mdb.c:644): `PAGEBASE` is `PAGEHDRSZ` (mdb.c:1104), so
+/// pages reach 64 KiB. A host with larger OS pages is clamped to this at
+/// creation.
 #[cfg(target_os = "linux")]
-pub(super) const LMDB_MAX_PAGE_SIZE: u32 = 0x8000;
+pub(super) const LMDB_MAX_PAGE_SIZE: u32 = 0x10000;
 
 /// Coherence floor only: the smallest power of two that can hold one page
 /// header plus one `MDB_meta` (136 bytes on a 64-bit build). Real files carry
@@ -425,16 +431,16 @@ pub(super) const LMDB_MAX_PAGE_SIZE: u32 = 0x8000;
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_MIN_PAGE_SIZE: u32 = 256;
 
-/// `NUM_METAS` (mdb.c:1249). A real `data.mdb` always holds both meta pages:
+/// `NUM_METAS` (mdb.c:1330). A real `data.mdb` always holds both meta pages:
 /// `mdb_env_init_meta` writes `psize * 2` bytes before anything else exists.
 #[cfg(target_os = "linux")]
 pub(super) const LMDB_META_PAGES: u64 = 2;
 
 /// Conservative floor for the lock region. `sizeof(MDB_txninfo)` is a
 /// cacheline-padded `MDB_txbody`, a cacheline-padded mutex-name slot and one
-/// `MDB_reader` (mdb.c:874-931) — 192 bytes with `CACHELINE == 64`
-/// (mdb.c:821) — and `mdb_env_setup_locks` sizes the file at
-/// `(maxreaders - 1) * sizeof(MDB_reader) + sizeof(MDB_txninfo)` (mdb.c:5477).
+/// `MDB_reader` (mdb.c:851-934) — 192 bytes with `CACHELINE == 64`
+/// (mdb.c:824) — and `mdb_env_setup_locks` sizes the file at
+/// `(maxreaders - 1) * sizeof(MDB_reader) + sizeof(MDB_txninfo)` (mdb.c:5897).
 /// The floor sits below every platform's real value, so length alone can only
 /// refuse a file no LMDB ever initialized.
 #[cfg(target_os = "linux")]
@@ -446,15 +452,15 @@ pub(super) const LMDB_LOCK_MIN_LEN: u64 = 64;
 /// This is the never-create boundary, and it runs before any environment open.
 /// The existing-only door opens read-write — heed defaults to
 /// `EnvFlags::empty()` — so without this gate LMDB would `ftruncate` and
-/// initialize a zero-length `lock.mdb` (mdb.c:5477-5484, 5604-5607) and write
+/// initialize a zero-length `lock.mdb` (mdb.c:5897-5904, 6020-6030) and write
 /// both meta pages into a zero-length `data.mdb` (`mdb_env_read_header`
 /// returns `ENOENT`, so `mdb_env_open2` takes its `newenv` branch,
-/// mdb.c:5072-5112). A directory holding two pre-created empty files would
+/// mdb.c:5467-5520). A directory holding two pre-created empty files would
 /// become a partial vault before any manifest gate could refuse it.
 ///
 /// A stock `MDB_RDONLY` validation open is NOT a substitute: LMDB opens the
 /// lock file `O_RDWR | O_CREAT` and initializes a zero-length one even for a
-/// read-only environment (mdb.c:5442-5449, 5477-5484). That is why validation
+/// read-only environment (mdb.c:5862, 5897-5904). That is why validation
 /// is positioned reads on descriptors this door already holds — refusal here
 /// creates, grows, truncates and writes nothing, so there is nothing to clean
 /// up.
@@ -500,7 +506,7 @@ pub(super) fn validate_bound_lmdb_lock(root: &Path, lock: &File) -> Result<()> {
         return Err(existing_root_refusal(root, false));
     }
     // `MDB_txbody` opens with `uint32_t mtb_magic` then `uint32_t mtb_format`
-    // (mdb.c:874-882), and `MDB_txninfo` opens with that body (mdb.c:905).
+    // (mdb.c:877-882), and `MDB_txninfo` opens with that body (mdb.c:908).
     let mut header = [0_u8; 8];
     lock.read_exact_at(&mut header, 0)?;
     if lmdb_header_u32(&header, 0) != LMDB_MAGIC

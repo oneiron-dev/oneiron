@@ -176,7 +176,7 @@ encoding_rs = "0.8"
 # sem_unlinks the NAME (open handles stay valid) — both legs of the
 # collision class are structurally gone.
 #
-# Target-gated on purpose: lmdb-master-sys's build.rs applies the
+# Target-gated on purpose: lmdb-master3-sys's build.rs applies the
 # MDB_USE_POSIX_SEM define unconditionally whenever the feature is on, and
 # on Linux that would REPLACE the default robust pthread mutexes
 # (MDB_USE_POSIX_MUTEX + MDB_USE_ROBUST, crash-recoverable) with

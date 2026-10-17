@@ -4928,15 +4928,18 @@ version = "0.20.5"
 dependencies = [
  "bitflags 2.13.2",
  "byteorder",
+ "chacha20poly1305",
+ "getrandom 0.4.3",
  "heed-traits",
  "heed-types",
  "libc",
- "lmdb-master-sys",
+ "lmdb-master3-sys",
  "once_cell",
  "page_size",
  "serde",
  "synchronoise",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -6274,10 +6277,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
-name = "lmdb-master-sys"
+name = "lmdb-master3-sys"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaeb9bd22e73bd1babffff614994b341e9b2008de7bb73bf1f7e9154f1978f8b"
+checksum = "78b1f49b7494125af9b87ddb83cb4828d4ddbaf83c3ed132d5ebd0d43d02f525"
 dependencies = [
  "cc",
  "doxygen-rs",
