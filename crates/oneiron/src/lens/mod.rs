@@ -14,7 +14,8 @@
 //! - `mediation` — host mediation: principals, backing refs, [`LensRenderFrame`].
 //! - `validate` — cross-cutting validators and the surface compiler.
 //! - `proposal`, `activation` — pack lens proposals and the owner's slot
-//!   selection (`vault.lenses.*`); `sdk` — the default vault projection verb.
+//!   selection (`vault.lenses.*`); `regen` — enacting a regeneration outcome
+//!   through those doors; `sdk` — the default vault projection verb.
 //! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
 mod activation;
@@ -40,6 +41,10 @@ mod mediation;
 mod mount;
 pub use mount::LensMount;
 mod proposal;
+mod regen;
+pub use regen::{
+    LensRegenEnactment, enact_lens_regeneration_embedded, regenerate_and_enact_lens_embedded,
+};
 pub use activation::{
     LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
 };
