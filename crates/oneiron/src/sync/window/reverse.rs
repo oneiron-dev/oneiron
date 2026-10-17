@@ -17,7 +17,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_TURN};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
@@ -372,6 +372,16 @@ pub(in crate::sync) fn reverse_rematerialize_with(
             // already present.
             if map_contains_binary(&entities_map, &hex_id)
                 && crate::sync::row_birth::mirror_local_birth(vault, doc, id)?
+            {
+                wrote_any = true;
+            }
+            // OF-522: a TURN's room row rides beside its carrier the same
+            // way, and is refreshed when only the row changed.
+            if window_key.world().is_none()
+                && EntityMetadataHeader::parse(&raw)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
+                && map_contains_binary(&entities_map, &hex_id)
+                && crate::sync::room_turns::mirror_room_turn(vault, doc, id)?
             {
                 wrote_any = true;
             }

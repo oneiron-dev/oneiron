@@ -23,6 +23,27 @@ pub(crate) fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
     }
 }
 
+/// Copies `source`'s root map `name` of byte rows into `target`, and
+/// commits. Copies nothing when `source` holds no such root: looking a root
+/// up by name creates it.
+pub(crate) fn copy_binary_root_map(source: &LoroDoc, target: &LoroDoc, name: &str) -> Result<()> {
+    if !matches!(source.get_value(), LoroValue::Map(roots) if roots.contains_key(name)) {
+        return Ok(());
+    }
+    let mut rows = Vec::new();
+    source.get_map(name).for_each(|key, value| {
+        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
+            rows.push((key.to_owned(), bytes.to_vec()));
+        }
+    });
+    let map = target.get_map(name);
+    for (key, bytes) in rows {
+        map_insert_bytes(&map, &key, &bytes)?;
+    }
+    target.commit();
+    Ok(())
+}
+
 pub(crate) fn map_delete(map: &LoroMap, key: &str) -> Result<()> {
     map.delete(key)
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapDelete, e))

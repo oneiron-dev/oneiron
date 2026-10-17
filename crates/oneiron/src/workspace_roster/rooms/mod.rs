@@ -6,6 +6,7 @@ mod offer_settle;
 mod offers;
 mod participants;
 mod participation;
+mod replica;
 #[cfg(test)]
 mod tests;
 mod upkeep;
@@ -39,6 +40,7 @@ pub(crate) use participation::{
     record_participation_in_txn, require_join_covering_in_txn,
 };
 use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
+pub(crate) use replica::{TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};

@@ -53,6 +53,7 @@ pub(crate) mod receipt_ingest;
 pub mod replay;
 pub mod residence;
 pub mod residence_operation_budgets;
+pub(crate) mod room_turns;
 pub(crate) mod row_birth;
 pub mod schema;
 pub mod selector;

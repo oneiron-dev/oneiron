@@ -504,6 +504,26 @@ pub(crate) fn register_custody_observer(
     )
 }
 
+/// Observer B for the base window's room turn map (OF-522): each room turn
+/// row an import changes is merged into this vault's.
+pub(crate) fn register_room_turns_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let room_turns_map = doc.get_map(crate::sync::room_turns::ROOM_TURNS_MAP);
+    subscribe_map_observer(
+        doc,
+        &room_turns_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::room_turns::materialize_room_turns_from_delta,
+        ("room_turns", None),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(

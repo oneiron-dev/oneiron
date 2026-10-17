@@ -461,9 +461,9 @@ pub fn promotion_covers_full_window(
 
 /// [`promotion_covers_full_window`] for the machine `destination` names. A
 /// machine of this vault's that proved itself also covers the window's
-/// custody transitions (OF-422): each is sealed to the owner's machines, and
-/// the selector never copies one. Any other destination does not, so a
-/// window that carries one is not promoted to it.
+/// custody transitions (OF-422), each sealed to the owner's machines, and its
+/// room turn rows (OF-522); the selector copies neither. Any other
+/// destination does not, so a window that carries one is not promoted to it.
 pub fn promotion_covers_full_window_for(
     vault: &Vault,
     source: &LoroDoc,
@@ -479,7 +479,12 @@ pub fn promotion_covers_full_window_for(
     let _ = super::window::export_scrubbed_window_snapshot(vault, window, source)?;
     let selected = granted_window_doc(vault, source, window, scope, selector)?;
     if matches!(destination, Withhold::Worlds(_) | Withhold::Peer(_)) {
-        super::custody::copy_custody_map(source, &selected)?;
+        for name in [
+            super::custody::CUSTODY_MAP,
+            super::room_turns::ROOM_TURNS_MAP,
+        ] {
+            super::loro_support::copy_binary_root_map(source, &selected, name)?;
+        }
     }
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
