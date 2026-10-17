@@ -796,10 +796,9 @@ impl Vault {
                 .map(RoutedVerdictOutcome::Decided)
                 .ok_or_else(|| Error::InvariantViolation("routed verdict decided nothing").into()),
             GeneratedDecisions::Trapped => Ok(RoutedVerdictOutcome::Trapped),
-            GeneratedDecisions::Unread(_) => Err(Error::InvariantViolation(
-                "a durable routed verdict came back unread",
-            )
-            .into()),
+            GeneratedDecisions::Unread(_) => {
+                Err(Error::InvariantViolation("a durable routed verdict came back unread").into())
+            }
         }
     }
 }
