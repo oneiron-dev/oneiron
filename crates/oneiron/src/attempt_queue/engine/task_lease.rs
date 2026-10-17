@@ -5,7 +5,7 @@
 //! these doors take the TASK and the try the highway already resolved, and a
 //! lease owner the highway derived from the authenticated actor.
 
-use crate::attempt_queue::encoding::{decode_record, encode_record, ready_at, ready_key};
+use crate::attempt_queue::encoding::{decode_record, ready_at, ready_key};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
     AttemptId, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
@@ -63,7 +63,7 @@ impl AttemptQueue<'_> {
         lease_claimed_record(&mut record, &input.lease_owner, now)?;
         crate::task_verb::acquire_task_symbols(self.store, wtxn, Some(task_ref), now)?;
         self.store.attempt_ready.delete(wtxn, &key)?;
-        self.put_record_in_txn(wtxn, &record)?;
+        self.put_record_in_txn(wtxn, &mut record)?;
         Ok(ClaimOutcome::Claimed(record))
     }
 
@@ -91,12 +91,16 @@ impl AttemptQueue<'_> {
         }
         validate_transition_lease(&record, lease_owner, attempt_count, "renew_lease")?;
         record.updated_at = now.max(record.updated_at);
-        self.put_record_in_txn(wtxn, &record)?;
+        self.put_record_in_txn(wtxn, &mut record)?;
         Ok(record)
     }
 
-    fn put_record_in_txn(&self, wtxn: &mut heed::RwTxn<'_>, record: &AttemptRecord) -> Result<()> {
-        let encoded = encode_record(record)?;
+    fn put_record_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &mut AttemptRecord,
+    ) -> Result<()> {
+        let encoded = self.encode_in_txn(wtxn, record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;

@@ -9,6 +9,9 @@ use crate::attempt_queue::{
     CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
     RetryAttempt, RetryOutcome,
 };
+use crate::batch::secret_scan::{
+    SidePart, admit_side_parts, admitted_from, from_named_tree, named_tree,
+};
 use crate::error::{Error, Result};
 
 use super::inbound::{route_inbound_surface_event, route_inbound_surface_event_admitting_in_txn};
@@ -474,16 +477,6 @@ pub(super) fn admit_surface_event_once_in_txn(
         receiving: &event.receiving_identity_ref,
         correlation_id: &event.correlation_id,
     });
-    let payload = encode_surface_event_attempt_payload(&SurfaceEventAttemptPayload {
-        event: event.clone(),
-        route: if thread_ref.is_some() {
-            SurfaceEventDispatchRoute::ProposeConfirm
-        } else {
-            event.dispatch_route()
-        },
-        dispatch_idempotency_key: dedupe_key.clone(),
-        thread_ref: thread_ref.map(str::to_owned),
-    })?;
 
     let queue = AttemptQueue::new(vault);
     if let Some(existing) = matching_surface_event_attempt(
@@ -508,7 +501,7 @@ pub(super) fn admit_surface_event_once_in_txn(
                     crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread)
                 })
                 .transpose()?;
-            if requested != prior || held.event != *event {
+            if requested != prior || !held_event_matches(&held.event, event)? {
                 return Err(Error::InvalidConfig(
                     "CC correlation already belongs to another message or thread".to_owned(),
                 ));
@@ -520,6 +513,16 @@ pub(super) fn admit_surface_event_once_in_txn(
         });
     }
 
+    let payload = encode_surface_event_attempt_payload(&SurfaceEventAttemptPayload {
+        event: admitted_event_in_txn(vault, wtxn, event, &dedupe_key)?,
+        route: if thread_ref.is_some() {
+            SurfaceEventDispatchRoute::ProposeConfirm
+        } else {
+            event.dispatch_route()
+        },
+        dispatch_idempotency_key: dedupe_key.clone(),
+        thread_ref: thread_ref.map(str::to_owned),
+    })?;
     let outcome = crate::ports::JobQueue::port_job_enqueue(
         vault,
         wtxn,
@@ -544,6 +547,45 @@ pub(super) fn admit_surface_event_once_in_txn(
             replayed: true,
         },
     })
+}
+
+/// The event as the side-row wall admits it, before it is serialized into the
+/// attempt payload (OF-067; ARCH-0069 #handles-in-fields). A secret a provider
+/// sent in one of its fields goes to custody and the field keeps its handle;
+/// the event is still admitted. The run id and dedupe key were derived from
+/// the event as it arrived, so a redelivery finds the same row.
+fn admitted_event_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    event: &SurfaceEvent,
+    dedupe_key: &str,
+) -> Result<SurfaceEvent> {
+    let mut parts = [SidePart::Value(named_tree(event)?)];
+    let read = |parts: &[SidePart]| match parts {
+        [SidePart::Value(tree)] => from_named_tree::<SurfaceEvent>(tree),
+        _ => None,
+    };
+    if !admit_side_parts(
+        vault,
+        wtxn,
+        ("intake", dedupe_key.as_bytes()),
+        &mut parts,
+        |parts| read(parts).is_some(),
+    )? {
+        return Ok(event.clone());
+    }
+    read(&parts).ok_or(Error::InvariantViolation(
+        "a masked surface event no longer decodes",
+    ))
+}
+
+/// Whether a replayed event is the one a row already holds, as the side-row
+/// wall stored it: a field whose secret it lifted holds a handle there.
+fn held_event_matches(held: &SurfaceEvent, offered: &SurfaceEvent) -> Result<bool> {
+    if held == offered {
+        return Ok(true);
+    }
+    admitted_from(&named_tree(held)?, &named_tree(offered)?)
 }
 
 /// Reads a run's attempt rows inside the caller's write transaction.

@@ -6,8 +6,7 @@ use crate::Vault;
 use crate::attempt_queue::annotation_hold::AnnotationHold;
 use crate::attempt_queue::cancel::AttemptCancelState;
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, encode_record, ready_at,
-    ready_key,
+    DedupeIndexKeys, READY_KEY_LEN, decode_ready_key, decode_record, ready_at, ready_key,
 };
 use crate::attempt_queue::types::{
     AttemptId, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
@@ -239,7 +238,7 @@ impl<'a> AttemptQueue<'a> {
             None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
         };
         crate::attempt_queue::check_owner_retained_range(&input.kind, &id)?;
-        let record = AttemptRecord {
+        let mut record = AttemptRecord {
             id,
             kind: input.kind,
             payload: input.payload,
@@ -276,7 +275,7 @@ impl<'a> AttemptQueue<'a> {
         {
             return Err(crate::Error::InvariantViolation("attempt id collision"));
         }
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -397,7 +396,7 @@ impl<'a> AttemptQueue<'a> {
                 input.now,
             )?;
             self.store.attempt_ready.delete(wtxn, key)?;
-            let encoded = encode_record(&record)?;
+            let encoded = self.encode_in_txn(wtxn, &mut record)?;
             self.store
                 .attempt_records
                 .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -804,7 +803,7 @@ impl<'a> AttemptQueue<'a> {
             self.hold_for_annotation_in_txn(wtxn, id, hold, input.now)?;
         }
 
-        let Some((ready_key, id, record)) = claimed else {
+        let Some((ready_key, id, mut record)) = claimed else {
             return Ok(ClaimOutcome::Empty);
         };
 
@@ -815,7 +814,7 @@ impl<'a> AttemptQueue<'a> {
             input.now,
         )?;
         self.store.attempt_ready.delete(wtxn, &ready_key)?;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, id.as_bytes(), &encoded)?;

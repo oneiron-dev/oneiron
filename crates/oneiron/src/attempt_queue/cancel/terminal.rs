@@ -5,7 +5,7 @@
 //! or a lease runs out. RUNG 1 and the reserve dial live in [`super::ops`].
 
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, decode_record, encode_record, lease_expired, ready_at, ready_key,
+    DedupeIndexKeys, decode_record, lease_expired, ready_at, ready_key,
 };
 use crate::attempt_queue::engine::AttemptQueue;
 use crate::attempt_queue::telemetry::invalid_transition;
@@ -112,7 +112,7 @@ impl AttemptQueue<'_> {
             input.now,
         )?;
 
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -134,7 +134,7 @@ impl AttemptQueue<'_> {
 
         // A landing that hands off is not the end of the work: its successor
         // surfaces when it settles.
-        let Some(successor) = successor else {
+        let Some(mut successor) = successor else {
             self.notify_settled_in_txn(wtxn, &record)?;
             return Ok(FinishLandingOutcome::Landed(record));
         };
@@ -152,7 +152,7 @@ impl AttemptQueue<'_> {
             return Err(Error::InvariantViolation("attempt id collision"));
         }
         crate::ports::recorded_at_in_txn(self.store, wtxn)?;
-        let encoded_successor = encode_record(&successor)?;
+        let encoded_successor = self.encode_in_txn(wtxn, &mut successor)?;
         self.store
             .attempt_records
             .put(wtxn, successor.id.as_bytes(), &encoded_successor)?;
@@ -236,7 +236,7 @@ impl AttemptQueue<'_> {
             input.reason,
             input.now,
         )?;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;

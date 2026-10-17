@@ -37,7 +37,7 @@ side_tables! {
     DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw;
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
-    INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson;
+    INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted;
     /// Approved docs source ceiling (source hash, owner, approval), keyed by the asset's hex32 id.
     INGEST_DOCS_DEEP_CEILING: VaultMeta b"docs-deep-ceiling:v1:" LegacyJson;
     /// Last deep-ingest receipt for one docs asset, keyed by its hex32 id.
@@ -126,7 +126,7 @@ side_tables! {
     /// unchanged NOTE is not read again, and its verdict and importance. Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
-    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw;
+    DREAMER_PARKED: VaultMeta b"dreamer:parked:" Raw Authored;
     /// Private step-only wait binding for one (task, trap) pair. Key: id16(task ref) + id16(trap
     /// ref).
     DREAMER_PEER_WAIT: VaultMeta b"dreamer:peer_wait:v1:" Raw;
@@ -212,7 +212,7 @@ side_tables! {
     DREAMER_STEP_INDEX: VaultMeta b"dreamer:step_index:v1:" Raw;
     /// Device-local step progression state (Started/ResponseReceived/Logged); never synced. Key:
     /// id16(attempt) + hash32(step).
-    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw;
+    DREAMER_STEP_STATE: VaultMeta b"dreamer:step_state:v1:" Raw Authored;
     /// When a host draft was scheduled for one stewardship reach-out. Key: id16(reach-out claim),
     /// value: u64be.
     DREAMER_STEWARDSHIP_DRAFTED: VaultMeta b"dreamer:stewardship:v1:drafted:" Raw;
@@ -475,7 +475,7 @@ side_tables! {
     /// redaction-shape checks), business validation `Named`'s generic
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_gate_decision`/`decode_gate_decision`.
-    GATE_DECISION_LEDGER: VaultMeta b"gate_decision:v0:" Raw;
+    GATE_DECISION_LEDGER: VaultMeta b"gate_decision:v0:" Raw Ciphertext;
     /// Claim-keyed gate decision index. Key: id16 + id16.
     GATE_DECISION_CLAIM_INDEX: VaultMeta b"gate_decision_by_claim:v0:" Raw;
     /// Claim-index backfill flag. Key: ().
@@ -569,7 +569,7 @@ side_tables! {
     INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
     /// A hook block: the rows one AddBlock pins for a recipient's board deliveries, its lifetime
     /// and its consumption. Key: id16 (block).
-    HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named;
+    HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named Authored;
     /// An owner check a hook's causal chain raised (a cycle or a deep chain). Key: hash32 (run key).
     HOOKS_CHECK: VaultMeta b"hooks:check:v1:" Named;
     /// A fact hook's cursor in one source. Key: id16 (binding) + u8 (source).
@@ -580,16 +580,16 @@ side_tables! {
     HOOKS_GRANT: VaultMeta b"hooks:grant:v1:" Named;
     /// Queued work a hook run saved before its cursor moved, and whether it landed. Key: hash32
     /// (run key).
-    HOOKS_INTENT: VaultMeta b"hooks:intent:v1:" Named;
+    HOOKS_INTENT: VaultMeta b"hooks:intent:v1:" Named Authored;
     /// The hook chain behind a row a hook landed. Key: id16 (row).
     HOOKS_LINEAGE: VaultMeta b"hooks:lineage:v1:" Named;
     /// A hook run's saved result and pinned input. Key: hash32 (run key).
-    HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named;
+    HOOKS_MEMO: VaultMeta b"hooks:memo:v1:" Named Authored;
     /// A hook run's Hook receipt. Key: hash32 (run key).
-    HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named;
+    HOOKS_RECEIPT: VaultMeta b"hooks:receipt:v1:" Named Authored;
     /// A hook's regen record: the contract its last good body passed under, its intent, and a
     /// regen decision waiting to be enacted. Key: id16 (binding).
-    HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named;
+    HOOKS_REGEN: VaultMeta b"hooks:regen:v1:" Named Authored;
     /// The settlement feed fact hooks follow: one row per settled proposal. Key: u64be (sequence).
     HOOKS_SETTLED: VaultMeta b"hooks:settled:v1:" Named;
     /// The last settlement sequence handed out. Key: ().
@@ -705,9 +705,9 @@ side_tables! {
     /// Tracker pull-page cursor. Key: ().
     LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw;
     /// Tracker-mirror outbox marker. Key: id16.
-    LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw;
+    LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine;
     /// Tracker-mirror revision counter of a task. Key: id16.
-    LINEAR_TASK_REVISION: VaultMeta b"linear.task_revision.v1/" Raw;
+    LINEAR_TASK_REVISION: VaultMeta b"linear.task_revision.v1/" Raw Engine;
     /// Verified typed writer of a task at its current revision (u64be revision, id16 actor, class
     /// byte). Key: id16.
     LINEAR_TASK_WRITER: VaultMeta b"linear.task_writer.v1/" Raw;

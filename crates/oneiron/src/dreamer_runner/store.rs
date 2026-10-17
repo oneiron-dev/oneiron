@@ -783,7 +783,7 @@ impl<'a> DreamerRunnerStore<'a> {
                 "dreamer parked row is owned by a different parker",
             ));
         }
-        PARKED.put(&self.vault.store, wtxn, &record.attempt_id, &record)?;
+        PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
         Ok(record)
     }
 

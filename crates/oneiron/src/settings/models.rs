@@ -26,7 +26,7 @@ impl Vault {
     /// offer whose key is `offer` (hex64), for use while it is parked.
     pub fn set_model_fallback(&self, offer: &str, model: &str) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        FALLBACKS.put(&self.store, &mut txn, &offer.to_owned(), &model.to_owned())?;
+        FALLBACKS.put(self, &mut txn, &offer.to_owned(), &model.to_owned())?;
         txn.commit()?;
         Ok(())
     }

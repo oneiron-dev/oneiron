@@ -224,7 +224,7 @@ pub(crate) fn note_bound_hook_in_txn(
         return Ok(());
     }
     REGEN.put(
-        &vault.store,
+        vault,
         txn,
         &binding,
         &HookRegenRecord {
@@ -319,7 +319,7 @@ impl Vault {
             self.decide_hook_regen(runtime, regenerator, binding, &row, intent.clone())?;
         record.intent = intent;
         record.pending = Some(outcome.clone());
-        self.with_write_txn_grouped(|txn| REGEN.put(&self.store, txn, &binding, &record))?;
+        self.with_write_txn_grouped(|txn| REGEN.put(self, txn, &binding, &record))?;
         Ok(outcome)
     }
 
@@ -473,7 +473,7 @@ impl Vault {
         record.pending = None;
         self.with_write_txn_grouped(|txn| {
             for id in std::iter::once(binding).chain(rebound) {
-                REGEN.put(&self.store, txn, &id, &record)?;
+                REGEN.put(self, txn, &id, &record)?;
             }
             Ok(())
         })?;

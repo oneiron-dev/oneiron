@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::AttemptQueue;
-use crate::attempt_queue::encoding::{decode_record, encode_record, ready_at, ready_key};
+use crate::attempt_queue::encoding::{decode_record, ready_at, ready_key};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{
     append_attempt_event, validate_intervention_actor, validate_lease_owner,
@@ -95,9 +95,10 @@ impl AttemptQueue<'_> {
         }
         record.placement = Some(placement);
         append_attempt_event(&mut record, input.kind, input.actor, input.note, input.now)?;
+        let encoded = self.encode_in_txn(&mut txn, &mut record)?;
         self.store
             .attempt_records
-            .put(&mut txn, record.id.as_bytes(), &encode_record(&record)?)?;
+            .put(&mut txn, record.id.as_bytes(), &encoded)?;
         txn.commit()?;
         self.store.notify_attempt_observers();
         Ok(InterveneOutcome {

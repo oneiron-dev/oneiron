@@ -40,4 +40,19 @@ impl<'a> AttemptQueue<'a> {
     pub(crate) fn from_store(store: &'a Store) -> Self {
         Self { store, vault: None }
     }
+
+    /// One row's bytes, read once by the side-row wall in the writer's
+    /// transaction (OF-067; [`super::encoding::encode_admitted_record`]). A
+    /// vault-opened handle lifts a secret the payload or notes hold into
+    /// custody; a store-only handle holds no custody door and refuses one.
+    pub(super) fn encode_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        record: &mut super::AttemptRecord,
+    ) -> crate::Result<Vec<u8>> {
+        match self.vault {
+            Some(vault) => super::encoding::encode_admitted_record(vault, wtxn, record),
+            None => super::encoding::encode_admitted_record(self.store, wtxn, record),
+        }
+    }
 }

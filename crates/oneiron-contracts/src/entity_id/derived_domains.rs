@@ -162,9 +162,14 @@ pub const DECISION_QUESTION: &[u8] = b"oneiron.decision.question.v1";
 /// token, or `decider` and the team reference.
 pub const COORDINATION_PATTERN: &[u8] = b"oneiron/coordination-pattern/v1/";
 
+/// The row a mask on write found a secret in outside the entity tables
+/// (`batch::secret_scan::mask::side_row`): a side-table row, an attempt
+/// record's payload and notes, or an intake event. Parts: place, row key.
+pub const SIDE_ROW_MASK: &[u8] = b"oneiron.side_row.mask.v1\0";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 41] = [
+pub(crate) const ALL: [&[u8]; 42] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -206,4 +211,5 @@ pub(crate) const ALL: [&[u8]; 41] = [
     PROJECT_REVISION,
     DECISION_QUESTION,
     COORDINATION_PATTERN,
+    SIDE_ROW_MASK,
 ];

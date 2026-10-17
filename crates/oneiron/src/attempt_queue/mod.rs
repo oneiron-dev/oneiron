@@ -62,8 +62,18 @@ pub use types::{
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
+#[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
     encoding::encode_record(record)
+}
+/// A signal row's bytes, read once by the side-row wall in the writer's
+/// transaction ([`encoding::encode_admitted_record`]).
+pub(crate) fn encode_admitted_signal_record(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &mut AttemptRecord,
+) -> crate::Result<Vec<u8>> {
+    encoding::encode_admitted_record(vault, wtxn, record)
 }
 pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate::Result<()> {
     validate::validate_cancel_actor(actor)?;

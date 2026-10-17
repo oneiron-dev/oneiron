@@ -238,7 +238,7 @@ impl Memory<'_> {
         let key = block_key(&row)?;
         self.with_verified_actor_write_txn(|txn| {
             require_live_section(self.vault(), txn, registry, &row.section_id)?;
-            PLUGIN_BLOCK.put(&self.vault().store, txn, &key, &row)?;
+            PLUGIN_BLOCK.put(self.vault(), txn, &key, &row)?;
             Ok(())
         })?;
         Ok(row)

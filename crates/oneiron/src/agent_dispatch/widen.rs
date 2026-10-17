@@ -312,7 +312,7 @@ impl AgentDispatcher<'_> {
             _ => return Err(invalid("widen landing unexpectedly proposed again")),
         });
         SLICE.put(
-            &self.vault.store,
+            self.vault,
             &mut wtxn,
             &record.request.intent.parent,
             &SliceOverride {
