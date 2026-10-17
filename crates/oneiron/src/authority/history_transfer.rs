@@ -207,6 +207,10 @@ impl Vault {
         }
         txn.commit()?;
         watch.finish()?;
+        // A row written after its window loaded reaches it only through the
+        // live mirror.
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(ids.iter().copied().collect());
         Ok(ids)
     }
 
@@ -522,6 +526,10 @@ impl Vault {
         }
         txn.commit()?;
         watch.finish()?;
+        // A row written after its window loaded reaches it only through the
+        // live mirror.
+        #[cfg(feature = "sync")]
+        self.note_committed_rows(ids.iter().copied().collect());
         Ok(PageVerdict::Landed(ids))
     }
 }
