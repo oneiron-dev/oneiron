@@ -77,6 +77,30 @@
       "section": false
     },
     {
+      "name": "self.focus.scratchpad.append",
+      "description": "Appends one line, with an optional keep or scratch mark and pin, to the bound actor's session scratchpad; the session's first line opens the pad, and a sealed pad is refused.",
+      "input": "crate::task_verb::sdk::ScratchpadAppendRequest",
+      "output": "crate::task_verb::sdk::ScratchpadWriteReply",
+      "call": "crate::task_verb::sdk::scratchpad_append_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.focus.scratchpad.seal",
+      "description": "Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad.",
+      "input": "crate::task_verb::sdk::ScratchpadSealRequest",
+      "output": "crate::task_verb::sdk::ScratchpadWriteReply",
+      "call": "crate::task_verb::sdk::scratchpad_seal_reply(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "self.memory.diary",
       "description": "Writes one private entry in the bound actor's own diary, as an actor-private NOTE.",
       "prose_links": ["/content"],
@@ -725,6 +749,28 @@
       "section": false
     },
     {
+      "name": "vault.explain.memory",
+      "description": "Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it.",
+      "input": "crate::task_verb::sdk::ExplainMemoryRequest",
+      "output": "Option<crate::task_verb::sdk::ExplainMemoryReply>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.memory\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.explain.gate",
+      "description": "Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it.",
+      "input": "crate::task_verb::sdk::ExplainGateRequest",
+      "output": "Option<crate::task_verb::sdk::ExplainGateReply>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.gate\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.kv.get",
       "description": "Exact key lookup in the bound actor's worldless key-value namespace; never recall.",
       "input": "crate::memory::KeyValueAddress",
@@ -1059,6 +1105,17 @@
       "input": "crate::receipt::AuthorityAuditQuery",
       "output": "crate::receipt::AuthorityAuditPage",
       "call": "crate::receipt::authority_audit_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.mesh.path_receipts",
+      "description": "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner.",
+      "input": "crate::task_verb::sdk::MeshPathReceiptsRequest",
+      "output": "Vec<crate::sync::mesh_path::MeshPathReceipt>",
+      "call": "crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)?",
       "host_door": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
@@ -2168,6 +2225,17 @@
       }
     },
     {
+      "name": "vault.artifacts.ask",
+      "description": "Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard.",
+      "input": "crate::blob_artifact::ArtifactAskSubmit",
+      "output": "crate::blob_artifact::ArtifactAskOutcome",
+      "call": "memory.artifacts_ask(&input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false
+    },
+    {
       "name": "vault.critic.review",
       "description": "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target.",
       "input": "crate::critic::review::CriticReviewSubmit",
@@ -3236,6 +3304,17 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
       "host_door": true,
       "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.questions.refresh",
+      "description": "Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it.",
+      "input": "crate::receipt::QuestionRefreshRequest",
+      "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.refresh\", &input)?",
+      "host_door": true,
+      "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
     },

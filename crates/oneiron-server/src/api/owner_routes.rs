@@ -54,6 +54,7 @@ mod federation_connect_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
+mod house_routes;
 mod inbox_routes;
 mod learning_setting_routes;
 mod legal_hold_routes;
@@ -120,6 +121,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(dreamer_routes::routes())
         .merge(embedding_space_routes::routes())
         .merge(history_routes::routes())
+        .merge(house_routes::routes())
         .merge(inbox_routes::routes())
         .merge(concern_routes::routes())
         .merge(learning_setting_routes::routes())

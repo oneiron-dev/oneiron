@@ -60,6 +60,16 @@ impl WorldKeyPad {
         Ok(Self(bytes))
     }
 
+    /// A pad back from a sealed pad object (`bundle`).
+    pub(super) fn from_bytes(bytes: Zeroizing<[u8; 32]>) -> Self {
+        Self(bytes)
+    }
+
+    /// The pad's own bytes, for the sealed pad object (`bundle`).
+    pub(super) fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     /// The tag `key`'s sealed content is filed under: `BLAKE3-derive_key(
     /// "oneiron/sealed-world-content-tag/v1", key id ‖ pad)`. Every replica that
     /// holds the pad can compute it; none can open content with it.
