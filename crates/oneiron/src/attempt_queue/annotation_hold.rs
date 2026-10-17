@@ -10,11 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use rmpv::Value;
-
 use crate::Vault;
-use crate::anchored_annotation::ANNOTATION_BRIEF_PREDICATE;
-use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -30,15 +26,6 @@ pub const ANNOTATION_HOLD_ACTOR: &str = "engine:annotation_hold";
 /// Refusal for an intervention that names [`ANNOTATION_HOLD_ACTOR`].
 pub(in crate::attempt_queue) const ERR_ANNOTATION_HOLD_ACTOR_RESERVED: &str =
     "intervention actor is reserved for the annotation hold";
-
-/// Brief claims read per page of the predicate posting list. A page size, not
-/// a cap: the walk reads every page.
-const BRIEF_PAGE: usize = 256;
-
-/// The stored keys of an `annotation.brief` claim value that name its thread
-/// and its TASK (the wire form `anchored_annotation` persists).
-const BRIEF_KEY_THREAD_ID: &str = "thread_id";
-const BRIEF_KEY_TASK_ID: &str = "task_id";
 
 /// Why the engine paused an attempt: its TASK answers a comment thread that is
 /// unattached. Recorded as the pause event's note under
@@ -162,57 +149,20 @@ impl Vault {
             .then_some(hold))
     }
 
-    /// The comment thread `task` was assigned from, by the brief claims'
-    /// posting list. A TASK names no brief of its own, and each assignment
-    /// mints a fresh TASK, so the walk matches the brief carrying `task`. The
-    /// list runs in claim-id order: a later brief on the same thread is a
-    /// newer assignment, and the hold is that one's task, not this one.
+    /// The comment thread `task` was assigned from, while `task` is that
+    /// thread's newest assignment
+    /// ([`Vault::annotation_thread_of_task_in_txn`]).
     fn annotation_brief_of_task_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task: &EntityId,
     ) -> Result<Option<AnnotationHold>> {
-        let mut found = None;
-        let mut after = None;
-        loop {
-            let page = crate::claim::claim_ids_for_predicate_page_in_txn(
-                &self.store,
-                txn,
-                ANNOTATION_BRIEF_PREDICATE,
-                after,
-                BRIEF_PAGE,
-            )?;
-            for claim_id in &page {
-                let Some(body) = self.get_claim_in_txn(txn, claim_id)? else {
-                    continue;
-                };
-                if !crate::claim::claim_surfaceable(&body) {
-                    continue;
-                }
-                let ClaimSubject::Entity(artifact_id) = &body.subject else {
-                    continue;
-                };
-                let (Some(thread_id), Some(brief_task)) = (
-                    brief_entity(&body.value, BRIEF_KEY_THREAD_ID),
-                    brief_entity(&body.value, BRIEF_KEY_TASK_ID),
-                ) else {
-                    continue;
-                };
-                let brief = AnnotationHold {
-                    artifact_id: *artifact_id,
-                    thread_id,
-                };
-                if brief_task == *task {
-                    found = Some(brief);
-                } else if found == Some(brief) {
-                    return Ok(None);
-                }
-            }
-            if page.len() < BRIEF_PAGE {
-                return Ok(found);
-            }
-            after = page.last().copied();
-        }
+        Ok(self
+            .annotation_thread_of_task_in_txn(txn, task)?
+            .map(|(artifact_id, thread_id)| AnnotationHold {
+                artifact_id,
+                thread_id,
+            }))
     }
 
     /// Resumes `task`'s attempts paused for its annotation hold, once that
@@ -295,16 +245,4 @@ impl Vault {
             held: held.saturating_sub(resumed),
         })
     }
-}
-
-/// One entity id of a brief claim value, by its stored key.
-fn brief_entity(value: &Value, key: &str) -> Option<EntityId> {
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    let (_, Value::Binary(bytes)) = entries.iter().find(|(k, _)| k.as_str() == Some(key))? else {
-        return None;
-    };
-    let raw: [u8; crate::entity_id::ENTITY_ID_LEN] = bytes.as_slice().try_into().ok()?;
-    EntityId::from_bytes(raw).ok()
 }

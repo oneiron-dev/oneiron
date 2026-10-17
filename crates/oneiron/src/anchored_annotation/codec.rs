@@ -292,6 +292,15 @@ pub(super) fn decode_brief_value(value: &Value, artifact_id: EntityId) -> Result
     })
 }
 
+/// The thread and the TASK a brief claim value names, read without its other
+/// keys (a task-to-thread lookup needs only these two).
+pub(super) fn decode_brief_thread_task(value: &Value) -> Result<(EntityId, EntityId)> {
+    Ok((
+        map_entity(value, KEY_THREAD_ID)?,
+        map_entity(value, KEY_TASK_ID)?,
+    ))
+}
+
 fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     let Value::Map(entries) = value else {
         return None;
