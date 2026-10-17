@@ -538,6 +538,14 @@ impl Vault {
         // after link issuance while the one-hour link was still outstanding.
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let slip_lifetime_secs = pending.slip_lifetime_secs.min(ceiling.initial_owner_secs);
+        // A live owner's own device gets their residence grant, named in the
+        // slip so the device's selector can name it (FIX 3134).
+        let grant_ref = self.own_device_grant_for_holder_in_txn(
+            &mut txn,
+            holder_ref,
+            pending.principal.actor_class.as_deref(),
+            now,
+        )?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let claims = SlipClaims {
@@ -555,7 +563,7 @@ impl Vault {
             channels: Default::default(),
             actor_class: pending.principal.actor_class,
             org_ref: pending.principal.org_ref,
-            grant_ref: None,
+            grant_ref: grant_ref.map(|id| id.to_hex()),
             invitation_ref: None,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;

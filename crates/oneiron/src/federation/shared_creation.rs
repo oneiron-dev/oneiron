@@ -63,7 +63,8 @@ pub(super) fn role_preset(role: Role) -> Result<GrantPreset> {
     })
 }
 /// A guest grant is disjoint from member initialization even though both
-/// records carry the FEDERATION_GRANT kind byte.
+/// records carry the FEDERATION_GRANT kind byte, and so is an owner's
+/// own-device grant (FIX 3134): pairing a device never closes sharing.
 fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         &vault.store,
@@ -80,7 +81,9 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
         }
         let grant =
             super::decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
-        if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+        if matches!(grant.scope, FederationGrantScope::Vault { .. })
+            && !super::is_own_device_grant(&grant)
+        {
             return Ok(true);
         }
     }
