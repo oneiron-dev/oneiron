@@ -1767,6 +1767,13 @@ Big. On a server the engine's
 `Memory::artifacts_ask_through` answers these asks. Until its door is in the
 SDK table, `vault.artifacts.review_slides` is the only door that serves one.
 
+A `vault.artifacts.review_slides` unit may name no image (neither
+`review_image` nor `review_image_ref`). On a host with the LibreOffice slide
+renderer, the door then renders that slide from the head itself, on local CPU
+and unmetered, and saves the host renderer's name on the judgment. Without the
+renderer, or when the render fails, the unit is read for its structure only
+and abstains. It is never refused. A unit that names both images is refused.
+
 ## 14. Tagger tiers and the teacher's handoff
 
 A host may keep several local tagger bundles as named tiers and serve one.
