@@ -92,9 +92,10 @@ pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// named on the host, and a changed tree put in force (see
 /// [`super::type_tree_upkeep`]).
 pub const COACH_TYPE_TREE_UPKEEP_FACET: &str = "coach.type_tree_upkeep";
-/// Room upkeep (ARCH-0067 §8, OF-417): each room the Coach reads gets its
-/// summary declared when its turns moved, and each quiet thread with open
-/// TASKs a Proposed nudge for the room's host. A closed-form job.
+/// Room upkeep (ARCH-0067 §8, OF-417): each room in the Coach's room reach
+/// (refs and turn times of what the Dreamer reads) gets its summary declared
+/// when its turns moved, and each quiet thread with open TASKs a Proposed
+/// nudge for the room's host. A closed-form job.
 pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
 /// Tradeoff routing (FIX-LIST 817): each pending project-bound skill tradeoff
 /// ask is handed to the leader of every project board it reached, to ask on
