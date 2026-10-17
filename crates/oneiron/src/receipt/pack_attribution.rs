@@ -153,6 +153,15 @@ pub(crate) fn put_attempt_pack_attribution_in_txn(
     ATTEMPT_ATTRIBUTION.put(store, txn, &key, fields)
 }
 
+/// The live attribution row of attempt `id`, before its close takes it.
+pub(crate) fn attempt_pack_attribution_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: AttemptId,
+) -> Result<Option<PackAttributionFields>> {
+    ATTEMPT_ATTRIBUTION.get(store, txn, id.as_bytes())
+}
+
 pub(crate) fn has_attempt_pack_attribution_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,

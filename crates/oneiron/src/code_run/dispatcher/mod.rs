@@ -389,6 +389,11 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Result<SelfDispatchOutcome> {
         // A hook's view of an earlier call is never this call's.
         *self.hook_view.borrow_mut() = None;
+        // A leased run's writes in this call are its own derivations (OF-540).
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
         // The descriptor bridge answers before the policy probe and the door:
         // a descriptor is no effect, so neither rules on it. Its own verb
         // hooks run around it on canonical storage, reading as the run's
