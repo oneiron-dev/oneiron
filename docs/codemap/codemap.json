@@ -59309,7 +59309,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -59325,6 +59325,23 @@
       "const": 1,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpenAiResponsesChain",
+      "OpenAiResponsesLlmStream",
+      "OpenAiResponsesStreamAccumulator",
+      "OpenAiResponsesTurn"
+     ],
+     "path": "src/lib/responses.rs",
+     "purpose": "Responses protocol mapping for held sockets: one turn's create frame, the chain a socket keeps, and event…",
+     "surface": {
+      "const": 2,
+      "fn": 18,
+      "struct": 4
      }
     },
     {
@@ -59382,7 +59399,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59391,7 +59408,7 @@
    },
    "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 1
   },
   "oneiron-llm-own-server": {
@@ -66992,15 +67009,16 @@
       "OutputLimitField",
       "ProviderConfig",
       "ProviderKind",
-      "ResponseFormatWire"
+      "ResponseFormatWire",
+      "ResponsesSocket"
      ],
      "path": "src/config/models/provider.rs",
      "purpose": "One provider entry: how to reach a model server, as data",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 7,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -69063,6 +69081,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/responses_socket.rs",
+     "purpose": "Responses over a held socket (ARCH-0081 §5)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -70987,7 +71015,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -71122,7 +71150,7 @@
    },
    "over_bar": 41,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 568,
+   "source_files": 569,
    "test_files": 182
   },
   "oneiron-spawn": {
