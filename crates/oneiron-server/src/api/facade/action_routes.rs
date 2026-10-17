@@ -38,6 +38,7 @@ use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::actions::{
     ActionArgument, ActionDispatch, ActionHostBinding, AgentActionCall,
 };
+use oneiron::code_run::live_run::{LiveRunCredential, is_live_run_verb};
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall,
     SelfDispatchOutcome, SelfEffect,
@@ -55,12 +56,13 @@ use tower::ServiceExt;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::server::SyncServer;
+use crate::server::{HeldLiveRun, LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer};
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/v1/core/actions", get(list))
         .route("/v1/core/actions/{verb}", post(invoke))
+        .route("/v1/core/live-runs/{run}/attach", post(attach_live_run))
 }
 
 /// One action call's body. The verb is the path's; the principal is the
@@ -70,6 +72,9 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 struct ActionRequest {
     args: Vec<ActionArgument>,
     idempotency_key: String,
+    /// The live run the action acts for (OF-181), as its attach answered.
+    #[serde(default)]
+    live_run: Option<String>,
 }
 
 async fn list(auth: CoreAuth) -> Result<Json<serde_json::Value>, FacadeApiError> {
@@ -98,16 +103,34 @@ async fn invoke(
     })?;
     // A credential that names no principal meets the facade's own refusal.
     facade_actor(&auth)?;
-    let bound = action_bound(&server, &auth)?.ok_or_else(|| {
+    let mut bound = action_bound(&server, &auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
         )
     })?;
+    // OF-181: a live-run handle resolves to its registered run, for this
+    // credential only, and namespaces the action's key; a live-run row
+    // names one.
+    let idempotency_key = match request.live_run {
+        Some(handle) => {
+            let run = server
+                .live_runs
+                .resolve(&handle, live_run_caller(&bound, &auth))
+                .map_err(refused)?;
+            let key = run.action_key(&request.idempotency_key).map_err(engine)?;
+            bound.live_run = Some(run);
+            key
+        }
+        None if is_live_run_verb(verb_id.as_str()) => {
+            return Err(refused(LiveRunRefusal::Required));
+        }
+        None => request.idempotency_key,
+    };
     let call = AgentActionCall {
         verb_id,
         args: request.args,
-        idempotency_key: request.idempotency_key,
+        idempotency_key,
     };
     let dispatch = execute(&server, headers, extensions, bound, call).await?;
     Ok(Json(serde_json::json!({
@@ -150,6 +173,8 @@ pub(crate) struct ActionBound {
     class: EdgeActorClass,
     key: oneiron::claim::ScopedReadActorKey,
     owner: Option<AuthenticatedOwner>,
+    /// The live run the action acts for, resolved from its handle.
+    live_run: Option<ResolvedLiveRun>,
 }
 
 /// What `auth` binds an action to. `None`: the credential names no
@@ -173,6 +198,7 @@ pub(crate) fn action_bound(
         class,
         key: key.at(auth.locality()),
         owner: owner_authorship(auth, server)?,
+        live_run: None,
     }))
 }
 
@@ -289,16 +315,27 @@ where
         class,
         key,
         owner,
+        live_run,
     } = bound;
     let door: Arc<dyn AgentVerbDoor> =
         Arc::new(FacadeRowDoor::new(server, headers, extensions, key));
     let executor = app()?;
+    // OF-181: the live run's guard, taken before the action and held through
+    // it, with the run's lease read again under it.
+    let held = match &live_run {
+        Some(run) => Some(
+            run.hold(&server.live_runs, &server.vault)
+                .map_err(engine)?
+                .map_err(refused)?,
+        ),
+        None => None,
+    };
     let vault = Arc::clone(&server.vault);
     tokio::task::spawn_blocking(move || {
         let binding = ActionHostBinding {
             verb_door: Some(door),
             owner: owner.as_ref(),
-            live_run: None,
+            live_run: held.as_ref().map(HeldLiveRun::proof),
             planner: None,
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
@@ -306,6 +343,53 @@ where
     .await
     .map_err(|_| internal())?
     .map_err(engine)
+}
+
+/// `POST /v1/core/live-runs/{run}/attach` (OF-181): attaches this credential
+/// to the live run `run` and answers `{"liveRun": <handle>}`, to this caller
+/// only. It needs the verified credential and write admission an action
+/// needs, from the run's own agent, while the run's runner holds its lease.
+async fn attach_live_run(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(run): Path<String>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Write)?;
+    facade_actor(&auth)?;
+    let bound = action_bound(&server, &auth)?.ok_or_else(|| {
+        FacadeApiError::forbidden(
+            "a live run attaches the credential's own read key",
+            ["Present a verified slip paired to the run's agent."],
+        )
+    })?;
+    let run = EntityId::from_hex(&run).map_err(|_| refused(LiveRunRefusal::Invalid))?;
+    let caller = live_run_caller(&bound, &auth);
+    let runs = Arc::clone(&server.live_runs);
+    let vault = Arc::clone(&server.vault);
+    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, run, caller))
+        .await
+        .map_err(|_| internal())?
+        .map_err(engine)?
+        .map_err(refused)?;
+    Ok(Json(serde_json::json!({ "liveRun": handle })))
+}
+
+/// Who a live-run handle is attached to or resolved for: the credential's
+/// actor, and its idempotency identity at its locality.
+fn live_run_caller(bound: &ActionBound, auth: &CoreAuth) -> LiveRunCaller {
+    LiveRunCaller {
+        actor: bound.writes_as(),
+        credential: LiveRunCredential::of(&auth.idempotency_principal(), auth.locality()),
+    }
+}
+
+fn refused(refusal: LiveRunRefusal) -> FacadeApiError {
+    FacadeApiError::new(
+        refusal.status(),
+        refusal.code(),
+        refusal.message(),
+        [refusal.suggestion()],
+    )
 }
 
 /// Runs verb-table row `row` on `input` as one action under `bound`, as
