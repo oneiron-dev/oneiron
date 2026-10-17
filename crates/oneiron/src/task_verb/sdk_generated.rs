@@ -180,6 +180,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
             (
+                "tasks.accept",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
+            ),
+            (
                 "vault.witness",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
@@ -1446,6 +1450,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<oneiron_browser::WindowInput>(),
             ),
             (
+                "self.desktop.handover",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
+            ),
+            (
                 "vault.commit",
                 crate::code_run::vault_read::request_schema::<CommitRequest>(),
             ),
@@ -1760,6 +1768,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "self.leader.split",
+                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderSplitInput>(),
+            ),
+            (
                 "self.skills.call",
                 crate::code_run::vault_read::request_schema::<crate::code_run::SkillCallInput>(),
             ),
@@ -2012,6 +2024,14 @@ pub fn mcp_arguments_schema_from_input(
                 "frame_epoch".to_owned(),
                 schema.pointer("/properties/frame_epoch")?.clone(),
             );
+            properties.insert(
+                "handle".to_owned(),
+                schema.pointer("/properties/handle")?.clone(),
+            );
+            properties.insert(
+                "after".to_owned(),
+                schema.pointer("/properties/after")?.clone(),
+            );
             &[]
         }
         "tasks.create" => {
@@ -2027,6 +2047,15 @@ pub fn mcp_arguments_schema_from_input(
                 "assignee".to_owned(),
                 schema.pointer("/properties/assignee")?.clone(),
             );
+            properties.insert(
+                "intent_key".to_owned(),
+                schema.pointer("/properties/intent_key")?.clone(),
+            );
+            properties.insert(
+                "brief".to_owned(),
+                schema.pointer("/properties/brief")?.clone(),
+            );
+            properties.insert("ttl".to_owned(), schema.pointer("/properties/ttl")?.clone());
             &["spec"]
         }
         "tasks.wave" => {
@@ -2065,6 +2094,17 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "tasks.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "task_ref".to_owned(),
+                schema.pointer("/properties/task_ref")?.clone(),
+            );
+            &["spec", "task_ref"]
+        }
+        "tasks.accept" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4052,6 +4092,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
         }
+        "tasks.accept" => {
+            let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
+        }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
             crate::memory::caps::check_witness_turn(&input)?;
@@ -4846,6 +4889,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.desktop.window" => {
             let _input: oneiron_browser::WindowInput = decode(value.clone())?;
         }
+        "self.desktop.handover" => {
+            let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
+        }
         "vault.commit" => {
             let input: CommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
@@ -5088,6 +5134,7 @@ pub fn invoke(
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
+        "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
@@ -5693,6 +5740,10 @@ pub fn invoke_browser(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
+        "self.desktop.handover" => serde_json::to_value(self_desktop_handover(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
         _ => {
             return Err(oneiron_browser::BrowserError::Input(format!(
                 "{verb} is not a browser verb"
@@ -5910,6 +5961,8 @@ pub fn describe(
         Err(MemoryError::bad_request(
             "describe(fold) peeks at a fold of a run's own log, which only that run's code mode holds",
         ))?
+    } else if input.handle.is_some() || input.after.is_some() {
+        crate::task_verb::sdk::describe_handle_status(memory, &input)?
     } else {
         memory.describe(
             input
@@ -5973,6 +6026,18 @@ pub fn tasks_update(
         &["/task_ref"],
     )?;
     memory.tasks_update_request(&input)
+}
+pub fn tasks_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAccept,
+) -> MemoryResult<crate::task_verb::TaskCallReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.accept",
+        &input,
+        &["/task_ref"],
+    )?;
+    memory.tasks_accept(input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,
@@ -7861,6 +7926,12 @@ pub fn self_desktop_window(
     input: oneiron_browser::WindowInput,
 ) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
     driver.window(input)
+}
+pub fn self_desktop_handover(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::HandoverInput,
+) -> Result<oneiron_browser::HandoverOutput, oneiron_browser::BrowserError> {
+    driver.handover(input)
 }
 pub fn vault_commit(
     memory: &Memory<'_>,

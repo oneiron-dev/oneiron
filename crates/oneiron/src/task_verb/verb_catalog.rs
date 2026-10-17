@@ -36,6 +36,7 @@ pub enum AgentVerb {
     VaultFanoutResumeAs,
     VaultFanoutAck,
     TasksUpdate,
+    TasksAccept,
     VaultWitness,
     VaultClaimsUpsert,
     VaultRecall,
@@ -288,6 +289,7 @@ pub enum AgentVerb {
     SelfDesktopBatch,
     SelfDesktopWindows,
     SelfDesktopWindow,
+    SelfDesktopHandover,
     VaultCommit,
     VaultRemember,
     VaultClaimsRetract,
@@ -380,6 +382,7 @@ impl AgentVerb {
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
         Self::TasksUpdate,
+        Self::TasksAccept,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
@@ -632,6 +635,7 @@ impl AgentVerb {
         Self::SelfDesktopBatch,
         Self::SelfDesktopWindows,
         Self::SelfDesktopWindow,
+        Self::SelfDesktopHandover,
         Self::VaultCommit,
         Self::VaultRemember,
         Self::VaultClaimsRetract,
@@ -727,6 +731,7 @@ impl AgentVerb {
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
+            Self::TasksAccept => "tasks.accept",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
@@ -983,6 +988,7 @@ impl AgentVerb {
             Self::SelfDesktopBatch => "self.desktop.batch",
             Self::SelfDesktopWindows => "self.desktop.windows",
             Self::SelfDesktopWindow => "self.desktop.window",
+            Self::SelfDesktopHandover => "self.desktop.handover",
             Self::VaultCommit => "vault.commit",
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
@@ -1074,6 +1080,7 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
+                | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -1385,6 +1392,7 @@ impl AgentVerb {
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
+                | Self::SelfDesktopHandover
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -1425,6 +1433,7 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
+                | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -1706,6 +1715,7 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksUpdate
+                | Self::TasksAccept
                 | Self::Ask
                 | Self::Wait
                 | Self::TasksAnswer
@@ -2057,6 +2067,7 @@ impl AgentVerb {
                 | Self::SelfDesktopBatch
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
+                | Self::SelfDesktopHandover
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -2131,6 +2142,7 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::TasksUpdate
+                | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultKvPut
@@ -2283,6 +2295,7 @@ impl AgentVerb {
                 | Self::SelfDesktopKey
                 | Self::SelfDesktopHotkey
                 | Self::SelfDesktopBatch
+                | Self::SelfDesktopHandover
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
@@ -2373,14 +2386,17 @@ impl AgentVerb {
                 "session_id",
                 "key",
                 "frame_epoch",
+                "handle",
+                "after",
             ],
-            Self::TasksCreate => &["spec", "label", "assignee"],
+            Self::TasksCreate => &["spec", "label", "assignee", "intent_key", "brief", "ttl"],
             Self::TasksWave => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
+            Self::TasksAccept => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2633,6 +2649,7 @@ impl AgentVerb {
             Self::SelfDesktopBatch => &["spec"],
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
+            Self::SelfDesktopHandover => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -2726,6 +2743,7 @@ impl AgentVerb {
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["spec", "task_ref"],
+            Self::TasksAccept => &["spec", "task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
@@ -2978,6 +2996,7 @@ impl AgentVerb {
             Self::SelfDesktopBatch => &["spec"],
             Self::SelfDesktopWindows => &["spec"],
             Self::SelfDesktopWindow => &["spec"],
+            Self::SelfDesktopHandover => &["spec"],
             Self::VaultCommit => &["spec"],
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
@@ -3107,10 +3126,10 @@ impl AgentVerb {
                 "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt."
             }
             Self::Describe => {
-                "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named."
+                "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named."
             }
             Self::TasksCreate => {
-                "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."
+                "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."
             }
             Self::TasksWave => {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
@@ -3129,6 +3148,9 @@ impl AgentVerb {
             }
             Self::TasksUpdate => {
                 "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."
+            }
+            Self::TasksAccept => {
+                "Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."
             }
             Self::VaultWitness => {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
@@ -3654,7 +3676,7 @@ impl AgentVerb {
                 "A workspace's work_companion policy, readable by every member it governs."
             }
             Self::VaultWorkspaceWorkCompanionSet => {
-                "The owner sets a workspace's work_companion policy in person."
+                "The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."
             }
             Self::SelfSkillsSave => {
                 "An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."
@@ -3666,7 +3688,7 @@ impl AgentVerb {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
             }
             Self::AiOptions => {
-                "The model rows an ai call could use: where each runs, what it takes, its rates, and what the media meter has left."
+                "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
             }
             Self::AiImage => {
                 "One image out of the host's image model; reference images make it an edit."
@@ -3682,7 +3704,7 @@ impl AgentVerb {
             }
             Self::AiVideoCancel => "Stops a video job at its provider.",
             Self::AiVerdict => {
-                "The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt."
+                "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."
             }
             Self::VaultGraphAsk => "",
             Self::VaultQuestionsCreate => "",
@@ -3783,6 +3805,9 @@ impl AgentVerb {
             Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
             Self::SelfDesktopWindow => {
                 "Moves the session onto another desktop window and observes it."
+            }
+            Self::SelfDesktopHandover => {
+                "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
             }
             Self::VaultCommit => {
                 "Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."

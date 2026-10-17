@@ -38,7 +38,7 @@ use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
 use super::offer::{ServedOffer, media_offer};
 use super::rerank::transport;
 use super::soniox::{self, SonioxRung};
-use super::status::{RungStatus, SeatState, SeatStatus};
+use super::status::{RungHealth, RungStatus, SeatState, SeatStatus};
 use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
@@ -503,6 +503,18 @@ impl MediaRuntime {
             .collect()
     }
 
+    /// Whether the rung `model` of `operation`'s seat can take a call now
+    /// (FIX 2942): it was built, and its offer is live ([`RungHealth::live_now`]).
+    pub(super) fn rung_live(&self, operation: AiOperation, model: &str) -> bool {
+        let Some(seat) = self.seats.get(&operation) else {
+            return false;
+        };
+        ModelId::new(model.to_owned())
+            .ok()
+            .and_then(|id| seat.rungs.get(&id))
+            .is_some_and(|alone| alone.health().iter().all(|(_, health)| health.live_now()))
+    }
+
     /// What the media meter has left to spend, in token units.
     #[must_use]
     pub fn units_left(&self) -> Option<u64> {
@@ -862,7 +874,9 @@ impl MediaRuntime {
 impl super::ModelRuntime {
     /// Every row of the `ai.*` family that serves `operation` (every one
     /// when `None`) over `inputs`: each available rung of each text seat,
-    /// then each media row.
+    /// then each media row. Only a rung that can take a call now is listed
+    /// (FIX 2942): one whose provider is down, whose one probation request
+    /// is out, or that a limit holds is left out until it is back.
     #[must_use]
     pub fn ai_options(
         &self,
@@ -896,8 +910,18 @@ impl super::ModelRuntime {
                     .seats
                     .iter()
                     .find(|status| status.seat_model.as_deref() == Some(seat.model.as_str()));
-                for rung in status.into_iter().flat_map(|status| &status.rungs) {
-                    let Some(model) = rung.engine_model.clone().filter(|_| rung.available) else {
+                let health: BTreeMap<usize, RungHealth> =
+                    seat.ladder.health().into_iter().collect();
+                let rungs = status
+                    .into_iter()
+                    .flat_map(|status| status.rungs.iter().enumerate());
+                for (position, rung) in rungs {
+                    let live = health.get(&position).is_none_or(RungHealth::live_now);
+                    let Some(model) = rung
+                        .engine_model
+                        .clone()
+                        .filter(|_| rung.available && live)
+                    else {
                         continue;
                     };
                     rows.push(MediaRow {
@@ -915,7 +939,12 @@ impl super::ModelRuntime {
                 }
             }
         }
-        rows.extend(self.media.options(operation, inputs));
+        rows.extend(
+            self.media
+                .options(operation, inputs)
+                .into_iter()
+                .filter(|row| self.media.rung_live(row.operation, &row.model)),
+        );
         rows
     }
 }
