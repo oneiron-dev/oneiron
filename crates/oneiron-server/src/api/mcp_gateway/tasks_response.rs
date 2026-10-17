@@ -4825,7 +4825,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.artifacts.body.commits" => {
-            let input: oneiron::office_body::OfficeBodyArtifactRequest =
+            let input: oneiron::office_body::OfficeBodyCommitsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_artifacts_body_commits(&memory, input)
                 .map_err(mcp_facade_error)?;
