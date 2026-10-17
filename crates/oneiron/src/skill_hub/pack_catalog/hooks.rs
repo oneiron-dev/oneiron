@@ -532,6 +532,46 @@ fn bindings_in_txn(
     Ok(result)
 }
 
+/// The owner's dial on the binding claim at `id`, read from the raw claim so
+/// a row [`bindings_in_txn`] skips as malformed still keeps its off choice.
+/// `None` when no live, approved binding claim stands there; `Some(false)`
+/// when one stands but its `enabled` flag cannot be read.
+fn prior_enabled_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<bool>> {
+    #[derive(Deserialize)]
+    struct Dial {
+        enabled: bool,
+    }
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if body.predicate != PREDICATE
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || !matches!(
+            body.approval,
+            ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+        )
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        body.value
+            .as_str()
+            .and_then(|text| serde_json::from_str::<Dial>(text).ok())
+            .is_some_and(|dial| dial.enabled),
+    ))
+}
+
 fn binding_candidate(row: &PackHookBinding) -> Result<ClaimCandidate> {
     let value = serde_json::to_string(row).map_err(|_| invalid("hook binding encoding"))?;
     Ok(ClaimCandidate::new(
@@ -714,10 +754,9 @@ impl Vault {
                     )
                     .edge(&code, EdgeKind::DerivedFrom, &source_id, 1.0);
             }
-            let enabled = prior
-                .iter()
-                .find(|(prior_id, _)| *prior_id == id)
-                .is_none_or(|(_, row)| row.enabled);
+            // The owner's dial from the claim at this id, malformed or not;
+            // only a fresh id starts on.
+            let enabled = prior_enabled_in_txn(&self.store, txn, &id)?.unwrap_or(true);
             let row = PackHookBinding {
                 version: HOOK_BINDING_VERSION,
                 code,
