@@ -63,6 +63,7 @@ pub mod replay_judge;
 pub mod runtime;
 pub mod server;
 mod skills_pack;
+mod slide_render;
 pub mod usage;
 mod wake_adapters;
 pub mod web_client;
