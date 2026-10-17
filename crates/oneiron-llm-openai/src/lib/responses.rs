@@ -325,17 +325,27 @@ impl OpenAiResponsesChain {
         self.response_id.as_deref()
     }
 
-    /// How many items the chain covers.
+    /// The digest of each item the chain covers, oldest first.
     #[must_use]
-    pub fn covered(&self) -> usize {
-        self.digests.len()
+    pub fn digests(&self) -> &[u64] {
+        &self.digests
     }
 
-    /// Whether `other` is this conversation at this response or a later one.
+    /// The chain that ends at `response_id` and covers `items`: a
+    /// conversation's stored chain, taken up on another socket.
     #[must_use]
-    pub fn continued_by(&self, other: &Self) -> bool {
-        other.digests.starts_with(&self.digests)
+    pub fn resumed(items: &[JsonValue], response_id: String) -> Self {
+        Self {
+            response_id: Some(response_id),
+            digests: responses_item_digests(items),
+        }
     }
+}
+
+/// The digest of each of `items`, as a chain keeps them.
+#[must_use]
+pub fn responses_item_digests(items: &[JsonValue]) -> Vec<u64> {
+    items.iter().map(item_digest).collect()
 }
 
 fn item_digest(item: &JsonValue) -> u64 {
