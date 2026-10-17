@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 171 facade rows, 635 declarations.
-Inputs: 149 of 171 fully typed, 22 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 145 of 171 fully typed, 26 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 39; unread shapes: 0.
+Census: 187 facade rows, 666 declarations.
+Inputs: 164 of 187 fully typed, 22 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 153 of 187 fully typed, 26 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 39; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1549,6 +1549,136 @@ class LegalHoldErasedRecord(TypedDict):
 class LegalHoldLiftAndErased(TypedDict):
     holds: list[EntityId]
     records: list[LegalHoldErasedRecord]
+InputKind = Literal["text", "image", "audio"]
+class EmbeddingSpace(TypedDict):
+    id: str
+    dimensions: int
+    accepts: list[InputKind]
+    query_towers: list[InputKind]
+    evidence: NotRequired[Any]
+class SpaceRefDeclared(TypedDict):
+    declared: str
+SpaceRef = Literal["text_index"] | SpaceRefDeclared
+class SpaceMoveStateSwappedInBody(TypedDict):
+    at: int
+    by_owner: bool
+class SpaceMoveStateSwappedIn(TypedDict):
+    swapped_in: SpaceMoveStateSwappedInBody
+class SpaceMoveStateKeptBody(TypedDict):
+    at: int
+    timed_out: bool
+class SpaceMoveStateKept(TypedDict):
+    kept: SpaceMoveStateKeptBody
+class SpaceMoveStateUndoneBody(TypedDict):
+    at: int
+class SpaceMoveStateUndone(TypedDict):
+    undone: SpaceMoveStateUndoneBody
+SpaceMoveState = Literal["open"] | SpaceMoveStateSwappedIn | SpaceMoveStateKept | SpaceMoveStateUndone
+class PairedInterval(TypedDict):
+    mean: float
+    low: float
+    high: float
+NotWorse = Literal["not_worse", "worse", "unknown"]
+class KindProbeCheck(TypedDict):
+    kind: InputKind
+    probes: int
+    families: int
+    difference: NotRequired[PairedInterval | None]
+    retest: NotRequired[PairedInterval | None]
+    tolerance: NotRequired[float | None]
+    verdict: NotWorse
+class SpaceMoveCheck(TypedDict):
+    checked_at: int
+    kinds: list[KindProbeCheck]
+    verdict: NotWorse
+class SpaceMove(TypedDict):
+    candidate: str
+    incumbent: SpaceRef
+    kinds: list[InputKind]
+    margin: NotRequired[float | None]
+    started_at: int
+    state: SpaceMoveState
+    last_check: NotRequired[SpaceMoveCheck | None]
+class EmbeddingSpacesView(TypedDict):
+    spaces: list[EmbeddingSpace]
+    text_index: EmbeddingSpace
+    slots: dict[str, str]
+    moves: list[SpaceMove]
+    probes: dict[str, int]
+EmbeddingSpaceDeclareRequest = EmbeddingSpace
+class EmbeddingSpaceBindRequest(TypedDict):
+    kind: InputKind
+    space: NotRequired[str | None]
+class EmbeddingSpaceRequest(TypedDict):
+    space: str
+class EmbeddingSpaceMoveRequest(TypedDict):
+    candidate: str
+    incumbent: NotRequired[str | None]
+    margin: NotRequired[float | None]
+class EmbeddingSpaceCandidateRequest(TypedDict):
+    candidate: str
+EmbeddingSpaceMoveOutcome = Literal["filling", "swapped_in", "kept", "undecided"]
+class EmbeddingSpaceMoveChecked(TypedDict):
+    outcome: EmbeddingSpaceMoveOutcome
+    check: NotRequired[SpaceMoveCheck | None]
+class SpaceProbe(TypedDict):
+    kind: InputKind
+    query: str
+    family: EntityId
+    targets: list[EntityId]
+    author: str
+    written_at: int
+class EmbeddingSpaceProbe(SpaceProbe):
+    id: str
+class EmbeddingSpaceProbes(TypedDict):
+    probes: list[EmbeddingSpaceProbe]
+class EmbeddingSpaceProbePutRequest(TypedDict):
+    kind: InputKind
+    query: str
+    family: EntityId
+    targets: NotRequired[list[EntityId]]
+    author: str
+class EmbeddingSpaceProbeDeleteRequest(TypedDict):
+    id: str
+class EmbeddingSpaceProbeDeleted(TypedDict):
+    ok: bool
+class LearningSettingsRequest(TypedDict):
+    key: NotRequired[str | None]
+class LearningSettingSpecView(TypedDict):
+    key: str
+    min: float
+    max: float
+    seed: float
+    value: float
+LearningSettingMode = Literal["seed", "pin"]
+LearningSettingScope = Literal["vault", "project", "task_type"]
+class LearningSettingRowView(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    scope: LearningSettingScope
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
+    value: float
+    weight_runs: NotRequired[float | None]
+    by: str
+    at: int
+    why: str
+class LearningSettingsView(TypedDict):
+    catalog: list[LearningSettingSpecView]
+    rows: list[LearningSettingRowView]
+class LearningSettingPut(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    value: float
+    weight_runs: NotRequired[float | None]
+    why: str
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
+class LearningSettingClear(TypedDict):
+    key: str
+    mode: LearningSettingMode
+    project: NotRequired[str | None]
+    task_type: NotRequired[str | None]
 class LensSlot(TypedDict):
     pack_name: str
     skill_id: str

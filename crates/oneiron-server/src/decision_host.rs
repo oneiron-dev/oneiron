@@ -16,6 +16,8 @@
 //! blocking thread.
 use std::sync::Arc;
 
+use oneiron::booking::constraint::BookingDecisions;
+use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
@@ -28,6 +30,11 @@ use oneiron::llm::{
     AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
     ModelId, ReasoningEffort,
 };
+use oneiron::policy_model::PolicyDecisions;
+use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::saved_query::MembershipDecisions;
+use oneiron::skill_hub::{ClaimReplayDecisions, UsefulUpstreamDecisions};
+use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::TaskDecisions;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
@@ -51,6 +58,11 @@ const TASK_ASK_UP_WORDING: &str = "Should this task ask its owner now? Yes when 
 escalation trigger needs a person's answer before the work goes on.";
 /// How long one task surface question may take.
 const TASK_DECISION_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+/// The placement question (OF-541): this host's wording.
+const PLACEMENT_WORDING: &str = "Which node of the task-type tree is this task? Answer the most \
+specific live node whose kind fits the task's subgoal and site, or the root when none fits.";
+/// How long one placement may take before the rule rung's reading stands.
+pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -284,6 +296,23 @@ impl DecisionHost {
         })
     }
 
+    /// The placement question through this ladder for `principal`, up to the
+    /// Big rung (a placement never asks a person), within `deadline`.
+    pub(crate) fn placement_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        deadline: &'a RetrievalDeadline,
+    ) -> PlacementDecisions<'a> {
+        PlacementDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            wording: PLACEMENT_WORDING.to_owned(),
+            deadline,
+        }
+    }
+
     /// The Dreamer's consolidation questions through this ladder, in the
     /// shipped wording: the verdict role's generated read sits at the Local
     /// slot, and an answer still in the band steps up the host's stronger
@@ -299,6 +328,127 @@ impl DecisionHost {
             bands: self.bands.clone(),
             ..ConsolidationDecisions::shipped()?
         })
+    }
+
+    /// The saved-query membership judge through this ladder, in the shipped
+    /// wording and budget: the judge's generated read sits at the Local slot,
+    /// and an answer still in the band steps up the host's stronger rungs to
+    /// the Big rung, under the host's bands.
+    pub fn membership_decisions(&self) -> oneiron::Result<MembershipDecisions> {
+        Ok(MembershipDecisions {
+            ladder: self.ladder.clone(),
+            dial: DecisionDial {
+                first: DecisionRung::Local,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            ..MembershipDecisions::shipped()?
+        })
+    }
+
+    /// A booking's free-text parse through this ladder for `principal`, on
+    /// the shipped budget: the parse tier's read sits at System One, and an
+    /// answer still in the band steps up to the Big rung.
+    #[must_use]
+    pub fn booking_decisions(&self, principal: EntityId) -> BookingDecisions {
+        BookingDecisions {
+            ladder: self.ladder.clone(),
+            dial: DecisionDial {
+                first: DecisionRung::SystemOne,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            ..BookingDecisions::shipped(principal)
+        }
+    }
+
+    /// The fan-out AUTO ruling through this ladder for `principal`, worded
+    /// `wording`, up to the Big rung: the fan-out's own approval asks the
+    /// person, so this dial never does.
+    #[must_use]
+    pub fn fanout_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        wording: String,
+        deadline: &'a RetrievalDeadline,
+    ) -> FanoutDecisions<'a> {
+        FanoutDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            wording,
+            deadline,
+        }
+    }
+
+    /// The merge doors' useful-upstream question through this ladder, on
+    /// `deadline`. The doors require a System One or escalation seat to
+    /// answer first, so the dial starts at the first of those this host
+    /// fills; with neither, the question cannot be asked here.
+    pub fn useful_upstream<'a>(
+        &'a self,
+        deadline: &'a RetrievalDeadline,
+    ) -> oneiron::Result<UsefulUpstreamDecisions<'a>> {
+        let first = if self.ladder.system_one.is_some() {
+            DecisionRung::SystemOne
+        } else if self.ladder.escalation.is_some() {
+            DecisionRung::Escalation
+        } else {
+            return Err(oneiron::Error::InvalidConfig(
+                "useful-upstream needs a System One seat or the house read on this host".into(),
+            ));
+        };
+        Ok(UsefulUpstreamDecisions {
+            ladder: self.ladder.ladder(),
+            dial: DecisionDial {
+                first,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: self.bands.clone(),
+            deadline,
+        })
+    }
+
+    /// A claim refinement's held-out replay score through this ladder,
+    /// worded `wording`, on `deadline`, up to the Big rung.
+    #[must_use]
+    pub fn claim_replay<'a>(
+        &'a self,
+        wording: String,
+        deadline: &'a RetrievalDeadline,
+    ) -> ClaimReplayDecisions<'a> {
+        ClaimReplayDecisions {
+            ladder: self.ladder.ladder(),
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            wording,
+            deadline,
+        }
+    }
+
+    /// The policy safeguard's typed read through this ladder for `principal`,
+    /// worded `wording` at `revision`, up to the Big rung, each read on
+    /// `budget`: one per enabled plane, held by the plane's policy config.
+    pub fn policy_decisions(
+        &self,
+        principal: EntityId,
+        revision: String,
+        wording: String,
+        budget: std::time::Duration,
+    ) -> oneiron::Result<PolicyDecisions> {
+        PolicyDecisions::new(
+            Arc::new(self.ladder.clone()),
+            principal,
+            self.dial(DecisionRung::Big),
+            self.bands.clone(),
+            revision,
+            wording,
+            budget,
+        )
     }
 
     /// The code-mode seat pick through this ladder, for `principal`.
