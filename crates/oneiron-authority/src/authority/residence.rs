@@ -1,8 +1,8 @@
 //! The owner's residence directives to one of their machines, and each
 //! machine's result for one (OF-534). A directive is an owner act through
 //! the host, like any roster-signed owner action: it names one physical
-//! machine and one act (sync all, sync what it opened, open an item, fetch
-//! the thin index again, prune old read caches). Only the machine it names
+//! machine and one act (sync all, sync what it opened, open an item, read
+//! its thin index, prune old read caches). Only the machine it names
 //! applies it, and that machine signs the result with its own install key,
 //! naming the directive's entry among its parents. Neither carries content:
 //! no item body, index title or window bytes ride the log.
@@ -38,14 +38,9 @@ pub enum ResidenceAct {
     SyncAll,
     /// Sync what the machine opened.
     SyncOpened,
-    /// Open one item of one window; with `promote`, the window becomes a
-    /// writable replica on the machine.
-    Open {
-        window: String,
-        item: EntityId,
-        promote: bool,
-    },
-    /// Fetch the current windows' thin index again.
+    /// Open one item of one window on the machine.
+    Open { window: String, item: EntityId },
+    /// Read the machine's thin index.
     Index,
     /// Drop the read caches of opened items last touched before `before`
     /// (recorded-clock seconds).
@@ -131,8 +126,8 @@ pub struct ResidenceResult {
     pub finished_at: u64,
     pub status: ResidenceResultStatus,
     /// What the act touched: windows the home granted again (sync opened),
-    /// read caches dropped (sync all, prune), windows indexed (index), the
-    /// one item opened (open).
+    /// read caches dropped (sync all, prune), windows in the thin index
+    /// (index), the one item opened (open).
     pub count: u64,
     /// Why a refused directive does not apply; `None` once applied.
     pub reason: Option<String>,
@@ -169,7 +164,7 @@ impl ResidenceResult {
 }
 
 /// Canonical field order: kind, id, machine, owner, issued_at, act, then the
-/// act's own fields (an open's window, item and promote; a prune's before).
+/// act's own fields (an open's window and item; a prune's before).
 pub(super) fn residence_directive_value(directive: &ResidenceDirective) -> Value {
     let mut entries = vec![
         (
@@ -186,14 +181,9 @@ pub(super) fn residence_directive_value(directive: &ResidenceDirective) -> Value
         (Value::from("act"), Value::from(directive.act.wire())),
     ];
     match &directive.act {
-        ResidenceAct::Open {
-            window,
-            item,
-            promote,
-        } => {
+        ResidenceAct::Open { window, item } => {
             entries.push((Value::from("window"), Value::from(window.as_str())));
             entries.push((Value::from("item"), Value::from(item.to_hex())));
-            entries.push((Value::from("promote"), Value::from(*promote)));
         }
         ResidenceAct::Prune { before } => {
             entries.push((Value::from("before"), Value::from(*before)));
@@ -209,7 +199,7 @@ pub(super) fn decode_residence_directive(entries: &[(Value, Value)]) -> Result<A
         .ok_or_else(invalid_authority)?;
     let mut keys = DIRECTIVE_KEYS.to_vec();
     match act {
-        "open" => keys.extend(["window", "item", "promote"]),
+        "open" => keys.extend(["window", "item"]),
         "prune" => keys.push("before"),
         _ => {}
     }
@@ -229,9 +219,6 @@ pub(super) fn decode_residence_directive(entries: &[(Value, Value)]) -> Result<A
                 .ok_or_else(invalid_authority)?
                 .to_owned(),
             item: id("item")?,
-            promote: required(entries, "promote")?
-                .as_bool()
-                .ok_or_else(invalid_authority)?,
         },
         "index" => ResidenceAct::Index,
         "prune" => ResidenceAct::Prune {

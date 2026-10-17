@@ -9,11 +9,11 @@
 //! way, so the owner reads it on any replica that holds both.
 //!
 //! The result is the directive's journal: a directive with no accepted result
-//! from its machine is pending there. A local act (a prune, the mode choice)
-//! commits in the same transaction as its result, so it lands once. An act
-//! that asks the home (an open, the index, the grants a switch to opened
-//! needs) commits its own rows first; each is safe to run again, so a crash
-//! before the result only repeats it. Neither entry carries content.
+//! from its machine is pending there. A prune and a mode choice commit in the
+//! same transaction as their result, so each lands once. An open, and the
+//! grants a switch to opened asks the home for, commit their own rows first;
+//! each is safe to run again, so a crash before the result only repeats it.
+//! The index read changes nothing. Neither entry carries content.
 
 use std::collections::BTreeMap;
 

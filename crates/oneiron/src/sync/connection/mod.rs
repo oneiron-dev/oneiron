@@ -73,11 +73,11 @@ pub struct SyncConnection {
     queue: SyncQueue,
     config: ConnectionConfig,
     /// The residence mode this machine runs now. A change closes the live
-    /// socket; the next connect negotiates the new hello. Shared with the
-    /// residence upkeep, which applies the owner's mode directives.
-    mode: Arc<tokio::sync::watch::Sender<SyncResidenceMode>>,
-    /// One round of the owner's residence directives at a time (OF-534).
-    directive_round: Arc<directives::DirectiveRound>,
+    /// socket; the next connect negotiates the new hello.
+    mode: tokio::sync::watch::Sender<SyncResidenceMode>,
+    /// Wakes the owner's residence directives naming this machine: the
+    /// residence upkeep rings it once the authority history is in (OF-534).
+    directive_wake: Arc<tokio::sync::Notify>,
     /// Whether this env's member left the shared vault it holds (OF-158): the
     /// lane ends for good and never reconnects.
     left: tokio::sync::watch::Sender<bool>,
@@ -133,7 +133,7 @@ impl SyncConnection {
         {
             config.client_config.residence_home_route = Some(ResidenceHomeRoute::new(None));
         }
-        let mode = Arc::new(tokio::sync::watch::channel(mode).0);
+        let mode = tokio::sync::watch::channel(mode).0;
         // An own device's query doors ask the home through this connection.
         let home_search = config.client_config.federation_peer.is_none().then(|| {
             HomeSearch::attach(
@@ -147,7 +147,7 @@ impl SyncConnection {
             queue,
             config,
             mode,
-            directive_round: Arc::default(),
+            directive_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
             _home_search: home_search,
@@ -302,14 +302,66 @@ impl SyncConnection {
         &self,
         mode: SyncResidenceMode,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
-        switch_residence_mode(
-            &self.manager,
-            &self.client_config(),
-            &self.mode,
+        self.switch_residence_mode(mode, |_, _| Ok(())).await
+    }
+
+    /// [`Self::set_residence_mode`], with `finish` run in the transaction
+    /// that records the choice, beside the read caches a switch to sync-all
+    /// drops; the new mode is published once that commits. The owner's mode
+    /// directives record their result there (OF-534).
+    async fn switch_residence_mode(
+        &self,
+        mode: SyncResidenceMode,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
+    ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
+        let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
+        if self.config.client_config.federation_peer.is_some() {
+            return Err(crate::sync::TransportError::InvalidPayload(
+                "a federation lane has no residence mode",
+            ));
+        }
+        let vault = self.manager.vault();
+        let effective = crate::sync::residence::effective_residence_mode(
+            None,
             mode,
-            |_, _| Ok(()),
-        )
-        .await
+            crate::sync::residence::local_is_elected_home(vault).map_err(storage)?,
+        );
+        let mut change = ResidenceModeChange {
+            mode: effective,
+            retained: Vec::new(),
+            unsynced: Vec::new(),
+            pruned_items: 0,
+        };
+        let switching = effective != *self.mode.borrow();
+        if switching && effective == SyncResidenceMode::Opened {
+            let mut config = self.client_config();
+            config.residence_mode = SyncResidenceMode::Opened;
+            let (mut client, _events) =
+                crate::sync::SyncClient::new(Arc::clone(&self.manager), config).map_err(storage)?;
+            for window in
+                crate::sync::residence::discover_local_window_keys(vault).map_err(storage)?
+            {
+                if client.retain_window(&window).await? {
+                    change.retained.push(window);
+                } else {
+                    change.unsynced.push(window);
+                }
+            }
+        }
+        vault
+            .with_write_txn_grouped(|txn| {
+                if switching && effective == SyncResidenceMode::All {
+                    // A cached id refuses local writes until promoted; the
+                    // full windows supersede every read cache.
+                    change.pruned_items =
+                        crate::sync::residence::prune_thin_items_in_txn(vault, txn, u64::MAX)?;
+                }
+                crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
+                finish(txn, &change)
+            })
+            .map_err(storage)?;
+        self.mode.send_replace(effective);
+        Ok(change)
     }
 
     /// Open one item for a person: its read cache, its local canonical row,
@@ -365,7 +417,24 @@ impl SyncConnection {
     /// (recorded-clock seconds). Promoted and sync-all windows are not
     /// pruned here: [`Self::demote_window`] demotes a promoted one.
     pub fn prune_opened_items(&self, before: u64) -> Result<usize, crate::sync::TransportError> {
-        crate::sync::residence::prune_thin_items(self.manager.vault(), before)
+        self.prune_opened_items_with(before, |_, _| Ok(()))
+    }
+
+    /// [`Self::prune_opened_items`], with `finish` run in the prune's
+    /// transaction with the count it dropped. The owner's prune directives
+    /// record their result there (OF-534).
+    fn prune_opened_items_with(
+        &self,
+        before: u64,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>, usize) -> crate::error::Result<()>,
+    ) -> Result<usize, crate::sync::TransportError> {
+        let vault = self.manager.vault();
+        vault
+            .with_write_txn_grouped(|txn| {
+                let pruned = crate::sync::residence::prune_thin_items_in_txn(vault, txn, before)?;
+                finish(txn, pruned)?;
+                Ok(pruned)
+            })
             .map_err(|e| crate::sync::TransportError::Storage(e.to_string()))
     }
 
@@ -550,65 +619,6 @@ impl SyncConnection {
     pub fn queue(&self) -> &SyncQueue {
         &self.queue
     }
-}
-
-/// [`SyncConnection::set_residence_mode`] on a lane's parts, for the
-/// residence upkeep too: `finish` runs in the transaction that records the
-/// choice, beside the read caches a switch to sync-all drops, and the new
-/// mode is published once that commits.
-async fn switch_residence_mode(
-    manager: &Arc<WindowManager>,
-    config: &SyncClientConfig,
-    current: &tokio::sync::watch::Sender<SyncResidenceMode>,
-    mode: SyncResidenceMode,
-    finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
-) -> Result<ResidenceModeChange, crate::sync::TransportError> {
-    let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
-    if config.federation_peer.is_some() {
-        return Err(crate::sync::TransportError::InvalidPayload(
-            "a federation lane has no residence mode",
-        ));
-    }
-    let vault = manager.vault();
-    let effective = crate::sync::residence::effective_residence_mode(
-        None,
-        mode,
-        crate::sync::residence::local_is_elected_home(vault).map_err(storage)?,
-    );
-    let mut change = ResidenceModeChange {
-        mode: effective,
-        retained: Vec::new(),
-        unsynced: Vec::new(),
-        pruned_items: 0,
-    };
-    let switching = effective != *current.borrow();
-    if switching && effective == SyncResidenceMode::Opened {
-        let mut config = config.clone();
-        config.residence_mode = SyncResidenceMode::Opened;
-        let (mut client, _events) =
-            crate::sync::SyncClient::new(Arc::clone(manager), config).map_err(storage)?;
-        for window in crate::sync::residence::discover_local_window_keys(vault).map_err(storage)? {
-            if client.retain_window(&window).await? {
-                change.retained.push(window);
-            } else {
-                change.unsynced.push(window);
-            }
-        }
-    }
-    vault
-        .with_write_txn_grouped(|txn| {
-            if switching && effective == SyncResidenceMode::All {
-                // A cached id refuses local writes until promoted; the full
-                // windows supersede every read cache.
-                change.pruned_items =
-                    crate::sync::residence::prune_thin_items_in_txn(vault, txn, u64::MAX)?;
-            }
-            crate::sync::residence::set_device_sync_preference_in_txn(vault, txn, mode)?;
-            finish(txn, &change)
-        })
-        .map_err(storage)?;
-    current.send_replace(effective);
-    Ok(change)
 }
 
 /// Flush all buffered local updates to the persistent offline queue.

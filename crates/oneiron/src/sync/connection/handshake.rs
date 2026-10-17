@@ -111,8 +111,23 @@ impl SyncConnection {
         result
     }
 
-    /// The loop [`Self::run`] and [`Self::run_observed`] drive.
+    /// The loop [`Self::run`] and [`Self::run_observed`] drive, with the
+    /// owner's residence directives naming this machine run beside it, across
+    /// its reconnects, each time the residence upkeep wakes them (OF-534).
     async fn drive(
+        &self,
+        client: SyncClient,
+        shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    ) -> crate::error::Result<()> {
+        let directives = self.run_residence_directives(client.event_tx.clone());
+        tokio::select! {
+            result = self.drive_loop(client, shutdown_rx) => result,
+            never = directives => match never {},
+        }
+    }
+
+    /// The connect, sync and reconnect loop [`Self::drive`] runs.
+    async fn drive_loop(
         &self,
         client: SyncClient,
         mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,

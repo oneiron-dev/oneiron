@@ -223,13 +223,16 @@ async fn open(
         authority_checkpoint_pin: pin,
         ..SyncClientConfig::default()
     };
-    let connection = SyncConnection::new(
+    let connection = Arc::new(SyncConnection::new(
         Arc::clone(&server.reassert_manager),
         ConnectionConfig {
             client_config,
             auto_reconnect: true,
         },
-    )?;
+    )?);
+    // The owner's residence rows reach this machine through this connection
+    // (FIX 531).
+    crate::residence_machines::register(machine, &connection);
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
     let over = if mesh.is_some() { "mesh" } else { "url" };
