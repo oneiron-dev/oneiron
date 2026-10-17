@@ -21,7 +21,7 @@ use oneiron::authority::CapabilitySlip;
 use oneiron::memory::MemoryError;
 use reqwest::Url;
 use reqwest::blocking::Client;
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -35,8 +35,8 @@ mod response;
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
 use self::response::{
-    ReadFailure, describe_send_failure, read_capped, read_error_envelope, read_export,
-    serialize_request,
+    ReadFailure, describe_send_failure, encode_request, read_capped, read_error_envelope,
+    read_export, serialize_request,
 };
 
 /// Path prefix every facade verb hangs off.
@@ -246,6 +246,7 @@ impl RemoteClient {
             HeaderValue::from_str(&invocation.to_hex())
                 .map_err(|_| transport_error("could not name the invocation"))?,
         );
+        let body = encode_request(body, &mut credential);
         let response = (if long_running(verb) {
             &self.export_agent
         } else {
@@ -313,9 +314,10 @@ impl RemoteClient {
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         let bytes =
             serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
-        let credential = self
+        let mut credential = self
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
+        let bytes = encode_request(bytes, &mut credential);
         self.stream_agent
             .post(url)
             .timeout(REQUEST_TIMEOUT)
@@ -346,9 +348,10 @@ impl RemoteClient {
             .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         let bytes =
             serialize_request(request).map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
-        let credential = self
+        let mut credential = self
             .credential_headers()
             .map_err(|_| oneiron::FatalLlmError::Auth)?;
+        let bytes = encode_request(bytes, &mut credential);
         self.stream_agent
             .post(url)
             .headers(credential)
