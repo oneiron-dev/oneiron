@@ -131,6 +131,9 @@ pub(super) fn run(
         HousekeepingSweep::GateDecisionRetention => return gate_decisions(vault, deadline),
         HousekeepingSweep::HardEraseSweep => SweepWork::HardErase(hard_erase(vault, owner_asked)?),
         HousekeepingSweep::PprCacheEviction => return ppr_cache(vault, now, deadline, cursor),
+        HousekeepingSweep::SharedActMaturity => SweepWork::SharedActs {
+            noticed: count(vault.notify_matured_shared_acts()?),
+        },
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
