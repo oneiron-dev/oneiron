@@ -982,7 +982,7 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 15
      }
     },
@@ -10620,11 +10620,22 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 8,
       "re-export": 1,
       "struct": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/reader_spawn.rs",
+     "purpose": "Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2
      }
     },
     {
@@ -10654,9 +10665,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "mod": 4,
-      "re-export": 8
+      "re-export": 10
      }
     },
     {
@@ -10667,6 +10678,46 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClaimOutcome",
+      "DelegatedSource",
+      "ReaderActor",
+      "ReaderFindingRef",
+      "ReaderJob",
+      "ReaderJobRunner",
+      "ReaderJobState",
+      "ReaderJobWake",
+      "ReaderParent",
+      "ReaderReportReceipt",
+      "ReaderRoute",
+      "ReaderRunEnd",
+      "ReaderSpawnReceipt",
+      "RunDeadline",
+      "SelfReaderReportCall",
+      "SelfReaderSpawnCall",
+      "SpawnHostSeat",
+      "SpawnParentBinding",
+      "TaskWaitFailure",
+      "TaskWaitFinding",
+      "TaskWaitPolicy",
+      "TaskWaitSet",
+      "TaskWaitSetCall",
+      "TaskWaitSetResult"
+     ],
+     "path": "src/code_run/reader.rs",
+     "purpose": "Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 10,
+      "enum": 4,
+      "fn": 8,
+      "struct": 19,
+      "trait": 1
      }
     },
     {
@@ -10717,7 +10768,7 @@
      "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4
      }
@@ -10771,16 +10822,18 @@
       "MemorySearchInput",
       "MemorySupersedeInput",
       "MemoryTimeRange",
+      "ReaderSpawnInput",
       "SkillCallInput",
       "TaskRefuseDomain",
-      "TaskRefuseInput"
+      "TaskRefuseInput",
+      "TaskWaitSetRequest"
      ],
      "path": "src/code_run/run_verbs.rs",
      "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
       "enum": 1,
-      "struct": 7
+      "struct": 9
      }
     },
     {
@@ -10818,8 +10871,22 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 9,
-      "re-export": 2
+      "crate-vis": 10,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "ReaderJobs"
+     ],
+     "path": "src/code_run/storage/reader_jobs.rs",
+     "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
+     "surface": {
+      "crate-vis": 23,
+      "fn": 9,
+      "struct": 1
      }
     },
     {
@@ -10910,7 +10977,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AgentVerbAnswer",
@@ -19855,6 +19922,7 @@
       "SlideReviewAnchor",
       "SlideReviewBase",
       "SlideReviewError",
+      "SlideReviewImage",
       "SlideReviewLabels",
       "SlideReviewRequest",
       "SlideReviewRun",
@@ -19865,8 +19933,9 @@
      "path": "src/edit_roundtrip/slides_review.rs",
      "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
      "surface": {
+      "const": 1,
       "crate-vis": 6,
-      "enum": 2,
+      "enum": 3,
       "fn": 3,
       "struct": 10
      }
@@ -25986,7 +26055,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 191,
       "re-export": 74
      }
@@ -26504,7 +26573,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 13,
+      "fn": 14,
       "struct": 9,
       "trait": 3
      }
@@ -26544,6 +26613,27 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AudioRef",
+      "DecisionMedia",
+      "DecisionMediaRef",
+      "ImageRef",
+      "MediaCall",
+      "MediaServed",
+      "ResolvedMedia"
+     ],
+     "path": "src/llm/decision/media_ref.rs",
+     "purpose": "Media a typed decision reads by reference (owner point 3)",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 7,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -26552,7 +26642,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -27809,7 +27899,7 @@
       "const": 1,
       "crate-vis": 6,
       "enum": 2,
-      "fn": 12,
+      "fn": 14,
       "struct": 8
      }
     },
@@ -29943,7 +30033,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 33,
       "fn": 10,
       "struct": 2
      }
@@ -38170,7 +38260,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 39
      }
     },
     {
@@ -44229,14 +44319,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 5,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -44396,6 +44486,7 @@
       "TaskCanAskRequest",
       "TaskCreateRequest",
       "TaskRequest",
+      "TaskUpdateRequest",
       "TaskWaitRequest",
       "VaultReceiptsRequest",
       "WorkCompanionSetRequest",
@@ -44407,7 +44498,7 @@
       "enum": 1,
       "fn": 9,
       "re-export": 11,
-      "struct": 32
+      "struct": 33
      }
     },
     {
@@ -49114,7 +49205,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 56,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -49674,7 +49765,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 91,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50353,9 +50444,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 123,
+   "over_bar": 126,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3042,
+   "source_files": 3046,
    "test_files": 903
   },
   "oneiron-android": {
