@@ -44782,7 +44782,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 33
      }
     },
@@ -44834,6 +44834,32 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddingSpaceBindRequest",
+      "EmbeddingSpaceCandidateRequest",
+      "EmbeddingSpaceDeclareRequest",
+      "EmbeddingSpaceMoveChecked",
+      "EmbeddingSpaceMoveOutcome",
+      "EmbeddingSpaceMoveRequest",
+      "EmbeddingSpaceProbe",
+      "EmbeddingSpaceProbeDeleteRequest",
+      "EmbeddingSpaceProbeDeleted",
+      "EmbeddingSpaceProbePutRequest",
+      "EmbeddingSpaceProbes",
+      "EmbeddingSpaceRequest",
+      "EmbeddingSpacesView"
+     ],
+     "path": "src/task_verb/sdk_embedding_space.rs",
+     "purpose": "The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host…",
+     "surface": {
+      "enum": 1,
+      "fn": 13,
+      "struct": 12
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -44841,7 +44867,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 219
+      "fn": 232
      }
     },
     {
@@ -50651,7 +50677,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 111,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -50807,7 +50833,7 @@
    },
    "over_bar": 136,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3068,
+   "source_files": 3069,
    "test_files": 903
   },
   "oneiron-android": {
@@ -58674,7 +58700,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 174
+      "fn": 187
      }
     },
     {
@@ -59688,7 +59714,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 175
+      "fn": 188
      }
     },
     {
@@ -62224,6 +62250,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/embedding_space_doors.rs",
+     "purpose": "The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/graph_ask_doors.rs",
      "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
      "surface": {
@@ -62247,7 +62283,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -62257,7 +62293,7 @@
      "path": "src/api/facade/legal_hold_doors.rs",
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -64058,7 +64094,7 @@
      "surface": {
       "enum": 9,
       "fn": 3,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 21
      }
     },
@@ -64113,11 +64149,21 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BackupArgs",
       "DoctorArgs",
+      "EmbeddingKind",
+      "EmbeddingSpaceArgs",
+      "EmbeddingSpaceBindArgs",
+      "EmbeddingSpaceCandidateArgs",
+      "EmbeddingSpaceDeclareArgs",
+      "EmbeddingSpaceMoveArgs",
+      "EmbeddingSpaceProbeDeleteArgs",
+      "EmbeddingSpaceProbePutArgs",
+      "EmbeddingSpaceProbesCommand",
+      "EmbeddingSpacesCommand",
       "ExportArgs",
       "GuestRevokeArgs",
       "GuestsCommand",
@@ -64146,6 +64192,7 @@
       "RunArgs",
       "RunDecisionArgs",
       "RunsCommand",
+      "SecretAnchorSignArgs",
       "SecretClass",
       "SecretRegisterArgs",
       "SecretRevokeArgs",
@@ -64164,8 +64211,8 @@
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
-      "enum": 11,
-      "struct": 33
+      "enum": 14,
+      "struct": 41
      }
     },
     {
@@ -64194,7 +64241,7 @@
       "const": 1,
       "crate-vis": 4,
       "fn": 12,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 1
      }
     },
@@ -64451,7 +64498,7 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 16,
+      "fn": 17,
       "re-export": 1
      }
     },
@@ -67269,7 +67316,7 @@
      "path": "src/owner/secrets.rs",
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -68472,7 +68519,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 265,
+     "files": 266,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -68787,9 +68834,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 32,
+   "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 518,
+   "source_files": 519,
    "test_files": 182
   },
   "oneiron-spawn": {
