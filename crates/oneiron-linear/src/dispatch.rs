@@ -2,22 +2,28 @@
 
 use std::path::PathBuf;
 
+use oneiron::linear_sync::{
+    LinearEffectKind, LinearEffectRequest, LinearTaskStore, VaultLinearTaskStore,
+};
 use oneiron::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
     OutboundDispatchOutcome, OutboundDispatchRequest, OutboundExecutionOutcome,
     OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
     OutboundIntentTrigger,
 };
-use oneiron::{LinearSyncResult, Vault};
+use oneiron::{LinearSyncError, LinearSyncResult, Vault};
 use serde_json::Value;
 
-use crate::egress::{CREATE, UPDATE};
+use crate::egress::{CREATE, LinearMutation, UPDATE};
 use crate::journal::LinearResponseJournal;
 use crate::{GraphQlCall, GraphQlExecutor, GraphQlTransportError, LinearOutboundDoor, invalid};
 
 /// The credential-bearing host connector bound to the engine's ordinary
 /// ExternalEffect gate, budget, intent ledger and receipt. A standalone HTTP
 /// or callback-only path cannot implement `LinearOutboundDoor` in production.
+/// Each call is admitted for the door's actor (the host scheduler) and the
+/// mirrored TASK revision's verified writer in ONE outbound admission, so a
+/// remote mutation charges each distinct connector key once (OF-427).
 pub struct VaultLinearOutboundDoor<'v, T> {
     vault: &'v Vault,
     journal: LinearResponseJournal<T>,
@@ -106,13 +112,29 @@ impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, T> {
 }
 
 impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
-    fn dispatch(&mut self, operation_id: [u8; 32], call: &GraphQlCall) -> LinearSyncResult<Value> {
-        let (verb, target) = if call.query == CREATE {
-            ("create_issue", call.variables["input"]["teamId"].as_str())
-        } else if call.query == UPDATE {
-            ("update_issue", call.variables["id"].as_str())
-        } else {
-            return Err(invalid("unknown Linear mutation"));
+    fn dispatch(
+        &mut self,
+        mutation: &LinearMutation<'_>,
+        call: &GraphQlCall,
+    ) -> LinearSyncResult<Value> {
+        let operation_id = mutation.operation_id;
+        let (verb, target, kind) = match mutation.issue {
+            None if call.query == CREATE => (
+                "create_issue",
+                call.variables["input"]["teamId"].as_str(),
+                LinearEffectKind::Create,
+            ),
+            Some(issue)
+                if call.query == UPDATE
+                    && call.variables["id"].as_str() == Some(issue.issue_id.as_str()) =>
+            {
+                (
+                    "update_issue",
+                    call.variables["id"].as_str(),
+                    LinearEffectKind::Update,
+                )
+            }
+            _ => return Err(invalid("unknown Linear mutation")),
         };
         let target = target
             .filter(|value| !value.trim().is_empty())
@@ -122,6 +144,31 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             .actor_ref
             .as_deref()
             .ok_or_else(|| invalid("Linear outbound actor has no reference"))?;
+        let scheduler_actor = self
+            .actor
+            .actor_entity_ref
+            .ok_or_else(|| invalid("Linear outbound actor has no entity"))?;
+        let task_ref = match (mutation.task_ref, mutation.issue) {
+            (Some(task_ref), _) => task_ref,
+            (None, Some(issue)) => {
+                VaultLinearTaskStore::new(self.vault)
+                    .link_for_issue(issue)?
+                    .ok_or(LinearSyncError::AuthorizationDenied)?
+                    .task_ref
+            }
+            (None, None) => return Err(invalid("Linear create names no TASK")),
+        };
+        // The exact mutation the vault binds to the TASK's current mirror
+        // operation and admits for both actors under the outbound writer.
+        let effect = LinearEffectRequest {
+            operation_id,
+            task_ref,
+            scheduler_actor,
+            issue: mutation.issue.cloned(),
+            kind,
+            fields: mutation.fields.clone(),
+        };
+        self.vault.recheck_admitted_linear_effect(&effect)?;
         let digest = blake3::Hash::from(operation_id).to_hex().to_string();
         let intent_ref = format!("linear:{digest}");
         let content_ref = self.journal.stage_request(&operation_id, call)?;
@@ -150,7 +197,7 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
         };
         let result = self
             .vault
-            .dispatch_outbound_intent_recorded(request, &mut sink)
+            .dispatch_linear_outbound_intent_recorded(request, &effect, &mut sink)
             .map_err(|_| invalid("Linear outbound dispatch failed"))?;
         if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
             return Err(invalid("Linear outbound dispatch did not deliver"));
