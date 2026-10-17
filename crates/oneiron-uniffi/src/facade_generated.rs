@@ -294,6 +294,41 @@ export_facade! {
     let output = client.vault_members_withdraw_invitation(&input)?;
     crate::codec::lift_record("vault.members.withdraw_invitation", &output)
 };
+"vault.shared.object" => fn vault_shared_object(&self, input: SharedActRequest) -> PendingAuthorityAct = |client| {
+    let input: oneiron::task_verb::sdk::SharedActRequest = crate::codec::lower_record("vault.shared.object", input)?;
+    let output = client.vault_shared_object(&input)?;
+    crate::codec::lift_record("vault.shared.object", &output)
+};
+"vault.shared.withdraw_objection" => fn vault_shared_withdraw_objection(&self, input: SharedActRequest) -> PendingAuthorityAct = |client| {
+    let input: oneiron::task_verb::sdk::SharedActRequest = crate::codec::lower_record("vault.shared.withdraw_objection", input)?;
+    let output = client.vault_shared_withdraw_objection(&input)?;
+    crate::codec::lift_record("vault.shared.withdraw_objection", &output)
+};
+"vault.shared.started" => fn vault_shared_started(&self, input: SharedVaultRequest) -> Vec<PendingActStarted> = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.started", input)?;
+    let output = client.vault_shared_started(&input)?;
+    crate::codec::lift_record("vault.shared.started", &output)
+};
+"vault.shared.matured" => fn vault_shared_matured(&self, input: SharedVaultRequest) -> Vec<PendingActMatured> = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.matured", input)?;
+    let output = client.vault_shared_matured(&input)?;
+    crate::codec::lift_record("vault.shared.matured", &output)
+};
+"vault.shared.erase_ask" => fn vault_shared_erase_ask(&self, input: SharedEraseAskRequest) -> SharedEraseAsk = |client| {
+    let input: oneiron::task_verb::sdk::SharedEraseAskRequest = crate::codec::lower_record("vault.shared.erase_ask", input)?;
+    let output = client.vault_shared_erase_ask(&input)?;
+    crate::codec::lift_record("vault.shared.erase_ask", &output)
+};
+"vault.shared.erase_asks" => fn vault_shared_erase_asks(&self, input: SharedVaultRequest) -> Vec<SharedEraseAsk> = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.erase_asks", input)?;
+    let output = client.vault_shared_erase_asks(&input)?;
+    crate::codec::lift_record("vault.shared.erase_asks", &output)
+};
+"vault.shared.close_erase_ask" => fn vault_shared_close_erase_ask(&self, input: SharedEraseAskCloseRequest) -> SharedEraseAsk = |client| {
+    let input: oneiron::task_verb::sdk::SharedEraseAskCloseRequest = crate::codec::lower_record("vault.shared.close_erase_ask", input)?;
+    let output = client.vault_shared_close_erase_ask(&input)?;
+    crate::codec::lift_record("vault.shared.close_erase_ask", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;

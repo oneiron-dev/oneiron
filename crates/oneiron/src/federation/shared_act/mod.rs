@@ -3,9 +3,14 @@
 //! the objection window and stays effect-free; this module validates each
 //! act's typed plan, claims the matured act in the writer that applies its
 //! effect, and records one receipt that every affected holder is told about.
-//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`).
+//! Erase keeps its own executor (`Memory::execute_completed_entity_erase`);
+//! a Member's or Admin's ask for one is `erase_ask`.
+mod erase_ask;
 mod membership;
 
+pub use erase_ask::{
+    EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
+};
 pub use membership::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
 
 use super::FederationGrantRole as Role;

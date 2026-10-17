@@ -27,10 +27,11 @@ const CLEAR_LIMIT: usize = 4096;
 
 /// The sweeps whose deadlines are noted. The erasure sweep needs no rows: an
 /// obligation waiting is the first `h:` row.
-pub(super) const WAKE_SWEEPS: [HousekeepingSweep; 3] = [
+pub(super) const WAKE_SWEEPS: [HousekeepingSweep; 4] = [
     HousekeepingSweep::SecretLeaseExpiry,
     HousekeepingSweep::CriticalConfirmExpiry,
     HousekeepingSweep::VoicePrintRetention,
+    HousekeepingSweep::SharedActMaturity,
 ];
 
 fn tag(sweep: HousekeepingSweep) -> Option<[u8; 1]> {
@@ -38,6 +39,7 @@ fn tag(sweep: HousekeepingSweep) -> Option<[u8; 1]> {
         HousekeepingSweep::SecretLeaseExpiry => Some([1]),
         HousekeepingSweep::CriticalConfirmExpiry => Some([2]),
         HousekeepingSweep::VoicePrintRetention => Some([3]),
+        HousekeepingSweep::SharedActMaturity => Some([4]),
         _ => None,
     }
 }

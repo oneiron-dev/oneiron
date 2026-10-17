@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 195 facade rows, 562 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 155.
+// UniFFI census: 202 facade rows, 569 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 162.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -3131,6 +3131,112 @@ pub struct SharedInvitationWithdrawRequest {
     pub member: String,
     #[serde(rename = "invitation")]
     pub invitation: String,
+}
+
+/// `oneiron::federation::pending_act::PendingActStarted`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PendingActStarted {
+    #[serde(rename = "act_id")]
+    pub act_id: String,
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "act")]
+    pub act: String,
+    #[serde(rename = "recipient")]
+    pub recipient: String,
+    #[serde(rename = "deadline")]
+    pub deadline: u64,
+}
+
+/// `oneiron::federation::pending_act::matured::PendingActMatured`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PendingActMatured {
+    #[serde(rename = "act_id")]
+    pub act_id: String,
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "act")]
+    pub act: String,
+    #[serde(rename = "recipient")]
+    pub recipient: String,
+    #[serde(rename = "deadline")]
+    pub deadline: u64,
+    #[serde(rename = "noticed_at")]
+    pub noticed_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_shared_members::SharedEraseAskRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedEraseAskRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "record")]
+    pub record: String,
+}
+
+/// `oneiron::federation::shared_act::erase_ask::EraseAskKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EraseAskKind {
+    #[serde(rename = "request")]
+    Request,
+    #[serde(rename = "proposal")]
+    Proposal,
+}
+
+/// `oneiron::federation::shared_act::erase_ask::EraseAskStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EraseAskStatus {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "erased")]
+    Erased {
+        #[serde(rename = "by")]
+        by: String,
+        #[serde(rename = "act", default, skip_serializing_if = "Option::is_none")]
+        act: Option<String>,
+    },
+    #[serde(rename = "declined")]
+    Declined {
+        #[serde(rename = "by")]
+        by: String,
+    },
+}
+
+/// `oneiron::federation::shared_act::erase_ask::SharedEraseAsk`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedEraseAsk {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "vault_id")]
+    pub vault_id: u64,
+    #[serde(rename = "kind")]
+    pub kind: EraseAskKind,
+    #[serde(rename = "asker")]
+    pub asker: String,
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "asked_at")]
+    pub asked_at: u64,
+    #[serde(rename = "status")]
+    pub status: EraseAskStatus,
+    #[serde(rename = "closed_at", default, skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_shared_members::SharedEraseAskCloseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedEraseAskCloseRequest {
+    #[serde(rename = "ask_id")]
+    pub ask_id: String,
+    #[serde(rename = "erased")]
+    pub erased: bool,
+    #[serde(rename = "act_id", default, skip_serializing_if = "Option::is_none")]
+    pub act_id: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest`.

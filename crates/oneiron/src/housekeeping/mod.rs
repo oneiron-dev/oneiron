@@ -38,7 +38,7 @@ use crate::error::{ErrorKind, Result};
 
 use self::schedule::SweepState;
 
-/// One sweep the housekeeping pass knows. The engine runs the first ten; the
+/// One sweep the housekeeping pass knows. The engine runs the first eleven; the
 /// rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +65,9 @@ pub enum HousekeepingSweep {
     HardEraseSweep,
     /// Evicts cached graph walks past the longest serve window.
     PprCacheEviction,
+    /// Tells the live Owners of each waiting shared act whose window has
+    /// passed with no live objection (OF-163). Effect-free.
+    SharedActMaturity,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -120,7 +123,7 @@ const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -131,6 +134,7 @@ impl HousekeepingSweep {
         Self::GateDecisionRetention,
         Self::HardEraseSweep,
         Self::PprCacheEviction,
+        Self::SharedActMaturity,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -152,6 +156,7 @@ impl HousekeepingSweep {
             Self::GateDecisionRetention => "gate_decision_retention",
             Self::HardEraseSweep => "hard_erase_sweep",
             Self::PprCacheEviction => "ppr_cache_eviction",
+            Self::SharedActMaturity => "shared_act_maturity",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -167,7 +172,9 @@ impl HousekeepingSweep {
     /// those sweeps run then and hourly besides, for a deadline no door noted.
     /// The seal backstop runs every fifteen minutes (ARCH-0064 SGN-04); the
     /// erasure sweep daily, hourly while an obligation waits (ARCH-0038's
-    /// deadline is 30 days); the graph-walk cache daily.
+    /// deadline is 30 days); the graph-walk cache daily. A shared act's
+    /// deadline makes the maturity sweep due then (its start notes it), and
+    /// it runs hourly besides, for an act an objection withdrawal released.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -188,6 +195,7 @@ impl HousekeepingSweep {
                 at_open: true,
             },
             Self::HardEraseSweep | Self::PprCacheEviction => engine(DAY),
+            Self::SharedActMaturity => engine(HOUR),
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
             Self::ConsultSettlement => Runner::Host(HostOnlyReason::NeedsHostDigestRoute),
             Self::PolicyHoldPrune => Runner::Host(HostOnlyReason::NeedsAuthenticatedOwner),
@@ -381,6 +389,10 @@ pub enum SweepWork {
         evicted: u64,
         deps_cleaned: u64,
     },
+    SharedActs {
+        /// Matured-act notices written to live Owners.
+        noticed: u64,
+    },
 }
 
 impl SweepWork {
@@ -423,6 +435,7 @@ impl SweepWork {
                 evicted,
                 deps_cleaned,
             } => evicted == 0 && deps_cleaned == 0,
+            Self::SharedActs { noticed } => noticed == 0,
         }
     }
 }
@@ -501,9 +514,9 @@ impl Vault {
 
     /// When a vault that is not running must next run a pass, or `None` when
     /// it owes no retirement: the earliest deadline a door noted for a secret
-    /// lease, a voice print or a critical confirm, not before that sweep is
-    /// next due (a failing sweep waits out its backoff), and the erasure
-    /// sweep's due time while an obligation waits. Cache and retention hygiene
+    /// lease, a voice print, a critical confirm or a shared act's window, not
+    /// before that sweep is next due (a failing sweep waits out its backoff),
+    /// and the erasure sweep's due time while an obligation waits. Cache and retention hygiene
     /// never wake a vault. Reads one row per sweep and the schedule, never a
     /// whole table, so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
