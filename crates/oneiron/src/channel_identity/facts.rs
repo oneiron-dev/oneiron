@@ -1,15 +1,20 @@
 //! Channel facts as claims (OF-272): every write of a ChannelIdentity row
 //! moves its `channel_identity.*` heads in the same transaction, and the fact
-//! readers read those heads, not the row. Custody (who holds the account, the
-//! delegated grant and its scopes, the live credential proof) stays on the
-//! local row: claims carry facts, never send authority.
+//! readers read those heads, not the row. The row seeds the channel, address
+//! and binding; from then on a claim correction owns them, and the assignment
+//! slot follows the heads. Custody (who holds the account, the delegated
+//! grant and its scopes, the live credential proof) stays on the local row:
+//! claims carry facts, never send authority.
 use std::collections::BTreeMap;
 
 use super::codec::{
     decode_binding, decode_optional_entity_ref, is_channel_identity_claim_predicate,
 };
 use super::keys::*;
-use super::{ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState};
+use super::{
+    ChannelIdentity, ChannelIdentityBinding, ChannelIdentityShape, ChannelIdentityState, Custody,
+    InboundDisposition,
+};
 use crate::Vault;
 use crate::batch::{BatchOp, apply_ops};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -37,6 +42,41 @@ pub struct ChannelIdentityFacts {
     /// The channel actor this identity's reputation rides on.
     pub reputation_ref: Option<EntityId>,
     pub manifest_ref: Option<EntityId>,
+}
+
+/// The facts a claim correction owns once the row has seeded them (OF-272):
+/// the channel, the address and the binding. A later row write keeps
+/// whatever head of these is live, so it never undoes a correction.
+const CORRECTABLE_PREDICATES: [&str; 5] = [
+    PREDICATE_CHANNEL_IDENTITY_CHANNEL,
+    PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
+];
+
+impl ChannelIdentityFacts {
+    /// What this identity can do for a message arriving now (OF-272): its
+    /// state head, read on the machine of the row's custody. The row says
+    /// only which machine; a claim never mints a capability. A state that
+    /// machine lacks (a delegated row never rotates or quarantines) routes
+    /// nothing.
+    #[must_use]
+    pub fn inbound_with_custody(&self, custody: &Custody) -> InboundDisposition {
+        let self_held = matches!(custody, Custody::SelfHeld { .. });
+        match self.state {
+            ChannelIdentityState::Active => InboundDisposition::Deliver,
+            ChannelIdentityState::Rotating if self_held => InboundDisposition::Deliver,
+            ChannelIdentityState::Released => InboundDisposition::DeliverRetiring,
+            ChannelIdentityState::Quarantine if self_held => InboundDisposition::DeliverRetiring,
+            ChannelIdentityState::Requested | ChannelIdentityState::PendingFulfillment => {
+                InboundDisposition::NotYetRoutable
+            }
+            ChannelIdentityState::Tombstone
+            | ChannelIdentityState::Rotating
+            | ChannelIdentityState::Quarantine => InboundDisposition::Closed,
+        }
+    }
 }
 
 fn corrupt() -> Error {
@@ -99,13 +139,13 @@ pub(crate) fn channel_identity_facts_in_txn(
     }))
 }
 
-/// The family's live heads by predicate: Active and not stale, one each.
-fn live_heads_in_txn(
+/// Each live head of the identity's family: Active and not stale.
+fn for_each_live_head(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     identity_ref: &EntityId,
-) -> Result<BTreeMap<String, (EntityId, ClaimBody)>> {
-    let mut heads = BTreeMap::new();
+    mut visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
+) -> Result<()> {
     for entry in store.port_edges(
         txn,
         identity_ref,
@@ -127,6 +167,19 @@ fn live_heads_in_txn(
         {
             continue;
         }
+        visit(claim_id, body)?;
+    }
+    Ok(())
+}
+
+/// The family's live heads by predicate: Active and not stale, one each.
+fn live_heads_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: &EntityId,
+) -> Result<BTreeMap<String, (EntityId, ClaimBody)>> {
+    let mut heads = BTreeMap::new();
+    for_each_live_head(store, txn, identity_ref, |claim_id, body| {
         if heads
             .insert(body.predicate.clone(), (claim_id, body))
             .is_some()
@@ -135,8 +188,31 @@ fn live_heads_in_txn(
                 "channel identity claim family has two live heads for one predicate",
             ));
         }
-    }
+        Ok(())
+    })?;
     Ok(heads)
+}
+
+/// Every live channel head's value and every live address head's value, for
+/// the assignment re-key (OF-272). Unlike the fact reader this takes a
+/// doubled head as it is: a correction made across transactions holds two
+/// until its old head closes, and the caller decides what that settles.
+pub(super) fn assignment_heads_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: &EntityId,
+) -> Result<(Vec<String>, Vec<String>)> {
+    let (mut channels, mut addresses) = (Vec::new(), Vec::new());
+    for_each_live_head(store, txn, identity_ref, |_, body| {
+        let values = match body.predicate.as_str() {
+            PREDICATE_CHANNEL_IDENTITY_CHANNEL => &mut channels,
+            PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE => &mut addresses,
+            _ => return Ok(()),
+        };
+        values.push(body.value.as_str().ok_or_else(corrupt)?.to_owned());
+        Ok(())
+    })?;
+    Ok((channels, addresses))
 }
 
 impl Vault {
@@ -152,7 +228,9 @@ impl Vault {
     /// Moves the identity's `channel_identity.*` heads to `identity`, in the
     /// transaction that writes its row. A head already holding the value is
     /// left alone; every other predicate gets a new head that supersedes the
-    /// old, so the family never holds two live heads for one predicate.
+    /// old, so the family never holds two live heads for one predicate. The
+    /// row only seeds the channel, address and binding: once one of those has
+    /// a live head, a claim correction owns it and this write keeps it.
     pub(super) fn supersede_channel_identity_claim_heads_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -163,7 +241,10 @@ impl Vault {
         let live = live_heads_in_txn(&self.store, &*wtxn, identity_ref)?;
         for body in identity.claim_bodies(*identity_ref)? {
             let existing = live.get(&body.predicate);
-            if existing.is_some_and(|(_, head)| head.value == body.value) {
+            if existing.is_some_and(|(_, head)| {
+                head.value == body.value
+                    || CORRECTABLE_PREDICATES.contains(&body.predicate.as_str())
+            }) {
                 continue;
             }
             let new_id = self.store.clock.entity_id()?;

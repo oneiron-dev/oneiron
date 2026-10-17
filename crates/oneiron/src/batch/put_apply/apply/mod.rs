@@ -723,6 +723,13 @@ pub(in crate::batch) fn apply_put(
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
     }
+    // OF-272: the write unit re-keys the identity's slot before it commits.
+    crate::channel_identity::note_claim_put_for_rekey(
+        store,
+        wtxn,
+        &id,
+        decoded_claim_body.as_ref(),
+    )?;
     if entity_type == ENTITY_TYPE_COMM_RECORD {
         crate::comm::maintain_pending_stop_put(store, wtxn, &id, data)?;
     }

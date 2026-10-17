@@ -84,7 +84,8 @@ pub use self::shape::{ChannelIdentityShape, SelfHeldShape};
 pub use self::transition::DelegatedProvisionRequest;
 
 pub(crate) use self::assignment::{
-    clear_assignment_for_delete, close_claim_heads_for_delete_in_txn, maintain_assignment_put,
+    AssignmentRekeys, clear_assignment_for_delete, close_claim_heads_for_delete_in_txn,
+    maintain_assignment_put, note_claim_put_for_rekey,
 };
 #[cfg(test)]
 use self::codec::validate_channel_identity_body_bytes;
