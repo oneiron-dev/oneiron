@@ -44417,6 +44417,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/catalog_fragment_revision.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/consts.rs",
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
@@ -45079,8 +45089,21 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 33
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CatalogFragment"
+     ],
+     "path": "src/task_verb/sdk_catalog_fragment.rs",
+     "purpose": "The code-mode catalog fragment (ONE-2510 S2): the whole verb set code mode serves, as one TypeScript…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -51017,7 +51040,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 115,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -51173,7 +51196,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3091,
+   "source_files": 3093,
    "test_files": 903
   },
   "oneiron-android": {
