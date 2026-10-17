@@ -18,7 +18,7 @@ use crate::claim::ClaimSource;
 use crate::entity_id::EntityId;
 use crate::identity_topology::{
     EntityLifecycleState, IdentityOpEvidence, IdentityOpOutcome, IdentityOpWrite,
-    IdentityTopologyOp, MergeOp, SurvivorshipPlan,
+    IdentityTopologyOp, MergeOp, SurvivorshipPlan, entity_lifecycle_state_for_store_in_txn,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::side_table::{self, Raw, SideTable};
@@ -56,20 +56,21 @@ fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
 /// (whose type stays PERSON while its identity has moved to the survivor).
 ///
 /// Single validator for both the cache check and the synced scan, so the
-/// shortcut can never disagree with the truth it is a shortcut for.
+/// shortcut can never disagree with the truth it is a shortcut for. It needs
+/// only the store, so the gate's `Store`-only door validates by the same rule.
 pub(super) fn active_comm_party_key_in_txn(
-    vault: &Vault,
+    store: &Store,
     rtxn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> CommResult<Option<String>> {
-    let Some(raw) = vault.store.port_entity_record(rtxn, &id)? else {
+    let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
 
     if raw.entity_type != ENTITY_TYPE_PERSON {
         return Ok(None);
     }
-    if vault.entity_lifecycle_state_in_txn(rtxn, &id)? != EntityLifecycleState::Active {
+    if entity_lifecycle_state_for_store_in_txn(store, rtxn, &id)? != EntityLifecycleState::Active {
         return Ok(None);
     }
     let mut cursor = Cursor::new(&raw.body);
@@ -110,16 +111,13 @@ pub(crate) fn comm_party_keys_in_txn(
 /// Every active comm-owned PERSON row, grouped by its exact `party_key`, ids
 /// ascending. This is the synced truth the node-local index caches.
 fn active_comm_persons_by_party_key_in_txn(
-    vault: &Vault,
+    store: &Store,
     rtxn: &heed::RoTxn<'_>,
 ) -> CommResult<BTreeMap<String, Vec<EntityId>>> {
     let mut groups: BTreeMap<String, Vec<EntityId>> = BTreeMap::new();
-    for entry in vault
-        .store
-        .port_entity_ids_by_type(rtxn, ENTITY_TYPE_PERSON, None)?
-    {
+    for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_PERSON, None)? {
         let id = entry?;
-        if let Some(party_key) = active_comm_party_key_in_txn(vault, rtxn, id)? {
+        if let Some(party_key) = active_comm_party_key_in_txn(store, rtxn, id)? {
             groups.entry(party_key).or_default().push(id);
         }
     }
@@ -138,14 +136,14 @@ fn active_comm_persons_by_party_key_in_txn(
 /// when several active rows share the key, picks the lexicographically smallest
 /// id so every node converges on the same one.
 fn lookup_party_in_txn(
-    vault: &Vault,
+    store: &Store,
     rtxn: &heed::RoTxn<'_>,
     party_key: &str,
 ) -> CommResult<PartyLookup> {
-    if let Some(id) = fresh_indexed_party_in_txn(vault, rtxn, party_key)? {
+    if let Some(id) = fresh_indexed_party_in_txn(store, rtxn, party_key)? {
         return Ok(PartyLookup::Fresh(id));
     }
-    Ok(active_comm_persons_by_party_key_in_txn(vault, rtxn)?
+    Ok(active_comm_persons_by_party_key_in_txn(store, rtxn)?
         .remove(party_key)
         .and_then(|ids| ids.into_iter().next())
         .map_or(PartyLookup::Absent, PartyLookup::Repairable))
@@ -154,12 +152,12 @@ fn lookup_party_in_txn(
 /// The party the node-local shortcut names for `party_key`, when it names an
 /// active comm-owned PERSON that still carries that key.
 fn fresh_indexed_party_in_txn(
-    vault: &Vault,
+    store: &Store,
     rtxn: &heed::RoTxn<'_>,
     party_key: &str,
 ) -> CommResult<Option<EntityId>> {
-    if let Some(id) = PARTY_INDEX.get(&vault.store, rtxn, &party_index_digest(party_key))?
-        && active_comm_party_key_in_txn(vault, rtxn, id)?.as_deref() == Some(party_key)
+    if let Some(id) = PARTY_INDEX.get(store, rtxn, &party_index_digest(party_key))?
+        && active_comm_party_key_in_txn(store, rtxn, id)?.as_deref() == Some(party_key)
     {
         return Ok(Some(id));
     }
@@ -178,8 +176,8 @@ impl CommParties {
     /// resolves to none, as no shortcut to it is fresh.
     pub(crate) fn read_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> CommResult<Self> {
         let mut parties = BTreeMap::new();
-        for (party_key, ids) in active_comm_persons_by_party_key_in_txn(vault, rtxn)? {
-            let indexed = fresh_indexed_party_in_txn(vault, rtxn, &party_key)?;
+        for (party_key, ids) in active_comm_persons_by_party_key_in_txn(&vault.store, rtxn)? {
+            let indexed = fresh_indexed_party_in_txn(&vault.store, rtxn, &party_key)?;
             if let Some(party) = indexed.or_else(|| ids.first().copied()) {
                 parties.insert(party_key, party);
             }
@@ -240,7 +238,7 @@ fn resolve_party_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     party_key: &str,
 ) -> CommResult<Option<EntityId>> {
-    match lookup_party_in_txn(vault, &*wtxn, party_key)? {
+    match lookup_party_in_txn(&vault.store, &*wtxn, party_key)? {
         PartyLookup::Fresh(id) => Ok(Some(id)),
         PartyLookup::Repairable(id) => {
             put_party_index_in_txn(vault, wtxn, party_key, id)?;
@@ -317,7 +315,7 @@ pub(super) fn resolve_party(vault: &Vault, party: &str) -> CommResult<Option<Ent
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
     let lookup = {
         let rtxn = vault.store.env.read_txn()?;
-        lookup_party_in_txn(vault, &rtxn, party)?
+        lookup_party_in_txn(&vault.store, &rtxn, party)?
     };
     match lookup {
         PartyLookup::Fresh(id) => Ok(Some(id)),
@@ -341,22 +339,23 @@ pub(crate) fn resolve_party_ref_in_txn(
     party: &str,
 ) -> CommResult<Option<EntityId>> {
     validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
-    Ok(match lookup_party_in_txn(vault, rtxn, party)? {
+    Ok(match lookup_party_in_txn(&vault.store, rtxn, party)? {
         PartyLookup::Fresh(id) | PartyLookup::Repairable(id) => Some(id),
         PartyLookup::Absent => None,
     })
 }
 
 /// Party resolution for a reader that holds a `Store` and no `Vault` — the
-/// external-effect gate door.
+/// external-effect gate's override lookup.
 ///
-/// It answers from the node-local shortcut and then RE-VALIDATES the hit
-/// against synced truth (the row must still be a PERSON carrying exactly this
-/// `party_key`), so a stale shortcut resolves to NOTHING rather than to the
-/// wrong person. Deliberately the same interim shape CA's `comm.do_not_contact`
-/// leg uses at the same hydration point, and deliberately fail-closed for this
-/// caller: an unresolvable party means no override was found, which HOLDS the
-/// send rather than releasing it.
+/// The same synced-truth answer [`resolve_party_ref_in_txn`] gives, on the
+/// caller's transaction and with no write: a fresh node-local shortcut is
+/// taken only when it still names an ACTIVE comm PERSON carrying exactly this
+/// `party_key`; a miss, a stale hit or a merge/split shell falls back to the
+/// active PERSON scan, smallest id first. A party another device minted, whose
+/// shortcut this node never wrote, therefore still finds its override; a
+/// shortcut naming a retired shell never does. Override authority is not
+/// broadened: only the one party a lookup resolves to is asked.
 pub(crate) fn resolve_party_ref_from_store_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -366,24 +365,10 @@ pub(crate) fn resolve_party_ref_from_store_in_txn(
     if party_key.is_empty() {
         return Ok(None);
     }
-    let Some(id) = PARTY_INDEX.get(store, txn, &party_index_digest(party_key))? else {
-        return Ok(None);
-    };
-    let Some(raw) = store.port_entity_record(txn, &id)? else {
-        return Ok(None);
-    };
-
-    if raw.entity_type != ENTITY_TYPE_PERSON {
-        return Ok(None);
-    }
-    let mut cursor = Cursor::new(&raw.body);
-    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
-        return Ok(None);
-    };
-    let Ok(entries) = value_map(&value) else {
-        return Ok(None);
-    };
-    Ok((required_string(entries, KEY_PARTY_KEY).ok() == Some(party_key)).then_some(id))
+    Ok(match lookup_party_in_txn(store, txn, party_key)? {
+        PartyLookup::Fresh(id) | PartyLookup::Repairable(id) => Some(id),
+        PartyLookup::Absent => None,
+    })
 }
 
 pub(super) fn party_index_digest(party: &str) -> [u8; 32] {
@@ -406,7 +391,7 @@ pub(super) fn party_index_digest(party: &str) -> [u8; 32] {
 pub(super) fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<usize> {
     let twin_groups: Vec<(String, Vec<EntityId>)> = {
         let rtxn = vault.store.env.read_txn()?;
-        active_comm_persons_by_party_key_in_txn(vault, &rtxn)?
+        active_comm_persons_by_party_key_in_txn(&vault.store, &rtxn)?
             .into_iter()
             .filter(|(_, ids)| ids.len() > 1)
             .collect()

@@ -664,6 +664,15 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
+                crate::counterparty_contact::retire_family_claims_for_batch_delete_in_txn(
+                    store,
+                    config,
+                    analyzer,
+                    wtxn,
+                    &id,
+                    mutation_recorded_at,
+                    text_index_trusted,
+                )?;
                 // A batch-deleted world takes its keys with it (fix 7).
                 crate::world_keys::destroy_world_keys_in_txn(
                     store,
