@@ -135,9 +135,10 @@ pub struct RestoreArgs {
 
     /// How the backup's vault key unlocks: `device` (this install's
     /// keystore, from the device wrap the backup carries), `password`,
-    /// `passkey`, `escrow` or `kit`. Every way but `device` needs `--trust`.
-    /// Where no vault is yet, the restore makes it and wraps its key to this
-    /// install.
+    /// `passkey`, `escrow` (a wrap the backup carries, or a registry's
+    /// capsule with `--capsule`) or `kit`. Every way but `device` needs
+    /// `--trust`. Where no vault is yet, the restore makes it and wraps its
+    /// key to this install.
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device, conflicts_with = "activate")]
     pub unlock: UnlockMethod,
 
@@ -148,6 +149,14 @@ pub struct RestoreArgs {
     /// With `--unlock escrow`: the escrow wrap's label.
     #[arg(long, value_name = "NAME")]
     pub label: Option<String>,
+
+    /// With `--unlock escrow`: a registry's escrow capsule report (JSON) for
+    /// the backup's vault and key, opened in place of a wrap the backup
+    /// carries. Its recipient's secret is read from stdin, `--secret-file`
+    /// or the recovery box; that recipient is released, and is retired
+    /// after.
+    #[arg(long, value_name = "REPORT", conflicts_with_all = ["activate", "label"])]
+    pub capsule: Option<PathBuf>,
 
     /// With `--unlock kit`: a world kit piece file, a recovery code as text
     /// or a piece export. Give two, or one and the kit passphrase, read from
@@ -188,7 +197,8 @@ pub enum UnlockMethod {
     Password,
     /// A passkey's PRF output at the input `--inspect` prints.
     Passkey,
-    /// An escrow recipient's seed, from a recovery box or as a secret.
+    /// An escrow recipient's seed, from a recovery box or as a secret; with
+    /// `--capsule`, a registry's capsule and its recipient's secret.
     Escrow,
     /// The world recovery kit: its root opens the `world-kit` escrow wrap.
     Kit,

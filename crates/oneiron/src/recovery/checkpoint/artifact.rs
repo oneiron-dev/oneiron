@@ -122,6 +122,9 @@ impl std::fmt::Debug for CheckpointKey {
 pub struct ArtifactUnlocks {
     pub kind: ArtifactKind,
     pub vault_id: [u8; 32],
+    /// The commitment naming the vault key it is sealed under: an escrow
+    /// capsule kept elsewhere for this key names the same one.
+    pub commitment: [u8; 32],
     /// The public facts of each vault-key wrap it carries.
     pub wraps: Vec<VaultKeyWrapInfo>,
 }
@@ -130,16 +133,20 @@ impl CheckpointKey {
     /// What can unlock the artifact at `path`, from its clear head.
     pub fn unlocks(path: &Path) -> Result<ArtifactUnlocks> {
         let prelude = Prelude::read(&mut File::open(path)?)?;
+        let carried = prelude.carried()?;
         Ok(ArtifactUnlocks {
             kind: prelude.kind,
             vault_id: prelude.vault_id,
-            wraps: prelude.carried()?.wrap_infos(),
+            commitment: *carried.commitment(),
+            wraps: carried.wrap_infos(),
         })
     }
 
     /// Unlocks the key of the artifact at `path` from one of the vault-key
-    /// wraps it carries. The carried wraps are bound to the artifact once its
-    /// manifest opens; a forged header unlocks a key that opens nothing.
+    /// wraps it carries, or from an escrow capsule kept elsewhere for its
+    /// vault and key ([`VaultKeyUnlock::EscrowCapsule`]). The carried wraps
+    /// are bound to the artifact once its manifest opens; a forged header
+    /// unlocks a key that opens nothing.
     /// It trusts no signer until told whom ([`CheckpointKey::trusting`]).
     pub fn unlock(path: &Path, unlock: &VaultKeyUnlock<'_>) -> Result<Self> {
         let prelude = Prelude::read(&mut File::open(path)?)?;

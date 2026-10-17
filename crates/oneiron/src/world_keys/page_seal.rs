@@ -257,9 +257,11 @@ pub fn reopen_delivered_page_seal(
 }
 
 /// Unlocks the pages of the sealed vault at `vault_path` from its mirror,
-/// with any of its vault key's wraps. The seal opens that vault, and only
-/// while it holds the wrap that opened ([`Vault::settle_page_seal`]); it
-/// never creates one, and a mirror whose vault's data is missing refuses.
+/// with any of its vault key's wraps, or an escrow capsule presented from
+/// outside them ([`VaultKeyUnlock::EscrowCapsule`]). The seal opens that
+/// vault, and only while it holds the wrap that opened, envelope for
+/// envelope ([`Vault::settle_page_seal`]); it never creates one, and a
+/// mirror whose vault's data is missing refuses.
 pub fn unlock_page_seal(vault_path: &Path, unlock: &VaultKeyUnlock<'_>) -> Result<VaultPageSeal> {
     let mirror = read_mirror(vault_path)?;
     if !has_data(vault_path) {
