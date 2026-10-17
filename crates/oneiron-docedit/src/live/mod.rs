@@ -16,18 +16,19 @@ pub mod deck_export;
 pub mod pptx;
 
 pub use deck_export::{
-    ExportKey, ExportOutcome, ExportProfile, Gate, OracleReceipt, RoundtripReport, StepOutcome,
-    attach_evidence, project, relationship_changes, roundtrip_check,
+    ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport,
+    StepOutcome, attach_evidence, project, relationship_changes, roundtrip_check,
 };
 pub use pptx::{
-    ApproveScope, AttributionIndex, ChangeKind, Conflict, DeckDiff, DeckFork, DeckNode, DeckOp,
-    GeometryProps, Landing, LandingReceipt, LiveDeck, NodeBinding, NodeId, NodeKind, Paragraph,
-    PreflightReport, RelationshipChange, RenderPair, RenderSide, Run, SlideRender, StampedOp,
-    TextBody, diff, land, preflight,
+    ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, Conflict, ConnectorEnd,
+    DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps, Landing, LandingReceipt, LiveDeck,
+    NodeBinding, NodeId, NodeKind, NodePayload, Paragraph, PreflightReport, RelationshipChange,
+    RenderPair, RenderSide, Run, SlideRender, StampedOp, TextBody, diff, land, preflight,
 };
 
 use crate::deck::DeckError;
 use crate::edit::EditRefusal;
+use crate::native_patch::NativeRefusal;
 use crate::retained_opc;
 
 /// Why a live-deck operation, landing or export did not happen.
@@ -39,6 +40,9 @@ pub enum LiveError {
     Package(#[from] retained_opc::Error),
     #[error(transparent)]
     Edit(#[from] EditRefusal),
+    /// A live-born table or chart the native writer refused.
+    #[error(transparent)]
+    Native(#[from] NativeRefusal),
     #[error("invalid live deck operation: {0}")]
     Invalid(&'static str),
     #[error("unknown node")]

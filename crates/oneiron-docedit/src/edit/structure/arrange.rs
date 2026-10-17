@@ -1,9 +1,10 @@
 //! The live-deck projector's shape verbs: a sibling reorder (z-order), an
 //! empty group framed over slide space, and a cross-slide copy that carries
 //! its relationships and draws its native ids on the destination. With the
-//! slide verbs in `slides/lifecycle.rs`, each is checked here from the
-//! exported candidate: only its own parts change, every other slide and
-//! shape reads back as it was, and the written result reads back as asked.
+//! slide verbs in `slides/lifecycle.rs` and the picture and connector in
+//! `born.rs`, each is checked here from the exported candidate: only its own
+//! parts change, every other slide and shape reads back as it was, and the
+//! written result reads back as asked.
 
 use super::super::media::related;
 use super::super::xml::{self, A, P, R};
@@ -11,7 +12,7 @@ use super::{
     A16, NewGroup, Plan, SHAPE_CREATION_EXT, StructureEdit, check, end_of, highest_id, mint_guid,
     position, shape_tree, timing,
 };
-use crate::deck::{DeckView, ShapeView, SlideView};
+use crate::deck::{DeckView, ShapeKind, ShapeView, SlideView};
 use crate::edit::{EditRefusal, Effect, Xfrm};
 use crate::retained_opc::{Package, rels_name};
 use std::collections::{BTreeMap, BTreeSet};
@@ -426,6 +427,67 @@ pub(super) fn verify(
                 }
             }
         }
+        StructureEdit::AddPicture { slide, picture } => {
+            let (old, new) = slide_pair(before, &after, slide)?;
+            let id = added(effects, old, new, picture.name, ShapeKind::Picture)?;
+            let (_, tree) = xml::read(&candidate, slide)?;
+            let at = check::find_shape(&tree, id).ok_or(fault("the picture is missing"))?;
+            let embed = xml::path(&tree, at, &[(P, "blipFill"), (A, "blip")])
+                .and_then(|blip| tree.nodes[blip].attr_ns(R, "embed"))
+                .ok_or(fault("the picture names no media"))?;
+            let link = candidate
+                .relationships(slide)?
+                .into_iter()
+                .find(|rel| rel.id == embed && !rel.external)
+                .ok_or(fault("the picture's relationship is missing"))?;
+            if input
+                .relationships(slide)?
+                .iter()
+                .any(|rel| rel.id == link.id)
+                || input.part(&link.target)?.is_some()
+                || candidate.part(&link.target)?.as_deref() != Some(picture.picture.bytes)
+            {
+                return Err(fault("the picture's media is not the asset in a new part"));
+            }
+            allowed.extend([
+                slide.to_owned(),
+                rels_name(slide),
+                link.target,
+                TYPES.to_owned(),
+            ]);
+        }
+        StructureEdit::AddConnector { slide, connector } => {
+            allowed.push(slide.to_owned());
+            let (old, new) = slide_pair(before, &after, slide)?;
+            let id = added(effects, old, new, connector.name, ShapeKind::Connector)?;
+            let (_, tree) = xml::read(&candidate, slide)?;
+            let at = check::find_shape(&tree, id).ok_or(fault("the connector is missing"))?;
+            let prst = xml::path(&tree, at, &[(P, "spPr"), (A, "prstGeom")])
+                .and_then(|geometry| tree.nodes[geometry].attr("prst"));
+            let end = |local: &str| {
+                xml::path(
+                    &tree,
+                    at,
+                    &[(P, "nvCxnSpPr"), (P, "cNvCxnSpPr"), (A, local)],
+                )
+                .map(|node| {
+                    let read = |name: &str| {
+                        tree.nodes[node]
+                            .attr(name)
+                            .and_then(|value| value.parse::<u32>().ok())
+                    };
+                    (read("id"), read("idx"))
+                })
+            };
+            let asked =
+                |end: Option<(u32, u32)>| end.map(|(shape, site)| (Some(shape), Some(site)));
+            if prst != Some(connector.preset.name())
+                || end("stCxn") != asked(connector.start)
+                || end("endCxn") != asked(connector.end)
+            {
+                return Err(fault("the connector is not as asked"));
+            }
+        }
         _ => return Err(EditRefusal::Invalid("the plan does not match the verb")),
     }
     if let Some(part) = changed.iter().find(|part| !allowed.contains(part)) {
@@ -467,6 +529,35 @@ fn slide_pair<'v>(
     find(before)
         .zip(find(after))
         .ok_or(EditRefusal::ReadBack("the slide is gone"))
+}
+
+/// The one shape a creation verb appended to the shape tree, read back with
+/// its effect's id and creation id and as asked, every kept shape as it was.
+fn added(
+    effects: &[Effect],
+    old: &SlideView,
+    new: &SlideView,
+    name: &str,
+    kind: ShapeKind,
+) -> Result<u32, EditRefusal> {
+    let Some(Effect::ShapeAdded { id, creation_id }) = effects.first() else {
+        return Err(EditRefusal::ReadBack("nothing was added"));
+    };
+    let shape = new
+        .shapes
+        .iter()
+        .find(|s| s.id == Some(*id))
+        .ok_or(EditRefusal::ReadBack("the new shape is missing"))?;
+    if shape.kind != kind
+        || shape.creation_id.as_ref() != Some(creation_id)
+        || shape.name.as_deref() != Some(name)
+        || !shape.group_path.is_empty()
+        || new.shapes.len() != old.shapes.len() + 1
+    {
+        return Err(EditRefusal::ReadBack("the new shape is not as asked"));
+    }
+    kept(old, new)?;
+    Ok(*id)
 }
 
 /// Every shape `old` held reads back in `new` with its identity and content.
