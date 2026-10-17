@@ -591,7 +591,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.memory.diary.query": { description: "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "cancel": { description: "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "steer": { description: "The TASK's spawner nudges its live run; a resend with the same key answers the first receipt.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "describe": { description: "Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named.", scope: "Read", proposes: false, hostDoor: false, section: true },
+  "describe": { description: "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named.", scope: "Read", proposes: false, hostDoor: false, section: true },
   "tasks.create": { description: "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal.", scope: "Write", proposes: true, hostDoor: false, section: true },
   "tasks.wave": { description: "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.fanout.launch": { description: "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -679,7 +679,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.settings.learning": { description: "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.settings.learning.put": { description: "The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.settings.learning.clear": { description: "The owner clears one learned-setting row of a key, mode and scope.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.secrets.lift_history": { description: "The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.secrets.lift_history": { description: "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.widen_proposals": { description: "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.widen_proposals.approve": { description: "The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.widen_proposals.decline": { description: "The owner, as the board above, declines one context-widen proposal for good; the decline stays on record.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -1213,7 +1213,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         }),
       },
       secrets: {
-        /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+        /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
         lift_history: (input: Facade.SecretLiftRequest, options?: O): FacadeReturns<"vault.secrets.lift_history">[K] => invoke("vault.secrets.lift_history", input, options, newInvocation()),
       },
       /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
@@ -1527,7 +1527,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
     cancel: (input: Facade.TaskRequest, options?: O): FacadeReturns<"cancel">[K] => invoke("cancel", input, options, newInvocation()),
     /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
     steer: (input: Facade.SteerRequest, options?: O): FacadeReturns<"steer">[K] => invoke("steer", input, options, newInvocation()),
-    /** Describes one TASK as its card, a board card by key, or the whole TASKS section when nothing is named. */
+    /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), or the whole TASKS section when nothing is named. */
     describe: (input: Facade.DescribeRequest, options?: O): FacadeReturns<"describe">[K] => invoke("describe", input, options, newInvocation()),
     tasks: {
       /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal. */

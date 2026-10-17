@@ -3,6 +3,7 @@
 //! Plan writes nothing; apply re-reads the same frontier and refuses a plan
 //! whose frontier has moved, so what the owner approved is what they saw.
 use super::live::LiveShape;
+use super::reach::{ShapePlanReach, reach_projection};
 use super::seed::{hex, seed_digest};
 use super::{ShapeCeiling, ShapeMemberRole, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
 use crate::error::Result;
@@ -76,14 +77,19 @@ pub struct ShapePlan {
     pub seed_id: Option<String>,
     /// The seed this plan renders; apply carries it back.
     pub seed: ShapeSeed,
-    /// The pinned frontier, hex: the seed, the policy frontier and every
-    /// live setup row this plan read.
+    /// The pinned frontier, hex: the seed, the policy frontier, every live
+    /// setup row this plan read and every row its reach line joined.
     pub frontier: String,
     pub items: Vec<ShapePlanItem>,
     /// Live structure the seed does not name. Apply never sees it; it is
     /// drift, to adopt into the seed or leave be. Nothing reconciles it.
     pub undeclared: Vec<ShapeRow>,
     pub summary: ShapePlanSummary,
+    /// The reach line (ARCH-0070 `shape:reach-line`): what these actors can
+    /// send before this plan and after it. It informs the owner's word and
+    /// decides nothing.
+    #[serde(default)]
+    pub reach: ShapePlanReach,
 }
 
 /// How a change to `target` lands. One policy, so a ruling moves one line.
@@ -202,6 +208,7 @@ fn frontier(seed: &ShapeSeed, live: &LiveShape) -> Result<String> {
         hasher.update(&bytes);
         hasher.update(entity.map(|id| id.to_hex()).unwrap_or_default().as_bytes());
     }
+    live.reach.hash_into(&mut hasher);
     Ok(hex(hasher.finalize().as_bytes()))
 }
 
@@ -327,6 +334,15 @@ impl Vault {
             .filter(|(row, _)| !named.contains(&row.target()))
             .map(|(row, _)| row.clone())
             .collect();
+        // The whole set, before and with every item in place, each joined
+        // from scratch; only the finished sets are compared.
+        let mut unresolved = Vec::new();
+        let after = live.reach.with_plan(&items, &mut unresolved);
+        let reach = ShapePlanReach::of(
+            reach_projection(&live.reach).visible(visible)?,
+            reach_projection(&after).visible(visible)?,
+            unresolved,
+        );
         Ok(ShapePlan {
             seed_id,
             seed,
@@ -334,6 +350,7 @@ impl Vault {
             items,
             undeclared,
             summary,
+            reach,
         })
     }
 }

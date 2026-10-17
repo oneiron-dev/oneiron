@@ -177,8 +177,8 @@ pub use live::{
     skill_goal_axis_plan,
 };
 pub use measurement::{
-    AuditPair, BlindPreference, HonestyReplay, HonestyReplayObservation, JudgeMeasurements,
-    PreferredResponse, WorldAxisScore,
+    AnchorLabelScore, AuditPair, BlindPreference, HonestyReplay, HonestyReplayObservation,
+    JudgeMeasurements, PreferredResponse, WorldAxisScore,
 };
 pub use preflight::{SkillEditPreflight, preflight_skill_edit_offline_floors};
 pub use project_goal::{
@@ -241,7 +241,7 @@ use goal_axis::{
     is_tradeoff, score_goal_axes, validate_goal_vector,
 };
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
-use measurement::{measure, validate_measurements, world_labels_digest};
+use measurement::{anchor_score, measure, validate_measurements, world_labels_digest};
 
 // ---------------------------------------------------------------------------
 // Dials + pinned strings
