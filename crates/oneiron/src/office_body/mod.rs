@@ -57,7 +57,7 @@ pub use verbs::{
     OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
     XlsxBodyView, XlsxSheetView,
 };
-pub use xlsx::{BodyCell, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
+pub use xlsx::{BodyCell, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
 
 use crate::Vault;
 use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance, CalcEngineStamp};

@@ -29,6 +29,7 @@ pub mod retained_opc;
 pub mod xlfn;
 pub mod xlsx_body;
 mod xlsx_shift;
+mod xlsx_styles;
 
 pub use stemma::api::{Document, validate};
 pub use stemma::docx::ArchiveLimits;

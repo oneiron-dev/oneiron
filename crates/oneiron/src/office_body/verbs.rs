@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{
-    BodyBlockKind, BodyCell, BodyName, DeckBodyView, DocxBody, DocxBodyOp, OfficeBodyDiff,
-    OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork,
-    OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, OfficeRecalcZone, ProposalSettleRequest,
-    ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxStyle,
+    BodyBlockKind, BodyCell, BodyFormat, BodyName, DeckBodyView, DocxBody, DocxBodyOp,
+    OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
+    OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, OfficeBodyProposal, OfficeRecalcZone,
+    ProposalSettleRequest, ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp,
+    XlsxPreview, XlsxStyle,
 };
 use crate::batch::secret_scan::LiftedKeys;
 use crate::edge::EdgeActorClass;
@@ -277,6 +278,8 @@ pub struct XlsxBodyView {
     pub sheets: Vec<XlsxSheetView>,
     pub names: Vec<BodyName>,
     pub styles: Vec<XlsxStyle>,
+    /// The cell formats the body composed.
+    pub formats: Vec<BodyFormat>,
 }
 
 /// `vault.artifacts.body.read`: the typed body, by format.
@@ -336,6 +339,11 @@ impl From<XlsxBody> for XlsxBodyView {
                 .collect(),
             names: body.names.into_values().collect(),
             styles: body.styles,
+            formats: body
+                .formats
+                .into_iter()
+                .map(|(id, format)| BodyFormat { id, format })
+                .collect(),
         }
     }
 }

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 271 facade rows, 1036 declarations.
+Census: 271 facade rows, 1044 declarations.
 Inputs: 226 of 271 fully typed, 43 typed down to an opaque serde_json::Value leaf, 2 with a shape the generator could not read
 Results: 220 of 271 fully typed, 40 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 2.
@@ -4745,6 +4745,7 @@ class BodyCell(TypedDict):
     value: XlsxValue
     formula: NotRequired[str | None]
     style: NotRequired[int | None]
+    format: NotRequired[str | None]
     locked: NotRequired[XlsxLock | None]
 class XlsxArea(TypedDict):
     first: tuple[int, int]
@@ -4763,11 +4764,64 @@ class BodyName(TypedDict):
 class XlsxStyle(TypedDict):
     num_fmt: int
     format: NotRequired[str | None]
+class XlsxColorRgb(TypedDict):
+    kind: Literal["rgb"]
+    argb: str
+class XlsxColorTheme(TypedDict):
+    kind: Literal["theme"]
+    theme: int
+    tint: NotRequired[float | None]
+class XlsxColorIndexed(TypedDict):
+    kind: Literal["indexed"]
+    index: int
+class XlsxColorAuto(TypedDict):
+    kind: Literal["auto"]
+XlsxColor = XlsxColorRgb | XlsxColorTheme | XlsxColorIndexed | XlsxColorAuto
+class XlsxFont(TypedDict):
+    name: NotRequired[str | None]
+    size: NotRequired[float | None]
+    bold: NotRequired[bool | None]
+    italic: NotRequired[bool | None]
+    underline: NotRequired[str | None]
+    strike: NotRequired[bool | None]
+    color: NotRequired[XlsxColor | None]
+class XlsxFill(TypedDict):
+    pattern: str
+    fg: NotRequired[XlsxColor | None]
+    bg: NotRequired[XlsxColor | None]
+class XlsxEdge(TypedDict):
+    style: str
+    color: NotRequired[XlsxColor | None]
+class XlsxBorder(TypedDict):
+    left: NotRequired[XlsxEdge | None]
+    right: NotRequired[XlsxEdge | None]
+    top: NotRequired[XlsxEdge | None]
+    bottom: NotRequired[XlsxEdge | None]
+    diagonal: NotRequired[XlsxEdge | None]
+    diagonal_up: NotRequired[bool | None]
+    diagonal_down: NotRequired[bool | None]
+class XlsxNumberFormatBuiltin(TypedDict):
+    kind: Literal["builtin"]
+    id: int
+class XlsxNumberFormatCode(TypedDict):
+    kind: Literal["code"]
+    code: str
+XlsxNumberFormat = XlsxNumberFormatBuiltin | XlsxNumberFormatCode
+class XlsxFormat(TypedDict):
+    base: int
+    font: NotRequired[XlsxFont | None]
+    fill: NotRequired[XlsxFill | None]
+    border: NotRequired[XlsxBorder | None]
+    number_format: NotRequired[XlsxNumberFormat | None]
+class BodyFormat(TypedDict):
+    id: str
+    format: XlsxFormat
 class XlsxBodyView(TypedDict):
     date1904: bool
     sheets: list[XlsxSheetView]
     names: list[BodyName]
     styles: list[XlsxStyle]
+    formats: list[BodyFormat]
 NodeId = int
 NodeKind = Literal["root", "slide", "group", "shape", "picture", "graphic_frame", "connector"]
 class GeometryProps(TypedDict):
@@ -4918,6 +4972,15 @@ class XlsxBodyOpSetStyle(TypedDict):
     sheet: str
     cell: str
     style: NotRequired[int | None]
+class XlsxBodyOpDefineFormat(TypedDict):
+    op: Literal["define_format"]
+    id: str
+    format: XlsxFormat
+class XlsxBodyOpSetFormat(TypedDict):
+    op: Literal["set_format"]
+    sheet: str
+    cell: str
+    format: str
 class XlsxBodyOpClear(TypedDict):
     op: Literal["clear"]
     sheet: str
@@ -4967,7 +5030,7 @@ class XlsxBodyOpDeleteColumns(TypedDict):
     sheet: str
     at: int
     count: int
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
