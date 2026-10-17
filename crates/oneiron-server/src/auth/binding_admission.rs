@@ -1,5 +1,6 @@
 //! Consume holder proofs at the network door, once per request or upgrade,
-//! and stop serving a shared vault its Owners deleted (OF-163).
+//! and stop serving a shared vault its Owners deleted (OF-163). A request off
+//! a mesh stream must prove, over HTTP, the machine its handshake proved.
 use super::{BindingProof, CoreAuth, bearer_token};
 use crate::server::SyncServer;
 use axum::extract::{Request, State};
@@ -106,6 +107,21 @@ pub(crate) async fn admit_http_binding(
                 return error.into_response();
             }
         }
+    }
+    // A mesh stream's handshake proved its MACHINE: the request must prove
+    // that same machine over HTTP too. Unknown, missing or another machine's
+    // proof refuses, never falling back to Unknown (FIX 997).
+    if let Some(mesh) = request
+        .extensions()
+        .get::<crate::handler::mesh::MeshProvedMachine>()
+        .copied()
+        && !matches!(machine, PeerMachine::Proven { machine: proved, .. } if proved == mesh.0)
+    {
+        let error = crate::error::ApiError::unauthorized();
+        if request.uri().path().starts_with("/v1/") {
+            return crate::error::EnvelopedApiError::from(error).into_response();
+        }
+        return error.into_response();
     }
     // Every admitted request carries the machine it proved, or Unknown.
     let mut request = request;
