@@ -9,9 +9,9 @@ use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, WindowIndexEntry, authority_append_for,
-    authority_tail_for, authority_wanted, home_search_candidates, index_selection_revision,
-    promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet, selected_item_blob_with,
-    shelve_sealed_window, window_index_page, window_index_projection_with,
+    authority_range_for, authority_tail_for, authority_wanted, home_search_candidates,
+    index_selection_revision, promotion_snapshot_with, sealed_shelf_after, sealed_shelf_packet,
+    selected_item_blob_with, shelve_sealed_window, window_index_page, window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
@@ -126,6 +126,25 @@ struct AuthorityTailRequest {
     limit: usize,
 }
 
+/// The exact authority entries a machine wants, as concatenated 32-byte
+/// hashes in base64, whether their ancestors come too, down to the entries it
+/// holds or staged (`held`, packed the same way), and how many it takes from
+/// `cursor` in one page (OF-469).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityRangeRequest {
+    #[serde(default)]
+    vault_id: Option<String>,
+    hashes: String,
+    #[serde(default)]
+    parent_closure: bool,
+    #[serde(default)]
+    held: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    limit: usize,
+}
+
 /// The signed authority entries a machine appends, each canonical signed
 /// body in base64, parents first (OF-469).
 #[derive(Deserialize)]
@@ -159,6 +178,7 @@ pub(super) fn run(
             "residence.sealed.get" => sealed_get(server, peer, request.params),
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
+            "residence.authority.range" => authority_range(server, peer, request.params),
             _ => Err(AppError::bad_request(
                 "unknown residence RPC",
                 Some("method"),
@@ -798,6 +818,67 @@ fn authority_tail(
         json!({
             "entries": entries,
             "wanted": base64::engine::general_purpose::STANDARD.encode(wanted),
+        }),
+        Some(Vec::new()),
+    ))
+}
+
+/// Concatenated 32-byte hashes in base64, as the authority RPCs pack them.
+fn packed_hashes(
+    packed: &str,
+) -> Result<std::collections::BTreeSet<oneiron::authority::AuthorityEntryHash>, AppError> {
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(packed)
+        .map_err(|_| AppError::invalid_params())?;
+    if raw.len() % 32 != 0 {
+        return Err(AppError::invalid_params());
+    }
+    raw.chunks_exact(32)
+        .map(|hash| <[u8; 32]>::try_from(hash).map_err(|_| AppError::invalid_params()))
+        .collect()
+}
+
+/// One 32-byte hash in base64.
+fn one_hash(encoded: &str) -> Result<[u8; 32], AppError> {
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| AppError::invalid_params())?;
+    <[u8; 32]>::try_from(raw.as_slice()).map_err(|_| AppError::invalid_params())
+}
+
+/// The exact authority entries the proved machine names and, with parent
+/// closure, their ancestors down to what it holds, parents first, from this
+/// home's hot log (OF-469). Only a machine of the owner's is served; any
+/// other looks missing. Nothing in the reply is trusted there: the machine
+/// verifies every entry itself and reads `unheld` as this home's claim only.
+fn authority_range(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityRangeRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let fetch = oneiron::authority::AuthorityHistoryFetch {
+        vault_id: input.vault_id.as_deref().map(one_hash).transpose()?,
+        hashes: packed_hashes(&input.hashes)?,
+        parent_closure: input.parent_closure,
+        held: packed_hashes(&input.held)?,
+        cursor: input.cursor.as_deref().map(one_hash).transpose()?,
+        limit: input
+            .limit
+            .clamp(1, oneiron::authority::AUTHORITY_HISTORY_PAGE_MAX),
+    };
+    let page = authority_range_for(&server.vault, peer, &fetch)
+        .map_err(|_| AppError::not_found("authority history", None))?;
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let unheld: Vec<u8> = page.unheld.iter().flatten().copied().collect();
+    Ok((
+        json!({
+            "vault_id": page.vault_id.map(|id| encode(&id)),
+            "checkpoint": page.checkpoint.map(|head| encode(&head)),
+            "rows": page.rows.iter().map(|row| encode(row)).collect::<Vec<_>>(),
+            "unheld": encode(&unheld),
+            "next": page.next.map(|next| encode(&next)),
         }),
         Some(Vec::new()),
     ))
