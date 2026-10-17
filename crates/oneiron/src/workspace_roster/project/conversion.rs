@@ -95,10 +95,13 @@ fn thread_project_in(
 }
 
 impl Vault {
-    /// Bind an existing typed TASK to its room thread before conversion. The
-    /// binding is stored on the room turn, not inferred from task prose.
+    /// Bind an existing typed TASK to its room thread before conversion, as
+    /// `actor`'s act. The binding is stored on the room turn, not inferred
+    /// from task prose. A private thread (FIX 2951) is bound only from its
+    /// audience (FIX 3125); to anyone else it is an unknown thread.
     pub fn bind_room_thread_task(
         &self,
+        actor: EntityId,
         room: EntityId,
         thread: EntityId,
         task: EntityId,
@@ -110,6 +113,7 @@ impl Vault {
                     .project_conversion_policy()
                     .unwrap_or_default();
             let mut row = room_thread_in(self, txn, room, thread)?;
+            rooms::require_thread_audience_in(self, txn, room, thread, actor)?;
             let turns = rooms::thread_turns_in(self, txn, room, thread)?;
             let source = rooms::room_in(self, txn, room)?;
             let members = source.member_ids.into_iter().collect();
@@ -278,11 +282,14 @@ impl Vault {
         self.backfill_tasks_by_owner()?;
         let converted = self.with_write_txn_grouped(|txn| {
             // The bare path's owner is revalidated here, before anything is
-            // read for it; a card's below, with its intent.
+            // read for it; a card's below, with its intent. Either is the
+            // actor converting the thread.
+            let mut acting = None;
             if let Some((owner, _)) = bare {
-                owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+                acting = Some(owner.revalidate_as_vault_owner_in_txn(self, txn)?);
             }
             if let Some(birth) = &card {
+                acting = Some(birth.owner.revalidate_in_txn(self, txn)?);
                 let principal_ref = birth.owner.principal_ref_in_txn(self, txn)?;
                 let intent = birth.intent;
                 if intent.principal_ref != principal_ref
@@ -306,6 +313,15 @@ impl Vault {
                     .project_conversion_policy()
                     .ok_or_else(invalid)?;
             let mut row = room_thread_in(self, txn, room, thread)?;
+            // FIX 3125: a private thread (FIX 2951) converts only by an actor
+            // in its audience; to anyone else it is an unknown thread.
+            rooms::require_thread_audience_in(
+                self,
+                txn,
+                room,
+                thread,
+                acting.ok_or_else(invalid)?,
+            )?;
             let turns = rooms::thread_turns_in(self, txn, room, thread)?;
             if row.converted_project.is_some()
                 || self.get_entity_type_in_txn(txn, &project_id)?.is_some()
