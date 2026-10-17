@@ -140,6 +140,28 @@ export class Oneiron {
     return this.#client.lastReceiptRef() ?? null
   }
 
+  /**
+   * Resends the call a `PENDING_ASK` refusal answered, under the invocation
+   * its `hook` names (ARCH-0080 §3): pass the caught `OneironError`, the
+   * verb's SDK name (`vault.claims.upsert`) and the same input. While the ask
+   * is open it throws the same `PENDING_ASK`; once the ask is answered
+   * proceed, the saved call runs once and this returns its result. Any other
+   * refusal is refused before a call is made. Run one retry of a pending call
+   * at a time.
+   *
+   * The reply is the verb's shared wire JSON, not the typed projection the
+   * verb's own method returns.
+   */
+  retry(pending: OneironError, verb: string, input: unknown): unknown {
+    const refusal = {
+      code: pending.code,
+      message: pending.message,
+      suggestions: [...pending.suggestions],
+      ...(pending.hook ? {hook: pending.hook} : {}),
+    }
+    return this.#call(() => this.#client.retry(refusal, verb, input))
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
   report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
@@ -515,6 +537,18 @@ export class Oneiron {
         export: (request: Facade.OfficeBodyExportVerbRequest): Facade.OfficeBodyExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyExport(keyedJson(request))) as Facade.OfficeBodyExportView; return result }),
         /** The workbook an XLSX export would land now, recalculated. */
         preview: (request: Facade.OfficeBodyArtifactRequest): Facade.XlsxPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyPreview(keyedJson(request))) as Facade.XlsxPreview; return result }),
+        deck: {
+          /** A deck fork's merge preflight against the live head. */
+          review: (request: Facade.OfficeBodyForkRequest): Facade.DeckReviewView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckReview(keyedJson(request))) as Facade.DeckReviewView; return result }),
+          /** A person lands a reviewed deck fork. */
+          merge: (request: Facade.DeckForkMergeRequest): Facade.LandingReceipt => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckMerge(keyedJson(request))) as Facade.LandingReceipt; return result }),
+          /** Projects a deck, landing it as the next version when its export gate is open. */
+          export: (request: Facade.DeckExportRequest): Facade.DeckExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckExport(keyedJson(request))) as Facade.DeckExportView; return result }),
+          /** The deck export gate for a profile. */
+          gate: (request: Facade.DeckGateRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckGate(keyedJson(request))) as Facade.DeckGateView; return result }),
+          /** Records the deck oracle's receipt for its export profile. */
+          oracle: (request: Facade.DeckOracleRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckOracle(keyedJson(request))) as Facade.DeckGateView; return result }),
+        },
       },
       /** Appends one version of bytes to a blob artifact's append-only chain. */
       append: (input: Facade.AppendBlobVersionRequest): Facade.BlobVersionView => this.#call(() => this.#client.vaultArtifactsAppend(input) as Facade.BlobVersionView),
@@ -586,6 +620,10 @@ export class Oneiron {
       dismiss_card: (input: Facade.ProjectCardRequest): Facade.ProjectCardDismissal => this.#call(() => this.#client.vaultProjectsDismissCard(input) as Facade.ProjectCardDismissal),
       /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */
       confirm: (input: Facade.ProjectCardConfirmRequest): Facade.ProjectMintReceipt => this.#call(() => this.#client.vaultProjectsConfirm(input) as Facade.ProjectMintReceipt),
+      roster: {
+        /** Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent. */
+        write: (input: Facade.ProjectRosterWriteRequest): Facade.ProjectRosterWriteOutcome => this.#call(() => this.#client.vaultProjectsRosterWrite(input) as Facade.ProjectRosterWriteOutcome),
+      },
       goal: {
         /** What a project's goal-intake interview starts from, for a member of its home room. */
         intake: (input: Facade.ProjectRefRequest): Facade.ProjectGoalInterviewContext => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as Facade.ProjectGoalInterviewContext),
@@ -642,6 +680,7 @@ export class Oneiron {
       create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
       edit: (input: Facade.QuestionEditRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsEdit(input) as Facade.QuestionRecord),
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
+      backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
     },
@@ -790,6 +829,7 @@ export class Oneiron {
 }
 
 export { OneironError }
+export type { HookStop } from "./error.js"
 export type * from "./types.js"
 export type * as Facade from "./facade-types.js"
 

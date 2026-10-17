@@ -9,7 +9,8 @@
 // The helper's calls: every default and bound a caller would notice is one
 // named value here, so a ruling changes one line. They are top-level in the
 // bundle's closure, never globals. A diff spends at most
-// HOST_CALLS_PER_STEP (reader_forks.js, bundled first) calls a step.
+// HOST_CALLS_PER_STEP (reader_forks.js, bundled first) calls a step, and
+// calls built-ins only through that file's primordials.
 
 // Lockstep window sizes: lines by line, bytes by block.
 const DIFF_WINDOW_LINES = 4096;
@@ -28,15 +29,6 @@ const DIFF_ALGORITHM_BYTES = "blocks/v1";
 function makeDiff(api) {
   "use strict";
   const {slice, can, store} = api;
-  const call = Function.prototype.call;
-  const push = call.bind(Array.prototype.push);
-  const reverse = call.bind(Array.prototype.reverse);
-  const arraySlice = call.bind(Array.prototype.slice);
-  const indexOf = call.bind(String.prototype.indexOf);
-  const strSlice = call.bind(String.prototype.slice);
-  const endsWith = call.bind(String.prototype.endsWith);
-  const freeze = Object.freeze;
-  const min = Math.min, max = Math.max;
 
   const refOf = r => {
     const ref = typeof r === "string" ? r : (r?.ref ?? r?.handle ?? r?.name);
@@ -59,11 +51,13 @@ function makeDiff(api) {
   // script walked back from the end: "=", "-" or "+" per step. `null` past
   // DIFF_MAX_EDITS.
   const myers = (x, y) => {
-    const n = x.length, m = y.length, offset = DIFF_MAX_EDITS + 1;
-    const v = new Int32Array(2 * offset + 2);
+    const n = x.length, m = y.length, offset = DIFF_MAX_EDITS + 1, size = 2 * offset + 2;
+    const v = new Int32(size);
     const trace = [];
     for (let d = 0; d <= min(n + m, DIFF_MAX_EDITS); ++d) {
-      push(trace, v.slice());
+      const frontier = new Int32(size);
+      for (let i = 0; i < size; ++i) frontier[i] = v[i];
+      push(trace, frontier);
       for (let k = -d; k <= d; k += 2) {
         let i = k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])
           ? v[offset + k + 1] : v[offset + k - 1] + 1;
@@ -92,7 +86,8 @@ function makeDiff(api) {
   };
   const sideText = (sign, side) => {
     let text = "";
-    for (const line of side) text += sign + line + (endsWith(line, "\n") ? "" : "\n\\ No newline at end of file\n");
+    for (let i = 0; i < side.length; ++i)
+      text += sign + side[i] + (endsWith(side[i], "\n") ? "" : "\n\\ No newline at end of file\n");
     return text;
   };
   const hunk = (aStart, del, bStart, add, edge, coarse) => {
@@ -114,7 +109,7 @@ function makeDiff(api) {
     let tail = 0;
     while (tail < x.length - head && tail < y.length - head
       && x[x.length - 1 - tail] === y[y.length - 1 - tail]) ++tail;
-    const xs = arraySlice(x, head, x.length - tail), ys = arraySlice(y, head, y.length - tail);
+    const xs = copyOf(x, head, x.length - tail), ys = copyOf(y, head, y.length - tail);
     if (!xs.length && !ys.length) return [];
     const ops = myers(xs, ys);
     if (!ops) return [hunk(aBase + head, xs, bBase + head, ys, edge, true)];
@@ -124,7 +119,8 @@ function makeDiff(api) {
       if (del.length || add.length) push(out, hunk(aBase + head + aAt, del, bBase + head + bAt, add, edge, false));
       del = []; add = [];
     };
-    for (const op of ops) {
+    for (let i = 0; i < ops.length; ++i) {
+      const op = ops[i];
       if (op === "=") { flush(); ++ai; ++bi; continue; }
       if (!del.length && !add.length) { aAt = ai; bAt = bi; }
       if (op === "-") push(del, xs[ai++]);
@@ -139,8 +135,10 @@ function makeDiff(api) {
     if (by !== "lines" && by !== "bytes") throw new TypeError('diff takes {by: "lines" | "bytes"}');
     const left = refOf(a), right = refOf(b);
     let calls = 0;
-    const host = async (f, ...args) => { ++calls; return await f(...args); };
-    for (const ref of [left, right]) {
+    const host = async (f, ...args) => { ++calls; return await apply(f, undefined, args); };
+    const refs = [left, right];
+    for (let i = 0; i < refs.length; ++i) {
+      const ref = refs[i];
       const verdict = await host(can, {read: ref});
       if (!verdict?.can) return freeze({refused: verdict?.reason ?? "denied", ref, detail: verdict});
     }
@@ -168,7 +166,8 @@ function makeDiff(api) {
       if (by === "lines") {
         const xl = lines(x.text), yl = lines(y.text);
         done = xl.length < window && yl.length < window;
-        for (const h of hunks(xl, yl, start, start, !done)) { push(found, h); bytes += h.text.length; }
+        const made = hunks(xl, yl, start, start, !done);
+        for (let i = 0; i < made.length; ++i) { push(found, made[i]); bytes += made[i].text.length; }
       } else {
         done = x.reached - start < window && y.reached - start < window;
         if (x.text !== y.text || x.base64 !== y.base64) {
@@ -187,7 +186,7 @@ function makeDiff(api) {
     if (!done) reply.next = {window: w};
     if (bytes > DIFF_STORE_PAST_BYTES) {
       let text = "";
-      for (const h of found) text += h.text;
+      for (let i = 0; i < found.length; ++i) text += found[i].text;
       reply.stored = await host(store, text, options.name, {sources: [left, right]});
     } else {
       reply.hunks = found;

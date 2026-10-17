@@ -158,6 +158,7 @@ pub enum AgentVerb {
     VaultProjectsProposals,
     VaultProjectsDismissCard,
     VaultProjectsConfirm,
+    VaultProjectsRosterWrite,
     VaultProjectsGoalIntake,
     VaultRoomsJoin,
     VaultRoomsConsent,
@@ -196,6 +197,7 @@ pub enum AgentVerb {
     VaultQuestionsCreate,
     VaultQuestionsEdit,
     VaultQuestionsPause,
+    VaultQuestionsBackfill,
     VaultQuestionsRead,
     VaultQuestionsAnswers,
     VaultDecisionsAsksAnswer,
@@ -221,6 +223,7 @@ pub enum AgentVerb {
     SelfBrowserBatch,
     SelfBrowserLibraryFind,
     SelfBrowserLibraryPropose,
+    SelfBrowserLibraryRetire,
     SelfBrowserLibraryRun,
     SelfDesktopOpen,
     SelfDesktopObserve,
@@ -276,6 +279,11 @@ pub enum AgentVerb {
     VaultArtifactsBodyForkDiscard,
     VaultArtifactsBodyExport,
     VaultArtifactsBodyPreview,
+    VaultArtifactsBodyDeckReview,
+    VaultArtifactsBodyDeckMerge,
+    VaultArtifactsBodyDeckExport,
+    VaultArtifactsBodyDeckGate,
+    VaultArtifactsBodyDeckOracle,
     VaultArtifactsAppend,
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
@@ -447,6 +455,7 @@ impl AgentVerb {
         Self::VaultProjectsProposals,
         Self::VaultProjectsDismissCard,
         Self::VaultProjectsConfirm,
+        Self::VaultProjectsRosterWrite,
         Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
         Self::VaultRoomsConsent,
@@ -485,6 +494,7 @@ impl AgentVerb {
         Self::VaultQuestionsCreate,
         Self::VaultQuestionsEdit,
         Self::VaultQuestionsPause,
+        Self::VaultQuestionsBackfill,
         Self::VaultQuestionsRead,
         Self::VaultQuestionsAnswers,
         Self::VaultDecisionsAsksAnswer,
@@ -510,6 +520,7 @@ impl AgentVerb {
         Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryPropose,
+        Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRun,
         Self::SelfDesktopOpen,
         Self::SelfDesktopObserve,
@@ -565,6 +576,11 @@ impl AgentVerb {
         Self::VaultArtifactsBodyForkDiscard,
         Self::VaultArtifactsBodyExport,
         Self::VaultArtifactsBodyPreview,
+        Self::VaultArtifactsBodyDeckReview,
+        Self::VaultArtifactsBodyDeckMerge,
+        Self::VaultArtifactsBodyDeckExport,
+        Self::VaultArtifactsBodyDeckGate,
+        Self::VaultArtifactsBodyDeckOracle,
         Self::VaultArtifactsAppend,
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
@@ -743,6 +759,7 @@ impl AgentVerb {
             Self::VaultProjectsProposals => "vault.projects.proposals",
             Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
             Self::VaultProjectsConfirm => "vault.projects.confirm",
+            Self::VaultProjectsRosterWrite => "vault.projects.roster.write",
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsConsent => "vault.rooms.consent",
@@ -781,6 +798,7 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "vault.questions.create",
             Self::VaultQuestionsEdit => "vault.questions.edit",
             Self::VaultQuestionsPause => "vault.questions.pause",
+            Self::VaultQuestionsBackfill => "vault.questions.backfill",
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
             Self::VaultDecisionsAsksAnswer => "vault.decisions.asks.answer",
@@ -806,6 +824,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
+            Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfDesktopOpen => "self.desktop.open",
             Self::SelfDesktopObserve => "self.desktop.observe",
@@ -861,6 +880,11 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiscard => "vault.artifacts.body.fork.discard",
             Self::VaultArtifactsBodyExport => "vault.artifacts.body.export",
             Self::VaultArtifactsBodyPreview => "vault.artifacts.body.preview",
+            Self::VaultArtifactsBodyDeckReview => "vault.artifacts.body.deck.review",
+            Self::VaultArtifactsBodyDeckMerge => "vault.artifacts.body.deck.merge",
+            Self::VaultArtifactsBodyDeckExport => "vault.artifacts.body.deck.export",
+            Self::VaultArtifactsBodyDeckGate => "vault.artifacts.body.deck.gate",
+            Self::VaultArtifactsBodyDeckOracle => "vault.artifacts.body.deck.oracle",
             Self::VaultArtifactsAppend => "vault.artifacts.append",
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
@@ -1031,6 +1055,7 @@ impl AgentVerb {
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
@@ -1069,6 +1094,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultDecisionsAsksAnswer
@@ -1113,6 +1139,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
+                | Self::VaultArtifactsBodyDeckReview
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckGate
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1145,6 +1176,7 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
@@ -1327,6 +1359,7 @@ impl AgentVerb {
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
@@ -1365,6 +1398,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultDecisionsAsksAnswer
@@ -1409,6 +1443,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
+                | Self::VaultArtifactsBodyDeckReview
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckGate
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1649,6 +1688,7 @@ impl AgentVerb {
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
@@ -1687,6 +1727,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultDecisionsAsksAnswer
@@ -1712,6 +1753,7 @@ impl AgentVerb {
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
@@ -1759,6 +1801,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
                 | Self::VaultArtifactsBodyPreview
+                | Self::VaultArtifactsBodyDeckReview
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckGate
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
@@ -1865,6 +1912,7 @@ impl AgentVerb {
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
@@ -1892,6 +1940,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
+                | Self::VaultQuestionsBackfill
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::ConnectorCall
@@ -1902,6 +1951,7 @@ impl AgentVerb {
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
@@ -1932,6 +1982,9 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyForkMerge
                 | Self::VaultArtifactsBodyForkDiscard
                 | Self::VaultArtifactsBodyExport
+                | Self::VaultArtifactsBodyDeckMerge
+                | Self::VaultArtifactsBodyDeckExport
+                | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultClaimsSeed
@@ -2120,6 +2173,7 @@ impl AgentVerb {
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
             Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
@@ -2158,6 +2212,7 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
@@ -2183,6 +2238,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
@@ -2238,6 +2294,11 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
+            Self::VaultArtifactsBodyDeckReview => &["spec"],
+            Self::VaultArtifactsBodyDeckMerge => &["spec"],
+            Self::VaultArtifactsBodyDeckExport => &["spec"],
+            Self::VaultArtifactsBodyDeckGate => &["spec"],
+            Self::VaultArtifactsBodyDeckOracle => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2410,6 +2471,7 @@ impl AgentVerb {
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
             Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
@@ -2448,6 +2510,7 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
+            Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
@@ -2473,6 +2536,7 @@ impl AgentVerb {
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
@@ -2528,6 +2592,11 @@ impl AgentVerb {
             Self::VaultArtifactsBodyForkDiscard => &["spec"],
             Self::VaultArtifactsBodyExport => &["spec"],
             Self::VaultArtifactsBodyPreview => &["spec"],
+            Self::VaultArtifactsBodyDeckReview => &["spec"],
+            Self::VaultArtifactsBodyDeckMerge => &["spec"],
+            Self::VaultArtifactsBodyDeckExport => &["spec"],
+            Self::VaultArtifactsBodyDeckGate => &["spec"],
+            Self::VaultArtifactsBodyDeckOracle => &["spec"],
             Self::VaultArtifactsAppend => &["spec"],
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
@@ -2967,6 +3036,9 @@ impl AgentVerb {
             Self::VaultProjectsConfirm => {
                 "The owner's tap that confirms a host-held project card; only the host's own door can complete it."
             }
+            Self::VaultProjectsRosterWrite => {
+                "Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."
+            }
             Self::VaultProjectsGoalIntake => {
                 "What a project's goal-intake interview starts from, for a member of its home room."
             }
@@ -3065,6 +3137,7 @@ impl AgentVerb {
             Self::VaultQuestionsCreate => "",
             Self::VaultQuestionsEdit => "",
             Self::VaultQuestionsPause => "",
+            Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsAnswers => "",
             Self::VaultDecisionsAsksAnswer => "",
@@ -3111,6 +3184,9 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryPropose => {
                 "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition."
+            }
+            Self::SelfBrowserLibraryRetire => {
+                "Takes a program out of the replay library for every later run, and returns the card it had."
             }
             Self::SelfBrowserLibraryRun => {
                 "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."
@@ -3222,19 +3298,19 @@ impl AgentVerb {
                 "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none."
             }
             Self::VaultArtifactsBodyRead => {
-                "Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history."
+                "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history."
             }
             Self::VaultArtifactsBodyCommits => {
                 "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by."
             }
             Self::VaultArtifactsBodyEdit => {
-                "A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head."
+                "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."
             }
             Self::VaultArtifactsBodyForkOpen => {
                 "Opens a fork of the live body at its head for machine work, in an optional run."
             }
             Self::VaultArtifactsBodyForkEdit => {
-                "The opener's typed DOCX or XLSX operations on its open fork of a live body."
+                "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body."
             }
             Self::VaultArtifactsBodyForkDiff => {
                 "A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show."
@@ -3246,10 +3322,25 @@ impl AgentVerb {
                 "Abandons an open fork's unlanded work and returns its record."
             }
             Self::VaultArtifactsBodyExport => {
-                "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator."
+                "Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator; a deck exports through vault.artifacts.body.deck.export."
             }
             Self::VaultArtifactsBodyPreview => {
                 "The workbook an XLSX body's export would land now, recalculated and read back; nothing lands."
+            }
+            Self::VaultArtifactsBodyDeckReview => {
+                "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names."
+            }
+            Self::VaultArtifactsBodyDeckMerge => {
+                "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses."
+            }
+            Self::VaultArtifactsBodyDeckExport => {
+                "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection is a proposal and nothing lands."
+            }
+            Self::VaultArtifactsBodyDeckGate => {
+                "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector."
+            }
+            Self::VaultArtifactsBodyDeckOracle => {
+                "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened."
             }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."

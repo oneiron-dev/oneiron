@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 247 facade rows, 851 declarations.
-Inputs: 207 of 247 fully typed, 39 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 200 of 247 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 63; unread shapes: 1.
+Census: 254 facade rows, 906 declarations.
+Inputs: 211 of 254 fully typed, 42 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 207 of 254 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 66; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -672,6 +672,10 @@ class ContextPackMediaQuery(TypedDict):
     mime: str
     bytes_b64: str
     kinds: NotRequired[list[MediaQueryKind]]
+class QueryAffect(TypedDict):
+    valence: float
+    arousal: float
+    dominance: float
 class RecallRequest(TypedDict):
     query: str
     effort: NotRequired[RecallEffort | None]
@@ -681,6 +685,7 @@ class RecallRequest(TypedDict):
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
     media: NotRequired[ContextPackMediaQuery | None]
+    query_affect: NotRequired[QueryAffect | None]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -2978,32 +2983,95 @@ class ProjectMintReceipt(TypedDict):
     card_id: str
     grant_decision_id: GateDecisionId
     grant_ref: str
-class ProjectRefRequest(TypedDict):
-    project_ref: str
-class GoalPreference(TypedDict):
-    prefer: str
-    over: str
-    reason: str
-class ProjectGoalRevisionProposal(TypedDict):
+ProjectRole = Literal["project", "corpus"]
+ProjectRevisionHash = Any
+class ProjectParentWitness(TypedDict):
     project: EntityId
-    goal_claim: EntityId
-    preference: GoalPreference
-    question_digest: str
-    picked_by: EntityId
-    at: int
-class ProjectGoalInterviewContext(TypedDict):
-    goal_claim: NotRequired[EntityId | None]
-    generation: int
-    card_seed: NotRequired[ProjectGoalDraft | None]
-    revision_proposals: list[ProjectGoalRevisionProposal]
-class JoinRequest(TypedDict):
-    room: EntityId
-    branch: NotRequired[EntityId | None]
+    head: ProjectRevisionHash
+    leader: EntityId
+class ScopeResourceBucket(TypedDict):
+    kind: Literal["bucket"]
+    key: str
+class ScopeResourceDocumentVersion(TypedDict):
+    kind: Literal["document_version"]
+    document: str
+    version: str
+class ScopeResourceProjection(TypedDict):
+    kind: Literal["projection"]
+    key: str
+ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResourceProjection
+class ScopeScope(TypedDict):
+    world: NotRequired[str | None]
+    facet: NotRequired[str | None]
+    relationship: NotRequired[str | None]
+    project: NotRequired[str | None]
+    readable: list[ScopeResource]
+    writable: list[ScopeResource]
+class ProjectAuthority(TypedDict):
+    parents: list[str]
+    parent_heads: NotRequired[list[ProjectParentWitness]]
+    claims_scope_ref: str
+    slice: ScopeScope
+    depth_limit: int
+    depth_remaining: int
+    leader: str
+    board: list[str]
+    roster: NotRequired[list[str] | None]
+class ProjectAnchor(TypedDict):
+    authority: ProjectAuthority
+    proof: NotRequired[ProjectWriteProof | None]
+ProjectProofVersion = Literal["v2", "v3"]
+class ProjectWriteProof(TypedDict):
+    slip_wire: str
+    holder_signature: list[int]
+    signed_at: int
+    anchor: NotRequired[ProjectAnchor | None]
+    version: NotRequired[ProjectProofVersion]
+class ProjectGoalRecord(TypedDict):
+    project_id: str
+    goal: str
+    why: str
+    axes: list[str]
+class ProjectBudgetShare(TypedDict):
+    project_id: str
+    parent_id: str
+    share_bps: int
+class ProjectRecord(TypedDict):
+    role: ProjectRole
+    schema_version: int
+    depth: NotRequired[int]
+    parents: list[str]
+    parent_heads: NotRequired[list[ProjectParentWitness]]
+    claims_scope_ref: str
+    slice: NotRequired[ScopeScope]
+    depth_limit: NotRequired[int]
+    depth_remaining: NotRequired[int]
+    write_proof: NotRequired[ProjectWriteProof | None]
+    leader: str
+    board: list[str]
+    roster: list[str]
+    sessions: list[str]
+    tasks: list[str]
+    branches: list[str]
+    skill_forks: list[str]
+    goal: NotRequired[str | None]
+    goal_record: NotRequired[ProjectGoalRecord | None]
+    why: NotRequired[str | None]
+    born_from: NotRequired[str | None]
+    budget: NotRequired[str | None]
+    budget_share: NotRequired[ProjectBudgetShare | None]
+    asks: list[str]
+    home_room: str
+    origin_room: NotRequired[str | None]
+    origin_thread: NotRequired[str | None]
+    origin_at: NotRequired[int | None]
+    wrapper_task: NotRequired[str | None]
+class ProjectRosterWriteRequest(TypedDict):
+    project: EntityId
+    record: Any
+ConsentPart = Literal["subject", "spend", "membership", "admission"]
+class RequiredPartySubject(TypedDict):
     subject: JoinSubject
-    paid: bool
-    spend_scope: NotRequired[SpendScopeId | None]
-    intent_key: str
-ConsentPart = Literal["spend", "membership", "admission"]
 class RequiredPartyPayer(TypedDict):
     payer: EntityId
 class RequiredPartyVaultAdminBody(TypedDict):
@@ -3014,7 +3082,7 @@ class RequiredPartyRoomHostBody(TypedDict):
     room: EntityId
 class RequiredPartyRoomHost(TypedDict):
     room_host: RequiredPartyRoomHostBody
-RequiredParty = Literal["payer_unknown"] | RequiredPartyPayer | RequiredPartyVaultAdmin | RequiredPartyRoomHost
+RequiredParty = Literal["payer_unknown"] | RequiredPartySubject | RequiredPartyPayer | RequiredPartyVaultAdmin | RequiredPartyRoomHost
 class ConsentNeed(TypedDict):
     part: ConsentPart
     party: RequiredParty
@@ -3105,6 +3173,7 @@ class AdmissionConsent(TypedDict):
     granted_by: EntityId
     basis: AdmissionBasis
 class ConsentSet(TypedDict):
+    subject: ConsentState[EntityId]
     spend: ConsentState[SpendConsent]
     membership: ConsentState[MembershipConsent]
     admission: ConsentState[AdmissionConsent]
@@ -3117,6 +3186,34 @@ class JoinOutcome(TypedDict):
     join_ref: str
     decision: JoinDecisionView
     receipt_ref: NotRequired[str | None]
+class ProjectRosterWriteOutcome(TypedDict):
+    installed: bool
+    invitations: list[JoinOutcome]
+class ProjectRefRequest(TypedDict):
+    project_ref: str
+class GoalPreference(TypedDict):
+    prefer: str
+    over: str
+    reason: str
+class ProjectGoalRevisionProposal(TypedDict):
+    project: EntityId
+    goal_claim: EntityId
+    preference: GoalPreference
+    question_digest: str
+    picked_by: EntityId
+    at: int
+class ProjectGoalInterviewContext(TypedDict):
+    goal_claim: NotRequired[EntityId | None]
+    generation: int
+    card_seed: NotRequired[ProjectGoalDraft | None]
+    revision_proposals: list[ProjectGoalRevisionProposal]
+class JoinRequest(TypedDict):
+    room: EntityId
+    branch: NotRequired[EntityId | None]
+    subject: JoinSubject
+    paid: bool
+    spend_scope: NotRequired[SpendScopeId | None]
+    intent_key: str
 class ConsentAnswer(TypedDict):
     join_ref: str
     part: ConsentPart
@@ -3645,6 +3742,14 @@ class QuestionPauseRequest(TypedDict):
 class QuestionPaused(TypedDict):
     id: EntityId
     paused: bool
+class QuestionBackfillRequest(TypedDict):
+    id: EntityId
+    expected_version: int
+    at: NotRequired[int | None]
+class ScheduledBackfill(TypedDict):
+    question: str
+    version: int
+    due_at: int
 class QuestionReadRequest(TypedDict):
     id: EntityId
     version: NotRequired[int | None]
@@ -4056,13 +4161,91 @@ class XlsxBodyView(TypedDict):
     sheets: list[XlsxSheetView]
     names: list[BodyName]
     styles: list[XlsxStyle]
+NodeId = int
+NodeKind = Literal["root", "slide", "group", "shape", "picture", "graphic_frame", "connector"]
+class GeometryProps(TypedDict):
+    offset: NotRequired[tuple[int, int] | None]
+    extent: NotRequired[tuple[int, int] | None]
+    rotation: NotRequired[int | None]
+    flip_h: NotRequired[bool | None]
+    flip_v: NotRequired[bool | None]
+Preset = Literal["rect", "round_rect", "ellipse", "triangle", "right_arrow"]
+Digest = str
+StepAssetKind = Literal["factual", "illustration"]
+class AssetRef(TypedDict):
+    artifact: str
+    version: int
+    hash: Digest
+    kind: StepAssetKind
+    description: str
+ChartKind = Literal["bar", "line", "pie"]
+class ChartSeries(TypedDict):
+    name: str
+    values: list[float | None]
+ConnectorPreset = Literal["straight", "elbow", "curved"]
+class ConnectorEnd(TypedDict):
+    node: NodeId
+    site: int
+class NodePayloadPictureBody(TypedDict):
+    image: AssetRef
+class NodePayloadPicture(TypedDict):
+    picture: NodePayloadPictureBody
+class NodePayloadTableBody(TypedDict):
+    header: list[str]
+    rows: list[list[str | None]]
+class NodePayloadTable(TypedDict):
+    table: NodePayloadTableBody
+class NodePayloadChartBody(TypedDict):
+    family: ChartKind
+    categories: list[str]
+    series: list[ChartSeries]
+class NodePayloadChart(TypedDict):
+    chart: NodePayloadChartBody
+class NodePayloadConnectorBody(TypedDict):
+    preset: ConnectorPreset
+    start: NotRequired[ConnectorEnd | None]
+    end: NotRequired[ConnectorEnd | None]
+class NodePayloadConnector(TypedDict):
+    connector: NodePayloadConnectorBody
+NodePayload = NodePayloadPicture | NodePayloadTable | NodePayloadChart | NodePayloadConnector
+class Run(TypedDict):
+    text: str
+    bold: NotRequired[bool | None]
+    italic: NotRequired[bool | None]
+    size: NotRequired[int | None]
+    latin: NotRequired[str | None]
+class Paragraph(TypedDict):
+    id: NodeId
+    level: int
+    runs: list[Run]
+class TextBody(TypedDict):
+    paragraphs: list[Paragraph]
+class DeckNodeView(TypedDict):
+    id: NodeId
+    kind: NodeKind
+    parent: NotRequired[NodeId | None]
+    name: NotRequired[str | None]
+    imported: bool
+    geometry: GeometryProps
+    placeholder: NotRequired[tuple[str, int] | None]
+    preset: NotRequired[Preset | None]
+    payload: NotRequired[NodePayload | None]
+    text: NotRequired[TextBody | None]
+    made_by: NotRequired[str | None]
+class DeckBodyView(TypedDict):
+    frontier: list[int]
+    version: int
+    nodes: list[DeckNodeView]
 class OfficeBodyViewDocx(TypedDict):
     format: Literal["docx"]
     body: DocxBodyView
 class OfficeBodyViewXlsx(TypedDict):
     format: Literal["xlsx"]
     body: XlsxBodyView
-OfficeBodyView = OfficeBodyViewDocx | OfficeBodyViewXlsx
+class OfficeBodyViewPptx(TypedDict):
+    format: Literal["pptx"]
+    body: DeckBodyView
+OfficeBodyView = OfficeBodyViewDocx | OfficeBodyViewXlsx | OfficeBodyViewPptx
 class TextCommitReceipt(TypedDict):
     document: str
     peer: int
@@ -4128,13 +4311,63 @@ class XlsxBodyOpDeleteName(TypedDict):
     name: str
     sheet: NotRequired[str | None]
 XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName
+class DeckOpAddSlideBody(TypedDict):
+    id: NotRequired[NodeId | None]
+class DeckOpAddSlide(TypedDict):
+    add_slide: DeckOpAddSlideBody
+class DeckOpAddNodeBody(TypedDict):
+    id: NotRequired[NodeId | None]
+    parent: NodeId
+    kind: NodeKind
+    name: NotRequired[str | None]
+    index: NotRequired[int | None]
+    preset: NotRequired[Preset | None]
+    payload: NotRequired[NodePayload | None]
+class DeckOpAddNode(TypedDict):
+    add_node: DeckOpAddNodeBody
+class DeckOpRemoveNodeBody(TypedDict):
+    node: NodeId
+class DeckOpRemoveNode(TypedDict):
+    remove_node: DeckOpRemoveNodeBody
+class DeckOpMoveNodeBody(TypedDict):
+    node: NodeId
+    new_parent: NodeId
+    index: int
+class DeckOpMoveNode(TypedDict):
+    move_node: DeckOpMoveNodeBody
+class DeckOpSetTextBody(TypedDict):
+    node: NodeId
+    body: TextBody
+class DeckOpSetText(TypedDict):
+    set_text: DeckOpSetTextBody
+class DeckOpSetRunMarksBody(TypedDict):
+    node: NodeId
+    paragraph: NodeId
+    runs: list[Run]
+class DeckOpSetRunMarks(TypedDict):
+    set_run_marks: DeckOpSetRunMarksBody
+class DeckOpSetGeometryBody(TypedDict):
+    node: NodeId
+    geometry: GeometryProps
+class DeckOpSetGeometry(TypedDict):
+    set_geometry: DeckOpSetGeometryBody
+class DeckOpReplaceOpaqueBody(TypedDict):
+    part: str
+    expected: list[int]
+    replacement: list[int]
+class DeckOpReplaceOpaque(TypedDict):
+    replace_opaque: DeckOpReplaceOpaqueBody
+DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpReplaceOpaque
 class OfficeBodyOpsDocx(TypedDict):
     format: Literal["docx"]
     ops: list[DocxBodyOp]
 class OfficeBodyOpsXlsx(TypedDict):
     format: Literal["xlsx"]
     ops: list[XlsxBodyOp]
-OfficeBodyOps = OfficeBodyOpsDocx | OfficeBodyOpsXlsx
+class OfficeBodyOpsPptx(TypedDict):
+    format: Literal["pptx"]
+    ops: list[DeckOp]
+OfficeBodyOps = OfficeBodyOpsDocx | OfficeBodyOpsXlsx | OfficeBodyOpsPptx
 class OfficeBodyEditRequest(TypedDict):
     artifact_ref: str
     base: NotRequired[list[int] | None]
@@ -4238,6 +4471,141 @@ class XlsxPreview(TypedDict):
     frontier: list[int]
     book: XlsxBook
     recalc: NotRequired[str | None]
+class NodeMove(TypedDict):
+    node: NodeId
+    old_parent: NotRequired[NodeId | None]
+    new_parent: NotRequired[NodeId | None]
+    old_index: NotRequired[int | None]
+    new_index: NotRequired[int | None]
+    cross_slide: bool
+class OpaqueChange(TypedDict):
+    part: str
+    base: NotRequired[list[int] | None]
+    proposal: NotRequired[list[int] | None]
+class ConflictBothMovedBody(TypedDict):
+    node: NodeId
+class ConflictBothMoved(TypedDict):
+    both_moved: ConflictBothMovedBody
+class ConflictDeletedVsEditedBody(TypedDict):
+    node: NodeId
+    deleted_by_head: bool
+class ConflictDeletedVsEdited(TypedDict):
+    deleted_vs_edited: ConflictDeletedVsEditedBody
+class ConflictTextVsTextBody(TypedDict):
+    node: NodeId
+class ConflictTextVsText(TypedDict):
+    text_vs_text: ConflictTextVsTextBody
+class ConflictGeometryVsReparentBody(TypedDict):
+    node: NodeId
+class ConflictGeometryVsReparent(TypedDict):
+    geometry_vs_reparent: ConflictGeometryVsReparentBody
+class ConflictBothReplacedOpaqueBody(TypedDict):
+    part: str
+class ConflictBothReplacedOpaque(TypedDict):
+    both_replaced_opaque: ConflictBothReplacedOpaqueBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque
+class RelationshipChange(TypedDict):
+    source: str
+    id: str
+    kind: str
+    before: NotRequired[str | None]
+    after: NotRequired[str | None]
+class SlideRender(TypedDict):
+    slide: NodeId
+    part: str
+    fingerprint: list[int]
+class RenderSide(TypedDict):
+    version: int
+    state_hash: list[int]
+    export_key: list[int]
+    slides: list[SlideRender]
+class RenderPair(TypedDict):
+    head: RenderSide
+    candidate: RenderSide
+    changed: list[NodeId]
+class DeckDiff(TypedDict):
+    base_version: int
+    head_version: int
+    proposal_version: int
+    added: list[NodeId]
+    removed: list[NodeId]
+    moved: list[NodeMove]
+    text_changed: list[NodeId]
+    formatting_changed: list[NodeId]
+    geometry_changed: list[NodeId]
+    opaque_changed: list[OpaqueChange]
+    affected_slides: list[NodeId]
+    head_only: list[NodeId]
+    conflicts: list[Conflict]
+    relationships: list[RelationshipChange]
+    renders: NotRequired[RenderPair | None]
+class DeckReviewView(TypedDict):
+    head: list[int]
+    head_version: int
+    ok: bool
+    diff: DeckDiff
+    replay_refusals: list[str]
+    stale_units: list[NodeId]
+    evidence_refusal: NotRequired[str | None]
+class ApproveScopeThisActor(TypedDict):
+    this_actor: str
+class ApproveScopeThisRunAndChildren(TypedDict):
+    this_run_and_children: str
+class ApproveScopeOneItem(TypedDict):
+    one_item: str
+ApproveScope = ApproveScopeThisActor | ApproveScopeThisRunAndChildren | ApproveScopeOneItem
+Landing = Literal["merge", "switch"]
+class DeckForkMergeRequest(TypedDict):
+    artifact_ref: str
+    fork_ref: str
+    reviewed_head: list[int]
+    scope: NotRequired[ApproveScope | None]
+    landing: NotRequired[Landing | None]
+    made_by: NotRequired[Any | None]
+class LandingReceipt(TypedDict):
+    proposal: str
+    proposer: str
+    settler: str
+    scope: ApproveScope
+    landing: Landing
+    automatic: bool
+    reviewed_version: int
+    landed_version: int
+    affected: list[NodeId]
+    switched_away: list[NodeId]
+class DeckExportRequest(TypedDict):
+    artifact_ref: str
+    run_ref: str
+    made_by: NotRequired[Any | None]
+class DeckExportView(TypedDict):
+    frontier: list[int]
+    profile: str
+    projector: str
+    authoritative: bool
+    noop: bool
+    changed_parts: list[str]
+    record: NotRequired[OfficeBodyExportRecord | None]
+class DeckGateRequest(TypedDict):
+    profile: NotRequired[str | None]
+class StepOutcomeFailed(TypedDict):
+    failed: str
+class StepOutcomeInconclusive(TypedDict):
+    inconclusive: str
+StepOutcome = Literal["passed", "not_run"] | StepOutcomeFailed | StepOutcomeInconclusive
+class OracleReceipt(TypedDict):
+    profile: str
+    powerpoint_version: str
+    macos_version: str
+    font_versions: list[str]
+    steps: list[StepOutcome]
+    clean: bool
+class DeckGateView(TypedDict):
+    profile: str
+    projector: str
+    open: bool
+    receipt: NotRequired[OracleReceipt | None]
+class DeckOracleRequest(TypedDict):
+    receipt: OracleReceipt
 class AppendBlobVersionRequest(TypedDict):
     artifact_ref: str
     content_base64: str
