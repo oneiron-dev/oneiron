@@ -104,6 +104,7 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             dispatched,
             usage,
             service_quantity,
+            stream,
         } => json!({
             "event": "settled",
             "revision": revision,
@@ -114,6 +115,7 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "dispatched": dispatched,
             "usage": usage,
             "service_quantity": service_quantity,
+            "stream": stream,
             "refused": error.is_some(),
             "allocation_refused": allocation_error.is_some(),
         }),

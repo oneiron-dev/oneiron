@@ -111,6 +111,7 @@ impl VaultUsage {
                 dispatched,
                 usage,
                 service_quantity,
+                stream: _,
                 units,
                 unit,
                 allocation_units,
