@@ -515,6 +515,8 @@ class Oneiron:
         def structural(self) -> "Oneiron._VaultStructuralVerbs": ...
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs": ...
+        @property
+        def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
             """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
         @property
@@ -641,7 +643,7 @@ class Oneiron:
             """The owner stops one connector event subscription; the agent's key for the channel stays."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
-            """One page of the dated authority log audit: grants, revokes and confirms, for the owner."""
+            """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
         @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs": ...
     class _VaultAuthorityHandoffAlarmsVerbs:
@@ -1068,6 +1070,9 @@ class Oneiron:
     class _VaultHabitsVerbs:
         def checkin(self, input: Facade.HabitCheckinInput) -> Facade.EntityRefReceipt:
             """Appends one immutable check-in under a Habit TASK."""
+    class _VaultEsignVerbs:
+        def create(self, spec: Facade.EsignCreateRequest) -> Facade.EsignDraftView:
+            """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
     class _VaultConsolidationVerbs:
         def enqueue(self, spec: Facade.ConsolidationEnqueueRequest) -> Facade.DreamerAttemptRef:
             """Enqueues one consolidation attempt and returns its durable job reference."""

@@ -19,9 +19,11 @@
 //! - "Surprise picks the next experiment. It never prunes." A prune names a
 //!   cause and ends a branch's eligibility; its attempts, claims and outputs
 //!   stay as evidence. A buggy node takes debug children instead.
-//! - Every weave names the claim it landed through the gate, its common
-//!   ancestor and its validation overlap, and is refused until a held-out win
-//!   in this campaign turned merge crossover on.
+//! - Every weave names the claim it landed through the gate, the gate's own
+//!   record of that landing, its common ancestor and its validation overlap,
+//!   and is refused until a held-out win in this campaign turned merge
+//!   crossover on. A controller weaves only a claim it wrote; one past
+//!   Proposed stands only on the gate's Allow for it under the owner's Grant.
 //! - Parents rank by the DGM formula until the engine estimator's information
 //!   gain wins a held-out selection benchmark (`estimator`). Each round
 //!   receipts every branch's Beta belief either way.
@@ -84,6 +86,10 @@ const ROUND: SideTable<([u8; 16], u64), SelectionReceipt, Named> =
 const MAX_REF_BYTES: usize = 256;
 const MAX_REFS: usize = 64;
 const MAX_WEAVE_PARENTS: usize = 8;
+/// The gate's recorded content kind and outcomes a weave claim is read by.
+const WEAVE_CONTENT_KIND: &str = "claim";
+const OUTCOME_ALLOW: &str = "allow";
+const OUTCOME_DENY: &str = "deny";
 
 /// What a campaign improves, and so which ruler it is bound to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,7 +283,18 @@ pub struct WeaveReceipt {
     /// The claim's approval when the weave was recorded: proposed, unless an
     /// owner grant let the gate approve it.
     pub claim_approval: ClaimApprovalStatus,
+    /// The gate's recorded decision on the claim's landing, by hex id: the
+    /// claim door's record of its writer's write.
+    pub gate_decision: String,
     pub at: u64,
+}
+
+/// Who records a weave, as `vault.research.weave` authenticated them: the
+/// vault owner, or the campaign's controller agent by its actor entity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeaveWriter {
+    Owner,
+    Controller { actor: EntityId },
 }
 
 /// One experiment: an existing attempt annotated with its campaign record.
@@ -775,18 +792,89 @@ fn put_new_node(
     node: &ExperimentNode,
     parents: &[AttemptId],
 ) -> Result<()> {
-    vault.with_write_txn_grouped(|txn| {
-        let key = (*root.as_bytes(), *node.attempt.as_bytes());
-        if NODE.contains(&vault.store, txn, &key)? {
-            return Err(invalid("the experiment is already recorded"));
-        }
-        // A parent pruned while the child was checked cannot take it.
-        let nodes = nodes_in_txn(vault, txn, root)?;
-        if parents.iter().any(|parent| pruned_lineage(&nodes, parent)) {
-            return Err(invalid("a pruned branch takes no new experiments"));
-        }
-        NODE.put(&vault.store, txn, &key, node)
-    })
+    vault.with_write_txn_grouped(|txn| put_new_node_in_txn(vault, txn, root, node, parents))
+}
+
+fn put_new_node_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    node: &ExperimentNode,
+    parents: &[AttemptId],
+) -> Result<()> {
+    let key = (*root.as_bytes(), *node.attempt.as_bytes());
+    if NODE.contains(&vault.store, txn, &key)? {
+        return Err(invalid("the experiment is already recorded"));
+    }
+    // A parent pruned while the child was checked cannot take it.
+    let nodes = nodes_in_txn(vault, txn, root)?;
+    if parents.iter().any(|parent| pruned_lineage(&nodes, parent)) {
+        return Err(invalid("a pruned branch takes no new experiments"));
+    }
+    NODE.put(&vault.store, txn, &key, node)
+}
+
+/// The weave claim's approval and the gate's recorded decision on its
+/// landing. The claim must be live and have landed through the gated claim
+/// door: its locally attested writer, and that writer's latest decision on
+/// it that let a row land. A controller weaves only a claim it wrote. A claim
+/// past Proposed stands for anyone but the owner only on an Allow for its
+/// writer: the owner's Grant (actor ceilings, source trust) let this writer
+/// land it there, which is the auto-weave grant ([`auto_weave_granted`]).
+fn weave_claim_landing_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    writer: WeaveWriter,
+    claim: &EntityId,
+) -> Result<(ClaimApprovalStatus, String)> {
+    let body = vault
+        .get_claim_in_txn(txn, claim)?
+        .ok_or(invalid("the weave's claim is missing"))?;
+    if body.lifecycle != ClaimLifecycleStatus::Active
+        || body.approval == ClaimApprovalStatus::Rejected
+    {
+        return Err(invalid("the weave's claim was rejected or closed"));
+    }
+    let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, claim, &body)?
+        .ok_or(invalid("the weave's claim has no attested writer"))?
+        .entity_ref();
+    if let WeaveWriter::Controller { actor } = writer
+        && actor != author
+    {
+        return Err(invalid(
+            "a campaign controller weaves only a claim it wrote",
+        ));
+    }
+    let author = author.to_hex();
+    let decision = vault
+        .store
+        .gate_decisions_for_claim_in_txn(txn, claim.as_bytes())?
+        .into_iter()
+        .filter(|record| {
+            record.redacted_at.is_none()
+                && record.content_kind == WEAVE_CONTENT_KIND
+                && record.actor_ref.as_deref() == Some(author.as_str())
+                && record.outcome != OUTCOME_DENY
+        })
+        .last()
+        .ok_or(invalid("the weave's claim did not land through the gate"))?;
+    if body.approval != ClaimApprovalStatus::Proposed
+        && writer != WeaveWriter::Owner
+        && !auto_weave_granted(&decision)
+    {
+        return Err(invalid(
+            "a weave lands past Proposed only under an owner auto-weave grant",
+        ));
+    }
+    Ok((body.approval, decision.decision_id.to_hex()))
+}
+
+/// Whether the gate's decision on a weave claim carries an owner auto-weave
+/// grant: an Allow for its writer, which the owner's Grant alone gives a
+/// non-owner landing past Proposed. A narrower, weave-scoped grant changes
+/// this one test.
+fn auto_weave_granted(decision: &crate::store::GateDecisionRecord) -> bool {
+    decision.outcome == OUTCOME_ALLOW
 }
 
 /// Record a fork: a variation of a live parent, or a debug child of a buggy
@@ -843,15 +931,19 @@ pub fn record_fork(
 
 /// Record a weave: a crossover child of several measured parents with a
 /// common ancestor, landed as a claim through the gate. Refused until a
-/// held-out win in this campaign turned merge crossover on.
+/// held-out win in this campaign turned merge crossover on. The receipt
+/// binds the gate's decision on the claim, read in the node's transaction.
 /// # Errors
 /// Crossover not requested or not yet earned, fewer than two or duplicate
 /// parents, an unmeasured, buggy or pruned parent, an ancestor common to not
 /// every parent, an overlap under the floor, a child not under a parent on
-/// the run, a missing, retracted or rejected claim, or storage errors.
+/// the run, a missing, retracted or rejected claim, a claim the controller
+/// did not write or that has no gate decision, a non-owner landing past
+/// Proposed without an auto-weave grant, or storage errors.
 pub fn record_weave(
     vault: &Vault,
     root: AttemptId,
+    writer: WeaveWriter,
     input: WeaveInput,
     at: u64,
 ) -> Result<ExperimentNode> {
@@ -898,34 +990,31 @@ pub fn record_weave(
         }
     }
     check_child(vault, &binding, input.child, &input.parents)?;
-    let claim = vault
-        .get_claim(&input.claim)?
-        .ok_or(invalid("the weave's claim is missing"))?;
-    if claim.lifecycle != ClaimLifecycleStatus::Active
-        || claim.approval == ClaimApprovalStatus::Rejected
-    {
-        return Err(invalid("the weave's claim was rejected or closed"));
-    }
-    let node = ExperimentNode {
-        attempt: input.child,
-        kind: ExperimentKind::Weave,
-        parents: input.parents.clone(),
-        candidate: input.candidate,
-        search: None,
-        held_out: None,
-        invalid: None,
-        weave: Some(WeaveReceipt {
-            common_ancestor: input.common_ancestor,
-            validation_overlap: input.validation_overlap,
-            claim: input.claim,
-            claim_approval: claim.approval,
-            at,
-        }),
-        pruned: None,
-        recorded_at: at,
-    };
-    put_new_node(vault, root, &node, &input.parents)?;
-    Ok(node)
+    vault.with_write_txn_grouped(|txn| {
+        let (claim_approval, gate_decision) =
+            weave_claim_landing_in_txn(vault, txn, writer, &input.claim)?;
+        let node = ExperimentNode {
+            attempt: input.child,
+            kind: ExperimentKind::Weave,
+            parents: input.parents.clone(),
+            candidate: input.candidate.clone(),
+            search: None,
+            held_out: None,
+            invalid: None,
+            weave: Some(WeaveReceipt {
+                common_ancestor: input.common_ancestor,
+                validation_overlap: input.validation_overlap,
+                claim: input.claim,
+                claim_approval,
+                gate_decision,
+                at,
+            }),
+            pruned: None,
+            recorded_at: at,
+        };
+        put_new_node_in_txn(vault, txn, root, &node, &input.parents)?;
+        Ok(node)
+    })
 }
 
 fn check_measurement(
