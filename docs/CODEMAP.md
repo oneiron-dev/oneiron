@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3115 | 903 | 144 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3116 | 903 | 144 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 25 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -151,7 +151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `federation` | dir | 32 | L | yes | Federation grant record substrate |
 | `feedback` | dir | 14 | m | yes | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `fusion` | file | 1 | s | — | Score fusion kernels, defined in `oneiron-retrieval` |
-| `gate` | dir | 131 | L | yes | DEC-0005 Gate policy manifest resolver |
+| `gate` | dir | 132 | L | yes | DEC-0005 Gate policy manifest resolver |
 | `genui` | dir | 12 | m | yes | OF-336 generated-UI component contract |
 | `git_wire` | dir | 26 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
 | `graph_fs` | dir | 12 | m | — | Graph-FS read projection over the vault graph |
