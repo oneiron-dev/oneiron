@@ -85,8 +85,10 @@ fn checked_ref(
     let id = EntityId::from_hex(reference).map_err(|_| invalid())?;
     if id.to_hex() != reference
         || !EntityStoreRead::port_entity_with_raw(&vault.store, txn, &id, |raw| {
-            Ok(EntityMetadataHeader::parse(raw).is_some_and(|h| h.entity_type == kind)
-                && raw.len() > ENTITY_METADATA_HEADER_LEN)
+            Ok(
+                EntityMetadataHeader::parse(raw).is_some_and(|h| h.entity_type == kind)
+                    && raw.len() > ENTITY_METADATA_HEADER_LEN,
+            )
         })?
         .unwrap_or(false)
     {

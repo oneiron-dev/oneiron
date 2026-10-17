@@ -747,8 +747,7 @@ impl Vault {
         if parent.leader != actor.to_hex() {
             return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
         }
-        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &child_id, |_| Ok(()))?
-            .is_some()
+        if EntityStoreRead::port_entity_with_raw(&self.store, txn, &child_id, |_| Ok(()))?.is_some()
         {
             return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
         }

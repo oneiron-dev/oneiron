@@ -658,9 +658,10 @@ pub(crate) fn capture_canonical_window_within(
         .chain(snapshot.tombstones.iter().map(|row| row.id))
         .collect();
     for entity in candidates {
-        if let Some(value) = vault
-            .store
-            .port_deletion_marker(&txn, DeletionMarker::HardDelete, &id(entity)?)?
+        if let Some(value) =
+            vault
+                .store
+                .port_deletion_marker(&txn, DeletionMarker::HardDelete, &id(entity)?)?
         {
             if !crate::deletion::decode_tombstone_value(&value).is_hard() {
                 return Err(invalid("invalid hard delete marker"));

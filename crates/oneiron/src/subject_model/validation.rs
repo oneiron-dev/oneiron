@@ -149,9 +149,11 @@ pub(crate) fn validate_subject_model_claim_in_session(
         let (actor, subject) = validate_actor_subject_claim_structure(body)?;
         // Resolve both endpoints from one segment-aware snapshot, not the
         // logical read view captured before earlier batch puts were staged.
-        view.port_entities_at_write_segment(txn, [&actor, &subject], |[actor_raw, subject_raw]| {
-            require_anchor_headers(actor_raw, subject_raw)
-        })?;
+        view.port_entities_at_write_segment(
+            txn,
+            [&actor, &subject],
+            |[actor_raw, subject_raw]| require_anchor_headers(actor_raw, subject_raw),
+        )?;
     }
     Ok(())
 }

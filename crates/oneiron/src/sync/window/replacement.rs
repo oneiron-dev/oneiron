@@ -607,7 +607,9 @@ fn carry_over_hard_deletes(vault: &Vault, old: &LoroDoc, candidate: &LoroDoc) ->
         let rtxn = vault.store.env.read_txn()?;
         for id in ids {
             if let Some(value) =
-                vault.store.port_deletion_marker(&rtxn, DeletionMarker::HardDelete, &id)?
+                vault
+                    .store
+                    .port_deletion_marker(&rtxn, DeletionMarker::HardDelete, &id)?
                 && !tombstones
                     .values_for(&id)
                     .iter()

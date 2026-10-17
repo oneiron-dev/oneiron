@@ -240,18 +240,23 @@ pub(super) fn scrub_local_claim_carriers(
     if key.world().is_some() {
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         for id in &ids {
-            if crate::ports::EntityStoreRead::port_entity_with_raw(&vault.store, &rtxn, id, |raw| {
-                crate::sync::types::retained_world_shell_belongs_to_window(
-                    vault,
-                    &rtxn,
-                    doc,
-                    &tombstones,
-                    id,
-                    raw,
-                    key,
-                    false,
-                )
-            })?
+            if crate::ports::EntityStoreRead::port_entity_with_raw(
+                &vault.store,
+                &rtxn,
+                id,
+                |raw| {
+                    crate::sync::types::retained_world_shell_belongs_to_window(
+                        vault,
+                        &rtxn,
+                        doc,
+                        &tombstones,
+                        id,
+                        raw,
+                        key,
+                        false,
+                    )
+                },
+            )?
             .unwrap_or(false)
             {
                 retained.push(*id);
