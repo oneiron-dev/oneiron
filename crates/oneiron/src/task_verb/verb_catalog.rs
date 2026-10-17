@@ -158,6 +158,7 @@ pub enum AgentVerb {
     VaultProjectsProposals,
     VaultProjectsDismissCard,
     VaultProjectsConfirm,
+    VaultProjectsRosterWrite,
     VaultProjectsGoalIntake,
     VaultRoomsJoin,
     VaultRoomsConsent,
@@ -448,6 +449,7 @@ impl AgentVerb {
         Self::VaultProjectsProposals,
         Self::VaultProjectsDismissCard,
         Self::VaultProjectsConfirm,
+        Self::VaultProjectsRosterWrite,
         Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
         Self::VaultRoomsConsent,
@@ -745,6 +747,7 @@ impl AgentVerb {
             Self::VaultProjectsProposals => "vault.projects.proposals",
             Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
             Self::VaultProjectsConfirm => "vault.projects.confirm",
+            Self::VaultProjectsRosterWrite => "vault.projects.roster.write",
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
             Self::VaultRoomsConsent => "vault.rooms.consent",
@@ -1034,6 +1037,7 @@ impl AgentVerb {
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
@@ -1331,6 +1335,7 @@ impl AgentVerb {
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
@@ -1653,6 +1658,7 @@ impl AgentVerb {
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
@@ -1870,6 +1876,7 @@ impl AgentVerb {
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
+                | Self::VaultProjectsRosterWrite
                 | Self::VaultRoomsJoin
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
@@ -2126,6 +2133,7 @@ impl AgentVerb {
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
             Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
@@ -2417,6 +2425,7 @@ impl AgentVerb {
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
             Self::VaultProjectsConfirm => &["spec"],
+            Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
@@ -2974,6 +2983,9 @@ impl AgentVerb {
             }
             Self::VaultProjectsConfirm => {
                 "The owner's tap that confirms a host-held project card; only the host's own door can complete it."
+            }
+            Self::VaultProjectsRosterWrite => {
+                "Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."
             }
             Self::VaultProjectsGoalIntake => {
                 "What a project's goal-intake interview starts from, for a member of its home room."
