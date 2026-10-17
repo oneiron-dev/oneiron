@@ -677,12 +677,27 @@ impl Vault {
         }
     }
 
-    pub fn evict_voice_target(&self, voice_id: &str, target: &str) -> Result<()> {
+    /// Drops the target pointer, and returns it so the host can delete the
+    /// vendor's clone. A corrupt pointer is dropped all the same.
+    pub fn evict_voice_target(
+        &self,
+        voice_id: &str,
+        target: &str,
+    ) -> Result<Option<VoiceTargetRecord>> {
         let key = target_key(voice_id, target)?;
         let identity = self
             .voice_identity(voice_id)?
             .ok_or_else(|| invalid("unknown voice identity"))?;
         let mut txn = self.store.env.write_txn()?;
+        let evicted = read_row(
+            TARGETS,
+            &self.store,
+            &txn,
+            &key,
+            "corrupt voice target clone",
+        )
+        .ok()
+        .flatten();
         TARGETS.delete(&self.store, &mut txn, &key)?;
         OWNER_INDEX.delete(
             &self.store,
@@ -690,7 +705,7 @@ impl Vault {
             &(identity.owner, TARGETS.key_bytes(&key)),
         )?;
         txn.commit()?;
-        Ok(())
+        Ok(evicted)
     }
 
     /// The selection for a target at `locality` and its fence, read from one
