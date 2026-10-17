@@ -131,20 +131,32 @@ pub fn build_openai_responses_turn(
     if !reasoning.is_empty() {
         head.insert("reasoning".into(), JsonValue::Object(reasoning));
     }
-    head.insert(
-        "model".to_owned(),
-        JsonValue::String(
-            catalog
-                .metadata
-                .get("wire_model")
-                .and_then(JsonValue::as_str)
-                .unwrap_or_else(|| request.model.name())
-                .to_owned(),
-        ),
-    );
+    let wire_model = catalog
+        .metadata
+        .get("wire_model")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_else(|| request.model.name())
+        .to_owned();
+    head.insert("model".to_owned(), JsonValue::String(wire_model.clone()));
     // The chain lives on the socket alone; the vault keeps the transcript.
     // The host sets `store` when its owner turned it on (OF-602).
     head.insert("store".into(), JsonValue::Bool(false));
+    // A reasoning model's items come back with their encrypted content, so a
+    // whole replay sends the model its own earlier reasoning with nothing
+    // stored.
+    if catalog
+        .capabilities
+        .contains(&oneiron::LlmCapability::Reasoning)
+    {
+        let include = head.entry("include").or_insert_with(|| json!([]));
+        if let Some(list) = include.as_array_mut()
+            && !list
+                .iter()
+                .any(|value| value == ENCRYPTED_REASONING_INCLUDE)
+        {
+            list.push(json!(ENCRYPTED_REASONING_INCLUDE));
+        }
+    }
     for key in [
         "stream",
         "stream_options",
@@ -178,15 +190,63 @@ pub fn build_openai_responses_turn(
         items: request
             .messages
             .iter()
-            .flat_map(openai_responses_items)
+            .flat_map(|message| responses_items(message, Some(&wire_model)))
             .collect(),
     })
 }
 
-/// One message as Responses input items. Reasoning parts are left out: on a
-/// chained turn the socket keeps them, and a replay has no id to name them by.
+/// What a request includes to get each reasoning item's encrypted content.
+const ENCRYPTED_REASONING_INCLUDE: &str = "reasoning.encrypted_content";
+
+/// How a reasoning part this codec read carries its item, in the part's
+/// signature: this prefix, then the model that answered, the item's id and
+/// its encrypted content, a line each. Another provider's signature never
+/// starts with it.
+const ENCRYPTED_REASONING: &str = "openai-reasoning\n";
+
+/// A reasoning item `model` returned, as its part's signature: its id and
+/// encrypted content.
+fn reasoning_signature(item: &JsonValue, model: &str) -> Option<String> {
+    let id = item.get("id")?.as_str()?;
+    let encrypted = item.get("encrypted_content")?.as_str()?;
+    Some(format!("{ENCRYPTED_REASONING}{model}\n{id}\n{encrypted}"))
+}
+
+/// The reasoning item a part's signature carries, as `(model, id,
+/// encrypted content)`.
+fn encrypted_reasoning(signature: &str) -> Option<(&str, &str, &str)> {
+    let mut lines = signature.strip_prefix(ENCRYPTED_REASONING)?.splitn(3, '\n');
+    Some((lines.next()?, lines.next()?, lines.next()?))
+}
+
+/// Whether reasoning `answered` returned goes back to `wire` (the model a
+/// request names): the same model, or `wire`'s dated snapshot
+/// (`gpt-5` and `gpt-5-2025-08-07`). Another model's reasoning stays out.
+fn same_model(answered: &str, wire: &str) -> bool {
+    answered == wire
+        || answered
+            .strip_prefix(wire)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(|date| {
+                date.len() == 10
+                    && date.bytes().enumerate().all(|(at, byte)| match at {
+                        4 | 7 => byte == b'-',
+                        _ => byte.is_ascii_digit(),
+                    })
+            })
+}
+
+/// One message as Responses input items. A reasoning part this codec read
+/// with its encrypted content goes back as its reasoning item; any other is
+/// left out (on a chained turn the socket keeps it).
 #[must_use]
 pub fn openai_responses_items(message: &LlmMessage) -> Vec<JsonValue> {
+    responses_items(message, None)
+}
+
+/// [`openai_responses_items`] for a request to `wire`: a reasoning item
+/// another model returned stays out. `None` keeps every one.
+fn responses_items(message: &LlmMessage, wire: Option<&str>) -> Vec<JsonValue> {
     let mut items = Vec::new();
     let mut content = Vec::new();
     let text_type = if message.role == LlmMessageRole::Assistant {
@@ -213,7 +273,25 @@ pub fn openai_responses_items(message: &LlmMessage) -> Vec<JsonValue> {
             ContentPart::Text { text } => {
                 content.push(json!({ "type": text_type, "text": text }));
             }
-            ContentPart::Reasoning { .. } | ContentPart::Audio { .. } => {}
+            // Its summary stays out: the encrypted content is the reasoning,
+            // and a streamed summary's text is joined differently from a
+            // whole one's, which would break the socket's chain.
+            ContentPart::Reasoning { signature, .. } => {
+                if let Some((_, id, encrypted)) = signature
+                    .as_deref()
+                    .and_then(encrypted_reasoning)
+                    .filter(|(answered, ..)| wire.is_none_or(|wire| same_model(answered, wire)))
+                {
+                    flush(&mut content, &mut items);
+                    items.push(json!({
+                        "type": "reasoning",
+                        "id": id,
+                        "encrypted_content": encrypted,
+                        "summary": [],
+                    }));
+                }
+            }
+            ContentPart::Audio { .. } => {}
             ContentPart::Image { media_type, image } => {
                 let url = match image {
                     ImageContent::Base64 { data } => format!("data:{media_type};base64,{data}"),
@@ -384,6 +462,10 @@ pub fn parse_openai_responses_output(response: &JsonValue) -> LlmResult<LlmRespo
         .get("output")
         .and_then(JsonValue::as_array)
         .ok_or(FatalLlmError::EmptyResponse)?;
+    let model = response
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default();
     let mut content = Vec::new();
     for item in output {
         match item.get("type").and_then(JsonValue::as_str) {
@@ -408,11 +490,9 @@ pub fn parse_openai_responses_output(response: &JsonValue) -> LlmResult<LlmRespo
             }
             Some("reasoning") => {
                 let text = reasoning_text(item);
-                if !text.is_empty() {
-                    content.push(ContentPart::Reasoning {
-                        text,
-                        signature: None,
-                    });
+                let signature = reasoning_signature(item, model);
+                if !text.is_empty() || signature.is_some() {
+                    content.push(ContentPart::Reasoning { text, signature });
                 }
             }
             Some("function_call") => {
@@ -560,6 +640,8 @@ pub struct OpenAiResponsesStreamAccumulator {
     assembly: StreamAssembly,
     tools: BTreeMap<u64, ToolHeader>,
     tool_called: bool,
+    /// The model the response names, from its first event.
+    model: String,
 }
 
 impl OpenAiResponsesStreamAccumulator {
@@ -622,11 +704,35 @@ impl OpenAiResponsesStreamAccumulator {
                         }
                         Ok(events)
                     }
+                    // A finished reasoning item carries its encrypted content,
+                    // which a whole replay sends back.
+                    Some("reasoning")
+                        if responses_event_type(event) == "response.output_item.done" =>
+                    {
+                        match reasoning_signature(item, &self.model) {
+                            Some(signature) => self.assembly.reasoning(
+                                &format!("reasoning-{}", index()),
+                                "",
+                                Some(signature),
+                            ),
+                            None => Ok(Vec::new()),
+                        }
+                    }
                     Some(other) if other.ends_with("_call") => {
                         Err(FatalLlmError::InvalidRequest.into())
                     }
                     _ => Ok(Vec::new()),
                 }
+            }
+            "response.created" | "response.in_progress" => {
+                if let Some(model) = event
+                    .get("response")
+                    .and_then(|response| response.get("model"))
+                    .and_then(JsonValue::as_str)
+                {
+                    model.clone_into(&mut self.model);
+                }
+                Ok(Vec::new())
             }
             "response.output_text.delta" | "response.refusal.delta" => {
                 let content = event

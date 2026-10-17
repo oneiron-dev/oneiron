@@ -32,6 +32,10 @@ pub struct EndpointDescriptor {
     pub owner_device_required: bool,
     pub api_base: Option<&'static str>,
     pub sync_path: Option<&'static str>,
+    /// The `sync_path` subprotocol that carries MCP calls on one socket
+    /// instead of one HTTP request each; an upgrade that names it gets the
+    /// MCP carrier, not sync.
+    pub mcp_subprotocol: Option<&'static str>,
     pub pairing_path: Option<&'static str>,
     pub relay_url: Option<String>,
     pub locker_base: Option<String>,
@@ -48,6 +52,7 @@ impl EndpointDescriptor {
             owner_device_required: false,
             api_base: Some("/v1/core"),
             sync_path: Some("/ws"),
+            mcp_subprotocol: Some(crate::handler::MCP_SUBPROTOCOL),
             pairing_path: Some("/.well-known/oneiron"),
             relay_url: None,
             locker_base: None,
@@ -64,6 +69,7 @@ impl EndpointDescriptor {
             owner_device_required: true,
             api_base: None,
             sync_path: None,
+            mcp_subprotocol: None,
             pairing_path: None,
             relay_url: Some(relay_url),
             locker_base: Some(format!("/v1/relay/{vault}/locker")),

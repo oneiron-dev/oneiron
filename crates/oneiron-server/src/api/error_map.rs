@@ -23,6 +23,33 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             ],
         );
     }
+    // A room refusal names the speaker, or the join, it refused; the
+    // generic scope answer would drop them.
+    if let oneiron::Error::Record(oneiron::error::RecordError::RoomJoinRefused { .. }) = error {
+        return ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: Some("conversation_actor".to_owned()),
+            },
+            [
+                "A party refused this room join, or it cannot stand; nothing was written. The refusal names which part and who.",
+            ],
+        );
+    }
+    if matches!(
+        error,
+        oneiron::Error::Record(oneiron::error::RecordError::RoomSpeakerIneligible { .. })
+    ) {
+        return ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: Some("conversation_actor".to_owned()),
+            },
+            [
+                "Speak as an actor with a speaking role in this room; a person, the Dreamer or an upkeep actor may not host it.",
+            ],
+        );
+    }
     match error.kind() {
         ErrorKind::ConversationDenied => ApiError::forbidden_scope("conversation_actor"),
         ErrorKind::ConversationState => ApiError::invalid_state(Some("conversation_state")),

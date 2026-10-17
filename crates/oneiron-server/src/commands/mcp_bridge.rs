@@ -667,6 +667,7 @@ impl Bridge {
                 self.idle.as_secs()
             )),
             link::Cut::TooLarge => Refusal::TooLarge,
+            link::Cut::Revoked(why) => Refusal::Auth(json!({ "error": why })),
         }
     }
 }

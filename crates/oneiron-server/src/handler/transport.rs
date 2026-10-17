@@ -285,12 +285,12 @@ where
     /// docs. `None` once the transport has been aborted.
     pub(super) async fn read_next(&mut self) -> Option<Result<WsMessage, E>> {
         if self.credential_revoked() {
-            self.socket.take();
+            self.close_revoked().await;
             return None;
         }
         let frame = self.socket.as_mut()?.next().await;
         if self.credential_revoked() {
-            self.socket.take();
+            self.close_revoked().await;
             return None;
         }
         match frame {
@@ -300,6 +300,18 @@ where
                 .map(|inner| Ok(WsMessage::Binary(inner.map_or(data, Into::into)))),
             other => other,
         }
+    }
+
+    /// Ends a socket whose credential was revoked, saying so: a peer then
+    /// tells revocation from a dropped link (the MCP bridge answers
+    /// `mcp_auth_required`, not `server_unreachable`).
+    async fn close_revoked(&mut self) {
+        self.send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+            code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
+            reason: Utf8Bytes::from_static("credential revoked"),
+        })))
+        .await;
+        self.socket.take();
     }
 
     /// Unwraps one inbound codec frame and counts the frame. `Some(None)` is a
