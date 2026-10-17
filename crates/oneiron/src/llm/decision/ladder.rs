@@ -944,6 +944,8 @@ impl DecisionLadder<'_> {
         let mut weighed = false;
         let mut stepping = None;
         let mut next_read = first;
+        // The think row routes only on a paired reading, so it applies only beside one.
+        let think_row = policy.think_threshold().filter(|_| self.paired.is_some());
         while let Some(read) = next_read.take() {
             let answer = match read {
                 Read::Answer(answer) => answer,
@@ -976,7 +978,7 @@ impl DecisionLadder<'_> {
             } else {
                 weighed = true;
                 in_band = answer.probability.is_some_and(|p| row.band.contains(p));
-                step_cause(&answer, in_band, row.mode, policy.think_threshold())
+                step_cause(&answer, in_band, row.mode, think_row)
             };
             prior = Some(answer);
             if needs_person {
@@ -1101,6 +1103,8 @@ impl DecisionLadder<'_> {
                     reasoning,
                 }),
                 images: readings.images,
+                think_row: think_row.map(|row| row.version),
+                person_row: person_row.map(|row| row.version),
             },
         })
     }

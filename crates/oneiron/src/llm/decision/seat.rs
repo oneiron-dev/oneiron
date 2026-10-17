@@ -310,6 +310,8 @@ pub async fn decide_at_remote_seat(
                 reasoning,
             }),
             images,
+            think_row: None,
+            person_row: None,
         },
         human_ask,
     })

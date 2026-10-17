@@ -289,6 +289,8 @@ fn refresh_with(
                         person: Vec::new(),
                         time: None,
                         images: Vec::new(),
+                        think_row: None,
+                        person_row: None,
                     },
                     human_ask: None,
                 },

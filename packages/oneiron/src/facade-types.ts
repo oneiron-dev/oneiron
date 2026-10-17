@@ -1551,7 +1551,7 @@ export type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause
 /** `oneiron::llm::decision::types::ImagePin` */
 export type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number }
 /** `oneiron::llm::decision::types::DecisionReceipt` */
-export type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[] }
+export type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null }
 /** `oneiron::llm::decision::types::HumanAskReason` */
 export type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline"
 /** `oneiron::llm::decision::routine::RoutineOutcome` */

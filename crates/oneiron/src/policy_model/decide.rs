@@ -128,6 +128,7 @@ impl PolicyDecisions {
             "providers": pins,
             "queue": self.ladder.human_pin,
             "person_question": self.ladder.person,
+            "paired_question": self.ladder.paired,
             "budget_nanos": self.budget.as_nanos().to_string(),
         });
         blake3::hash(value.to_string().as_bytes())

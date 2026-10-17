@@ -10616,6 +10616,14 @@ pub struct DecisionReceipt {
     pub time: Option<DecisionTime>,
     #[serde(rename = "images", default, skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<ImagePin>>,
+    #[serde(rename = "think_row", default, skip_serializing_if = "Option::is_none")]
+    pub think_row: Option<u32>,
+    #[serde(
+        rename = "person_row",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_row: Option<u32>,
 }
 
 /// `oneiron::llm::decision::types::HumanAskReason`.
