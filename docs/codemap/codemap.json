@@ -10252,7 +10252,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -30456,7 +30456,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/affiliated.rs",
@@ -31100,6 +31100,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "WitnessAssertions",
       "WitnessAuthor",
       "WitnessMessage",
       "WitnessReceipt",
@@ -31110,7 +31111,7 @@
      "surface": {
       "enum": 1,
       "fn": 2,
-      "struct": 3
+      "struct": 4
      }
     },
     {
