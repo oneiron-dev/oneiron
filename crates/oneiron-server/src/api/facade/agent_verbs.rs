@@ -60,6 +60,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.members.decline", post(facade_route))
         .route("/vault.members.withdraw_invitation", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
+        .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.authority.handoff_alarms", post(facade_route))
         .route(
             "/vault.authority.handoff_alarms.acknowledge",
@@ -70,6 +71,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.legal_holds.list", post(facade_route))
         .route("/vault.legal_holds.log", post(facade_route))
         .route("/vault.legal_holds.lift_and_erase", post(facade_route))
+        .route("/vault.settings.learning", post(facade_route))
+        .route("/vault.settings.learning.put", post(facade_route))
+        .route("/vault.settings.learning.clear", post(facade_route))
         .route("/vault.lenses.propose", post(facade_route))
         .route("/vault.lenses.activate", post(facade_route))
         .route("/vault.lenses.deactivate", post(facade_route))

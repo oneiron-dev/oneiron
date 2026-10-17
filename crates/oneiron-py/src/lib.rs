@@ -669,6 +669,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_guests_mint_slip(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.guests.mint_slip")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.guests.mint_slip", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_authority_handoff_alarms(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.authority.handoff_alarms")?;
         let output = py
@@ -732,6 +739,30 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.legal_holds.lift_and_erase", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_learning(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.learning")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.learning", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_learning_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.learning.put")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.settings.learning.put", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_settings_learning_clear(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.settings.learning.clear")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.settings.learning.clear", input)
             })
             .map_err(raise)?;
         encode(&output)

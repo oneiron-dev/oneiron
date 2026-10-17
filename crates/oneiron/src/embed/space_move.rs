@@ -40,6 +40,12 @@ pub const SPACE_PROBE_MIN_FAMILIES: usize = 10;
 
 /// Producer name of a space move's result note.
 pub const SPACE_MOVE_NOTE_PRODUCER: &str = "embedding.space_move";
+/// How long a swapped-in move can be undone, in vault seconds; then its incumbent retires. A
+/// placeholder read only through [`Vault::swap_undo_window_passed`].
+pub const SPACE_MOVE_UNDO_WINDOW_SECS: u64 = 30 * 24 * 60 * 60;
+/// How long an open move may go without a check, in vault seconds, before it closes kept: its
+/// candidate never filled, or its probes never ran ([`Vault::expire_unfilled_space_moves`]).
+pub const SPACE_MOVE_FILL_DEADLINE_SECS: u64 = 14 * 24 * 60 * 60;
 
 /// Open and concluded moves. Key: candidate space id string.
 const EMBEDDING_MOVE: SideTable<String, SpaceMove, Named> =
@@ -139,8 +145,9 @@ pub enum SpaceMoveState {
     /// The candidate serves; the incumbent stays declared for undo. `by_owner` is the owner's
     /// yes over a check that did not read not worse.
     SwappedIn { at: u64, by_owner: bool },
-    /// The incumbent kept serving; the candidate's rows of the moved kinds went.
-    Kept { at: u64 },
+    /// The incumbent kept serving; the candidate's rows of the moved kinds went. `timed_out` is
+    /// a move closed at [`SPACE_MOVE_FILL_DEADLINE_SECS`] with no check run, not a worse one.
+    Kept { at: u64, timed_out: bool },
     /// An undo bound the incumbent again.
     Undone { at: u64 },
 }
@@ -214,6 +221,19 @@ pub(crate) fn open_move_names_in_txn(
             row.state == SpaceMoveState::Open
                 && (row.candidate == space_id || row.incumbent.declared() == Some(space_id))
         }))
+}
+
+/// The candidate of the open move that carries `kind`'s slot, when one does.
+pub(crate) fn moving_kind_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    kind: InputKind,
+) -> Result<Option<String>> {
+    Ok(EMBEDDING_MOVE
+        .scan(store, txn)?
+        .into_iter()
+        .find(|(_, row)| row.state == SpaceMoveState::Open && row.kinds.contains(&kind))
+        .map(|(_, row)| row.candidate))
 }
 
 fn open_move_in_txn(
@@ -347,10 +367,22 @@ fn space_move_summary(moving: &SpaceMove) -> String {
             "{kinds} search now uses embedding space {} on the owner's yes; {} stays for undo",
             moving.candidate, moving.incumbent
         ),
-        SpaceMoveState::Kept { .. } => format!(
+        SpaceMoveState::Kept {
+            timed_out: false, ..
+        } => format!(
             "{kinds} search stays on {}; embedding space {} scored worse on the vault's own \
              probes",
             moving.incumbent, moving.candidate
+        ),
+        SpaceMoveState::Kept {
+            timed_out: true, ..
+        } => format!(
+            "{kinds} search stays on {}; embedding space {} was not checked within {} days of \
+             the move's start (its model never filled it, or its probes never ran), so the move \
+             closed; begin it again once that model answers",
+            moving.incumbent,
+            moving.candidate,
+            SPACE_MOVE_FILL_DEADLINE_SECS / (24 * 60 * 60)
         ),
         SpaceMoveState::Undone { .. } => format!(
             "{kinds} search is back on {}; the move to embedding space {} was undone",
@@ -397,7 +429,7 @@ impl Vault {
         let (state, at) = match moving.state {
             SpaceMoveState::Open => return Ok(()),
             SpaceMoveState::SwappedIn { at, .. } => ("swapped_in", at),
-            SpaceMoveState::Kept { at } => ("kept", at),
+            SpaceMoveState::Kept { at, .. } => ("kept", at),
             SpaceMoveState::Undone { at } => ("undone", at),
         };
         self.record_notification_in_txn(
@@ -704,7 +736,8 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when the move to `candidate` has not swapped in, a slot it moved
-    /// no longer binds the candidate, or the incumbent space is retired.
+    /// no longer binds the candidate, or the incumbent space is retired
+    /// ([`Self::retire_swapped_incumbents`]).
     pub fn undo_space_move(&self, candidate: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let Some(mut moving) = EMBEDDING_MOVE
@@ -744,6 +777,90 @@ impl Vault {
         Ok(())
     }
 
+    /// Whether a move that swapped in at `swapped_at` (vault seconds) is past its undo window at
+    /// `now`, so its incumbent may retire: the one policy hook for the window. Today a fixed
+    /// [`SPACE_MOVE_UNDO_WINDOW_SECS`], a placeholder; the owner leans toward keeping the old
+    /// space while any retained backup or checkpoint still needs it, which would read here.
+    fn swap_undo_window_passed(&self, _rtxn: &RoTxn<'_>, swapped_at: u64, now: u64) -> bool {
+        now.saturating_sub(swapped_at) >= SPACE_MOVE_UNDO_WINDOW_SECS
+    }
+
+    /// Retires the incumbent of each move past its undo window
+    /// ([`Self::swap_undo_window_passed`]; ARCH-0019 `#space-migration`: the old version
+    /// retires once the new one swaps in), when no slot binds it and no open move names it:
+    /// its rows and declaration go, and that move can no longer be undone. The vault's own text
+    /// index never retires. Returns the spaces retired.
+    pub fn retire_swapped_incumbents(&self) -> Result<Vec<String>> {
+        let now = self.store.clock.now_recorded_at();
+        let due: BTreeSet<String> = {
+            let rtxn = self.store.env.read_txn()?;
+            let mut due = BTreeSet::new();
+            for (_, row) in EMBEDDING_MOVE.scan(&self.store, &rtxn)? {
+                let SpaceMoveState::SwappedIn { at, .. } = row.state else {
+                    continue;
+                };
+                if let Some(id) = row.incumbent.declared()
+                    && self.swap_undo_window_passed(&rtxn, at, now)
+                    && embedding_space_in_txn(&self.store, &rtxn, id)?.is_some()
+                {
+                    due.insert(id.to_owned());
+                }
+            }
+            due
+        };
+        let mut retired = Vec::new();
+        for id in due {
+            match self.retire_embedding_space(&id) {
+                Ok(()) => retired.push(id),
+                // Bound again, or named by an open move: it still serves.
+                Err(Error::InvalidConfig(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(retired)
+    }
+
+    /// Closes each open move that began at least [`SPACE_MOVE_FILL_DEADLINE_SECS`] ago and has
+    /// never recorded a check: its candidate's rung is down for good, refuses too much, or is
+    /// too slow to fill. The move concludes kept with `timed_out`, the incumbent keeps serving,
+    /// the candidate's rows of the moved kinds go, and the move leaves its note. A move whose
+    /// check read unknown stays open for the owner's yes. Returns the candidates closed.
+    pub fn expire_unfilled_space_moves(&self) -> Result<Vec<String>> {
+        let now = self.store.clock.now_recorded_at();
+        let due = |row: &SpaceMove| {
+            row.state == SpaceMoveState::Open
+                && row.last_check.is_none()
+                && now.saturating_sub(row.started_at) >= SPACE_MOVE_FILL_DEADLINE_SECS
+        };
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if !EMBEDDING_MOVE
+                .scan(&self.store, &rtxn)?
+                .iter()
+                .any(|(_, row)| due(row))
+            {
+                return Ok(Vec::new());
+            }
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        let mut expired = Vec::new();
+        for (_, mut moving) in EMBEDDING_MOVE.scan(&self.store, &wtxn)? {
+            if !due(&moving) {
+                continue;
+            }
+            moving.state = SpaceMoveState::Kept {
+                at: now,
+                timed_out: true,
+            };
+            EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
+            drop_space_rows_in_txn(&self.store, &mut wtxn, &moving.candidate, &moving.kinds)?;
+            self.note_space_move_in_txn(&mut wtxn, &moving)?;
+            expired.push(moving.candidate);
+        }
+        wtxn.commit()?;
+        Ok(expired)
+    }
+
     /// Records `check` on the open move to `candidate` and acts on it: a passing check, or the
     /// owner's yes, binds the candidate for every moving kind; a worse one closes the move and
     /// drops the candidate's rows; an unknown one leaves the move open.
@@ -770,7 +887,10 @@ impl Vault {
             };
             true
         } else if verdict == NotWorse::Worse {
-            moving.state = SpaceMoveState::Kept { at };
+            moving.state = SpaceMoveState::Kept {
+                at,
+                timed_out: false,
+            };
             true
         } else {
             false

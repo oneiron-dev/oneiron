@@ -1334,6 +1334,26 @@ async fn vault_guests_revoke(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_guests_mint_slip(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.guests.mint_slip")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.guests.mint_slip", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.guests.mint_slip", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_guests_mint_slip(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_authority_handoff_alarms(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -1482,6 +1502,74 @@ async fn vault_legal_holds_lift_and_erase(
     let hooks = facade_hooks_pre(server, call, "vault.legal_holds.lift_and_erase", value).await?;
     let output = facade_output(
         super::host_doors::vault_legal_holds_lift_and_erase(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_settings_learning(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.learning")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.learning", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.settings.learning", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_learning(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_settings_learning_put(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.learning.put")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.learning.put", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.settings.learning.put", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_learning_put(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_settings_learning_clear(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.learning.clear")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.learning.clear", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.settings.learning.clear", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_settings_learning_clear(
             server,
             auth,
             facade_input(hooks.args.clone())?,
@@ -3815,6 +3903,7 @@ pub(crate) async fn call_verb(
             vault_members_withdraw_invitation(server, call, input).await
         }
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
+        "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
         "vault.authority.handoff_alarms" => {
             vault_authority_handoff_alarms(server, call, input).await
         }
@@ -3828,6 +3917,9 @@ pub(crate) async fn call_verb(
         "vault.legal_holds.lift_and_erase" => {
             vault_legal_holds_lift_and_erase(server, call, input).await
         }
+        "vault.settings.learning" => vault_settings_learning(server, call, input).await,
+        "vault.settings.learning.put" => vault_settings_learning_put(server, call, input).await,
+        "vault.settings.learning.clear" => vault_settings_learning_clear(server, call, input).await,
         "vault.lenses.propose" => vault_lenses_propose(server, call, input).await,
         "vault.lenses.activate" => vault_lenses_activate(server, call, input).await,
         "vault.lenses.deactivate" => vault_lenses_deactivate(server, call, input).await,
@@ -3991,6 +4083,8 @@ pub(crate) async fn call_verb(
         | "self.unfold"
         | "self.folds"
         | "tasks.refuse"
+        | "self.leader.advice"
+        | "self.leader.pattern"
         | "self.skills.call"
         | "self.team.start"
         | "self.team.record"
