@@ -83,6 +83,32 @@ pub struct SharedMemberAddRequest {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub role: Option<Role>,
+    /// The public key (64 hex) the invitee generated on their own device:
+    /// the host then mints their own slip for this invitation (FIX 1925).
+    #[serde(default)]
+    pub holder_key: Option<String>,
+}
+
+/// `vault.members.add`'s answer: the invitation's receipt and, when the call
+/// named the invitee's device key on a host that signs slips, the invitee's
+/// own slip for it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedMemberInvited {
+    pub receipt: SharedActExecutionReceipt,
+    pub credential: Option<InvitationSlip>,
+}
+
+/// An invitee's own slip (FIX 1925): it lists, accepts or declines its one
+/// invitation while that is pending, and nothing else. The invitee proves
+/// each request with their own key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvitationSlip {
+    /// The slip id, hex.
+    pub slip_id: String,
+    /// The `v2.slip.` credential.
+    pub slip: String,
+    /// When the invitation, and with it the slip, expires.
+    pub expires_at: u64,
 }
 
 /// `vault.members.change`'s input: another non-root role for a member who
@@ -221,14 +247,35 @@ pub fn read_shared_deletion(vault: &Vault) -> MemoryResult<Option<SharedVaultDel
 }
 
 /// `vault.members.add`: an Admin's `add_member` power invites a member, who
-/// joins on `vault.members.accept`.
+/// joins on `vault.members.accept`. With the invitee's `holder_key` and the
+/// host's `slips` issuer, the answer carries the invitee's own slip for the
+/// invitation; an embedded handle holds no issuer and invites without one.
 pub fn add_shared_member_as(
     vault: &Vault,
     admin: &AuthenticatedOwner,
+    slips: Option<&HostSlipIssuer>,
     input: SharedMemberAddRequest,
-) -> MemoryResult<SharedActExecutionReceipt> {
+) -> MemoryResult<SharedMemberInvited> {
     let member = person_id("member", &input.member)?;
-    Ok(vault.add_shared_member(admin, input.vault_id, member, input.role)?)
+    let key = input
+        .holder_key
+        .as_deref()
+        .map(super::sdk_shared_members::holder_key)
+        .transpose()?;
+    let (receipt, slip) =
+        vault.invite_shared_member(admin, input.vault_id, member, input.role, slips.zip(key))?;
+    let credential = match slip {
+        Some(slip) => Some(InvitationSlip {
+            slip_id: crate::entity_id::bytes_to_hex_lower(&slip.claims.slip_id),
+            slip: slip.to_token()?,
+            expires_at: slip.claims.expires_at,
+        }),
+        None => None,
+    };
+    Ok(SharedMemberInvited {
+        receipt,
+        credential,
+    })
 }
 
 /// `vault.members.change`: an Admin's `assign_role` power moves a member.

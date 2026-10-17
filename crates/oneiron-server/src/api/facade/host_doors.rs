@@ -56,6 +56,8 @@ pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::embedding_space_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The owner's root wave door (OF-427), likewise.
+pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
 pub(crate) use super::widen_proposal_doors::*;
 // The app's policy-action doors (OF-181), likewise.
