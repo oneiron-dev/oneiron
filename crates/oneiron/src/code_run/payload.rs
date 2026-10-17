@@ -14,9 +14,9 @@ use super::support::{
     optional_u64_value, optional_value, request_map, str_array, str_value, u64_value,
 };
 use super::types::{
-    SelfCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait,
-    SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfMemoryEdgeWriteResult,
-    SelfMemorySearchResult, SelfMemoryWriteResult, SelfSpeechResult,
+    AgentVerbRefusalWords, SelfCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome,
+    SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFailedResult,
+    SelfMemoryEdgeWriteResult, SelfMemorySearchResult, SelfMemoryWriteResult, SelfSpeechResult,
 };
 use crate::error::GateError;
 
@@ -560,6 +560,44 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         })),
         _ => Err(invalid_code_run_replay("unknown dispatch outcome kind")),
     }
+}
+
+/// Writes a refused row's own words onto its recorded `denied` outcome,
+/// beside the code; the outcome's decoder reads past them.
+pub(super) fn word_refusal(outcome: &mut Value, words: &AgentVerbRefusalWords) {
+    if let Value::Map(entries) = outcome {
+        entries.push((Value::from("message"), Value::from(words.message.as_str())));
+        entries.push((
+            Value::from("suggestions"),
+            Value::Array(
+                words
+                    .suggestions
+                    .iter()
+                    .map(|suggestion| Value::from(suggestion.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
+}
+
+/// The words [`word_refusal`] kept on a recorded `denied` outcome, with its
+/// code; `None` for any other outcome, or a refusal kept without words.
+pub(super) fn refusal_words(outcome: &Value) -> Option<AgentVerbRefusalWords> {
+    let entries = expect_map(outcome, "dispatch outcome must be a map").ok()?;
+    let text = |key: &str| {
+        map_get(entries, key)
+            .and_then(str_value)
+            .map(str::to_owned)
+            .ok()
+    };
+    if text("kind")? != "denied" {
+        return None;
+    }
+    Some(AgentVerbRefusalWords {
+        code: text("outcome")?,
+        message: text("message")?,
+        suggestions: map_get(entries, "suggestions").and_then(str_array).ok()?,
+    })
 }
 
 pub(super) fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
