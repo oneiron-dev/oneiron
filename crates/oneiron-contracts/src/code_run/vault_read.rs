@@ -7,8 +7,8 @@ mod error;
 mod types;
 
 pub use self::context_pack::{
-    ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls,
-    CoreContextPackRequest,
+    ContextPackBudgetControls, ContextPackDepthControls, ContextPackMediaQuery,
+    ContextPackRetrievalBudgetControls, CoreContextPackRequest, MediaQueryKind,
 };
 pub use self::contract::{
     MEMORY_VERBS, VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability,

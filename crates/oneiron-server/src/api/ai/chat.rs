@@ -34,7 +34,7 @@ use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
 use oneiron::memory::{
     Memory, MemoryError, MessageStreamError, MessageStreamHandle, MessageStreamReceipt,
     MessageWriteMode, StreamCadence, StreamCancelReason, StreamSyncVisibility, WitnessAuthor,
-    WitnessMessage, WitnessTurn,
+    WitnessMessage, WitnessTurn, resolve_entity_ref,
 };
 use oneiron::runtime_hooks::verb::InvocationClaim;
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
@@ -479,17 +479,35 @@ fn start_turn(
     // turn before anything lands and a retry of it witnesses once.
     // The turn's hooks read under the caller's credential, where its
     // connection sits (ARCH-0080 §3). An owner-grade credential naming no
-    // principal reads as the owner it writes as.
-    let hooked = || match auth.principal_ref() {
-        Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
-        None => vault.memory(actor, class),
+    // principal reads as the owner it writes as. The surface is bound to the
+    // conversation this request starts its work in (OF-221), so a root TASK
+    // it creates carries that origin to the agent that realizes it; a ref
+    // that does not resolve binds none, and the witness refuses it.
+    let origin = resolve_entity_ref(&vault, &request.conversation_ref).ok();
+    let hooked = || {
+        let memory = match auth.principal_ref() {
+            Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
+            None => vault.memory(actor, class),
+        };
+        match origin {
+            Some(conversation) => memory.with_origin_conversation(conversation),
+            None => memory,
+        }
     };
     let reader =
         VerbCall::reader_of(&hooked(), HOST_TURN_GENERATE).map_err(|error| engine(&error))?;
-    let generating =
-        turn_generate_pre(&vault, actor, invocation, reader, &request.conversation_ref)
-            .map_err(|error| engine(&error))?
-            .map_err(|stop| hook_stopped(&stop))?;
+    // Chat resolves no room before the user's turn is witnessed, so its
+    // call names none.
+    let generating = turn_generate_pre(
+        &vault,
+        actor,
+        invocation,
+        reader,
+        &request.conversation_ref,
+        None,
+    )
+    .map_err(|error| engine(&error))?
+    .map_err(|stop| hook_stopped(&stop))?;
 
     // The assistant message closes after the vault's idle timeout without
     // an append; read before anything is written.
@@ -605,11 +623,13 @@ fn invocation(headers: &axum::http::HeaderMap) -> Result<Option<InvocationId>, R
 /// The call of a turn's `host.turn.generate`. A write a host verb causes
 /// stamps the System class. Its invocation derives from the turn's own, so a
 /// retry of the turn carries it too. Its hooks read under `reader`, the
-/// caller's key, and as `actor` when there is none.
+/// caller's key, and as `actor` when there is none. `room` is the room the
+/// host resolved the turn into, if it did: the call's scope.
 fn turn_generate_call(
     actor: EntityId,
     invocation: Option<InvocationId>,
     reader: Option<ScopedReadActorKey>,
+    room: Option<EntityId>,
 ) -> VerbCall {
     VerbCall {
         verb: HOST_TURN_GENERATE.to_owned(),
@@ -621,7 +641,7 @@ fn turn_generate_call(
         }),
         actor,
         class: HookActorClass::System,
-        scope: None,
+        scope: room.map(|room| format!("room:{}", room.to_hex())),
         board_epoch: None,
         domain: VerbDomain::Write,
         reader,
@@ -630,6 +650,8 @@ fn turn_generate_call(
 
 /// Runs `host.turn.generate`'s pre chain for `actor`'s reply in `room`,
 /// its hooks reading under `reader`, the caller's key, when there is one.
+/// `resolved` is the room entity the host already read `room` as, if any:
+/// a hook scoped to it, or to its world, facet or project, fires.
 /// `Err(stop)` when a hook skipped the turn or asked first: the turn ends
 /// there, with the stop's reason. Hooks write and run their sandbox, so they
 /// run off the runtime's workers.
@@ -639,6 +661,7 @@ pub(crate) fn turn_generate_pre(
     invocation: Option<InvocationId>,
     reader: Option<ScopedReadActorKey>,
     room: &str,
+    resolved: Option<EntityId>,
 ) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
     let args = json!({
         "room": room,
@@ -647,7 +670,7 @@ pub(crate) fn turn_generate_pre(
     });
     crate::server::blocking(|| {
         vault.pre_verb_hooks(
-            turn_generate_call(actor, invocation, reader),
+            turn_generate_call(actor, invocation, reader, resolved),
             args.clone(),
             &|rewritten: &Value| host_args_kept(&args, rewritten),
         )

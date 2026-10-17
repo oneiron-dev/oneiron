@@ -29,7 +29,11 @@ pub(super) fn catalog_entry(
         context_window_tokens: provider.context_tokens,
         max_output_tokens: provider.max_output_tokens,
         cost: None,
-        capabilities: provider.capabilities.clone(),
+        capabilities: provider
+            .model_capabilities
+            .get(&model.model)
+            .unwrap_or(&provider.capabilities)
+            .clone(),
         metadata: BTreeMap::from([(
             "wire_model".to_owned(),
             JsonValue::String(model.model.clone()),

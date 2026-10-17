@@ -157,6 +157,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::AskReminders),
         Self::Engine(EngineLimit::AnswerProvenanceRefs),
         Self::Engine(EngineLimit::AskWaitIdentities),
+        Self::Engine(EngineLimit::LinePushMonthly),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
