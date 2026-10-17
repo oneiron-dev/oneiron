@@ -1,7 +1,7 @@
 //! One-off graph judgment: scoped context, injected answerer, and proposed claims.
 
 use super::super::held::{cut_text, fit_state};
-use super::super::types::paired_valid;
+use super::super::types::{invalid, paired_valid};
 use super::{records::AnswerRecord, store::encode};
 use crate::claim::{
     ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
@@ -12,6 +12,7 @@ use crate::llm::decision::{
     MAX_DECISION_AUDIOS_BYTES, MAX_DECISION_IMAGE_BYTES, MAX_DECISION_IMAGES,
     MAX_DECISION_IMAGES_BYTES, PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -201,13 +202,12 @@ impl GraphAskFailure {
     }
 }
 
-/// Enumerate up to `limit` live units of a graph type under the asker's
-/// scoped-read authority. The type index only nominates IDs: no raw row or
-/// count from that index reaches the answerer or the result without a scoped
-/// point read. This scan has a fixed bound, including invisible rows.
+/// Enumerate up to `limit` live units of a graph type under the asker's own
+/// read lane `lane`. The type index only nominates IDs: no raw row or count
+/// from that index reaches the answerer or the result without a scoped point
+/// read. This scan has a fixed bound, including invisible rows.
 pub fn select_graph_units_by_type(
-    vault: &Vault,
-    principal: EntityId,
+    lane: &ScopedRead<'_>,
     entity_type: u8,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
@@ -216,7 +216,7 @@ pub fn select_graph_units_by_type(
             "graph ask selection exceeds limit".into(),
         ));
     }
-    let scoped = vault.scoped_read(asker_reader(vault, principal)?);
+    let vault = lane.vault();
     let mut selected = Vec::new();
     let mut after = None;
     let mut scanned = 0;
@@ -227,7 +227,7 @@ pub fn select_graph_units_by_type(
         }
         scanned += page.len();
         after = page.last().copied();
-        let values = scoped.get_entities_parts_with_receipt(&page, None)?;
+        let values = lane.get_entities_parts_with_receipt(&page, None)?;
         for (id, value) in page.into_iter().zip(values.value) {
             if matches!(value, Some((kind, _, _)) if kind == entity_type)
                 && kind_is_graph_evidence(entity_type)
@@ -251,18 +251,23 @@ pub struct GraphTypeSelection {
 
 /// Enumerate and answer one entity type without publishing hidden IDs.
 pub fn run_graph_ask_by_type(
-    vault: &Vault,
-    principal: EntityId,
+    lane: &ScopedRead<'_>,
     actor: WriteActor,
     question: DecisionQuestion,
     selection: GraphTypeSelection,
     answerer: &mut impl GraphAnswerer,
     now: u64,
 ) -> std::result::Result<GraphAskResult, GraphAskFailure> {
-    let units =
-        select_graph_units_by_type(vault, principal, selection.entity_type, selection.limit)
-            .map_err(GraphAskFailure::before_units)?;
-    run_graph_ask(vault, principal, actor, question, &units, answerer, now)
+    let units = select_graph_units_by_type(lane, selection.entity_type, selection.limit)
+        .map_err(GraphAskFailure::before_units)?;
+    run_graph_ask(lane, actor, question, &units, answerer, now)
+}
+
+/// The asker `lane` reads as: the entity its key names. A lane keyed to
+/// anything else asks nothing.
+fn asker(lane: &ScopedRead<'_>) -> Result<EntityId> {
+    EntityId::from_hex(lane.actor_key().actor_ref())
+        .map_err(|_| invalid("graph ask reader is not an entity"))
 }
 
 // A NOTE's author-only read requires an identity-checked actor class. The
@@ -303,24 +308,28 @@ pub(super) fn kind_is_graph_evidence(kind: u8) -> bool {
 
 /// Evaluate selected graph units. Earlier committed answers remain in
 /// `GraphAskFailure::completed` if a later provider or write fails.
+///
+/// `lane` is the asker's own credential-bound read, with its proof,
+/// audience, worlds and room turn: every unit, neighbour, image and clip is
+/// read through it, before the answerer runs and again in the write. The
+/// entity it reads as is the asker each answer stays private to; `actor`
+/// only writes it.
 pub fn run_graph_ask(
-    vault: &Vault,
-    principal: EntityId,
+    lane: &ScopedRead<'_>,
     actor: WriteActor,
     question: DecisionQuestion,
     units: &[EntityId],
     answerer: &mut impl GraphAnswerer,
     now: u64,
 ) -> std::result::Result<GraphAskResult, GraphAskFailure> {
-    run_graph_ask_receipted(vault, principal, actor, question, units, answerer, now)
+    run_graph_ask_receipted(lane, actor, question, units, answerer, now)
         .map(|receipts| receipts.result)
 }
 
 /// [`run_graph_ask`], keeping the receipt of each unit its answerer declined
 /// through a full decision.
 pub fn run_graph_ask_receipted(
-    vault: &Vault,
-    principal: EntityId,
+    lane: &ScopedRead<'_>,
     actor: WriteActor,
     question: DecisionQuestion,
     units: &[EntityId],
@@ -334,15 +343,14 @@ pub fn run_graph_ask_receipted(
             "invalid graph ask unit selection".into(),
         )));
     }
-    let scoped =
-        vault.scoped_read(asker_reader(vault, principal).map_err(GraphAskFailure::before_units)?);
+    let principal = asker(lane).map_err(GraphAskFailure::before_units)?;
     let mut completed = GraphAskResult {
         answers: Vec::new(),
         abstained: Vec::new(),
     };
     let mut declined = Vec::new();
     for &unit in units {
-        match answer_unit(&scoped, principal, actor, &question, unit, answerer, now) {
+        match answer_unit(lane, principal, actor, &question, unit, answerer, now) {
             Ok(UnitOutcome::Hidden) => {}
             Ok(UnitOutcome::Abstain) => completed.abstained.push(unit),
             Ok(UnitOutcome::Declined(decision)) => {
@@ -474,13 +482,12 @@ fn answer_unit(
     let confidence = decision.probability.unwrap_or_default() as f32;
     // A callback can take arbitrarily long. A cheap preflight avoids waiting
     // for the writer when authority or source bytes have already changed.
-    let fresh = vault.scoped_read(asker_reader(vault, principal)?);
     let neighbors =
-        fresh.graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?;
+        scoped.graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?;
     if !same_eligible_neighbors(vault, &vault.store.env.read_txn()?, neighbors, &context)? {
         return Ok(UnitOutcome::Abstain);
     }
-    let current = fresh.get_entities_parts_with_receipt(
+    let current = scoped.get_entities_parts_with_receipt(
         &context.sources.iter().map(|s| s.id).collect::<Vec<_>>(),
         None,
     )?;
@@ -491,11 +498,14 @@ fn answer_unit(
     }
     #[cfg(test)]
     vault.test_hooks().signal_graph_ask_preflight(unit);
+    // Grant status is judged at the authorization clock, observed before the
+    // write snapshot opens.
+    vault.store.authorization_now()?;
     // A second, transaction-local authority check closes the race between
-    // the preflight and this write. A missing/changed source is an abstention,
+    // the preflight and this write: the asker's lane judges every source
+    // again in this snapshot. A missing/changed source is an abstention,
     // but provider and write-gate failures remain typed failures.
     let record = vault.with_write_txn_grouped(|txn| {
-        let scoped = vault.scoped_read(asker_reader_in_txn(vault, txn, principal)?);
         let neighbors = scoped.graph_ask_neighbors_in_txn(
             txn,
             &unit,
@@ -506,27 +516,30 @@ fn answer_unit(
         if !same_eligible_neighbors(vault, txn, neighbors, &context)? {
             return Ok(None);
         }
-        let mut taint = ClaimSource::UserStated;
+        let mut rows = Vec::with_capacity(context.sources.len());
         for source in &context.sources {
-            let Some((kind, _, body)) = scoped.graph_ask_parts_in_txn(txn, &source.id)? else {
+            let Some(raw) = scoped.graph_ask_raw_in_txn(txn, &source.id)? else {
                 return Ok(None);
             };
+            let kind = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("graph ask source header"))?
+                .entity_type;
             if kind != source.entity_type
-                || *blake3::hash(&body).as_bytes() != source.hash
+                || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != source.hash
                 || !source_eligible(vault, txn, &source.id, kind)?
             {
                 return Ok(None);
             }
-            let observed = if kind == crate::registry::ENTITY_TYPE_CLAIM {
-                let claim = crate::claim::decode_claim_body(&body, true)?;
-                let original = claim.source.unwrap_or(ClaimSource::Imported);
-                crate::claim::claim_evidence_taint(&claim).map_or(original, |inherited| {
-                    crate::dreamer_consolidation::source_meet(original, inherited)
-                })
-            } else {
-                ClaimSource::Imported
+            let Some(scope) = crate::federation::record_scope::scope_for_blob(
+                &scoped.store_read(),
+                txn,
+                source.id,
+                &raw,
+            )?
+            else {
+                return Ok(None);
             };
-            taint = crate::dreamer_consolidation::source_meet(taint, observed);
+            rows.push(super::standing::Source::of_row(kind, &raw, &scope)?);
         }
         let answer = AnswerRecord {
             claim: EntityId::now(),
@@ -545,15 +558,9 @@ fn answer_unit(
             value.clone(),
             confidence,
         );
-        if context.sources[0].entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            let body = crate::claim::decode_claim_body(&context.sources[0].body, true)?;
-            if let Some(scope) = body.scope {
-                candidate = candidate.with_scope(scope);
-            }
-            if let Some(world) = body.world {
-                candidate = candidate.with_world(world);
-            }
-        }
+        // The answer reads no wider than any source it rests on, the unit's
+        // neighbours included, as a standing backfill's does.
+        let taint = super::standing::constrain_sources(&mut candidate, &rows, principal)?;
         candidate = candidate
             .with_evidence_taint(taint)?
             .with_private_reader(principal)?
