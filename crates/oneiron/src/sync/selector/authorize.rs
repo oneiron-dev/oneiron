@@ -14,6 +14,7 @@ use crate::federation::{
     Ceiling, FederationDirectionScope, FederationGrantScope, Position, ScopeAxis, ScopeId,
     base_world_axis, decode_federation_grant_body,
 };
+use crate::provenance::birth::WithheldKey;
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
 use crate::sync::local_claims::withheld_claim_carriers;
@@ -205,7 +206,11 @@ pub(super) fn effective_scope_for_grant(
         .map(Ceiling::new)
 }
 
-pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> Result<LoroDoc> {
+pub(super) fn strip_guest_share_metadata(
+    source: &LoroDoc,
+    key: &WindowKey,
+    withheld: &WithheldKey,
+) -> Result<LoroDoc> {
     let out = create_window_doc("guest-share", key);
     let source_entities = source.get_map("entities");
     let source_edges = source.get_map("edges");
@@ -257,7 +262,7 @@ pub(super) fn strip_guest_share_metadata(source: &LoroDoc, key: &WindowKey) -> R
     // snapshot omits them to avoid leaking deleted membership/topology counts.
     // Its NOTEs already passed the selection that made `source`. A guest is
     // another vault, as far as its rows' births go.
-    copy_births_within(source, &out, BirthReach::OtherVault)?;
+    copy_births_within(source, &out, BirthReach::OtherVault(withheld))?;
     crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
     out.commit();
     Ok(out)
@@ -331,7 +336,7 @@ fn authorized_base_edge_endpoints(
                 selector,
                 position,
                 withhold,
-                BirthReach::OtherVault,
+                BirthReach::OtherVault(&WithheldKey::fresh()),
             )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
@@ -356,7 +361,7 @@ pub(super) fn filter_window_doc(
     selector: &SyncSelector,
     position: &Position,
     withhold: Withhold<'_>,
-    reach: BirthReach,
+    reach: BirthReach<'_>,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.

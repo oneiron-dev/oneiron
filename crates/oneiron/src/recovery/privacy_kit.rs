@@ -22,7 +22,8 @@ const SALT_CONTEXT: &str = "oneiron/kit/v2/passphrase-salt";
 const TAG_CONTEXT: &str = "oneiron/kit/v2/tag";
 
 /// The one 32-byte secret a kit carries.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum KitSecretKind {
     /// An owner-held vault's data key. Refused on a host-readable vault.
     VaultKey,
@@ -31,7 +32,8 @@ pub enum KitSecretKind {
 }
 
 /// Where the owner keeps one piece. There is no host, cloud or server variant.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PieceHome {
     /// The issuing machine, in its device-only key slot; never the vault store or sync.
     ThisMachine,
@@ -60,7 +62,8 @@ impl PieceHome {
 }
 
 /// Where the owner keeps a recovery code. Only a file on a machine leaves with it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CodeKeeping {
     /// A file on one of the owner's machines.
     FileOn(KitMachine),
@@ -75,7 +78,8 @@ pub enum CodeKeeping {
 }
 
 /// A machine that holds a piece.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum KitMachine {
     /// The issuing machine.
     ThisMachine,
@@ -84,7 +88,8 @@ pub enum KitMachine {
 }
 
 /// What losing one machine leaves, judged from the homes at issue. Clients word it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum KitCoverage {
     /// Losing any one machine that holds a piece still leaves two pieces.
     SurvivesMachineLoss,
@@ -195,8 +200,8 @@ pub struct KitIssue<'a> {
     /// Used only with a passphrase home.
     pub cost: PassphraseCost,
     /// The issuing machine is the owner's only machine. Only then may two pieces share it
-    /// (with the `FewerThanTwoAway` warning). The kit route sets it from the machine
-    /// roster; until that exists the client says.
+    /// (with the `FewerThanTwoAway` warning). `Vault::issue_world_kit` sets it from the
+    /// machine roster; elsewhere the caller says.
     pub only_machine: bool,
 }
 
