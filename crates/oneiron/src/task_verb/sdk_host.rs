@@ -1,5 +1,6 @@
 //! The inputs and answers of the verb-table rows a host door answers: the
-//! owner's `vault.packs.put` and `vault.hooks.replay`, the `ai.*` model calls
+//! owner's `vault.packs.put`, `vault.packs.remove`,
+//! `vault.connectors.subscriptions.*` and `vault.hooks.replay`, the `ai.*` model calls
 //! past text and `ai.verdict`. A server answers each with its own state (the
 //! owner's proof, its model seats, its decision ladder, its hook sandbox); an
 //! embedded handle answers a pack put as the vault's embedded owner and
@@ -108,6 +109,184 @@ pub fn put_pack_embedded(
     Ok(memory
         .put_pack_as_embedded_owner(input.into_files())?
         .into())
+}
+
+/// `vault.packs.remove`'s input: the installed pack to remove, by name.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PackRemoveRequest {
+    pub pack: String,
+}
+
+/// `vault.packs.remove` under the owner's proof a host minted from the
+/// request: the pack's receipt leaves the Active catalog and every hook
+/// binding of it stops; a built-in goes back to its Candidate. Answers the
+/// removed receipt.
+pub fn remove_pack_as_owner(
+    vault: &crate::Vault,
+    owner: &AuthenticatedOwner,
+    input: &PackRemoveRequest,
+) -> MemoryResult<PackInstallReceipt> {
+    Ok(vault.remove_pack(owner, &input.pack)?)
+}
+
+/// `vault.packs.remove` on an embedded handle, as the vault's embedded owner.
+pub fn remove_pack_embedded(
+    memory: &Memory<'_>,
+    input: PackRemoveRequest,
+) -> MemoryResult<PackInstallReceipt> {
+    let owner = memory.embedded_owner("vault.packs.remove")?;
+    remove_pack_as_owner(memory.vault(), &owner, &input)
+}
+
+/// `vault.connectors.subscriptions.put`'s input: the agent that answers a
+/// built-in channel (OF-519), and the channel, `slack` or `line`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSubscriptionRequest {
+    /// The agent, as 32 hex.
+    pub agent: String,
+    pub channel: String,
+}
+
+/// `vault.connectors.subscriptions.list`'s input: whose subscriptions.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSubscriptionsRequest {
+    /// The agent, as 32 hex.
+    pub agent: String,
+}
+
+/// `vault.connectors.subscriptions.revoke`'s input: the subscription to stop.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelSubscriptionRevokeRequest {
+    /// The subscription, as 32 hex.
+    pub subscription: String,
+}
+
+/// One connector event subscription of an agent, standing or revoked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelSubscriptionRow {
+    pub subscription: String,
+    pub connector_key: String,
+    pub connector: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicate: Option<String>,
+    pub active: bool,
+}
+
+/// `vault.connectors.subscriptions.list`'s answer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelSubscriptions {
+    pub agent: String,
+    pub subscriptions: Vec<ChannelSubscriptionRow>,
+}
+
+/// `vault.connectors.subscriptions.revoke`'s answer: the subscription wakes
+/// nothing more; its key stays.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelSubscriptionRevoked {
+    pub subscription: String,
+}
+
+fn hex_id(field: &str, value: &str) -> MemoryResult<crate::EntityId> {
+    crate::EntityId::from_hex(value.trim())
+        .map_err(|_| MemoryError::bad_request(format!("{field} is a 32-hex id")))
+}
+
+/// A refusal the subscription doors explain is the caller's to fix.
+fn subscription_error(error: crate::Error) -> MemoryError {
+    match error {
+        crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
+        crate::Error::EntityNotFound => MemoryError::not_found("no such subscription"),
+        other => other.into(),
+    }
+}
+
+/// `vault.connectors.subscriptions.put` under the owner's proof: the agent
+/// wakes on each message the channel's built-in pack routes to it, under
+/// its own key for the channel (reused while Active, else minted).
+pub fn subscribe_channel_as_owner(
+    vault: &crate::Vault,
+    owner: &AuthenticatedOwner,
+    input: &ChannelSubscriptionRequest,
+) -> MemoryResult<crate::connector_key::ChannelMessageSubscription> {
+    let agent = hex_id("agent", &input.agent)?;
+    vault
+        .subscribe_agent_to_channel_messages(owner, agent, &input.channel)
+        .map_err(subscription_error)
+}
+
+/// `vault.connectors.subscriptions.list` under the owner's proof: the
+/// agent's connector event subscriptions, standing and revoked.
+pub fn channel_subscriptions_as_owner(
+    vault: &crate::Vault,
+    _owner: &AuthenticatedOwner,
+    input: &ChannelSubscriptionsRequest,
+) -> MemoryResult<ChannelSubscriptions> {
+    let agent = hex_id("agent", &input.agent)?;
+    let subscriptions = vault
+        .connector_event_subscriptions(agent)?
+        .into_iter()
+        .map(|(id, row)| ChannelSubscriptionRow {
+            subscription: id.to_hex(),
+            connector_key: row.connector_key.to_hex(),
+            connector: row.filter.connector,
+            event_kind: row.filter.event_kind,
+            predicate: row.filter.predicate,
+            active: row.active,
+        })
+        .collect();
+    Ok(ChannelSubscriptions {
+        agent: agent.to_hex(),
+        subscriptions,
+    })
+}
+
+/// `vault.connectors.subscriptions.revoke` under the owner's proof.
+pub fn revoke_channel_subscription_as_owner(
+    vault: &crate::Vault,
+    owner: &AuthenticatedOwner,
+    input: &ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<ChannelSubscriptionRevoked> {
+    let id = hex_id("subscription", &input.subscription)?;
+    vault
+        .revoke_connector_event_subscription(owner, id)
+        .map_err(subscription_error)?;
+    Ok(ChannelSubscriptionRevoked {
+        subscription: id.to_hex(),
+    })
+}
+
+/// `vault.connectors.subscriptions.put` on an embedded handle, as the
+/// vault's embedded owner.
+pub fn subscribe_channel_embedded(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRequest,
+) -> MemoryResult<crate::connector_key::ChannelMessageSubscription> {
+    let owner = memory.embedded_owner("vault.connectors.subscriptions.put")?;
+    subscribe_channel_as_owner(memory.vault(), &owner, &input)
+}
+
+/// `vault.connectors.subscriptions.list` on an embedded handle.
+pub fn channel_subscriptions_embedded(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionsRequest,
+) -> MemoryResult<ChannelSubscriptions> {
+    let owner = memory.embedded_owner("vault.connectors.subscriptions.list")?;
+    channel_subscriptions_as_owner(memory.vault(), &owner, &input)
+}
+
+/// `vault.connectors.subscriptions.revoke` on an embedded handle.
+pub fn revoke_channel_subscription_embedded(
+    memory: &Memory<'_>,
+    input: ChannelSubscriptionRevokeRequest,
+) -> MemoryResult<ChannelSubscriptionRevoked> {
+    let owner = memory.embedded_owner("vault.connectors.subscriptions.revoke")?;
+    revoke_channel_subscription_as_owner(memory.vault(), &owner, &input)
 }
 
 /// A row only a host's own state answers, refused on an embedded handle.

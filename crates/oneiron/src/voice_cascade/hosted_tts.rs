@@ -2,16 +2,24 @@
 //! voice IDs are disposable render targets read from its bank target records. No
 //! provisioning, credentials, network I/O, PCM buffering or provider selection
 //! runs under the cascade lock.
-//! The host owns HTTP, response streaming and cancellation. It must frame raw
-//! PCM16 across arbitrary HTTP chunk boundaries and recheck the epoch at playback.
+//! Each render goes out as one `ai.speech` call on the host's media worker
+//! ([`HostedMediaQueue`]): admitted on its own permit, sent through its run's
+//! media gate to the hosted rung and settled on the characters it spoke, as
+//! every other media call is. The rung owns the provider's wire; the host
+//! hands each sentence's audio back and rechecks the epoch at playback.
+//! A sentence past the policy's text bound is not refused (Rule 5): it goes
+//! as several renders, in order, each within the bound, and their audio
+//! plays back in that order.
 
 use std::collections::VecDeque;
 
-use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession};
+use super::media::{BankBound, BankVoiceBinding, MediaVoiceRoute, VoiceMediaQueue, VoiceMediaWork};
+use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
     llm::ModelLocality,
+    llm::media::{AiOperation, MediaPart},
     voice_identity::ref_bank::VoiceRenderGrant,
 };
 
@@ -46,16 +54,18 @@ pub struct HostedBinding {
     pub grant: VoiceRenderGrant,
 }
 
-/// A single complete HTTP request; host adds its own secret auth header and
-/// streams the binary response. No audio/ref clips or credentials enter this DTO.
+/// One flushed sentence to render on the hosted target, in its banked clone.
+/// No audio/ref clips, credentials or provider wire enter this DTO: the
+/// hosted rung builds its own request.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostedRender {
     pub generation: GenerationEpoch,
     pub submission: u64,
     pub provider: HostedProvider,
-    pub url: String,
-    pub api_version: Option<&'static str>,
-    pub body: serde_json::Value,
+    pub text: String,
+    /// The clone it renders as, checked again before the call and before
+    /// its audio is handed back.
+    pub voice: BankVoiceBinding,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,9 +78,61 @@ pub enum HostedWork {
 }
 
 /// FIFO, nonblocking, unambiguous admission. An error admits nothing.
-/// Implementations never execute HTTP inside `try_submit`.
+/// Implementations never execute HTTP inside `try_submit`. A host's
+/// transport is [`HostedMediaQueue`]: renders leave only as admitted media
+/// calls.
 pub trait HostedTransport {
     fn try_submit(&mut self, work: HostedWork) -> Result<()>;
+}
+
+/// The hosted adapter's transport on the media worker: each render is one
+/// `ai.speech` call on `route`, the host's hosted rung for the target,
+/// queued to the [`VoiceMediaWorker`](super::media::VoiceMediaWorker), whose
+/// door admits, sends and settles it. A cancel drops the generation's queued
+/// speech and its call in flight.
+pub struct HostedMediaQueue<Q> {
+    route: MediaVoiceRoute,
+    queue: Q,
+}
+
+impl<Q: VoiceMediaQueue> HostedMediaQueue<Q> {
+    /// `route` is the speech rung of a hosted target that keeps clones.
+    pub fn new(route: MediaVoiceRoute, queue: Q) -> Result<Self> {
+        if route.operation() != AiOperation::Speech
+            || route.reference_target
+            || route.locality != ModelLocality::ThirdParty
+        {
+            return Err(invalid("a hosted render goes on a hosted speech route"));
+        }
+        Ok(Self { route, queue })
+    }
+}
+
+impl<Q: VoiceMediaQueue> HostedTransport for HostedMediaQueue<Q> {
+    fn try_submit(&mut self, work: HostedWork) -> Result<()> {
+        match work {
+            HostedWork::Render(render) => {
+                if render.provider.target() != self.route.target
+                    || render.voice.target != self.route.target
+                {
+                    return Err(invalid("render target is not the route's"));
+                }
+                let request = self.route.request(
+                    MediaPart::Text { text: render.text },
+                    Some(render.voice.voice()),
+                );
+                self.queue.try_submit(VoiceMediaWork::Speech {
+                    generation: render.generation,
+                    submission: render.submission,
+                    request,
+                    voice: Some(render.voice),
+                })
+            }
+            HostedWork::Cancel { generation } => {
+                self.queue.try_submit(VoiceMediaWork::Cancel { generation })
+            }
+        }
+    }
 }
 
 fn invalid(message: &str) -> Error {
@@ -160,31 +222,17 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         &self.binding
     }
 
-    fn request(&self, generation: GenerationEpoch, submission: u64) -> HostedRender {
-        let (url, api_version, body) = match self.binding.provider {
-            HostedProvider::Cartesia => (
-                "https://api.cartesia.ai/tts/bytes".into(),
-                Some("2026-08-14"),
-                serde_json::json!({"model_id":"sonic-3.5","transcript":self.buffer,
-                    "voice":{"id":self.binding.vendor_voice_id},
-                    "output_format":{"container":"raw","encoding":"pcm_s16le","sample_rate":PCM_RATE}}),
-            ),
-            HostedProvider::ElevenLabsFlash => (
-                format!(
-                    "https://api.elevenlabs.io/v1/text-to-speech/{}/stream?output_format=pcm_24000",
-                    self.binding.vendor_voice_id
-                ),
-                None,
-                serde_json::json!({"model_id":"eleven_flash_v2_5","text":self.buffer}),
-            ),
-        };
-        HostedRender {
-            generation,
-            submission,
-            provider: self.binding.provider,
-            url,
-            api_version,
-            body,
+    /// The banked clone a render goes out as.
+    fn bank_voice(binding: &HostedBinding, include_generated: bool) -> BankVoiceBinding {
+        BankVoiceBinding {
+            voice_id: binding.voice_id.clone(),
+            target: binding.provider.target().to_owned(),
+            include_generated,
+            bound: BankBound::Clone {
+                vendor_voice_id: binding.vendor_voice_id.clone(),
+                revision: binding.revision,
+                grant: binding.grant,
+            },
         }
     }
 
@@ -232,15 +280,22 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         }
     }
 
+    /// Sends the buffer as renders within the policy's text bound, in
+    /// order. A refused render keeps itself and the rest buffered for retry.
     fn flush(&mut self, generation: GenerationEpoch) -> Result<()> {
-        if self.buffer.is_empty() {
-            return Ok(());
+        while !self.buffer.is_empty() {
+            self.flush_piece(generation)?;
         }
-        let next = self
-            .next_submission
+        Ok(())
+    }
+
+    /// Sends the buffer's first piece within the policy's text bound as one
+    /// render; a piece of only whitespace is dropped unsent.
+    fn flush_piece(&mut self, generation: GenerationEpoch) -> Result<()> {
+        let submission = self.next_submission;
+        let next = submission
             .checked_add(1)
             .ok_or_else(|| invalid("submission exhausted"))?;
-        let request = self.request(generation, self.next_submission);
         // Serialize against the vault withdrawal writer through FIFO queue
         // admission; an LMDB read snapshot alone cannot do this.
         let admitted = self.vault.with_live_voice_target(
@@ -256,10 +311,19 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
                     self.binding.provider.target(),
                     self.binding.owner,
                 )?;
-                if self.buffer.len() > limits.max_text_bytes {
-                    return Err(invalid("policy text limit exceeded"));
+                let cut = speakable::first_piece(&self.buffer, limits.max_text_bytes);
+                let text = &self.buffer[..cut];
+                if text.trim().is_empty() {
+                    return Ok((cut, false));
                 }
-                self.transport.try_submit(HostedWork::Render(request))
+                self.transport.try_submit(HostedWork::Render(HostedRender {
+                    generation,
+                    submission,
+                    provider: self.binding.provider,
+                    text: text.to_owned(),
+                    voice: Self::bank_voice(&self.binding, self.include_generated),
+                }))?;
+                Ok((cut, true))
             },
         );
         let admitted = match admitted {
@@ -278,16 +342,18 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
                 return Err(error);
             }
         };
-        if admitted.is_none() {
+        let Some((cut, sent)) = admitted else {
             self.revoke(generation);
             return Err(invalid("voice target withdrawn, evicted or stale"));
+        };
+        if sent {
+            self.pending.push_back(PendingResponse {
+                submission,
+                next_chunk: 0,
+            });
+            self.next_submission = next;
         }
-        self.pending.push_back(PendingResponse {
-            submission: self.next_submission,
-            next_chunk: 0,
-        });
-        self.next_submission = next;
-        self.buffer.clear();
+        self.buffer.drain(..cut);
         Ok(())
     }
 
@@ -335,6 +401,30 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
             sample_rate: PCM_RATE,
             samples,
         })
+    }
+
+    /// Receive one whole sentence's audio from the media worker
+    /// ([`VoiceMediaOutput::Pcm`](super::media::VoiceMediaOutput::Pcm)) for
+    /// `submission`, at the rate its answer said. It completes that render.
+    pub fn receive_frame(&mut self, submission: u64, frame: PcmFrame) -> Result<PcmFrame> {
+        let generation = frame.generation;
+        if self.generation != Some(generation) || !matches!(self.phase, Phase::Open | Phase::Ended)
+        {
+            return Err(invalid("stale or cancelled response"));
+        }
+        self.ensure_live(generation)?;
+        if self
+            .pending
+            .front()
+            .is_none_or(|front| front.submission != submission || front.next_chunk != 0)
+        {
+            return Err(invalid("stale or out-of-order response"));
+        }
+        if frame.samples.is_empty() {
+            return Err(invalid("invalid PCM frame"));
+        }
+        self.pending.pop_front();
+        Ok(frame)
     }
 
     pub fn finish_response(&mut self, generation: GenerationEpoch, submission: u64) -> Result<()> {
@@ -407,11 +497,9 @@ impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<'_, T> {
         }
         match command {
             TtsCommand::Text { text, .. } => {
-                let limits = self.ensure_live(generation)?;
-                if text.is_empty()
-                    || text.len() > limits.max_text_bytes.saturating_sub(self.buffer.len())
-                {
-                    return Err(invalid("policy text limit exceeded"));
+                // A long sentence is split into renders at flush, never refused.
+                if text.is_empty() {
+                    return Err(invalid("empty text"));
                 }
                 self.buffer.push_str(&text);
             }

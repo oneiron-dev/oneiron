@@ -837,12 +837,19 @@ fn complete(
         })?;
     } else {
         // The run's durable result: the TASK's Done names it.
-        AgentDispatcher::new(vault).attach_resident_run_result(
+        let output = AgentDispatcher::new(vault).attach_resident_run_result(
             attempt,
             LEASE_OWNER,
             &outcome.replay_record,
             now,
         )?;
+        // OF-540: the result derives from what the run derived, witnessed
+        // while the lease holds; a run that cannot witness closes as bound.
+        if let Err(error) =
+            oneiron::skill_attribution::witness_agent_run_close(vault, attempt, LEASE_OWNER, output)
+        {
+            tracing::warn!(%error, attempt = ?attempt.id, "an agent run's close was not witnessed");
+        }
     }
     let judged = oneiron::task_verb::runner_done_question(vault, attempt.id)?.and_then(
         |question| match decisions.task_decisions() {

@@ -20,8 +20,9 @@ use base64::Engine;
 use hmac::{Hmac, Mac};
 use oneiron::Vault;
 use oneiron::channel_identity_provider::{
-    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, LINE_CHANNEL,
-    LineOfficialAccountInbound, SLACK_CHANNEL, SlackProviderInbound, SlackSharedPresenceAdapter,
+    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, LINE_CHANNEL, LineChat,
+    LineChatKind, LineOfficialAccountInbound, SLACK_CHANNEL, SlackProviderInbound,
+    SlackSharedPresenceAdapter,
 };
 use oneiron::surface_event::{
     InboundSurfaceEventInput, SurfaceEventAction, SurfaceEventAdmission, SurfaceInteractionKind,
@@ -459,14 +460,24 @@ fn line_events(
         {
             continue;
         }
-        let (Some(event_id), Some(user_id)) = (
-            text(event, "webhookEventId"),
-            event
-                .get("source")
-                .and_then(|source| text(source, "userId")),
-        ) else {
+        let Some(event_id) = text(event, "webhookEventId") else {
             continue;
         };
+        let source = event.get("source");
+        let user_id = source.and_then(|source| text(source, "userId"));
+        let chat = source.and_then(|source| {
+            let kind = LineChatKind::parse(text(source, "type")?)?;
+            Some(LineChat::new(kind, text(source, kind.id_field())?))
+        });
+        let chat = match chat {
+            Some(chat) if line_routes_by_chat(vault, handle, &chat, user_id.is_some())? => {
+                Some(chat)
+            }
+            _ => None,
+        };
+        if chat.is_none() && user_id.is_none() {
+            continue;
+        }
         // The event as LINE sent it, reply token included, beside the bot
         // it was for: a later reply path reads the token back from here.
         let kept = serde_json::to_vec(&serde_json::json!({
@@ -478,7 +489,8 @@ fn line_events(
         let inbound = LineOfficialAccountInbound {
             provider_event_id: event_id.to_owned(),
             destination: destination.to_owned(),
-            source_user_id: user_id.to_owned(),
+            source_user_id: user_id.map(str::to_owned),
+            chat,
             // Carried for the adapter's checks only: the archived event is
             // the copy a reply reads it back from.
             reply_token: text(event, "replyToken")
@@ -496,6 +508,28 @@ fn line_events(
         )?;
     }
     Ok(Reply::Ack)
+}
+
+/// Whether a group or room message routes to the chat's own identity
+/// rather than its sender's: always when LINE left the sender out, else when
+/// the owner bound an identity to the chat, so one bound agent hears the
+/// whole chat. An unbound chat with a named sender routes per sender, as a
+/// 1:1 message does.
+fn line_routes_by_chat(
+    vault: &Vault,
+    handle: &LineHandle,
+    chat: &LineChat,
+    has_sender: bool,
+) -> oneiron::Result<bool> {
+    if !has_sender {
+        return Ok(true);
+    }
+    let Ok(address) = handle.adapter.address_for_line_chat(chat) else {
+        return Ok(false);
+    };
+    Ok(vault
+        .channel_identity_by_assignment(LINE_CHANNEL, &address)?
+        .is_some())
 }
 
 /// Queues one parsed event. An event the adapter or the routing boundary

@@ -64,23 +64,59 @@ impl SyncConnection {
     /// Main event loop. Runs until the shutdown signal is received.
     ///
     /// Creates the local-update channel itself and attaches it to the
-    /// window manager's [`crate::sync::bridge::OutboundSink`], so every
-    /// Observer A update (persisted local commit) flows into the debounce →
-    /// wire path without host plumbing (ONE-1126). On exit the sink is
-    /// detached and later updates fall back to the durable `SyncQueue`.
+    /// window manager's [`crate::sync::bridge::OutboundSink`], beside any
+    /// other channel there, so every Observer A update (persisted local
+    /// commit) flows into the debounce → wire path without host plumbing
+    /// (ONE-1126). On exit its own channel is detached; with none left,
+    /// later updates fall back to the durable `SyncQueue`.
     ///
     /// # Arguments
     ///
-    /// * `shutdown_rx` — Oneshot channel to signal clean shutdown
+    /// * `shutdown_rx` — Oneshot channel to signal clean shutdown, honoured
+    ///   while a connect is pending too
     ///
     /// # Returns
     ///
     /// Returns the event receiver that emits `SyncEvent`s for the application.
     pub async fn run(
         &self,
-        mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+        shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> crate::error::Result<mpsc::UnboundedReceiver<SyncEvent>> {
         let (client, event_rx) = SyncClient::new(Arc::clone(&self.manager), self.client_config())?;
+        self.drive(client, shutdown_rx).await?;
+        Ok(event_rx)
+    }
+
+    /// [`Self::run`] for a host that keeps the connection for its whole
+    /// life: each event reaches `on_event` as it happens, rather than piling
+    /// up until the loop ends.
+    pub async fn run_observed(
+        &self,
+        shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+        mut on_event: impl FnMut(SyncEvent) + Send,
+    ) -> crate::error::Result<()> {
+        let (client, mut event_rx) =
+            SyncClient::new(Arc::clone(&self.manager), self.client_config())?;
+        let drive = self.drive(client, shutdown_rx);
+        tokio::pin!(drive);
+        let result = loop {
+            tokio::select! {
+                result = &mut drive => break result,
+                Some(event) = event_rx.recv() => on_event(event),
+            }
+        };
+        while let Ok(event) = event_rx.try_recv() {
+            on_event(event);
+        }
+        result
+    }
+
+    /// The loop [`Self::run`] and [`Self::run_observed`] drive.
+    async fn drive(
+        &self,
+        client: SyncClient,
+        mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    ) -> crate::error::Result<()> {
         let event_tx = client.event_tx.clone();
         let mut client = client;
 
@@ -105,7 +141,7 @@ impl SyncConnection {
         // Observer A → outbound wiring: while attached, persisted local
         // updates arrive on `local_rx` below.
         let (local_tx, mut local_rx) = mpsc::unbounded_channel::<LocalUpdate>();
-        self.manager.outbound().attach(local_tx);
+        let attachment = self.manager.outbound().attach(local_tx);
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
@@ -123,7 +159,16 @@ impl SyncConnection {
             // Attempt connection
             let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Connecting));
 
-            match self.connect_and_sync(&mut client, &event_tx).await {
+            // A stop while the connect is pending ends it there, rather than
+            // waiting out the dial and the initial sync.
+            let connected = tokio::select! {
+                connected = self.connect_and_sync(&mut client, &event_tx) => connected,
+                _ = &mut shutdown_rx => {
+                    let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                    break;
+                }
+            };
+            match connected {
                 Ok(ws_stream) => {
                     // Reset backoff on successful connect
                     // Note: connect_and_sync already emits Synced, so we don't emit Connected here
@@ -184,9 +229,9 @@ impl SyncConnection {
             }
         }
 
-        self.manager.outbound().detach();
+        self.manager.outbound().detach(attachment);
         self.running.send_replace(false);
-        Ok(event_rx)
+        Ok(())
     }
 
     /// Connects to the server and performs initial sync + queue replay.

@@ -2,9 +2,9 @@
 //! txn-composable read cohort.
 
 use super::codec::{
-    ThreadHead, annotation_envelope, decode_brief_value, decode_comment, decode_thread_head,
-    encode_brief_value, encode_comment_value, encode_thread_head_value, is_annotation_predicate,
-    task_role_body, warn_malformed_annotation_claim,
+    ThreadHead, annotation_envelope, decode_brief_thread_task, decode_brief_value, decode_comment,
+    decode_thread_head, encode_brief_value, encode_comment_value, encode_thread_head_value,
+    is_annotation_predicate, task_role_body, warn_malformed_annotation_claim,
 };
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_COMMENT_TEXT_MAX_BYTES,
@@ -12,17 +12,27 @@ use super::model::{
     ThreadState,
 };
 use crate::Vault;
+use crate::agent_dispatch::{
+    AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
+};
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::context_projection::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::habit::TaskRole;
-use crate::registry::{ArtifactFamilyKindId, ENTITY_TYPE_TASK, artifact_family_kind_of};
+use crate::registry::{
+    ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK, artifact_family_kind_of,
+};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 
 /// Weight for the `AssignedTo` / `Mentions` edge a brief writes.
 const BRIEF_ASSIGN_EDGE_WEIGHT: f32 = 1.0;
+
+/// Brief claims read per page of the predicate posting list. A page size, not
+/// a cap: the walk reads every page.
+const BRIEF_PAGE: usize = 256;
 
 // ---------------------------------------------------------------------------
 // Vault surface
@@ -268,8 +278,11 @@ impl Vault {
     ///
     /// Writes a productivity `TASK` entity, a durable `annotation.brief` claim
     /// linking the thread to that task with the anchor payload, and — when an
-    /// assignee is supplied — an `AssignedTo` edge. Returns the assembled brief
-    /// carrying the anchor, the thread transcript, and the `artifact@version`.
+    /// assignee is supplied — an `AssignedTo` edge. An agent-definition
+    /// assignee realizes the TASK: its attempt is dispatched in the same
+    /// transaction, briefed with the transcript. A person, or no assignee,
+    /// gets no attempt. Returns the assembled brief carrying the anchor, the
+    /// thread transcript, and the `artifact@version`.
     ///
     /// The transcript snapshot taken at assignment time is persisted IN the
     /// brief claim value, so the handed-off brief is stable: comments appended
@@ -334,6 +347,38 @@ impl Vault {
                 );
             }
             batch.apply(wtxn)?;
+            if let Some(agent) = assignee
+                && self.get_entity_type_in_txn(&*wtxn, &agent)? == Some(ENTITY_TYPE_AGENT_DEF)
+            {
+                let mut briefing = format!(
+                    "Annotation thread {} on artifact {}@{} was assigned to you as {brief_ref}. The thread:\n{thread_text}",
+                    thread_id.to_hex(),
+                    artifact_id.to_hex(),
+                    thread.anchor.version,
+                );
+                briefing.truncate(briefing.floor_char_boundary(CONTEXT_SPEC_MAX_TEXT_BYTES));
+                // The brief claim above is in this transaction, so dispatch's
+                // annotation hold sees it and parks the attempt while the
+                // thread is unattached.
+                AgentDispatcher::new(self).dispatch_for_task_in_txn(
+                    wtxn,
+                    task_id,
+                    DispatchAgent {
+                        target: AgentDispatchTarget::Custom(agent),
+                        parent_attempt: None,
+                        dedupe_key: Some(format!("task:{}", task_id.to_hex())),
+                        run_id: None,
+                        now: learned_at,
+                    },
+                    AgentSpawnContext {
+                        context_spec: Some(ContextSpec {
+                            briefing: Some(briefing),
+                            ..ContextSpec::default()
+                        }),
+                        ..AgentSpawnContext::default()
+                    },
+                )?;
+            }
             let artifact_version = thread.anchor.version;
             Ok(TaskBrief {
                 brief_ref,
@@ -391,6 +436,58 @@ impl Vault {
             }
         }
         Ok(best.map(|(_, brief)| brief))
+    }
+
+    /// The comment thread `task` was assigned from, as `(artifact, thread)`,
+    /// read in the caller's transaction. `None` when no brief names `task`, or
+    /// when a later brief on that thread names another TASK: each assignment
+    /// mints a fresh TASK, and only the newest answers the thread. A TASK names
+    /// no brief of its own, so this walks the brief claims' posting list, which
+    /// runs in claim-id order.
+    pub(crate) fn annotation_thread_of_task_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task: &EntityId,
+    ) -> Result<Option<(EntityId, EntityId)>> {
+        let mut found = None;
+        let mut after = None;
+        loop {
+            let page = crate::claim::claim_ids_for_predicate_page_in_txn(
+                &self.store,
+                txn,
+                ANNOTATION_BRIEF_PREDICATE,
+                after,
+                BRIEF_PAGE,
+            )?;
+            for claim_id in &page {
+                let Some(body) = self.get_claim_in_txn(txn, claim_id)? else {
+                    continue;
+                };
+                if !crate::claim::claim_surfaceable(&body) {
+                    continue;
+                }
+                let ClaimSubject::Entity(artifact_id) = &body.subject else {
+                    continue;
+                };
+                let (thread_id, brief_task) = match decode_brief_thread_task(&body.value) {
+                    Ok(pair) => pair,
+                    Err(err) => {
+                        warn_malformed_annotation_claim(*claim_id, &body.predicate, &err);
+                        continue;
+                    }
+                };
+                let brief = (*artifact_id, thread_id);
+                if brief_task == *task {
+                    found = Some(brief);
+                } else if found == Some(brief) {
+                    return Ok(None);
+                }
+            }
+            if page.len() < BRIEF_PAGE {
+                return Ok(found);
+            }
+            after = page.last().copied();
+        }
     }
 
     /// Writes a fresh thread-head claim inside the caller's write transaction

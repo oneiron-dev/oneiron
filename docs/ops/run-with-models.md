@@ -209,8 +209,10 @@ conversation again in full. The owner can turn storing on with
 `POST /v1/owner/settings/models` and `{"responses_store": true}` (`GET` reads
 it): each turn then goes with `store = true`, the provider keeps the response,
 and a new socket resumes a conversation from its last stored response, sending
-only the new items. The server remembers the last stored response of the 32
-most recent conversations per provider, until restart. A socket is
+only the new items. The server keeps each conversation's last stored response
+in the vault, as this deployment's own state (never synced, and left out of a
+checkpoint), so a resume also survives a restart; a turn whose response the
+provider has since dropped goes whole. A socket is
 replaced 5 minutes before its age limit (60 minutes at OpenAI, 59 at xAI).
 Idle sockets wait 10 minutes for a next turn, at most 8 per provider. A
 call whose socket will not open, or that carries audio, goes out over
@@ -385,14 +387,21 @@ one.
 ## 4. Chat
 
 `POST /v1/ai/chat` with `{"conversation_ref": "<32-hex>", "text": "…"}` (plus
-optional `history`) streams NDJSON: `accepted`, one `delta` per text chunk,
-`done`, then `saved` with the message receipt. The same deltas reach every
-owner socket on `/ws` as transient presence. Only the final message is written
-to the vault, once. The credential needs read and write scope, and must be
-able to read the answering agent's definition. It is checked for the whole
-turn: once it is revoked or expires, the body sends one
-`{"type":"error","code":"credential_revoked"}` line and ends, the model call
-stops, and the message is cancelled rather than saved as an answer. The seeded
+optional `history`) answers by default with the whole message once it is saved:
+`{conversation_ref, turn_id, message_id, text, incomplete, finish_reason}`.
+`turn_id` is the assistant turn that Continue and Retry name. A reply cut short
+(a crash, a failed stream, a length stop) is still one saved message: it answers
+`incomplete: true` with exactly the text that was saved. With `"stream": true`
+the answer is NDJSON instead: `accepted`, one `delta` per text chunk, `done`,
+then `saved` with the message receipt, and the same deltas reach every owner
+socket on `/ws` as transient presence. A whole answer keeps its partials
+private. Either way each delta is checkpointed in the message before it is
+published, and a client that goes away does not stop the turn. The credential
+needs read and write scope, and must be able to read the answering agent's
+definition. It is checked for the whole turn. Once it is revoked or expires, a
+streamed body sends one `{"type":"error","code":"credential_revoked"}` line
+and ends, a whole answer is refused with 403 `credential_revoked`, and the
+message is cancelled rather than saved as an answer. The seeded
 default agent answers; an owner-grade credential may name another with
 `agent_ref`, which must be live, approved and enabled. A turn still running
 at shutdown gets a grace to finish, then its message is cancelled, not left

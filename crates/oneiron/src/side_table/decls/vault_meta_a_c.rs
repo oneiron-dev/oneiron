@@ -121,6 +121,9 @@ side_tables! {
     /// One bound autoresearch campaign: its ruler, goal pin, policy digest, cohort and budget
     /// share, written once. Key: id16 (root attempt).
     AUTORESEARCH_BINDING: VaultMeta b"autoresearch:binding:v1:" Named;
+    /// One held-out selection benchmark of an autoresearch parent-selection estimator version
+    /// against the DGM formula, recorded once. Key: string (estimator version).
+    AUTORESEARCH_ESTIMATOR: VaultMeta b"autoresearch:estimator:v1:" Named;
     /// One autoresearch experiment node annotating an existing attempt: lineage, candidate pin,
     /// search and held-out evidence, buggy, weave and prune receipts. Key: id16 (root attempt) +
     /// id16 (node attempt).
