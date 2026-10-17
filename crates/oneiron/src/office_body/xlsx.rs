@@ -48,7 +48,7 @@ pub struct BodySheet {
     pub locked: Vec<XlsxArea>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BodyCell {
     pub address: String,
     /// A formula cell's value is its last computed result: the import's cache,
@@ -59,7 +59,7 @@ pub struct BodyCell {
     pub locked: Option<XlsxLock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BodyName {
     pub name: String,
     pub sheet: Option<String>,
@@ -70,7 +70,8 @@ pub struct BodyName {
 
 /// One typed operation on an XLSX body. A cell is an A1 address (`B12`,
 /// `$B$12`); a formula may carry its leading `=`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum XlsxBodyOp {
     /// Write a constant; the cell's formula, if any, goes.
     SetValue {

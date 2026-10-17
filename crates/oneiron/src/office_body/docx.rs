@@ -56,7 +56,8 @@ pub struct BodyBlock {
     pub cells: BTreeMap<(usize, usize), String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BodyBlockKind {
     Paragraph,
     Heading(u8),
@@ -66,7 +67,8 @@ pub enum BodyBlockKind {
 
 /// One typed operation on a DOCX body. Offsets and lengths count Unicode
 /// scalar values.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum DocxBodyOp {
     /// Replace a paragraph's text by its shortest edit.
     SetText {

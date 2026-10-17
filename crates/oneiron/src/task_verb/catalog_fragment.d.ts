@@ -4,9 +4,9 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 292 code-mode rows (274 host rows, 18 run rows), 909 declarations.
-// Replies: 235 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
-// Opaque serde_json::Value leaves: 65; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Census: 304 code-mode rows (286 host rows, 18 run rows), 952 declarations.
+// Replies: 247 fully typed, 45 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Opaque serde_json::Value leaves: 69; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
@@ -846,6 +846,49 @@ declare namespace Sdk {
   type CoreBatchEntityReceipt = { id: string; entity_type: number };
   type CoreBatchWriteReceipt = { count: number; entities: CoreBatchEntityReceipt[] };
   type BlobArtifactInput = { id?: string | null; name: string; media_type: string; occurred_at: number; learned_at?: number | null };
+  type OfficeBodyImportRequest = { artifact_ref: string; version?: number | null; made_by?: unknown | null };
+  type OfficeBodyKind = "docx" | "xlsx" | "pptx";
+  type OfficeBodyHead = { artifact: EntityId; kind: OfficeBodyKind; source_version: number; source_hash: number[]; import_frontier: number[]; frontier: number[]; commits: number };
+  type OfficeBodyArtifactRequest = { artifact_ref: string };
+  type OfficeBodyReadRequest = { artifact_ref: string; at?: number[] | null };
+  type BodyBlockKind = "paragraph" | { heading: number } | "table" | "opaque";
+  type DocxCellView = { row: number; col: number; text: string };
+  type DocxBlockView = { id: string; kind: BodyBlockKind; role?: string | null; imported: boolean; locked: boolean; text: string; cells: DocxCellView[] };
+  type DocxBodyView = { blocks: DocxBlockView[] };
+  type XlsxValue = "blank" | { number: number } | { text: string } | { bool: boolean } | { error: string };
+  type XlsxLock = "shared_formula" | "array_formula" | "data_table" | "rich_value" | "table_row" | "unsupported" | "builtin_name";
+  type BodyCell = { address: string; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
+  type XlsxArea = { first: [number, number]; last: [number, number]; lock: XlsxLock };
+  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[] };
+  type BodyName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
+  type XlsxStyle = { num_fmt: number; format?: string | null };
+  type XlsxBodyView = { date1904: boolean; sheets: XlsxSheetView[]; names: BodyName[]; styles: XlsxStyle[] };
+  type OfficeBodyView = { format: "docx"; body: DocxBodyView } | { format: "xlsx"; body: XlsxBodyView };
+  type TextCommitReceipt = { document: string; peer: number; start: number; end: number; made_by: MadeBy };
+  type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null };
+  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null };
+  type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] };
+  type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
+  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
+  type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null };
+  type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
+  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
+  type OfficeBodyForkEditRequest = { artifact_ref: string; fork_ref: string; ops: OfficeBodyOps; made_by?: unknown | null };
+  type OfficeBodyForkRequest = { artifact_ref: string; fork_ref: string };
+  type ChangeKind = "added" | "deleted" | "moved" | "text" | "cells";
+  type BlockChange = { block: string; kind: ChangeKind };
+  type ConflictKind = "delete_edit" | "competing_move" | "both_edited" | "both_set";
+  type BodyConflict = { block: string; kind: ConflictKind };
+  type OfficeBodyDiff = { base: number[]; head: number[]; proposal: BlockChange[]; current: BlockChange[]; conflicts: BodyConflict[] };
+  type OfficeBodyForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[] };
+  type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null };
+  type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
+  type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
+  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[] };
+  type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
+  type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
+  type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
   type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null };
   type ReadBlobVersionRequest = { artifact_ref: string; version: number };
@@ -1150,6 +1193,34 @@ declare const vault: Sdk.VaultHost & {
   artifacts: {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.Reply<Sdk.BlobVersionView>>;
+    body: {
+      /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by. */
+      commits(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.TextCommitReceipt[]>>;
+      /** A person's typed DOCX or XLSX operations on the live body, read against a base frontier (the head by default) and merged into the head. */
+      edit(input: Sdk.OfficeBodyEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
+      /** Projects a DOCX or XLSX body onto its imported package and lands it as the artifact's next version, with its made_by and calculator. */
+      export(input: Sdk.OfficeBodyExportVerbRequest): Promise<Sdk.Reply<Sdk.OfficeBodyExportView>>;
+      fork: {
+        /** A fork's three-way diff against the live head: what each side changed since the fork's base, and the conflicts a merge must show. */
+        diff(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
+        /** Abandons an open fork's unlanded work and returns its record. */
+        discard(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.Reply<Sdk.OfficeBodyFork>>;
+        /** The opener's typed DOCX or XLSX operations on its open fork of a live body. */
+        edit(input: Sdk.OfficeBodyForkEditRequest): Promise<Sdk.Reply<Sdk.OfficeBodyEdit>>;
+        /** A person lands a reviewed fork, naming the head the review read; a moved head, a blocking conflict or the opener as merger refuses. */
+        merge(input: Sdk.OfficeBodyForkMergeRequest): Promise<Sdk.Reply<Sdk.OfficeBodyDiff>>;
+        /** Opens a fork of the live body at its head for machine work, in an optional run. */
+        open(input: Sdk.OfficeBodyForkOpenRequest): Promise<Sdk.Reply<Sdk.OfficeBodyFork>>;
+      };
+      /** An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none. */
+      head(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.OfficeBodyHead | null>>;
+      /** Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document. */
+      import(input: Sdk.OfficeBodyImportRequest): Promise<Sdk.Reply<Sdk.OfficeBodyHead>>;
+      /** The workbook an XLSX body's export would land now, recalculated and read back; nothing lands. */
+      preview(input: Sdk.OfficeBodyArtifactRequest): Promise<Sdk.Reply<Sdk.XlsxPreview>>;
+      /** Reads a DOCX or XLSX live body as typed blocks or cells, at its head or at an earlier frontier of its history. */
+      read(input: Sdk.OfficeBodyReadRequest): Promise<Sdk.Reply<Sdk.OfficeBodyView>>;
+    };
     /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
     born_from(input: Sdk.BornFromRequest): Promise<Sdk.Reply<Sdk.BornFromView>>;
     /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */

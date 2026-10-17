@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 235 facade rows, 808 declarations.
-Inputs: 199 of 235 fully typed, 35 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 188 of 235 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
-Opaque serde_json::Value leaves: 59; unread shapes: 1.
+Census: 247 facade rows, 851 declarations.
+Inputs: 207 of 247 fully typed, 39 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 200 of 247 fully typed, 39 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Opaque serde_json::Value leaves: 63; unread shapes: 1.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -3983,6 +3983,261 @@ class BlobArtifactInput(TypedDict):
     media_type: str
     occurred_at: int
     learned_at: NotRequired[int | None]
+class OfficeBodyImportRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+    made_by: NotRequired[Any | None]
+OfficeBodyKind = Literal["docx", "xlsx", "pptx"]
+class OfficeBodyHead(TypedDict):
+    artifact: EntityId
+    kind: OfficeBodyKind
+    source_version: int
+    source_hash: list[int]
+    import_frontier: list[int]
+    frontier: list[int]
+    commits: int
+class OfficeBodyArtifactRequest(TypedDict):
+    artifact_ref: str
+class OfficeBodyReadRequest(TypedDict):
+    artifact_ref: str
+    at: NotRequired[list[int] | None]
+class BodyBlockKindHeading(TypedDict):
+    heading: int
+BodyBlockKind = Literal["paragraph", "table", "opaque"] | BodyBlockKindHeading
+class DocxCellView(TypedDict):
+    row: int
+    col: int
+    text: str
+class DocxBlockView(TypedDict):
+    id: str
+    kind: BodyBlockKind
+    role: NotRequired[str | None]
+    imported: bool
+    locked: bool
+    text: str
+    cells: list[DocxCellView]
+class DocxBodyView(TypedDict):
+    blocks: list[DocxBlockView]
+class XlsxValueNumber(TypedDict):
+    number: float
+class XlsxValueText(TypedDict):
+    text: str
+class XlsxValueBool(TypedDict):
+    bool: bool
+class XlsxValueError(TypedDict):
+    error: str
+XlsxValue = Literal["blank"] | XlsxValueNumber | XlsxValueText | XlsxValueBool | XlsxValueError
+XlsxLock = Literal["shared_formula", "array_formula", "data_table", "rich_value", "table_row", "unsupported", "builtin_name"]
+class BodyCell(TypedDict):
+    address: str
+    value: XlsxValue
+    formula: NotRequired[str | None]
+    style: NotRequired[int | None]
+    locked: NotRequired[XlsxLock | None]
+class XlsxArea(TypedDict):
+    first: tuple[int, int]
+    last: tuple[int, int]
+    lock: XlsxLock
+class XlsxSheetView(TypedDict):
+    name: str
+    cells: list[BodyCell]
+    locked: list[XlsxArea]
+class BodyName(TypedDict):
+    name: str
+    sheet: NotRequired[str | None]
+    formula: str
+    hidden: bool
+    locked: NotRequired[XlsxLock | None]
+class XlsxStyle(TypedDict):
+    num_fmt: int
+    format: NotRequired[str | None]
+class XlsxBodyView(TypedDict):
+    date1904: bool
+    sheets: list[XlsxSheetView]
+    names: list[BodyName]
+    styles: list[XlsxStyle]
+class OfficeBodyViewDocx(TypedDict):
+    format: Literal["docx"]
+    body: DocxBodyView
+class OfficeBodyViewXlsx(TypedDict):
+    format: Literal["xlsx"]
+    body: XlsxBodyView
+OfficeBodyView = OfficeBodyViewDocx | OfficeBodyViewXlsx
+class TextCommitReceipt(TypedDict):
+    document: str
+    peer: int
+    start: int
+    end: int
+    made_by: MadeBy
+class DocxBodyOpSetText(TypedDict):
+    op: Literal["set_text"]
+    block: str
+    text: str
+class DocxBodyOpSplice(TypedDict):
+    op: Literal["splice"]
+    block: str
+    at: int
+    delete: int
+    insert: str
+class DocxBodyOpSetCell(TypedDict):
+    op: Literal["set_cell"]
+    block: str
+    row: int
+    col: int
+    text: str
+class DocxBodyOpInsertParagraph(TypedDict):
+    op: Literal["insert_paragraph"]
+    after: NotRequired[str | None]
+    role: NotRequired[str | None]
+    text: str
+class DocxBodyOpDelete(TypedDict):
+    op: Literal["delete"]
+    block: str
+class DocxBodyOpMove(TypedDict):
+    op: Literal["move"]
+    block: str
+    after: NotRequired[str | None]
+DocxBodyOp = DocxBodyOpSetText | DocxBodyOpSplice | DocxBodyOpSetCell | DocxBodyOpInsertParagraph | DocxBodyOpDelete | DocxBodyOpMove
+class XlsxBodyOpSetValue(TypedDict):
+    op: Literal["set_value"]
+    sheet: str
+    cell: str
+    value: XlsxValue
+class XlsxBodyOpSetFormula(TypedDict):
+    op: Literal["set_formula"]
+    sheet: str
+    cell: str
+    formula: str
+class XlsxBodyOpSetStyle(TypedDict):
+    op: Literal["set_style"]
+    sheet: str
+    cell: str
+    style: NotRequired[int | None]
+class XlsxBodyOpClear(TypedDict):
+    op: Literal["clear"]
+    sheet: str
+    cell: str
+class XlsxBodyOpSetName(TypedDict):
+    op: Literal["set_name"]
+    name: str
+    sheet: NotRequired[str | None]
+    formula: str
+    hidden: bool
+class XlsxBodyOpDeleteName(TypedDict):
+    op: Literal["delete_name"]
+    name: str
+    sheet: NotRequired[str | None]
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName
+class OfficeBodyOpsDocx(TypedDict):
+    format: Literal["docx"]
+    ops: list[DocxBodyOp]
+class OfficeBodyOpsXlsx(TypedDict):
+    format: Literal["xlsx"]
+    ops: list[XlsxBodyOp]
+OfficeBodyOps = OfficeBodyOpsDocx | OfficeBodyOpsXlsx
+class OfficeBodyEditRequest(TypedDict):
+    artifact_ref: str
+    base: NotRequired[list[int] | None]
+    ops: OfficeBodyOps
+    made_by: NotRequired[Any | None]
+class OfficeBodyEdit(TypedDict):
+    frontier: list[int]
+    minted: list[str]
+    receipt: TextCommitReceipt
+class OfficeBodyForkOpenRequest(TypedDict):
+    artifact_ref: str
+    run_root_ref: NotRequired[str | None]
+class ForkStateOpen(TypedDict):
+    state: Literal["open"]
+class ForkStateMerged(TypedDict):
+    state: Literal["merged"]
+    by: EntityId
+    at: int
+    head: list[int]
+class ForkStateDiscarded(TypedDict):
+    state: Literal["discarded"]
+    by: EntityId
+    at: int
+ForkState = ForkStateOpen | ForkStateMerged | ForkStateDiscarded
+class OfficeBodyFork(TypedDict):
+    id: EntityId
+    artifact: EntityId
+    opener: EntityId
+    base: list[int]
+    commits: int
+    opened_at: int
+    state: ForkState
+    run_root: NotRequired[EntityId | None]
+class OfficeBodyForkEditRequest(TypedDict):
+    artifact_ref: str
+    fork_ref: str
+    ops: OfficeBodyOps
+    made_by: NotRequired[Any | None]
+class OfficeBodyForkRequest(TypedDict):
+    artifact_ref: str
+    fork_ref: str
+ChangeKind = Literal["added", "deleted", "moved", "text", "cells"]
+class BlockChange(TypedDict):
+    block: str
+    kind: ChangeKind
+ConflictKind = Literal["delete_edit", "competing_move", "both_edited", "both_set"]
+class BodyConflict(TypedDict):
+    block: str
+    kind: ConflictKind
+class OfficeBodyDiff(TypedDict):
+    base: list[int]
+    head: list[int]
+    proposal: list[BlockChange]
+    current: list[BlockChange]
+    conflicts: list[BodyConflict]
+class OfficeBodyForkMergeRequest(TypedDict):
+    artifact_ref: str
+    fork_ref: str
+    reviewed_head: list[int]
+class OfficeBodyExportVerbRequest(TypedDict):
+    artifact_ref: str
+    run_ref: str
+    author: NotRequired[str | None]
+    made_by: NotRequired[Any | None]
+class OfficeBodyExportRecord(TypedDict):
+    artifact: EntityId
+    version: int
+    frontier: list[int]
+    source_version: int
+    actor: EntityId
+    author: str
+    at: int
+    changes: int
+    recalc: NotRequired[str | None]
+class OfficeBodyExportView(TypedDict):
+    frontier: list[int]
+    record: NotRequired[OfficeBodyExportRecord | None]
+class XlsxCell(TypedDict):
+    col: int
+    row: int
+    value: XlsxValue
+    formula: NotRequired[str | None]
+    style: NotRequired[int | None]
+    locked: NotRequired[XlsxLock | None]
+class XlsxSheet(TypedDict):
+    name: str
+    cells: list[XlsxCell]
+    locked: list[XlsxArea]
+class XlsxName(TypedDict):
+    name: str
+    sheet: NotRequired[str | None]
+    formula: str
+    hidden: bool
+    locked: NotRequired[XlsxLock | None]
+class XlsxBook(TypedDict):
+    date1904: bool
+    sheets: list[XlsxSheet]
+    names: list[XlsxName]
+    styles: list[XlsxStyle]
+class XlsxPreview(TypedDict):
+    frontier: list[int]
+    book: XlsxBook
+    recalc: NotRequired[str | None]
 class AppendBlobVersionRequest(TypedDict):
     artifact_ref: str
     content_base64: str
