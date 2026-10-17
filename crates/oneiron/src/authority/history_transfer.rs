@@ -6,6 +6,8 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::adopted_evidence::AdoptedEvidence;
+
 pub(super) fn history_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -28,9 +30,10 @@ fn refuse_retired_standing(
     store: &crate::store::Store,
     fold: &AuthorityFold,
     merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<()> {
-    match retired_standing(store, fold, merged, arriving)? {
+    match retired_standing(store, fold, merged, evidence, arriving)? {
         Some(_) => Err(retired_standing_refusal()),
         None => Ok(()),
     }
@@ -44,39 +47,97 @@ fn retired_standing_refusal() -> Error {
 
 /// The first arriving row that stands on a key a handoff retired in `fold`:
 /// such a key signs nothing new into this history, and nothing new stands on
-/// a row one signed. `merged` holds the resident and arriving rows.
+/// a row one signed. `merged` holds the resident and arriving rows. On a
+/// vault that adopted a checkpoint image (`evidence`), an ancestor `merged`
+/// lacks is what the image holds of it
+/// ([`super::adopted_evidence::AdoptedEvidence::ancestor`]), its refusal
+/// for history the image does not carry included.
 fn retired_standing(
     store: &crate::store::Store,
     fold: &AuthorityFold,
     merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<Option<AuthorityEntryHash>> {
     for hash in arriving {
         let Some((_, entry)) = merged.get(hash) else {
             continue;
         };
-        if super::door_refuses_retired_standing(store, fold, hash, entry, &mut |parent| {
-            Ok(merged.get(parent).map(|(_, row)| row.clone()))
-        })? {
+        if super::door_refuses_retired_standing(
+            store,
+            fold,
+            hash,
+            entry,
+            &mut |parent| match merged.get(parent) {
+                Some((_, row)) => Ok(Some(row.clone())),
+                None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
+            },
+        )? {
             return Ok(Some(*hash));
         }
     }
     Ok(None)
 }
 
-fn history_root(
+/// What an import reads beside the rows it holds on a vault that adopted a
+/// checkpoint image (OF-469, slice E): the adopted, attested prefix the
+/// signed incoming tail extends, never a full prefix to replay. The genesis
+/// its verified pin names is the root, which a resident or arriving Genesis
+/// must be, and each row the image covers stands as held for a parent check.
+/// A covered row the import carries is hydration: it is not resident until
+/// it lands, and the store door judges it as any arriving row. With no
+/// adoption an import reads the rows it holds alone, as before (CALLS:
+/// OF-469 slice E import context on an adopted vault).
+#[derive(Clone, Copy)]
+pub(super) struct AdoptedPrefix<'a> {
+    genesis: AuthorityVaultId,
+    covered: &'a BTreeMap<AuthorityEntryHash, AuthorityCheckpointRow>,
+}
+
+impl<'a> AdoptedPrefix<'a> {
+    /// The prefix the verified, adopted image `adopted` stands for.
+    pub(super) fn of(adopted: &'a VerifiedAuthorityCheckpoint) -> Self {
+        Self {
+            genesis: adopted.pin().genesis,
+            covered: &adopted.image().rows,
+        }
+    }
+}
+
+/// The one genesis among `history`'s rows and, on an adopted vault,
+/// `adopted`'s pin; more than one refuses.
+fn import_root(
     history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    adopted: Option<AdoptedPrefix<'_>>,
 ) -> Result<Option<AuthorityVaultId>> {
-    let roots: BTreeSet<_> = history
+    let mut roots: BTreeSet<_> = history
         .iter()
         .filter_map(|(hash, (_, entry))| {
             matches!(entry.op, AuthorityOp::Genesis { .. }).then_some(*hash)
         })
         .collect();
+    roots.extend(adopted.map(|adopted| adopted.genesis));
     if roots.len() > 1 {
         return Err(invalid_authority());
     }
-    let root = roots.first().copied();
+    Ok(roots.first().copied())
+}
+
+/// Whether `hash` is held for an imported row's parent check: in `history`,
+/// or covered by the adopted image.
+fn parent_held(
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    adopted: Option<AdoptedPrefix<'_>>,
+    hash: &AuthorityEntryHash,
+) -> bool {
+    history.contains_key(hash) || adopted.is_some_and(|adopted| adopted.covered.contains_key(hash))
+}
+
+fn history_root(
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    adopted: Option<AdoptedPrefix<'_>>,
+) -> Result<Option<AuthorityVaultId>> {
+    let root = import_root(history, adopted)?;
     for (_, entry) in history.values() {
         if !matches!(entry.op, AuthorityOp::Genesis { .. }) && entry.vault_id != root {
             return Err(invalid_authority());
@@ -84,7 +145,7 @@ fn history_root(
         if entry
             .parent_hashes
             .iter()
-            .any(|hash| !history.contains_key(hash))
+            .any(|hash| !parent_held(history, adopted, hash))
         {
             return Err(invalid_authority());
         }
@@ -92,13 +153,80 @@ fn history_root(
     Ok(root)
 }
 
+/// The refusal a full export gives on a vault that adopted a checkpoint
+/// image while it does not physically hold every covered row (OF-469, slice
+/// E): the full signed history includes the covered prefix, so the export
+/// names what this vault lacks (the adopted pin's genesis, the image, the
+/// covered rows not stored) and returns no suffix and no partial shape.
+/// None once every covered row is held: the export runs as on any vault
+/// (CALLS: OF-469 slice E full export on an adopted vault).
+fn unheld_prefix(
+    adopted: &VerifiedAuthorityCheckpoint,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+) -> Option<Error> {
+    let missing: BTreeSet<AuthorityEntryHash> = adopted
+        .image()
+        .covered
+        .iter()
+        .filter(|hash| !history.contains_key(*hash))
+        .copied()
+        .collect();
+    (!missing.is_empty()).then(|| {
+        super::readonly_fold::history_required(&AuthorityHistoryRequest {
+            vault_id: Some(adopted.pin().genesis),
+            checkpoint: Some(adopted.id()),
+            missing,
+        })
+    })
+}
+
+/// The rows an import's consent structure reads past the `resident` ones on
+/// a vault that adopted a checkpoint image: the bodies the image carries of
+/// rows not stored here, as [`super::import_order::write_stage_order`] reads
+/// them. None of them is resident.
+fn carried_structure<'a>(
+    evidence: Option<&'a AdoptedEvidence>,
+    resident: &'a BTreeSet<AuthorityEntryHash>,
+) -> impl Iterator<Item = &'a AuthorityLogEntry> {
+    evidence
+        .into_iter()
+        .flat_map(|evidence| evidence.carried_past(resident))
+        .map(|(_, entry)| entry)
+}
+
+/// The verified image this vault adopted, as an import reads it, and its
+/// evidence, read only when there is one.
+fn adopted_context_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(
+    Option<VerifiedAuthorityCheckpoint>,
+    Option<std::sync::Arc<AdoptedEvidence>>,
+)> {
+    let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
+    else {
+        return Ok((None, None));
+    };
+    let evidence = super::adopted_evidence::adopted_evidence_in_txn(store, txn)?;
+    Ok((Some(adopted), evidence))
+}
+
 impl Vault {
     /// Exports the full origin-signed history, including signed quarantined forks.
     /// Original bytes and the genesis identity are preserved. No local secret leaves.
+    /// On a vault that adopted a checkpoint image, the full history includes
+    /// the covered prefix: until every covered row is physically held here,
+    /// the export refuses with the history it lacks ([`unheld_prefix`]).
     pub fn export_signed_authority_history(&self) -> Result<Vec<Vec<u8>>> {
         let txn = self.store.env.read_txn()?;
         let mut history = history_in_txn(self, &txn)?;
-        history_root(&history)?;
+        if let Some(adopted) =
+            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &txn)?
+            && let Some(refusal) = unheld_prefix(&adopted, &history)
+        {
+            return Err(refusal);
+        }
+        history_root(&history, None)?;
         let mut emitted = BTreeSet::new();
         let mut result = Vec::with_capacity(history.len());
         while !history.is_empty() {
@@ -123,6 +251,10 @@ impl Vault {
     /// Imports a complete signed history, atomically, before an in-chain ReRoot.
     /// A different genesis, invalid signature or missing parent writes nothing.
     /// Imported history is refolded locally; it never imports a trusted roster snapshot.
+    /// On a vault that adopted a checkpoint image, complete means the adopted,
+    /// attested prefix plus the signed incoming tail, not an independent
+    /// replay of the whole prefix ([`AdoptedPrefix`]); a covered row the
+    /// blobs carry lands as hydration.
     pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
         let mut decoded = Vec::with_capacity(blobs.len());
         for bytes in blobs {
@@ -133,6 +265,8 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
+        let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
+        let prefix = adopted.as_ref().map(AdoptedPrefix::of);
         for (hash, bytes, entry) in &decoded {
             merged
                 .entry(*hash)
@@ -153,9 +287,9 @@ impl Vault {
             Err(error) => return Err(error),
         };
         if let Some(local) = &local {
-            refuse_retired_standing(&self.store, local, &merged, &arriving)?;
+            refuse_retired_standing(&self.store, local, &merged, evidence.as_deref(), &arriving)?;
         }
-        history_root(&merged)?.ok_or_else(invalid_authority)?;
+        history_root(&merged, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
         let mut ops = Vec::new();
@@ -165,7 +299,8 @@ impl Vault {
         let stored = merged
             .iter()
             .filter(|(hash, _)| resident.contains(*hash))
-            .map(|(_, (_, entry))| entry);
+            .map(|(_, (_, entry))| entry)
+            .chain(carried_structure(evidence.as_deref(), &resident));
         let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
         for (hash, bytes, _) in
             super::import_order::import_order(stored, &resident, own_roots, decoded)
@@ -200,7 +335,7 @@ impl Vault {
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if local.is_none() {
-            refuse_retired_standing(&self.store, &fold, &merged, &arriving)?;
+            refuse_retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?;
         }
         if fold.vault_root_is_conflicted() {
             return Err(invalid_authority());
@@ -305,10 +440,20 @@ impl Vault {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         // The main-log heads: a world's side entries are never a main entry's parent.
         let parents = fold.append_heads;
+        // On a vault that adopted a checkpoint image, the signer's covered
+        // rows count by their summaries, stored or not (OF-469, slice E).
+        let adopted =
+            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, txn)?;
+        let covered = adopted
+            .iter()
+            .flat_map(|adopted| adopted.image().rows.values())
+            .filter(|row| row.signer == signer_key)
+            .map(|row| row.seq);
         let seq = history
             .values()
             .filter(|(_, entry)| entry.signer_key() == &signer_key)
             .map(|(_, entry)| entry.seq)
+            .chain(covered)
             .max()
             .unwrap_or(0)
             .checked_add(1)
@@ -378,20 +523,14 @@ pub fn recover_vaults_independently(
 /// their parents. The store door never needs a row's parents stored, so a
 /// machine that syncs what it opened holds the authority rows its windows
 /// carry, some above a gap a later page closes.
+/// On a vault that adopted a checkpoint image, `adopted` adds its prefix
+/// ([`AdoptedPrefix`]).
 pub(super) fn page_root(
     history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
     resident: &BTreeSet<AuthorityEntryHash>,
+    adopted: Option<AdoptedPrefix<'_>>,
 ) -> Result<Option<AuthorityVaultId>> {
-    let roots: BTreeSet<_> = history
-        .iter()
-        .filter_map(|(hash, (_, entry))| {
-            matches!(entry.op, AuthorityOp::Genesis { .. }).then_some(*hash)
-        })
-        .collect();
-    if roots.len() > 1 {
-        return Err(invalid_authority());
-    }
-    let root = roots.first().copied();
+    let root = import_root(history, adopted)?;
     for (hash, (_, entry)) in history {
         if !matches!(entry.op, AuthorityOp::Genesis { .. }) && entry.vault_id != root {
             return Err(invalid_authority());
@@ -400,7 +539,7 @@ pub(super) fn page_root(
             && entry
                 .parent_hashes
                 .iter()
-                .any(|parent| !history.contains_key(parent))
+                .any(|parent| !parent_held(history, adopted, parent))
         {
             return Err(invalid_authority());
         }
@@ -436,6 +575,8 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
+        let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;
+        let prefix = adopted.as_ref().map(AdoptedPrefix::of);
         if staged {
             let paged: BTreeSet<AuthorityEntryHash> =
                 decoded.iter().map(|(hash, _, _)| *hash).collect();
@@ -465,11 +606,12 @@ impl Vault {
             Err(error) => return Err(error),
         };
         if let Some(local) = &local
-            && let Some(refused) = retired_standing(&self.store, local, &merged, &arriving)?
+            && let Some(refused) =
+                retired_standing(&self.store, local, &merged, evidence.as_deref(), &arriving)?
         {
             return Ok(PageVerdict::Retired(refused));
         }
-        page_root(&merged, &resident)?.ok_or_else(invalid_authority)?;
+        page_root(&merged, &resident, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
         let mut ops = Vec::new();
@@ -479,7 +621,8 @@ impl Vault {
         let stored = merged
             .iter()
             .filter(|(hash, _)| resident.contains(*hash))
-            .map(|(_, (_, entry))| entry);
+            .map(|(_, (_, entry))| entry)
+            .chain(carried_structure(evidence.as_deref(), &resident));
         let own_roots = super::log_structure::LocalRoots::read_in_txn(&self.store, &txn)?;
         for (hash, bytes, _) in
             super::import_order::import_order(stored, &resident, own_roots, decoded)
@@ -514,7 +657,8 @@ impl Vault {
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         if local.is_none()
-            && let Some(refused) = retired_standing(&self.store, &fold, &merged, &arriving)?
+            && let Some(refused) =
+                retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?
         {
             return Ok(PageVerdict::Retired(refused));
         }
