@@ -572,6 +572,7 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                 critical_class_rule("legal.", false),
                 critical_class_rule("boundary.", false),
                 critical_class_rule("decision.settled", true),
+                critical_class_rule(crate::code_run::TEAM_DELIVERABLE_REVIEW_PREDICATE, true),
             ]),
         ),
         (

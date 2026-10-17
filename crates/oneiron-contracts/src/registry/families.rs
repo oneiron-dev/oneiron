@@ -3,7 +3,9 @@
 use super::{ENTITY_TYPE_REGISTRY, EntityClassification, EntityTypeRegistryEntry, TypeByteZone};
 
 /// Stable kind family. A spill keeps its family even when its byte is in overflow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum TypeByteFamily {
     Conversation,
     People,
