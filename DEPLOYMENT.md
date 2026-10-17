@@ -165,6 +165,7 @@ import_folder_text_bytes = 268435456 # text one notes import or folder rescan ho
 import_folder_notes = 100000      # notes one notes import or folder rescan reads; past it the folder is imported whole and the row asks
 import_decoded_messages = 1000000 # messages one history import holds decoded; past it the import lands whole and the row asks
 import_decoded_bytes = 1073741824 # bytes those decoded messages hold; past it the import lands whole and the row asks
+signature_decode_bytes = 1073741824 # bytes one signature image decode (POST /sign/image) allocates; a raster past it asks and is decoded whole
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

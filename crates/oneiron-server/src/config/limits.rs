@@ -258,6 +258,7 @@ impl LimitsConfig {
             import_folder_notes,
             import_decoded_messages,
             import_decoded_bytes,
+            signature_decode_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -317,6 +318,7 @@ impl LimitsConfig {
             (EngineLimit::ImportFolderNotes, import_folder_notes),
             (EngineLimit::ImportDecodedMessages, import_decoded_messages),
             (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
+            (EngineLimit::SignatureDecodeBytes, signature_decode_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -446,4 +448,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) import_folder_notes: Option<u64>,
     pub(super) import_decoded_messages: Option<u64>,
     pub(super) import_decoded_bytes: Option<u64>,
+    pub(super) signature_decode_bytes: Option<u64>,
 }

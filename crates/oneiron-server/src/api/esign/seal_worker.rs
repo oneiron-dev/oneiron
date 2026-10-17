@@ -11,14 +11,17 @@
 //! B-T seal; B-B without one), and `ONEIRON_SEAL_URL` the signing page the
 //! evidence names (the sign page at the host's public origin when unset). The seal organ is the build an installed pack carries
 //! for this platform, written under `ONEIRON_ORGAN_DIR`, or the program
-//! `ONEIRON_SEAL_ORGAN` names.
+//! `ONEIRON_SEAL_ORGAN` names. A pack build follows the packs: when the
+//! vault's installs change and the seal build they carry is not the one
+//! installed (a seal pack updated or removed), the host drops it, and the
+//! tick installs the current one, or waits for one.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::blob_artifact::esign::{EsignSealRun, SealProfile};
-use oneiron::skill_hub::pack_catalog::host_platform;
+use oneiron::skill_hub::pack_catalog::{PackInstallReceipt, host_platform};
 use oneiron_organ_host::seal::{
     FileSealKeys, HostedSealer, SEAL_ORGAN, SealKeys, SealSettings, SealTsa, pem_certificates,
     seal_spec, seal_spec_from_pack,
@@ -26,7 +29,7 @@ use oneiron_organ_host::seal::{
 use oneiron_organ_host::{FetchGrant, FetchOrigin, OrganSpec};
 
 use crate::builtin_host::public_origin;
-use crate::server::SyncServer;
+use crate::server::{HousekeepingAdmission, SyncServer};
 
 const KEY_ENV: &str = "ONEIRON_SEAL_KEY";
 const CHAIN_ENV: &str = "ONEIRON_SEAL_CHAIN";
@@ -45,19 +48,41 @@ const PER_TICK: usize = 8;
 /// The most bytes one CRL or timestamp fetch brings back.
 const FETCH_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Starts the seal worker on the server's runtime. It seals on the
-/// server's organ host, the one the mesh listener offers.
+/// Starts the seal worker on the server's runtime, every tick admitted. It
+/// seals on the server's organ host, the one the mesh listener offers.
 pub(crate) fn spawn(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+    spawn_admitted(server, crate::server::admit_every_pass())
+}
+
+/// [`spawn`] under a host's freeze (a managed host that reaps its vault): a
+/// tick runs only when `admit` lets it, and holds what it was given until
+/// its seals are written.
+pub(crate) fn spawn_admitted(
+    server: Arc<SyncServer>,
+    admit: HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut every = tokio::time::interval(TICK);
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut said: Option<String> = None;
+        let mut installs: Option<Vec<PackInstallReceipt>> = None;
         loop {
             every.tick().await;
-            let server = Arc::clone(&server);
-            let Ok(ticked) = tokio::task::spawn_blocking(move || tick(&server)).await else {
+            let Some(pass) = admit() else {
                 continue;
             };
+            let server = Arc::clone(&server);
+            let mut seen = installs.take();
+            let Ok((ticked, seen)) = tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                let ticked = tick(&server, &mut seen);
+                (ticked, seen)
+            })
+            .await
+            else {
+                continue;
+            };
+            installs = seen;
             match ticked {
                 Ok(runs) => {
                     said = None;
@@ -85,9 +110,16 @@ fn env_path(name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// One tick. `Err` says why seals wait.
-fn tick(server: &SyncServer) -> Result<Vec<EsignSealRun>, String> {
+/// One tick. `Err` says why seals wait. `installs` is what the last tick
+/// saw of the vault's pack installs.
+fn tick(
+    server: &SyncServer,
+    installs: &mut Option<Vec<PackInstallReceipt>>,
+) -> Result<Vec<EsignSealRun>, String> {
     let host = &*server.organs;
+    if env_path(ORGAN_ENV).is_none() {
+        follow_seal_pack(server, installs);
+    }
     let (Some(key), Some(chain)) = (env_path(KEY_ENV), env_path(CHAIN_ENV)) else {
         return Err(format!(
             "no seal certificate configured: set {KEY_ENV} and {CHAIN_ENV}"
@@ -172,6 +204,47 @@ fn install(server: &SyncServer, fetch: FetchGrant) -> Result<OrganSpec, String> 
         .map_err(|err| format!("the seal organ build: {err}"))?;
     seal_spec_from_pack(&binary, &crate::server::organ_dir(), fetch)
         .map_err(|err| format!("the seal organ build: {err}"))
+}
+
+/// Drops the seal organ the host installed from a pack once the vault's
+/// pack installs changed and the seal build they carry for this platform is
+/// not the installed one: the tick then installs the current build, or
+/// waits for one. Unchanged installs read nothing more.
+fn follow_seal_pack(server: &SyncServer, seen: &mut Option<Vec<PackInstallReceipt>>) {
+    let installs = match server.vault.installed_packs() {
+        Ok(installs) => installs,
+        Err(error) => {
+            tracing::warn!(%error, "the installed packs");
+            return;
+        }
+    };
+    if seen.as_ref().is_none_or(|seen| *seen == installs) {
+        *seen = Some(installs);
+        return;
+    }
+    if let Some(installed) = server.organs.spec(SEAL_ORGAN) {
+        let platform = host_platform();
+        let entries = match server.vault.pack_organs() {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::warn!(%error, "the pack organs");
+                return;
+            }
+        };
+        let carried = entries
+            .iter()
+            .find(|entry| {
+                entry.organ.name == SEAL_ORGAN && entry.held_platforms.contains(&platform)
+            })
+            .and_then(|entry| entry.organ.build(&platform))
+            .map(|build| build.blake3.as_str());
+        if installed.program_hash.map(|hash| hash.to_hex()).as_deref() != carried
+            && server.organs.uninstall(SEAL_ORGAN)
+        {
+            tracing::info!("the seal organ's pack changed; the seal installs its current build");
+        }
+    }
+    *seen = Some(installs);
 }
 
 /// Where the seal may fetch: its timestamp authority's origin.

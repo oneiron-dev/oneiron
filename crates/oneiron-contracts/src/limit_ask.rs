@@ -96,11 +96,16 @@ pub enum EngineLimit {
     /// Bytes those decoded messages hold, ids and titles included. Past it
     /// the import lands whole.
     ImportDecodedBytes,
+    /// Bytes one signature image decode (`POST /sign/image`) may allocate,
+    /// its decoded raster included: the decoder's own alloc bound is set from
+    /// it. An image whose header declares a raster past it asks whether
+    /// everything is okay, and is decoded whole.
+    SignatureDecodeBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -122,6 +127,7 @@ impl EngineLimit {
         Self::ImportFolderNotes,
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
+        Self::SignatureDecodeBytes,
     ];
 
     /// The config key that sets the row.
@@ -148,6 +154,7 @@ impl EngineLimit {
             Self::ImportFolderNotes => "limits.import_folder_notes",
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
+            Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
         }
     }
 
@@ -176,6 +183,7 @@ impl EngineLimit {
             Self::ImportFolderNotes => 100_000,
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
+            Self::SignatureDecodeBytes => 1 << 30,
         }
     }
 }

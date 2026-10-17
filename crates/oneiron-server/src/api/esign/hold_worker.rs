@@ -132,7 +132,7 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
         return Ok(());
     };
     if ask.answer.is_none() {
-        if server.vault().climb_stale_esign_ask(&ask)? {
+        if server.vault().climb_stale_esign_ask(held, &ask)? {
             tracing::info!(
                 document = %held.document,
                 recipient = %held.recipient,

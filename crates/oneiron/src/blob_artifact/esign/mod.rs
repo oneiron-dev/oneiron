@@ -21,9 +21,11 @@ pub use model::{
 
 mod capability;
 mod ceremony;
+mod door;
+pub use door::{EsignCreateRequest, EsignDraftView};
 mod escalation;
 pub use escalation::{
-    ESIGN_ASK_CLIMB_HOURS, HOLD_ALLOW, HOLD_DECLINE, HeldSigning, HeldSigningAnswer,
+    ESIGN_ASK_CLIMB_HOURS, HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigning, HeldSigningAnswer,
     HeldSigningState,
 };
 mod principals;

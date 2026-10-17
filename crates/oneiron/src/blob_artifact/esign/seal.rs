@@ -249,6 +249,14 @@ impl Vault {
                         &body,
                     )
                     .apply(txn)?;
+                if let Some(project) = state.document.project {
+                    crate::federation::record_scope::stamp_blob_project(
+                        &self.store,
+                        txn,
+                        id,
+                        project,
+                    )?;
+                }
                 let version = self.append_blob_artifact_version_in_txn(
                     txn,
                     &id,

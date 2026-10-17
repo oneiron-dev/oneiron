@@ -4,6 +4,7 @@ use super::{
     ledger::state_in,
     model::*,
 };
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, TimeRange, Vault};
 use std::io::Cursor;
@@ -55,15 +56,7 @@ impl Vault {
         if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
             return Err(invalid("signature image format"));
         }
-        let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
-        let mut limits = image::Limits::default();
-        limits.max_image_width = Some(2048);
-        limits.max_image_height = Some(2048);
-        limits.max_alloc = Some(32 * 1024 * 1024);
-        reader.limits(limits);
-        let decoded = reader
-            .decode()
-            .map_err(|_| invalid("signature image decode"))?;
+        let decoded = self.decode_signature_image(bytes, format)?;
         if !decoded.to_rgba8().pixels().any(|p| p.0[3] != 0) {
             return Err(invalid("signature image has no visible pixels"));
         }
@@ -140,6 +133,14 @@ impl Vault {
                     &body,
                 )
                 .apply(txn)?;
+            if let Some(project) = state.document.project {
+                crate::federation::record_scope::stamp_blob_project(
+                    &self.store,
+                    txn,
+                    image,
+                    project,
+                )?;
+            }
             // A bearer authorizes document input, not an owner-level Auto assertion.
             let artifact_actor = super::artifact_actor::actor(self, txn, now)?;
             self.append_blob_artifact_version_in_txn(
@@ -166,6 +167,40 @@ impl Vault {
 }
 
 impl Vault {
+    /// Decodes an uploaded signature image under the decoder's alloc bound,
+    /// the `[limits] signature_decode_bytes` row (OF-520). The raster its
+    /// header declares is measured against the row first: past it, the row
+    /// asks whether everything is okay and the image is decoded whole, the
+    /// bound lifted by that raster (ask and serve).
+    fn decode_signature_image(
+        &self,
+        bytes: &[u8],
+        format: image::ImageFormat,
+    ) -> Result<image::DynamicImage> {
+        let row = EngineLimit::SignatureDecodeBytes;
+        let bound = self.limit_watch().bound(row);
+        let reader = |max_alloc: u64| {
+            let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(2048);
+            limits.max_image_height = Some(2048);
+            limits.max_alloc = Some(max_alloc);
+            reader.limits(limits);
+            reader
+        };
+        let raster = reader(bound)
+            .into_decoder()
+            .map(|decoder| image::ImageDecoder::total_bytes(&decoder))
+            .map_err(|_| invalid("signature image decode"))?;
+        let max_alloc = match self.measure_limit(row, raster) {
+            Some(_) => bound.saturating_add(raster),
+            None => bound,
+        };
+        reader(max_alloc)
+            .decode()
+            .map_err(|_| invalid("signature image decode"))
+    }
+
     /// Read only a canonical raster uploaded by this capability's recipient.
     pub fn esign_signature_image_for_capability(
         &self,

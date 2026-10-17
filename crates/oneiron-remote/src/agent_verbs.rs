@@ -875,6 +875,9 @@ impl OneironClient {
                 "vault.artifacts.create" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactView>,
                 >(client, verb, &input),
+                "vault.esign.create" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignDraftView,
+                >(client, verb, &input),
                 "vault.conversations.create" => remote_agent_verb_output::<
                     oneiron::core_write::CoreEntityWriteReceipt,
                 >(client, verb, &input),
@@ -4412,6 +4415,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.create", value)
+    }
+    pub fn vault_esign_create(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignCreateRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignDraftView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.create", value)
     }
     pub fn vault_conversations_create(
         &self,

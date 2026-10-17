@@ -7,7 +7,7 @@ use crate::outbound::{OutboundDispatchOutcome, OutboundDispatchRequest};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignNoticeSwitches {
     pub invite: bool,
@@ -32,7 +32,7 @@ impl Default for EsignNoticeSwitches {
 
 /// Rule values belong to the installing pack; the engine does not choose a
 /// reminder ladder or a default expiry window. Seconds are measured from send.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EsignLifecycleRules {
     pub expiry_after_seconds: u64,

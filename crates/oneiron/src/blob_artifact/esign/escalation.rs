@@ -53,8 +53,14 @@ const TITLE_MAX_BYTES: usize = 256;
 pub enum HeldSigningState {
     /// Held; the host's next pass asks its first role.
     Held,
-    /// Waits in the role ask queue under `question` (hex).
-    Asked { question: String },
+    /// Waits in the role ask queue under `question` (hex). `wait` is the
+    /// role the ask's wait is timed at and since when, set at each climb;
+    /// none while it waits at the role it was first asked at, timed from
+    /// the ask.
+    Asked {
+        question: String,
+        wait: Option<HeldAskWait>,
+    },
     /// A role holder allowed it, and the signature landed.
     Allowed { at: u64 },
     /// A role holder declined it; the signature did not land.
@@ -62,6 +68,15 @@ pub enum HeldSigningState {
     /// The document moved on before the answer could land: the recipient's
     /// turn passed or the document ended.
     Superseded { at: u64 },
+}
+
+/// The rung a held sign act's ask waits at, and since when: each rung of a
+/// multi-hop chain waits its own [`ESIGN_ASK_CLIMB_HOURS`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeldAskWait {
+    pub role: AskRole,
+    pub since: u64,
 }
 
 /// A role holder's answer to one hold.
@@ -266,34 +281,74 @@ impl Vault {
             let mut held = open_hold(self, txn, document, recipient, held_at)?;
             held.state = HeldSigningState::Asked {
                 question: question.to_hex(),
+                wait: None,
             };
             HELD.put(&self.store, txn, &key(document, recipient), &held)
         })
     }
 
     /// Climbs a held sign act's unanswered `ask` one role up its chain once
-    /// [`ESIGN_ASK_CLIMB_HOURS`] have passed since it was asked: a person who
-    /// never answers passes the question on, through the climb that keeps
-    /// the ask's natural-person filter and ceiling. An ask at the vault
+    /// [`ESIGN_ASK_CLIMB_HOURS`] have passed at the role it waits at: since
+    /// it was asked, or since the climb that brought it there, so each rung
+    /// of a multi-hop chain waits its own hours. A person who never answers
+    /// passes the question on, through the climb that keeps the ask's
+    /// natural-person filter and ceiling. An ask another door moved after
+    /// its last climb (a holder passing it on, a role left unheld) starts
+    /// its wait when this pass first sees it there. An ask at the vault
     /// owners, or at no live holder, waits on. `true` when it climbed.
     ///
     /// # Errors
-    /// The setting or the climb's write failed.
-    pub fn climb_stale_esign_ask(&self, ask: &DecisionAsk) -> Result<bool> {
-        if ask.answer.is_some()
-            || ask
-                .role
-                .as_ref()
-                .is_none_or(|role| role.role.rank() == RoleRank::Owner)
-        {
+    /// The setting, the climb's write or the hold's wait write failed.
+    pub fn climb_stale_esign_ask(&self, held: &HeldSigning, ask: &DecisionAsk) -> Result<bool> {
+        let Some(at) = ask
+            .role
+            .as_ref()
+            .filter(|role| ask.answer.is_none() && role.role.rank() != RoleRank::Owner)
+        else {
             return Ok(false);
-        }
+        };
+        let now = self.now_recorded_at();
+        let since = match &held.state {
+            HeldSigningState::Asked {
+                wait: Some(wait), ..
+            } if wait.role == at.role => wait.since,
+            HeldSigningState::Asked { wait: Some(_), .. } => {
+                self.esign_hold_waits(held, &at.role, now)?;
+                return Ok(false);
+            }
+            _ => ask.asked_at,
+        };
         let hours = crate::learning_setting::setting_value(self, &ESIGN_ASK_CLIMB_HOURS)?;
-        let waited = self.now_recorded_at().saturating_sub(ask.asked_at) as f64;
-        if waited < hours * 3600.0 {
+        if (now.saturating_sub(since) as f64) < hours * 3600.0 {
             return Ok(false);
         }
-        Ok(self.climb_decision_ask(ask.seq)?.is_some())
+        let Some(climbed) = self.climb_decision_ask(ask.seq)? else {
+            return Ok(false);
+        };
+        self.esign_hold_waits(held, &climbed.role, now)?;
+        Ok(true)
+    }
+
+    /// Starts an asked hold's wait at `role`, from `since`. A hold settled
+    /// meanwhile is left as it is.
+    fn esign_hold_waits(&self, held: &HeldSigning, role: &AskRole, since: u64) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let key = key(&held.document, &held.recipient);
+            let Some(mut now) = HELD
+                .get(&self.store, txn, &key)?
+                .filter(|now| now.held_at == held.held_at)
+            else {
+                return Ok(());
+            };
+            let HeldSigningState::Asked { wait, .. } = &mut now.state else {
+                return Ok(());
+            };
+            *wait = Some(HeldAskWait {
+                role: role.clone(),
+                since,
+            });
+            HELD.put(&self.store, txn, &key, &now)
+        })
     }
 
     /// Settles one hold with a role holder's answer. An allowed hold signs
