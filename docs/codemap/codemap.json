@@ -17857,6 +17857,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConflictReviewScope",
       "ConflictSettleDecisions",
       "ConflictSettleReceipt",
       "ConflictSettlement",
@@ -17869,7 +17870,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "enum": 1,
+      "enum": 2,
       "fn": 3,
       "struct": 5
      }
@@ -29295,7 +29296,7 @@
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
