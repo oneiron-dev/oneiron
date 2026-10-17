@@ -256,10 +256,16 @@ pub(super) fn certificate(
         details.push(format!("rejection: {reason}"));
     }
     for recipient in &request.state.document.recipients {
-        details.push(format!(
+        let mut line = format!(
             "recipient: {} name: {} email: {}",
             recipient.id, recipient.name, recipient.email
-        ));
+        );
+        // The law that kept this signature with a natural person, as the
+        // sender named it.
+        if let Some(basis) = &recipient.natural_person {
+            line.push_str(&format!(" natural_person: {basis}"));
+        }
+        details.push(line);
     }
     for signature in request.state.signatures.values() {
         details.push(format!(
