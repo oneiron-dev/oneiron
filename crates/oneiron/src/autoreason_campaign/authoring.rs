@@ -207,6 +207,7 @@ pub fn bind_claim_authoring_campaign(
             confirmation: None,
             share,
             incumbent,
+            prior_ladder: Vec::new(),
         },
         at,
     )?;
