@@ -289,6 +289,36 @@ pub(super) fn served_scratchpad(
     }))
 }
 
+/// An agent's reader list as its board serves it: the READERS section for
+/// the frame and its full-view rows (ARCH-0032 #private-reads: the agent
+/// sees who may read its diary and sealed pads). Any other caller gets none.
+/// A list that does not read is logged and left off, so it never costs the
+/// agent its board.
+pub(super) fn served_readers(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Option<(oneiron::context_board::BoardSection, Vec<String>)> {
+    if auth.actor_class() != Some("agent") || auth.principal_ref().is_none() {
+        return None;
+    }
+    let section = match scratchpad_memory(server, auth).map(|memory| memory.board_readers_section())
+    {
+        Ok(Ok(section)) => section,
+        Ok(Err(error)) => {
+            tracing::warn!(code = %error.code, error = %error.message, "board readers section left off");
+            return None;
+        }
+        Err(_) => return None,
+    };
+    let rows = section
+        .pinned_rows()
+        .iter()
+        .chain(section.detail_rows())
+        .cloned()
+        .collect();
+    Some((section, rows))
+}
+
 /// The pad belongs to the authenticated entity principal under its declared
 /// class; the engine re-checks both on every write.
 fn scratchpad_memory<'a>(
