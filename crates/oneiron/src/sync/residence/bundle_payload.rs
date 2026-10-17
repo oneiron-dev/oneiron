@@ -276,7 +276,8 @@ impl WindowManager {
     /// everywhere.
     fn sealed_bundle_base(&self, windows: &[WindowKey]) -> Result<Zeroizing<Vec<u8>>> {
         let vault = self.vault();
-        let authority = vault.export_signed_authority_history()?;
+        // The rows held here: a vault not yet hydrated holds no covered row.
+        let authority = super::held_authority_history(vault)?;
         let public: BTreeSet<EntityId> = {
             let txn = vault.store.env.read_txn()?;
             let fold = vault.authority_view_readonly_in_txn(&txn)?;
