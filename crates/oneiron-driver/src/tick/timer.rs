@@ -226,6 +226,28 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     next = Some(due);
                 }
             }
+            // Each standing question's refresh (OF-506) arms the same
+            // home-only cadence; the Deadline pass runs the host's pump.
+            let question = match self.vault.next_question_refresh_at() {
+                Ok(question) => question,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        ?error,
+                        "question refresh deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(at) = question {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Micro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
+            }
         }
         // An unreadable home designation refuses Macro and digest, but
         // independent Micro/Meso/maintenance or commitment work continues.

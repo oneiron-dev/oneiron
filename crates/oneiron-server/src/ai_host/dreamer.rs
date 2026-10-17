@@ -51,6 +51,11 @@ pub(super) struct DreamerHost {
     thread: std::thread::JoinHandle<WakeSupervisorReport>,
 }
 
+/// The server the standing-question pump runs on, bound once the server is
+/// built: the Dreamer's Deadline passes drive the pump through it (OF-506).
+pub(super) type QuestionTimer =
+    Arc<std::sync::OnceLock<std::sync::Weak<crate::server::SyncServer>>>;
+
 pub(super) struct DreamerStart {
     pub(super) vault: Arc<Vault>,
     pub(super) runtime: Arc<ModelRuntime>,
@@ -65,6 +70,7 @@ pub(super) struct DreamerStart {
     pub(super) windows: BTreeMap<ModelId, u64>,
     /// The server's decision host, once it is staffed.
     pub(super) decisions: Arc<std::sync::OnceLock<DecisionHost>>,
+    pub(super) question_timer: QuestionTimer,
 }
 
 /// The input each model a role's rungs name may fill: its provider's context
@@ -164,6 +170,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         idle,
         windows,
         decisions,
+        question_timer,
     } = start;
     // Stewardship follow-up drafts ride this thread and stop with it.
     tokio::spawn(super::stewardship::draft_loop(
@@ -202,6 +209,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             inner: None,
             status: Arc::clone(&status),
             decisions,
+            question_timer,
         };
         let lifecycle = SessionLifecycleDriver::new(
             &vault,
@@ -323,6 +331,7 @@ struct ObservedFactory {
     /// ladder and promotes through its auto check. Until the server staffs
     /// it, a pass runs on the shipped, unstaffed ladder.
     decisions: Arc<std::sync::OnceLock<DecisionHost>>,
+    question_timer: QuestionTimer,
 }
 
 impl ObservedFactory {
@@ -514,6 +523,30 @@ impl PassExecutorFactory for ObservedFactory {
 
     fn actor(&self) -> Option<WriteActor> {
         Some(self.actor)
+    }
+
+    /// The standing-question pump, once serve has bound the server. Its
+    /// model rungs block on the server's runtime, so it runs on a thread of
+    /// its own, off this pass's runtime; the pass waits for it.
+    fn run_home_timer(
+        &mut self,
+        _vault: &Vault,
+        now_secs: u64,
+        _local_node_id: u64,
+    ) -> oneiron::Result<()> {
+        let Some(server) = self.question_timer.get().and_then(std::sync::Weak::upgrade) else {
+            return Ok(());
+        };
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| crate::decision_graph::pump_due(&server, now_secs))
+                .join()
+        })
+        .unwrap_or_else(|_| {
+            Err(oneiron::Error::InvalidConfig(
+                "standing question pump panicked".into(),
+            ))
+        })
     }
 }
 

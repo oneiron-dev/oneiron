@@ -224,7 +224,9 @@ pub(super) async fn serve_with_config(
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     workers.push(crate::wire_health::spawn(&sync_server));
     // Due standing questions are answered through the ladder (OF-506).
-    workers.push(crate::decision_graph::spawn(&sync_server));
+    if !ai.bind_question_timer(&sync_server) {
+        workers.push(crate::decision_graph::spawn(&sync_server));
+    }
     // Uncertain identities are decided, or asked of the person (OF-123).
     workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).

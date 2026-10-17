@@ -85,6 +85,17 @@ pub trait PassExecutorFactory {
     fn linked_shutdown(&self) -> Option<Arc<dyn LinkedShutdown>> {
         None
     }
+
+    /// The host's home-timer work, run once a Deadline pass is done: the
+    /// standing-question pump (OF-506). The default has none.
+    fn run_home_timer(
+        &mut self,
+        _vault: &Vault,
+        _now_secs: u64,
+        _local_node_id: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// [`PassExecutorFactory`] over the landed [`ConsolidationExecutor`]: owns

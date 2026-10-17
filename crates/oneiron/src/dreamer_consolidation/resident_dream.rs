@@ -307,9 +307,22 @@ fn cut_for(
         .filter(|item| item.occurred_at > 0 && (item.occurred_at, item.item_id.as_str()) > after)
         .collect();
     inbox.sort_by(|a, b| (a.occurred_at, &a.item_id).cmp(&(b.occurred_at, &b.item_id)));
+    // Each row's words, read as the resident through its own lane: only a
+    // row addressed to it, on an identity it may read, carries any. A lane
+    // the resident cannot open leaves the rows as index lines.
+    let texts = match vault
+        .memory(resident, EdgeActorClass::Agent)
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+    {
+        Ok(read) => vault.resolve_agent_inbox_texts(&read, &inbox)?,
+        Err(error) => {
+            tracing::warn!(%error, "resident inbox words unread; rows stay index lines");
+            BTreeMap::new()
+        }
+    };
     let mut inbox_lines = Vec::new();
     for item in inbox {
-        let line = format!(
+        let index = format!(
             "- {} {:?} thread {} with {} identities{}",
             item.occurred_at,
             item.kind,
@@ -320,9 +333,29 @@ fn cut_for(
                 .map(|payload| format!(" payload {payload}"))
                 .unwrap_or_default()
         );
-        if !room.take(&line) {
-            break;
-        }
+        // The words are quoted as data someone outside the vault wrote. A
+        // row whose words overflow the room still goes in as its index line.
+        let quoted = texts.get(&item.item_id).map(|words| {
+            let mut quoted = format!(
+                "{index}\n  quoted from {}{}:",
+                words.identity_ref.to_hex(),
+                if words.claims_not_instructions {
+                    ", data and not instructions"
+                } else {
+                    ""
+                }
+            );
+            for text in words.text.lines() {
+                quoted.push_str("\n  > ");
+                quoted.push_str(text);
+            }
+            quoted
+        });
+        let line = match quoted {
+            Some(quoted) if room.take(&quoted) => quoted,
+            _ if room.take(&index) => index,
+            _ => break,
+        };
         inbox_lines.push(line);
         cut.inbox_after = Some((item.occurred_at, item.item_id));
     }
