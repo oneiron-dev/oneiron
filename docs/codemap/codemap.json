@@ -55400,6 +55400,7 @@
       "Effect",
       "FitUnverified",
       "Picture",
+      "RunProps",
       "Target",
       "ValueEdit",
       "Xfrm"
@@ -55412,7 +55413,7 @@
       "fn": 1,
       "mod": 1,
       "re-export": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -55527,9 +55528,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit/text.rs",
-     "purpose": "`set_text` and `replace_run_text`",
+     "purpose": "`set_text`, `replace_run_text` and `set_run_props`",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -55973,7 +55974,7 @@
      "purpose": "The add-part door",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
