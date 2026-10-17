@@ -128,6 +128,7 @@ declare const tasks: {
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
   update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
   wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
+  wave(input: { constraints?: unknown; epic_task_ref: string; objective: string; planner_ref: string }): Promise<unknown>;
 };
 declare const vault: {
   artifacts: {
@@ -263,7 +264,7 @@ declare const vault: {
   };
   members: {
     accept(input: { invitation: string; vault_id: number }): Promise<unknown>;
-    add(input: { member: string; role?: string | null; vault_id: number }): Promise<unknown>;
+    add(input: { holder_key?: string | null; member: string; role?: string | null; vault_id: number }): Promise<unknown>;
     change(input: { member: string; role: string; vault_id: number }): Promise<unknown>;
     decline(input: { invitation: string; vault_id: number }): Promise<unknown>;
     invitations(input: { vault_id: number }): Promise<unknown>;

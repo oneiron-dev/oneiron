@@ -688,7 +688,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def add(self, spec):
-            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept."""
+            """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
         def change(self, spec):
             """An Admin assigns another non-root role to a member who is not an Owner."""
@@ -1189,6 +1189,9 @@ class Oneiron:
         def create(self, spec):
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal."""
             return json.loads(_translate(lambda: self._client.tasks_create(json.dumps(spec))))
+        def wave(self, spec):
+            """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
+            return json.loads(_translate(lambda: self._client.tasks_wave(json.dumps(spec))))
         def update(self, spec):
             """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))

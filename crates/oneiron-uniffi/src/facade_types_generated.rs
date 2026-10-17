@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 214 facade rows, 600 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 174.
+// UniFFI census: 215 facade rows, 607 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 175.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -1412,6 +1412,33 @@ pub struct TaskCreateReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub proposal_record: Option<RecordRef>,
+}
+
+/// `oneiron::task_verb::sdk::TaskWaveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaveRequest {
+    #[serde(rename = "epic_task_ref")]
+    pub epic_task_ref: String,
+    #[serde(rename = "planner_ref")]
+    pub planner_ref: String,
+    #[serde(rename = "objective")]
+    pub objective: String,
+    #[serde(
+        rename = "constraints",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub constraints: Option<crate::WireJson>,
+}
+
+/// `oneiron::task_verb::sdk::TaskWaveReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskWaveReceipt {
+    #[serde(rename = "attempt_ref")]
+    pub attempt_ref: String,
+    #[serde(rename = "state")]
+    pub state: String,
 }
 
 /// `oneiron::task_verb::sdk::TaskUpdateRequest`.
@@ -3041,6 +3068,36 @@ pub struct SharedMemberAddRequest {
     pub member: String,
     #[serde(rename = "role", default, skip_serializing_if = "Option::is_none")]
     pub role: Option<FederationGrantRole>,
+    #[serde(
+        rename = "holder_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub holder_key: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_shared::InvitationSlip`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InvitationSlip {
+    #[serde(rename = "slip_id")]
+    pub slip_id: String,
+    #[serde(rename = "slip")]
+    pub slip: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_shared::SharedMemberInvited`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SharedMemberInvited {
+    #[serde(rename = "receipt")]
+    pub receipt: SharedActExecutionReceipt,
+    #[serde(
+        rename = "credential",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential: Option<InvitationSlip>,
 }
 
 /// `oneiron::task_verb::sdk_shared::SharedMemberRoleRequest`.
@@ -6159,6 +6216,8 @@ pub struct TaskAskReceipt {
     pub idempotent_replay: bool,
     #[serde(rename = "statement", default, skip_serializing_if = "Option::is_none")]
     pub statement: Option<FanoutStatement>,
+    #[serde(rename = "task_records")]
+    pub task_records: Vec<RecordRef>,
 }
 
 /// `oneiron::task_verb::sdk::TaskWaitRequest`.
@@ -6206,6 +6265,14 @@ pub struct TaskAskAnswer {
     pub result_ref: String,
     #[serde(rename = "word_ref")]
     pub word_ref: String,
+    #[serde(rename = "task_record")]
+    pub task_record: RecordRef,
+    #[serde(rename = "actor_record")]
+    pub actor_record: RecordRef,
+    #[serde(rename = "result_record")]
+    pub result_record: RecordRef,
+    #[serde(rename = "word_record")]
+    pub word_record: RecordRef,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskDecision`.
@@ -8971,6 +9038,69 @@ pub struct QuestionMedia {
     pub audio: Option<bool>,
 }
 
+/// `oneiron::blob_artifact::verbs::FolderItemInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FolderItemInput {
+    #[serde(rename = "artifact_ref")]
+    pub artifact_ref: String,
+    #[serde(rename = "row")]
+    pub row: u32,
+}
+
+/// `oneiron::blob_artifact::verbs::ArtifactAskUnits`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ArtifactAskUnits {
+    #[serde(rename = "sheet_rows")]
+    SheetRows {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "rows")]
+        rows: String,
+        #[serde(rename = "answer_column")]
+        answer_column: u32,
+        #[serde(
+            rename = "header_row",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        header_row: Option<u32>,
+        #[serde(rename = "max_count", default, skip_serializing_if = "Option::is_none")]
+        max_count: Option<u64>,
+    },
+    #[serde(rename = "paragraphs")]
+    Paragraphs {
+        #[serde(rename = "blocks")]
+        blocks: Vec<String>,
+        #[serde(rename = "author")]
+        author: String,
+        #[serde(rename = "labels")]
+        labels: crate::WireJson,
+    },
+    #[serde(rename = "folder_items")]
+    FolderItems {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "answer_column")]
+        answer_column: u32,
+        #[serde(rename = "items")]
+        items: Vec<FolderItemInput>,
+        #[serde(rename = "max_count", default, skip_serializing_if = "Option::is_none")]
+        max_count: Option<u64>,
+    },
+}
+
+/// `oneiron::llm::decision::questions::records::ArtifactUnits`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactUnits {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "selection")]
+    pub selection: ArtifactAskUnits,
+}
+
 /// `oneiron::llm::decision::questions::records::QuestionDefinition`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -9011,6 +9141,8 @@ pub struct QuestionDefinition {
         skip_serializing_if = "Option::is_none"
     )]
     pub deadline_ms: Option<u64>,
+    #[serde(rename = "artifacts", default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<ArtifactUnits>>,
 }
 
 /// `oneiron::receipt::questions::QuestionCreateRequest`.

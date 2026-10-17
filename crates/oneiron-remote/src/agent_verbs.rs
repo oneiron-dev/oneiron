@@ -101,6 +101,11 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "tasks.wave" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::TaskWaveReceipt>(
+                        client, verb, &input,
+                    )
+                }
                 "tasks.update" => {
                     remote_agent_verb_output::<oneiron::task_verb::TaskUpdateReceipt>(
                         client, verb, &input,
@@ -205,7 +210,7 @@ impl OneironClient {
                     Option<oneiron::federation::SharedVaultDeletion>,
                 >(client, verb, &input),
                 "vault.members.add" => remote_agent_verb_output::<
-                    oneiron::federation::SharedActExecutionReceipt,
+                    oneiron::task_verb::sdk::SharedMemberInvited,
                 >(client, verb, &input),
                 "vault.members.change" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
@@ -983,6 +988,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("tasks.create", value)
     }
+    pub fn tasks_wave(
+        &self,
+        input: &oneiron::task_verb::sdk::TaskWaveRequest,
+    ) -> Result<oneiron::task_verb::sdk::TaskWaveReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("tasks.wave", value)
+    }
     pub fn tasks_update(
         &self,
         input: &oneiron::task_verb::sdk::TaskUpdateRequest,
@@ -1426,7 +1443,7 @@ impl OneironClient {
     pub fn vault_members_add(
         &self,
         input: &oneiron::task_verb::sdk::SharedMemberAddRequest,
-    ) -> Result<oneiron::federation::SharedActExecutionReceipt, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::SharedMemberInvited, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

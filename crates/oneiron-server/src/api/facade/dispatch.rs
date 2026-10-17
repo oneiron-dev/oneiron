@@ -461,6 +461,25 @@ async fn tasks_create(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn tasks_wave(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "tasks.wave")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("tasks.wave", &value)?;
+    let hooks = facade_hooks_pre(server, call, "tasks.wave", value).await?;
+    let output = facade_output(
+        super::host_doors::tasks_wave(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn tasks_update(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -2807,6 +2826,7 @@ async fn can(
     auth.require_unrestricted_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "can", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2835,6 +2855,7 @@ async fn ask(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "ask", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2849,6 +2870,7 @@ async fn wait(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "wait", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2863,6 +2885,7 @@ async fn tasks_answer(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let _turn = server.admit_task_work(actor).await;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -4778,6 +4801,7 @@ pub(crate) async fn call_verb(
         "steer" => steer(server, call, input).await,
         "describe" => describe(server, call, input).await,
         "tasks.create" => tasks_create(server, call, input).await,
+        "tasks.wave" => tasks_wave(server, call, input).await,
         "tasks.update" => tasks_update(server, call, input).await,
         "vault.witness" => vault_witness(server, call, input).await,
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
