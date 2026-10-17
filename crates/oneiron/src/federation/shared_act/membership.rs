@@ -188,7 +188,8 @@ impl Vault {
         Ok(ids)
     }
     /// Move `member` from `from` to `to` (`None` leaves the vault), dropping
-    /// the delegates it can no longer parent and, with `slips`, its slips.
+    /// the delegates it can no longer parent, the own-device grant a former
+    /// Owner held (FIX 3294) and, with `slips`, its slips.
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -206,6 +207,9 @@ impl Vault {
         }
         if to.is_none_or(|role| !role.is_admin()) {
             grants.extend(self.drop_member_grants_in_txn(txn, vault_id, member, to.is_none())?);
+        }
+        if crate::federation::own_device::own_device_grant_retires(from, to) {
+            grants.extend(self.retire_own_device_grants_in_txn(txn, member)?);
         }
         let revoked = match slips {
             Some(issuer) if to.is_none_or(|role| rank(role) < rank(from)) => {

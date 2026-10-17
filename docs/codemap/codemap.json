@@ -2086,7 +2086,7 @@
      "path": "src/authority/adopted_evidence.rs",
      "purpose": "What an adopted checkpoint image gives the store doors in place of the raw history it covers (OF-469, slice C)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -2447,7 +2447,7 @@
      "path": "src/authority/history_transfer.rs",
      "purpose": "Signed-history migration and independently authorized per-vault re-root doors",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 7,
       "struct": 1
      }
@@ -2605,7 +2605,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -4646,7 +4646,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 32,
       "mod": 1,
       "re-export": 3
      }
@@ -5234,7 +5234,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -11327,7 +11327,7 @@
      "path": "src/code_run/dispatcher/team_submit_output.rs",
      "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -12169,7 +12169,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/firecracker/launch.rs",
@@ -12203,7 +12203,7 @@
      "path": "src/code_sandbox/firecracker/protocol.rs",
      "purpose": "Bounded guest-agent framing; no host filesystem or credential capabilities",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -12241,7 +12241,7 @@
      "path": "src/code_sandbox/microvm/adapter.rs",
      "purpose": "The SandboxBoundaryAdapter implementation that binds a backend to the boundary contract",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -12263,7 +12263,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContainerBackend"
@@ -19064,6 +19064,7 @@
      "kind": "src",
      "notable": [
       "DigestCleanup",
+      "DigestNoteTombstones",
       "DigestOffer",
       "DigestProposal",
       "ProactivityCadence",
@@ -19076,10 +19077,10 @@
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "const": 5,
+      "const": 7,
       "crate-vis": 3,
       "fn": 14,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -21700,6 +21701,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "StepCancellation"
+     ],
+     "path": "src/engine_executor/cancel.rs",
+     "purpose": "The cancellation of one code step (FIX 600): a flag its owner sets and its runtime reads, linked one way to…",
+     "surface": {
+      "const": 1,
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/engine_executor/code_check.rs",
      "purpose": "Shadow mode: before a generated program runs, it is type-checked against the declarations its prompt teaches",
@@ -21768,7 +21783,7 @@
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
       "crate-vis": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -22024,7 +22039,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 2,
       "re-export": 9
      }
@@ -22056,7 +22071,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -22768,7 +22783,7 @@
      "path": "src/federation/own_device.rs",
      "purpose": "FIX 3134: an owner's own device holds a member FEDERATION_GRANT at its home, so the device's residence…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -28205,7 +28220,7 @@
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 4,
       "fn": 20,
       "struct": 12,
@@ -34896,7 +34911,7 @@
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
       "crate-vis": 5,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -37123,6 +37138,7 @@
       "CanonicalEntityDocument",
       "CanonicalEntityDocumentHistory",
       "CanonicalForkStatus",
+      "CanonicalPinCarrier",
       "CanonicalRoomFact",
       "CanonicalRoomTurn",
       "CanonicalSchemaManifest",
@@ -37138,7 +37154,7 @@
       "crate-vis": 18,
       "enum": 2,
       "fn": 8,
-      "struct": 17
+      "struct": 18
      }
     },
     {
@@ -40806,6 +40822,7 @@
      "path": "src/skill/call.rs",
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -40909,6 +40926,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/skill/invocation.rs",
+     "purpose": "The callable skill invocations running in this vault (FIX 600), each with the token that stops it, so an…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SkillGovernanceTier",
       "SkillLifecycle"
@@ -40928,7 +40955,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 8
      }
@@ -44354,7 +44381,7 @@
      "purpose": "Observer A/B registration and the shared Materializer/OutboundSink state",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 13,
       "struct": 6,
       "trait": 1
@@ -44819,6 +44846,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/document_pins.rs",
+     "purpose": "FIX 853 (OF-460): document quote pins on the window plane",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -45174,7 +45211,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 24,
       "re-export": 16
      }
@@ -53240,7 +53277,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -53912,7 +53949,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54003,7 +54040,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 164,
+     "files": 165,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54194,7 +54231,7 @@
    },
    "over_bar": 183,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3290,
+   "source_files": 3293,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64925,7 +64962,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -71362,7 +71399,7 @@
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
       "crate-vis": 16,
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },

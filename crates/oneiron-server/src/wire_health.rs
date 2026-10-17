@@ -451,6 +451,7 @@ impl DecisionProvider for GrantRule {
                 probability: Some(1.0),
                 paired: None,
                 person: None,
+                served: None,
             });
         }
         match &self.inner {
@@ -460,6 +461,7 @@ impl DecisionProvider for GrantRule {
                 probability: None,
                 paired: None,
                 person: None,
+                served: None,
             }),
         }
     }
