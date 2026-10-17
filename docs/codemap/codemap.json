@@ -26435,9 +26435,9 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 15,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
-      "fn": 10,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -41683,6 +41683,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/audit_rate.rs",
+     "purpose": "OF-542: `audit_rate` learned from audit checks (ARCH-0003 settings catalog: \"Learned from audit checks",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -42073,7 +42083,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 14
      }
     },
@@ -52824,7 +52834,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53078,7 +53088,7 @@
    },
    "over_bar": 165,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3215,
+   "source_files": 3216,
    "test_files": 902
   },
   "oneiron-android": {
@@ -55968,7 +55978,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 44,
+      "const": 45,
       "crate-vis": 1
      }
     },
