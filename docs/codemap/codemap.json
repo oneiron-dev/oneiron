@@ -6969,6 +6969,7 @@
      "kind": "src",
      "notable": [
       "Retired",
+      "RetiredWorkflow",
       "WorkflowRecord"
      ],
      "path": "src/browser_library.rs",
@@ -6976,8 +6977,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 6,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
