@@ -38373,7 +38373,7 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
