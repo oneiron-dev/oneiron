@@ -61734,13 +61734,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -61793,7 +61793,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -69825,7 +69825,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 37,
+   "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 549,
    "test_files": 182
