@@ -534,13 +534,16 @@ pub(crate) async fn handle_mcp_request(
                 .to_owned();
             let request_digest =
                 oneiron::receipt::call_json_digest(request.params.as_ref().unwrap_or(&Value::Null));
-            // OF-063: only a caller verified in the session keeps no record,
-            // judged on arrival and again before the receipt is written.
-            let anonymous = crate::api::call_receipt::in_anonymous_session(
-                server,
-                headers,
-                Some(actor.actor_ref),
-            );
+            // OF-063: only a caller whose credential's principal is verified
+            // in the session keeps no record, judged on arrival and again
+            // before the receipt is written; a credential naming no
+            // principal (the configured root) keeps the unchecked rule.
+            let principal = actor
+                .auth
+                .as_ref()
+                .and_then(crate::api::call_receipt::request_principal);
+            let anonymous =
+                crate::api::call_receipt::in_anonymous_session(server, headers, principal);
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
                 let actor = McpCallContext {
@@ -570,11 +573,7 @@ pub(crate) async fn handle_mcp_request(
                 )
             });
             let anonymous = anonymous
-                || crate::api::call_receipt::in_anonymous_session(
-                    server,
-                    headers,
-                    Some(actor.actor_ref),
-                );
+                || crate::api::call_receipt::in_anonymous_session(server, headers, principal);
             mcp_call_receipt(server, &actor, tool, request_digest, anonymous, called)
         }
         _ => Err(McpGatewayError::new(
