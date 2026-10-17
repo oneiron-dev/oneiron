@@ -2313,6 +2313,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/left_notices.rs",
+     "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -2593,7 +2603,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 14,
       "struct": 4
      }
@@ -8341,7 +8351,7 @@
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
       "crate-vis": 7,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -8365,7 +8375,9 @@
      "path": "src/channel_identity/sender.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3,
+      "fn": 1,
+      "type": 1
      }
     },
     {
@@ -21600,7 +21612,7 @@
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 9,
       "re-export": 1,
@@ -49266,7 +49278,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 126,
+     "files": 127,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50682,7 +50694,7 @@
    },
    "over_bar": 135,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3060,
+   "source_files": 3061,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60960,7 +60972,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -61013,7 +61025,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 20,
       "re-export": 1,
       "struct": 2
@@ -63664,7 +63676,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -63709,6 +63721,16 @@
      "purpose": "The address a request's client is charged under: the key booking admission counts per-address quotas by",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/left_notices.rs",
+     "purpose": "`POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68297,7 +68319,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -68607,7 +68629,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 513,
+   "source_files": 514,
    "test_files": 182
   },
   "oneiron-spawn": {
