@@ -206,13 +206,16 @@ declare function query(r: ResultRef, q: string | QuerySelection): Promise<QueryR
 declare function chunks(r: ResultRef, by: ChunkBy): ResultChunks;
 /** Whether this run may read a result now, by the checks every read of it
  * makes (its served rows, then its taint), without reading it: no preview,
- * no bytes. A read made after still makes them. */
-declare function can(input: { read: ResultRef }): Promise<CanReadReply>;
+ * no bytes. A read made after still makes them. With `child: {}`, also
+ * whether `self.spawn` could hand it to a reader child now, by the checks a
+ * spawn makes, spawning nothing. */
+declare function can(input: { read: ResultRef; child?: {} }): Promise<CanReadReply>;
 /** `can({read})`'s answer: the result's ref, size, kind and taint, or why
- * not, with the detail a read of it would refuse with. */
+ * not, with the detail a read of it would refuse with. With `child`, the
+ * children's cutoff and what their scope may still spend. */
 type CanReadReply =
-  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null } }
-  | { can: false; reason: "unknown_handle" | "withheld_rows" | "tainted" | "denied"; [detail: string]: unknown };
+  | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; spend_available_units: number } }
+  | { can: false; reason: "unknown_handle" | "withheld_rows" | "tainted" | "outside_delegated_range" | "reader_task_settled" | "spawn_unbound" | "past_cutoff" | "unmetered" | "denied"; [detail: string]: unknown };
 /** Foreign tier only. Proposals are data; they never commit host writes. */
 declare const propose: {
   file(path: `/mnt/outputs/${string}` | `/mnt/workspace/${string}`, bytes: Uint8Array | number[]): void;

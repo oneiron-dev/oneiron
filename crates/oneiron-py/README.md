@@ -109,6 +109,15 @@ created for the actor you want to act as instead.
 | `handle.tasks.*` | `create`, `update`, `answer`, `outcomes` |
 | `handle.vault.rooms.*` | `list`, `messages`, `render`, `find`, `get`, `trunk`, `claim`, `speak` |
 
+Every other verb in the SDK verb table sits at its SDK path on the handle and
+takes its whole input as one dict. The stubs type that dict and the result as
+TypedDicts from `oneiron.facade_types` (imported in the stubs as `Facade`),
+which `scripts/sdk/generate.py` reads from the Rust types each row names, and
+each method's docstring is its row's description. Of the table's 153 facade
+rows, 131 inputs and 127 results are fully typed; the rest are typed down to a
+leaf that is opaque JSON by design (`Any`), and none is left untyped. The
+module is stub-only: annotate with it under `typing.TYPE_CHECKING`.
+
 `vault.recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
 (default `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `as_of`
