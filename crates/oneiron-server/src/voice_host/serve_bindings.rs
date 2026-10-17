@@ -10,7 +10,7 @@ use oneiron::voice_cascade::{Brain, CascadeControl, TtsSeamClient};
 use tokio::net::UnixStream;
 use tokio::sync::oneshot;
 
-use super::{HostError, VoiceHost, VoiceMediaBindings, VoiceOutputs};
+use super::{HostError, VoiceHost, VoiceMediaBindings, VoiceOutputs, VoiceWireBindings};
 use crate::managed::ShutdownSignal;
 
 type ServeFuture = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
@@ -67,6 +67,38 @@ impl VoiceServeBindings {
                 let serving = host.serve_media_until(stream, &mut outputs, &mut bridge, stop);
                 // The worker outlives no connection: once serving ends, its
                 // call in flight is dropped and settles as dropped.
+                tokio::select! {
+                    result = serving => result,
+                    () = worker.run() => Err(io::Error::other("voice media worker stopped")),
+                }
+            })
+        });
+        let bindings = Self(Arc::new(Mutex::new(Some(VoiceServeConnection(serve)))));
+        Ok(bindings)
+    }
+
+    /// [`Self::with_media`] with the audio side on `stream` itself
+    /// ([`VoiceWireBindings`]): the sibling's microphone audio, cuts, VAD,
+    /// roster changes and drains arrive as wire ops, and spoken audio,
+    /// generation ends, flushes and controls leave as wire frames. The
+    /// connection's control seam is the wire's own.
+    pub fn with_wire<B>(
+        stream: UnixStream,
+        brain: B,
+        media: VoiceWireBindings,
+    ) -> Result<Self, HostError>
+    where
+        B: Brain + Send + 'static,
+    {
+        let (tts, mut bridge, worker, wire, control) = media.build()?;
+        let mut outputs = VoiceOutputs {
+            brain,
+            tts,
+            control,
+        };
+        let serve: Serve = Box::new(move |host, stop| {
+            Box::pin(async move {
+                let serving = host.serve_wire_until(stream, &mut outputs, &mut bridge, wire, stop);
                 tokio::select! {
                     result = serving => result,
                     () = worker.run() => Err(io::Error::other("voice media worker stopped")),
