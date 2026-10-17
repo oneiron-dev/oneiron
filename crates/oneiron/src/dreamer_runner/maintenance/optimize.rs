@@ -294,8 +294,13 @@ fn pending_proposal(
             let Some(record) = vault.get_skill_record(id)? else {
                 continue;
             };
+            // A team-shape revision moves its task-type tree, not its
+            // instructions: this pass's judge reads only instructions, and
+            // the skill keeps no reserve of its own, so resuming one here
+            // would retry it on every pass and never draft again.
             if record.lifecycle_status != SkillLifecycle::Candidate
                 || record.approval_status != ClaimApprovalStatus::Proposed
+                || record.skill_id == crate::agent_dispatch::TEAM_SHAPE_SKILL_NAME
                 || crate::skill::resident_of(&record)? != resident
             {
                 continue;
