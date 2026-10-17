@@ -4,7 +4,7 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 316 code-mode rows (298 host rows, 18 run rows), 1048 declarations.
+// Census: 316 code-mode rows (298 host rows, 18 run rows), 1052 declarations.
 // Replies: 258 fully typed, 46 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
@@ -86,10 +86,12 @@ declare namespace Sdk {
   type PeoplePage = { vault: string; page: number; people: PersonRow[]; more: number };
   type PersonRequest = { pr: string };
   type EmptyRequest = Record<string, never>;
+  type ShapePreset = "personal" | "family" | "team" | "org" | "community";
+  type ShapeMemberRole = "owner" | "admin" | "member" | "viewer";
   type ShapeCeiling = "auto" | "proposed";
   type ShapeGrantBound = { domain: "action"; actor: string; actor_class?: string | null; class: string; selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean } | { domain: "disclosure"; audience: string[]; class: string; selectors: string[] };
-  type ShapeTarget = { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
-  type ShapeRow = { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeTarget = { kind: "shared" } | { kind: "member"; member: string } | { kind: "world"; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "sync"; entity_kind: string };
+  type ShapeRow = { kind: "shared"; vault_id: number; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole } | { kind: "world"; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
   type ShapeSeed = { rows: ShapeRow[] };
   type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
   type ShapeChange = "create" | "update" | "retire";
@@ -99,7 +101,9 @@ declare namespace Sdk {
   type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState };
   type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
-  type ShapePlanRequest = { seed?: ShapeSeed | null };
+  type ShapePresetMember = { member: string; role?: ShapeMemberRole | null };
+  type ShapePresetPick = { preset: ShapePreset; vault_id: number; members?: ShapePresetMember[] };
+  type ShapePlanRequest = { seed?: ShapeSeed | null; preset?: ShapePresetPick | null };
   type ShapePlanSummary = { changes: number; needs_word: number; ceremonies: number; no_door: number };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
@@ -497,7 +501,7 @@ declare namespace Sdk {
   type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null };
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
   type LensDossierSource = { entity_ref: string; title: string };
-  type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[] };
+  type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
   type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
   type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeId = string;
@@ -569,7 +573,7 @@ declare namespace Sdk {
   type CodeFileChange = "added" | "removed" | "modified" | "renamed";
   type CodeFileDiffView = { path: string; change: CodeFileChange; renamed_from?: string | null; before?: CodeStateView | null; after?: CodeStateView | null; changes: CodeChangeView[] };
   type CodeRepoDiffView = { files: CodeFileDiffView[]; not_text: string[]; rendered: string };
-  type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null };
+  type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type BornFromRequest = { task_ref?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; agent_run?: string | null };
   type BornFromArtifact = { artifact_id: EntityId; version: number; at: number };

@@ -807,7 +807,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/mod.rs` | src | s | 1 struct · 9 re-export · 6 crate-vis | ScopedRead | The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that… |
 | `src/claim/scoped_read/note_visibility.rs` | src | s | 2 crate-vis | — | Actor and class checks for private NOTE bodies in scoped reads |
 | `src/claim/scoped_read/pinned_reads.rs` | src | s | 1 fn | — | Manifest-derived safety pins bypass query relevance, never actor authority |
-| `src/claim/scoped_read/point_reads.rs` | src | m | 2 struct · 1 enum · 7 fn · 6 crate-vis | PointRead, ReadRow, ReadTarget | The one receipted point-read entry: ids and short references, each at its own read frontier, answered from… |
+| `src/claim/scoped_read/point_reads.rs` | src | m | 2 struct · 1 enum · 8 fn · 6 crate-vis | PointRead, ReadRow, ReadTarget | The one receipted point-read entry: ids and short references, each at its own read frontier, answered from… |
 | `src/claim/scoped_read/reactions.rs` | src | s | 6 fn · 2 crate-vis | — | Reactions riding along with the conversation records a scoped read admits |
 | `src/claim/scoped_read/receipt.rs` | src | s | 1 struct · 3 fn · 1 re-export · 2 crate-vis | ScopedReadResult | Mandatory read receipts |
 | `src/claim/scoped_read/residence.rs` | src | s | 1 struct · 4 fn | ResidenceReadContext | One residence read's admission for the machine at the other end of the connection |
@@ -1136,11 +1136,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/history/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Delta-only board claims and exact Loro-frontier reconstruction |
 | `src/context_board/history/tests.rs` | test | m | — | — | Board acceptance: real claim rows, exact pinned text, no unchanged writes |
 | `src/context_board/history/types.rs` | src | s | 4 struct · 1 enum · 1 fn · 4 crate-vis | BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard | Typed board history requests and exact-fold results |
-| `src/context_board/hook_pins.rs` | src | s | 1 struct · 7 fn | HookPin | Hook blocks on the board (ARCH-0080 §11, OI-1 = A) |
+| `src/context_board/hook_pins.rs` | src | s | 2 struct · 8 fn | HookPin, HookShare | Hook blocks on the board (ARCH-0080 §11, OI-1 = A) |
 | `src/context_board/hydration.rs` | src | s | 5 struct · 3 fn | AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem | The assembled context one hydration call returns: session prefix material (counts, last activity… |
 | `src/context_board/inbox.rs` | src | s | 1 fn | — | INBOX, the seventh core section (ARCH-0067, AGM-3): who is talking to me and what still needs me |
 | `src/context_board/memories.rs` | src | s | 5 struct · 3 enum · 8 fn · 1 const | CompanionAssembly, MemoriesBudget, MemoriesCursor, MemoriesSection, MemoryRow, MemorySlot, MemorySource, MemoryTier | MEMORIES section — what retrieval pulled: typed rows, the slot budget, the companion echo, and the… |
-| `src/context_board/memories_frame.rs` | src | s | 2 fn · 1 crate-vis | — | Connects typed MEMORIES projections to the shared board frame and shed ladder |
+| `src/context_board/memories_frame.rs` | src | s | 2 fn · 2 crate-vis | — | Connects typed MEMORIES projections to the shared board frame and shed ladder |
 | `src/context_board/memories_projection.rs` | src | m | 2 fn · 4 crate-vis | — | MEMORIES projection with source labels, world fences, and one shared render budget |
 | `src/context_board/memory_pins.rs` | src | s | 2 fn · 2 crate-vis | — | Explicit memory pins bypass query relevance and render shedding, never read authority |
 | `src/context_board/mod.rs` | src | s | 22 re-export · 9 crate-vis | — | Typed Context Board render projections |
@@ -1740,7 +1740,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/ruling_integrity.rs` | src | s | 4 crate-vis | — | Stored authority bindings and append-only protection for administrative rulings |
 | `src/federation/rulings.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | AdminRuling, AdminRulingReceipt | Append-only equal-holder rulings and deterministic newest-wins projection |
 | `src/federation/shared_act/erase_ask.rs` | src | s | 1 struct · 2 enum · 3 fn · 1 const | EraseAskKind, EraseAskStatus, SharedEraseAsk | Erase asks (ARCH-0043 "Who may archive, delete and erase", 2026-10-09): in a shared vault a Member requests… |
-| `src/federation/shared_act/membership.rs` | src | m | 7 fn · 1 re-export · 4 crate-vis | — | Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's… |
+| `src/federation/shared_act/membership.rs` | src | m | 7 fn · 1 re-export · 5 crate-vis | — | Membership effects: the Owner handover the two Owner acts apply, and the ordinary member changes an Admin's… |
 | `src/federation/shared_act/membership/invitation.rs` | src | m | 1 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | SharedInvitation, SharedInvitationState | Invitee acceptance (CROSS-ARCH-0024: "Only an accepted, vault-specific invitation" grants membership) |
 | `src/federation/shared_act/mod.rs` | src | L | 9 struct · 2 enum · 10 fn · 2 const · 2 re-export · 4 crate-vis | DeleteVaultPlan, RemovalExportCopy, RemoveOwnerPlan, SharedActExecution, SharedActExecutionReceipt, SharedActExport, SharedActKind, SharedActOutcome +3 | Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never… |
 | `src/federation/shared_creation.rs` | src | s | 2 struct · 1 enum · 3 fn · 2 crate-vis | InitialSharedMember, SharedVaultCreation, SharedVaultPreset | Creation-time membership defaults, materialized once as explicit grant/policy rows |
@@ -2098,10 +2098,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/mediation/mediation_scope.rs` | src | s | 4 fn | — | Ordinary world-id and repository membership clamps on every frame-bound read |
 | `src/lens/mediation/mod.rs` | src | s | 5 re-export | — | Host mediation — the lens security chokepoint |
 | `src/lens/mediation/surface_dispatch.rs` | src | s | 1 fn | — | Native SurfaceEvent adapter into the existing frame-validated write plan |
-| `src/lens/mod.rs` | src | s | 16 re-export | — | Closed generated-lens atom vocabulary |
-| `src/lens/mount.rs` | src | s | 1 enum · 2 fn · 1 crate-vis | LensMount | Pack-aware lens mount decision, evaluated against the live vault on each render |
+| `src/lens/mod.rs` | src | s | 17 re-export | — | Closed generated-lens atom vocabulary |
+| `src/lens/mount.rs` | src | s | 1 enum · 3 fn · 1 crate-vis | LensMount | Pack-aware lens mount decision, evaluated against the live vault on each render |
 | `src/lens/proposal.rs` | src | m | 5 struct · 1 enum · 2 fn · 3 const · 11 crate-vis | LensListPage, LensListRequest, LensListRow, LensProposalState, LensProposeRequest, LensSlot | Pack lens proposals (OF-250): one frozen compiled tree bound to an installed pack's skill, with its authored… |
 | `src/lens/record_ref.rs` | src | m | 6 struct · 1 enum · 7 fn · 5 const | LinkedText, ProseSpan, RecordLinks, RecordLinksRequest, RecordRef, RecordRefPreview, ResolveRecordRefRequest | OF-063: typed, resolvable record refs |
+| `src/lens/regen.rs` | src | s | 1 enum · 5 fn | LensRegenEnactment | Enacting a regeneration outcome through the lens lifecycle (OF-250) |
 | `src/lens/sdk.rs` | src | m | 2 struct · 1 fn · 1 const | LensDefaultRequest, LensDossierSource | `vault.lenses.default` (OF-250): the default vault projection over the caller's own read key |
 | `src/lens/self_ui.rs` | src | m | 8 struct · 2 enum · 1 fn · 5 crate-vis | ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption, SelfUiValue, SliderControl +2 | The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value… |
 | `src/lens/tests/atom_fuzz.rs` | test | s | — | — | Corpus-driven, sustained mutation fuzzing of the atom wire and escaped renderer |
@@ -3027,12 +3028,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack body codec for custody records, bands, floors, and bindings |
 | `src/secret_custody/doors.rs` | src | m | 4 fn · 15 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
 | `src/secret_custody/floor.rs` | src | m | 2 fn · 8 crate-vis | — | Vault floor resolution plus the shared strict POLICY_MANIFEST walk |
-| `src/secret_custody/masked_files.rs` | src | s | 1 enum · 3 fn · 12 crate-vis | SecretSight | Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2) |
-| `src/secret_custody/mod.rs` | src | s | 6 re-export · 15 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
+| `src/secret_custody/found_keys.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 const · 1 re-export · 9 crate-vis | FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled | The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record… |
+| `src/secret_custody/found_keys/actions.rs` | src | m | 3 fn · 1 const · 2 crate-vis | — | The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret |
+| `src/secret_custody/masked_files.rs` | src | s | 1 enum · 3 fn · 13 crate-vis | SecretSight | Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2) |
+| `src/secret_custody/mod.rs` | src | s | 7 re-export · 16 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `src/secret_custody/owner_door.rs` | src | m | 4 struct · 1 fn | ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered | The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody |
 | `src/secret_custody/owner_door/tests.rs` | test | L | — | — | ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody… |
-| `src/secret_custody/reveal.rs` | src | m | 6 struct · 5 enum · 3 fn · 6 const · 10 crate-vis | HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk +3 | A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection) |
-| `src/secret_custody/reveal/agent.rs` | src | s | 3 crate-vis | — | The agent's doors: `reveal`, `wait` and `describe` on a handle |
+| `src/secret_custody/reveal.rs` | src | L | 6 struct · 5 enum · 3 fn · 6 const · 15 crate-vis | HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk +3 | A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection) |
+| `src/secret_custody/reveal/agent.rs` | src | s | 5 crate-vis | — | The agent's doors: `reveal`, `wait` and `describe` on a handle |
+| `src/secret_custody/reveal/file.rs` | src | s | 1 crate-vis | — | An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): "Agent with a… |
 | `src/secret_custody/reveal/owner.rs` | src | s | 3 fn | — | The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value |
 | `src/secret_custody/tests.rs` | test | L | — | — | SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index… |
 | `src/secret_custody/transition.rs` | src | m | 1 fn · 18 crate-vis | — | OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as an… |
@@ -3687,7 +3691,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_memory.rs` | src | s | 16 struct · 1 enum · 6 crate-vis | AppendBlobVersionRequest, BlobContent, ClaimRefRequest, CommitRequest, ConsolidationEnqueueRequest, ConsolidationStatusRequest, CreateNoteFromEntityRequest, CreateNoteRequest +9 | Typed inputs for the public memory verbs in the SDK inventory |
 | `src/task_verb/sdk_record_erase.rs` | src | s | 8 struct · 3 fn | EraseHeldBytes, EraseLfsChunk, EraseSameBytesRow, EraseShare, RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest | The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview` shows what an erase would… |
 | `src/task_verb/sdk_scratchpad.rs` | src | s | 3 struct · 1 enum · 1 fn | ScratchpadRecallMark, ScratchpadRecallReply, ScratchpadRecallReplyLine, ScratchpadRecallRequest | The door of `self.focus.scratchpad.recall` (OF-548, ARCH-0032 `#scratchpad-marks`: "a recall searches the… |
-| `src/task_verb/sdk_secret.rs` | src | m | 8 struct · 1 enum · 4 fn | RevealDecision, RevealDescribeRequest, RevealHandleCard, RevealPending, RevealProvenance, RevealReceipt, RevealRequest, RevealWaitAnswer +1 | `reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret's value by its handle (OF-560… |
+| `src/task_verb/sdk_secret.rs` | src | m | 8 struct · 1 enum · 7 fn · 2 crate-vis | RevealDecision, RevealDescribeRequest, RevealHandleCard, RevealPending, RevealProvenance, RevealReceipt, RevealRequest, RevealWaitAnswer +1 | `reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret's value by its handle (OF-560… |
 | `src/task_verb/sdk_secret_use.rs` | src | s | 3 struct · 1 enum · 1 fn | SecretUseAnswer, SecretUseRecord, SecretUseRequest, SecretUseStatus | `self.use`: an agent hands a secret to one trusted operation by its handle, and reads the operation's… |
 | `src/task_verb/sdk_self.rs` | src | s | 4 struct · 2 fn | DiaryEntryReceipt, DiaryEntryRequest, SteerReceipt, SteerRequest | The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one… |
 | `src/task_verb/sdk_share.rs` | src | s | 5 struct · 3 fn | ShareCreateRequest, ShareCreated, ShareRevokeRequest, ShareViewNarrowing, ShareViewRequest | `vault.shares.create`: the caller shares one stored brief with one recipient and chooses which born-with… |
@@ -3827,8 +3831,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_shape/apply.rs` | src | m | 3 struct · 2 enum · 4 fn | ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState | Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has |
 | `src/vault_shape/grant.rs` | src | s | 1 enum · 3 fn | ShapeGrantBound | A standing grant's bound as a seed writes it (DEC-0006): who, which class, which envelope |
 | `src/vault_shape/live.rs` | src | s | 4 crate-vis | — | The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed… |
-| `src/vault_shape/mod.rs` | src | m | 3 struct · 3 enum · 2 fn · 2 const · 4 re-export | ShapeCeiling, ShapePlanRequest, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget | Vault shape as code (ARCH-0070): the setup plane held in one hand |
-| `src/vault_shape/plan.rs` | src | s | 3 struct · 2 enum · 4 fn | ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary | Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item… |
+| `src/vault_shape/member.rs` | src | s | 2 struct · 2 enum · 2 fn · 1 crate-vis | ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick | Shared-vault membership as shape rows (ARCH-0043 presets as seeds) |
+| `src/vault_shape/mod.rs` | src | m | 3 struct · 3 enum · 3 fn · 2 const · 5 re-export | ShapeCeiling, ShapePlanRequest, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget | Vault shape as code (ARCH-0070): the setup plane held in one hand |
+| `src/vault_shape/plan.rs` | src | m | 3 struct · 2 enum · 4 fn | ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary | Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item… |
 | `src/vault_shape/seed.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | StoredShapeSeed | The seed's store: each revision is one immutable ASSET row in the replicated ledger, the same carrier a… |
 | `src/voice_cascade.rs` | src | s | 6 mod · 6 re-export | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `src/voice_cascade/budget.rs` | src | s | 1 crate-vis | — | Generation-owned budget reservation |
