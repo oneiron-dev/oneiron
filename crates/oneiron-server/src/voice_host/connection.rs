@@ -228,6 +228,9 @@ impl VoiceHost {
         let mut outbox = VecDeque::new();
         let mut requests = 0;
         let mut errors = 0;
+        // Subscribed before the session's first read: an attendee entering
+        // the bound container stops what was assembled before it.
+        let mut entry_wakes = self.entry_wakes();
         let shutdown = self.shutdown.triggered();
         tokio::pin!(shutdown);
         loop {
@@ -238,6 +241,11 @@ impl VoiceHost {
                     biased;
                     () = &mut shutdown => break,
                     () = &mut stop => break,
+                    // The newcomer barrier before any output (OF-365 P5).
+                    woke = super::next_entry_wake(&mut entry_wakes) => {
+                        self.entry_woke(woke, &mut entry_wakes, bridge.as_deref_mut(), outputs);
+                        continue;
+                    }
                     // Output first: the loop also fills the wire's queue, and
                     // steady microphone frames must not starve it.
                     out = WireMedia::next(wire) => match out {
