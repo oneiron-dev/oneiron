@@ -75,7 +75,7 @@ pub struct EvalExposure {
 }
 
 /// The release of a cohort's membership, after its serving was counted.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EvalRelease {
     pub exposure: EvalExposure,
     pub cases: Vec<EvalCase>,

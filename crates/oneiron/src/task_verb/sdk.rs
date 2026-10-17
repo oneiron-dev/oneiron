@@ -513,6 +513,7 @@ pub use super::sdk_host::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_record_erase::*;
+pub use super::sdk_research::*;
 pub use super::sdk_scratchpad::*;
 pub use super::sdk_secret::*;
 pub use super::sdk_secret_use::*;
