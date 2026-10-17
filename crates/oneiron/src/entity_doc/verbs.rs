@@ -2,6 +2,7 @@
 
 use super::document::{BODY, decode_frontier};
 use super::{DocAuthorization, EntityDoc, ForkRequest, ForkStatus, SettleVerb, invalid, storage};
+use crate::batch::secret_scan::{SecretScanMode, scan_content_in_txn, secret_scan_mode_in_txn};
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -126,7 +127,13 @@ impl Vault {
                     .set_peer_id(loro::LoroDoc::new().peer_id())
                     .map_err(|_| invalid("document peer rotation"))?;
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
-                apply(&mut doc, *entity, edit, at)?;
+                apply(
+                    &mut doc,
+                    *entity,
+                    edit,
+                    at,
+                    secret_scan_mode_in_txn(&self.store, txn)?,
+                )?;
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
             Ok(doc.frontier())
@@ -153,7 +160,7 @@ impl Vault {
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
-            crate::batch::secret_scan::scan_metadata_field(&request.text)?;
+            scan_content_in_txn(&self.store, txn, request.text.as_bytes())?;
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0
@@ -340,11 +347,14 @@ pub(super) fn resolve(
     Ok((start, end))
 }
 
+/// `secrets` is the owner's switch as the edit's transaction reads it: the
+/// replacement is text content, scanned only while the switch is on.
 pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
     at: u64,
+    secrets: SecretScanMode,
 ) -> Result<()> {
     let actor = edit
         .actor
@@ -354,7 +364,9 @@ pub(super) fn apply(
         EditVerb::ReplaceQuotedSpan { span, text } => (span, text),
         EditVerb::InsertAfterAnchor { anchor, text } => (anchor, text),
     };
-    crate::batch::secret_scan::scan_metadata_field(replacement)?;
+    if secrets == SecretScanMode::On {
+        crate::batch::secret_scan::scan_write_payload(replacement.as_bytes())?;
+    }
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
     if replacing {

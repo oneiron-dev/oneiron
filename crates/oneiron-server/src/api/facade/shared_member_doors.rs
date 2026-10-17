@@ -10,15 +10,17 @@
 //! only the invitation it names.
 use std::sync::Arc;
 
+use oneiron::EdgeActorClass;
 use oneiron::federation::{
     PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActExecutionReceipt,
     SharedEraseAsk, SharedInvitation,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, GuestSlipMintRequest, GuestSlipMinted, SharedActRequest, SharedEraseAskCloseRequest,
-    SharedEraseAskRequest, SharedInvitationRequest, SharedInvitationWithdrawRequest,
-    SharedVaultRequest,
+    self, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
+    RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest,
+    SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationRequest,
+    SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
 use super::host_doors::internal;
@@ -43,6 +45,45 @@ fn require_slip_invitation(auth: &CoreAuth, verb: &str, invitation: &str) -> Mem
         )),
         _ => Ok(()),
     }
+}
+
+/// `vault.records.erase_preview`: what erasing one record takes, read under
+/// the caller's own person proof; the engine's deletion authority decides.
+pub(crate) async fn vault_records_erase_preview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RecordEraseRequest,
+) -> MemoryResult<RecordErasePreview> {
+    const VERB: &str = "vault.records.erase_preview";
+    let caller = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        let memory = server.vault().memory(
+            caller.revalidate_person(server.vault())?,
+            EdgeActorClass::Human,
+        );
+        sdk::preview_record_erase(&memory, input)
+    })
+    .await
+}
+
+/// `vault.records.erase_confirm`: the caller's own erase of the record they
+/// previewed. Their proof starts a held record's `erase` act, which
+/// `vault.shared.execute` carries out after its veto window.
+pub(crate) async fn vault_records_erase_confirm(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RecordEraseConfirmRequest,
+) -> MemoryResult<RecordEraseOutcome> {
+    const VERB: &str = "vault.records.erase_confirm";
+    let caller = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        let memory = server.vault().memory(
+            caller.revalidate_person(server.vault())?,
+            EdgeActorClass::Human,
+        );
+        sdk::confirm_record_erase(&memory, &caller, input)
+    })
+    .await
 }
 
 /// `act` off the runtime: every engine door here reads or writes LMDB.
@@ -87,6 +128,30 @@ pub(crate) async fn vault_members_accept(
     require_slip_invitation(auth, VERB, &input.invitation)?;
     off_runtime(server, VERB, move |server| {
         sdk::accept_shared_invitation_as(server.vault(), &invitee, input)
+    })
+    .await
+}
+
+/// `vault.members.invitation_slip`: an `add_member` holder's mint of a
+/// pending invitation's slip (a founding invitation's, or a lost one), under
+/// the host's slip issuer.
+pub(crate) async fn vault_members_invitation_slip(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InvitationSlipRequest,
+) -> MemoryResult<InvitationSlip> {
+    const VERB: &str = "vault.members.invitation_slip";
+    let admin = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        crate::api::pairing::with_issuer(server, |issuer| {
+            Ok(sdk::mint_invitation_slip_as(
+                server.vault(),
+                &admin,
+                issuer,
+                input,
+            ))
+        })
+        .map_err(|_| internal(VERB))?
     })
     .await
 }

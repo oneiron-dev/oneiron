@@ -164,6 +164,17 @@ impl Vault {
     }
 }
 
+/// Whether the durable run `run` filed the report `receipt`. The record
+/// outlives the Coach's settling of it.
+pub(crate) fn filed_by_run_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+    receipt: EntityId,
+) -> Result<bool> {
+    BY_RUN.contains(&vault.store, txn, &by_run_key(run, receipt))
+}
+
 /// Up to `limit` reports waiting for the Coach, oldest receipt id first.
 pub(crate) fn pending_blocked_issues(
     vault: &Vault,

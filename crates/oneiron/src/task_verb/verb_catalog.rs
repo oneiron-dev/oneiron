@@ -17,6 +17,9 @@ pub enum AgentVerb {
     SelfInboxConcernMove,
     VaultPeopleList,
     VaultPeopleGet,
+    VaultShapeRead,
+    VaultShapePlan,
+    VaultShapeApply,
     SelfMessage,
     SelfGrantsAsk,
     SelfMemoryDiaryQuery,
@@ -57,6 +60,7 @@ pub enum AgentVerb {
     VaultSharedOutcomes,
     VaultSharedDeletion,
     VaultMembersAdd,
+    VaultMembersInvitationSlip,
     VaultMembersChange,
     VaultMembersRemove,
     VaultMembersLeave,
@@ -73,6 +77,8 @@ pub enum AgentVerb {
     VaultSharedCloseEraseAsk,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
+    VaultRecordsErasePreview,
+    VaultRecordsEraseConfirm,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -156,6 +162,8 @@ pub enum AgentVerb {
     VaultRoomsConsent,
     VaultRoomsOffer,
     VaultRoomsOfferAnswer,
+    VaultRoomsOfferVote,
+    VaultRoomsOfferReopen,
     VaultRoomsOffers,
     VaultProjectsGoalRevisions,
     VaultProjectsGoalDismiss,
@@ -277,6 +285,9 @@ impl AgentVerb {
         Self::SelfInboxConcernMove,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
+        Self::VaultShapeRead,
+        Self::VaultShapePlan,
+        Self::VaultShapeApply,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
         Self::SelfMemoryDiaryQuery,
@@ -317,6 +328,7 @@ impl AgentVerb {
         Self::VaultSharedOutcomes,
         Self::VaultSharedDeletion,
         Self::VaultMembersAdd,
+        Self::VaultMembersInvitationSlip,
         Self::VaultMembersChange,
         Self::VaultMembersRemove,
         Self::VaultMembersLeave,
@@ -333,6 +345,8 @@ impl AgentVerb {
         Self::VaultSharedCloseEraseAsk,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
+        Self::VaultRecordsErasePreview,
+        Self::VaultRecordsEraseConfirm,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -416,6 +430,8 @@ impl AgentVerb {
         Self::VaultRoomsConsent,
         Self::VaultRoomsOffer,
         Self::VaultRoomsOfferAnswer,
+        Self::VaultRoomsOfferVote,
+        Self::VaultRoomsOfferReopen,
         Self::VaultRoomsOffers,
         Self::VaultProjectsGoalRevisions,
         Self::VaultProjectsGoalDismiss,
@@ -540,6 +556,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => "self.inbox.concern.move",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
+            Self::VaultShapeRead => "vault.shape.read",
+            Self::VaultShapePlan => "vault.shape.plan",
+            Self::VaultShapeApply => "vault.shape.apply",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
@@ -580,6 +599,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => "vault.shared.outcomes",
             Self::VaultSharedDeletion => "vault.shared.deletion",
             Self::VaultMembersAdd => "vault.members.add",
+            Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
             Self::VaultMembersChange => "vault.members.change",
             Self::VaultMembersRemove => "vault.members.remove",
             Self::VaultMembersLeave => "vault.members.leave",
@@ -596,6 +616,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
+            Self::VaultRecordsErasePreview => "vault.records.erase_preview",
+            Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -683,6 +705,8 @@ impl AgentVerb {
             Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultRoomsOffer => "vault.rooms.offer",
             Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
+            Self::VaultRoomsOfferVote => "vault.rooms.offer.vote",
+            Self::VaultRoomsOfferReopen => "vault.rooms.offer.reopen",
             Self::VaultRoomsOffers => "vault.rooms.offers",
             Self::VaultProjectsGoalRevisions => "vault.projects.goal.revisions",
             Self::VaultProjectsGoalDismiss => "vault.projects.goal.dismiss",
@@ -803,6 +827,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -843,6 +870,7 @@ impl AgentVerb {
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -859,6 +887,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -942,6 +972,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
@@ -1070,6 +1102,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -1110,6 +1145,7 @@ impl AgentVerb {
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -1126,6 +1162,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1209,6 +1247,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
@@ -1366,6 +1406,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultShapeRead
+                | Self::VaultShapePlan
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::SelfMemoryDiaryQuery
@@ -1402,6 +1445,7 @@ impl AgentVerb {
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -1418,6 +1462,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1501,6 +1547,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
                 | Self::VaultProjectsGoalDismiss
@@ -1610,6 +1658,7 @@ impl AgentVerb {
                 | Self::SelfInboxMark
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
+                | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1631,6 +1680,7 @@ impl AgentVerb {
                 | Self::VaultSharedProposeRemoveOwner
                 | Self::VaultSharedExecute
                 | Self::VaultMembersAdd
+                | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
                 | Self::VaultMembersRemove
                 | Self::VaultMembersLeave
@@ -1643,6 +1693,8 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
+                | Self::VaultRecordsErasePreview
+                | Self::VaultRecordsEraseConfirm
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -1690,6 +1742,8 @@ impl AgentVerb {
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
+                | Self::VaultRoomsOfferVote
+                | Self::VaultRoomsOfferReopen
                 | Self::VaultProjectsGoalDismiss
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
@@ -1785,6 +1839,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultShapeRead => &["spec"],
+            Self::VaultShapePlan => &["spec"],
+            Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
@@ -1825,6 +1882,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
             Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
@@ -1841,6 +1899,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1924,6 +1984,8 @@ impl AgentVerb {
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOfferVote => &["spec"],
+            Self::VaultRoomsOfferReopen => &["spec"],
             Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
@@ -2046,6 +2108,9 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultShapeRead => &["spec"],
+            Self::VaultShapePlan => &["spec"],
+            Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
@@ -2086,6 +2151,7 @@ impl AgentVerb {
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
             Self::VaultMembersAdd => &["spec"],
+            Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
             Self::VaultMembersRemove => &["spec"],
             Self::VaultMembersLeave => &["spec"],
@@ -2102,6 +2168,8 @@ impl AgentVerb {
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
+            Self::VaultRecordsErasePreview => &["spec"],
+            Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -2185,6 +2253,8 @@ impl AgentVerb {
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
+            Self::VaultRoomsOfferVote => &["spec"],
+            Self::VaultRoomsOfferReopen => &["spec"],
             Self::VaultRoomsOffers => &["spec", "room_ref"],
             Self::VaultProjectsGoalRevisions => &["spec"],
             Self::VaultProjectsGoalDismiss => &["spec"],
@@ -2328,6 +2398,15 @@ impl AgentVerb {
             Self::SelfInboxConcernMove => "",
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
+            Self::VaultShapeRead => {
+                "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."
+            }
+            Self::VaultShapePlan => {
+                "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."
+            }
+            Self::VaultShapeApply => {
+                "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."
+            }
             Self::SelfMessage => {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
             }
@@ -2440,6 +2519,9 @@ impl AgentVerb {
             Self::VaultMembersAdd => {
                 "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
             }
+            Self::VaultMembersInvitationSlip => {
+                "An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost."
+            }
             Self::VaultMembersChange => {
                 "An Admin assigns another non-root role to a member who is not an Owner."
             }
@@ -2483,6 +2565,12 @@ impl AgentVerb {
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
                 "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
+            Self::VaultRecordsErasePreview => {
+                "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
+            }
+            Self::VaultRecordsEraseConfirm => {
+                "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
             }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
@@ -2704,10 +2792,16 @@ impl AgentVerb {
                 "One party's answer to a join that waits on it, after which the join is decided again."
             }
             Self::VaultRoomsOffer => {
-                "Publishes an agent's offer card to join a room or one of its threads."
+                "Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."
             }
             Self::VaultRoomsOfferAnswer => {
                 "The room's host answers an offer card: join, or not now."
+            }
+            Self::VaultRoomsOfferVote => {
+                "Someone in the room casts an advisory join or not-now vote on an open room-wide offer card, which keeps it open; only the host's answer admits."
+            }
+            Self::VaultRoomsOfferReopen => {
+                "The room's owner or delegated host reopens its aged-out room-wide offer card."
             }
             Self::VaultRoomsOffers => {
                 "One page of the current offer cards in a room or one of its threads."

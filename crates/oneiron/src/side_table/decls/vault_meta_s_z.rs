@@ -623,6 +623,9 @@ side_tables! {
     /// One way to unlock the vault data key: an E0 `VaultDek` envelope and its public
     /// metadata. Key: string (wrap id).
     VAULT_KEY_WRAP: VaultMeta b"vault_key:wrap:v1:" Named;
+    /// One vault shape apply's journal (ARCH-0070): its plan items and how each landed, so a torn
+    /// apply resumes. Key: string (the plan's frontier, hex).
+    VAULT_SHAPE_APPLY: VaultMeta b"vault_shape:apply:v1:" Named;
     /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named;
     /// Per-owner index over voice reference bank rows. Key: id16 (owner) + the indexed row's full
