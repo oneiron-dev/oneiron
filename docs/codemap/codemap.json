@@ -62042,6 +62042,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/embedding_space_routes.rs",
+     "purpose": "`/v1/owner/embedding-spaces`: the owner declares embedding spaces, binds kind slots and moves a slot to a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -66610,7 +66620,7 @@
      "path": "src/server/space_move.rs",
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -67287,7 +67297,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 256,
+     "files": 257,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67597,7 +67607,7 @@
    },
    "over_bar": 29,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 488,
+   "source_files": 489,
    "test_files": 182
   },
   "oneiron-spawn": {
