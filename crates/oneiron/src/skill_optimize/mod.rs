@@ -192,7 +192,9 @@ pub use self::labels::{
     JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,
     judge_digest_minutes, judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
 };
-pub(crate) use self::labels::{judge_ask_room, take_digest_asks_in_txn};
+pub(crate) use self::labels::{
+    judge_ask_room, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+};
 pub use self::offer::{
     ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck,
     OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,

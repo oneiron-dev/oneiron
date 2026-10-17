@@ -1088,7 +1088,11 @@ fn tradeoff_answer(vault: &Vault, proposal: &str, digest: &str) -> Result<Option
                 return None;
             }
             match verdict.disposition {
-                SkillEditDisposition::AcceptedTradeoff => Some("approve".to_owned()),
+                // A deferral carries a resolution only when it deferred an
+                // approval.
+                SkillEditDisposition::AcceptedTradeoff
+                | SkillEditDisposition::DeferredCycleCap
+                | SkillEditDisposition::DeferredJudgeCadence => Some("approve".to_owned()),
                 SkillEditDisposition::RejectedTradeoff => Some("reject".to_owned()),
                 _ => None,
             }
