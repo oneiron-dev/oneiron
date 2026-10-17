@@ -274,8 +274,11 @@ export class Oneiron {
    * deadline), answering with the best results ready, marked `partial`.
    * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server
    * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.
+   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,
+   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and
+   * remote alike; out of range it returns `BAD_REQUEST`.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */
@@ -542,10 +545,16 @@ export class Oneiron {
           edit: (request: Facade.OfficeBodyForkEditRequest): Facade.OfficeBodyEdit => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkEdit(keyedJson(request))) as Facade.OfficeBodyEdit; return result }),
           /** A fork's three-way diff against the live head. */
           diff: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiff(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
-          /** A person lands a reviewed fork. */
+          /** Lands one reviewed fork on an answer. */
           merge: (request: Facade.OfficeBodyForkMergeRequest): Facade.OfficeBodyDiff => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkMerge(keyedJson(request))) as Facade.OfficeBodyDiff; return result }),
           /** Abandons an open fork's unlanded work. */
           discard: (request: Facade.OfficeBodyForkRequest): Facade.OfficeBodyFork => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyForkDiscard(keyedJson(request))) as Facade.OfficeBodyFork; return result }),
+        },
+        proposal: {
+          /** An office proposal: its members, answers and settlement. */
+          read: (request: Facade.OfficeBodyProposalRequest): Facade.OfficeBodyProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyProposalRead(keyedJson(request))) as Facade.OfficeBodyProposal; return result }),
+          /** Accepts or rejects an office proposal's reviewed forks. */
+          settle: (request: Facade.OfficeBodyProposalSettleRequest): Facade.OfficeBodyProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyProposalSettle(keyedJson(request))) as Facade.OfficeBodyProposal; return result }),
         },
         /** Exports the live body as the artifact's next version. */
         export: (request: Facade.OfficeBodyExportVerbRequest): Facade.OfficeBodyExportView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyExport(keyedJson(request))) as Facade.OfficeBodyExportView; return result }),
