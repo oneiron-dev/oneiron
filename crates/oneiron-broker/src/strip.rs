@@ -24,6 +24,11 @@
 //!
 //! The rule works on bytes, never through a parsed JSON tree: each decoded
 //! reading sits in a buffer wiped on drop.
+//!
+//! A reply that streams past the buffer (a binary body,
+//! [`crate::Shape::streams`]) is read through [`KeyWatch`] instead: the same
+//! forms and the same runs, checked chunk by chunk, and the body passed
+//! unchanged or cut, never rewritten.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
@@ -409,6 +414,110 @@ fn unescape_one(rest: &[u8], text: &mut Vec<u8>) -> usize {
             text.push(rest[0]);
             1
         }
+    }
+}
+
+/// The longest run a streamed reply may hold open across chunks. A run
+/// that long cannot be read cheaply, so it cuts the reply, as a run encoded
+/// too deep is redacted whole by [`strip`].
+const MAX_HELD_RUN: usize = 1 << 20;
+
+/// A form of the key, or a run too long to rule one out, in a streamed reply.
+#[derive(Debug)]
+pub(crate) struct KeyFound;
+
+/// The strip rule for a reply read as it streams, whose body must pass
+/// unchanged: it finds what [`strip`] would replace, and says so instead of
+/// replacing it. A byte is cleared to pass once no form and no run that could
+/// still grow from the bytes after it can reach back over it, so it holds
+/// back the longest form's length less one, and the run still open.
+pub(crate) struct KeyWatch<'k> {
+    key: &'k [u8],
+    forms: Vec<Zeroizing<Vec<u8>>>,
+    /// The longest form's length less one.
+    reach: usize,
+    /// Bytes read and not yet cleared. They start where a run starts, or at
+    /// a byte no run holds, as the whole body's reading would.
+    held: Zeroizing<Vec<u8>>,
+}
+
+impl<'k> KeyWatch<'k> {
+    pub(crate) fn new(key: &'k [u8]) -> Self {
+        let forms = forms(key);
+        let reach = forms.iter().map(|form| form.len()).max().unwrap_or(1) - 1;
+        Self {
+            key,
+            forms,
+            reach,
+            held: Zeroizing::new(Vec::new()),
+        }
+    }
+
+    /// Takes the next chunk, and returns the bytes now cleared to pass.
+    pub(crate) fn push(&mut self, chunk: &[u8]) -> Result<Zeroizing<Vec<u8>>, KeyFound> {
+        let mut data = Zeroizing::new(Vec::with_capacity(self.held.len() + chunk.len()));
+        data.extend_from_slice(&self.held);
+        data.extend_from_slice(chunk);
+        let cleared = self.check(&data, false)?;
+        self.held = Zeroizing::new(data[cleared..].to_vec());
+        if self.held.len() > MAX_HELD_RUN + self.reach {
+            return Err(KeyFound);
+        }
+        Ok(Zeroizing::new(data[..cleared].to_vec()))
+    }
+
+    /// Ends the reply, and returns the bytes still held, now cleared.
+    pub(crate) fn finish(&mut self) -> Result<Zeroizing<Vec<u8>>, KeyFound> {
+        self.check(&self.held, true)?;
+        Ok(std::mem::take(&mut self.held))
+    }
+
+    /// Checks `data` for every form, and each run in it for every reading,
+    /// and returns how many of its first bytes are cleared: up to the last
+    /// run start at or before the reach of a form from the end, and never
+    /// into a run that reaches the end and may go on. At the reply's `end`,
+    /// every run is closed and every byte cleared.
+    fn check(&self, data: &[u8], end: bool) -> Result<usize, KeyFound> {
+        if self
+            .forms
+            .iter()
+            .any(|form| memchr::memmem::find(data, form).is_some())
+        {
+            return Err(KeyFound);
+        }
+        let bound = if end {
+            data.len()
+        } else {
+            data.len().saturating_sub(self.reach)
+        };
+        let mut cleared = 0;
+        let mut at = 0;
+        while at < data.len() {
+            if at <= bound {
+                cleared = at;
+            }
+            let stop = run_end(self.key, data, at);
+            if stop == at {
+                at += 1;
+                continue;
+            }
+            if stop == data.len() && !end {
+                return Ok(cleared);
+            }
+            let run = &data[at..stop];
+            if memchr::memchr2(b'\\', b'%', run).is_some() {
+                let mut read = Zeroizing::new(Vec::with_capacity(run.len()));
+                strip_run(&self.forms, run, &mut read);
+                if read.as_slice() != run {
+                    return Err(KeyFound);
+                }
+            }
+            at = stop;
+        }
+        if at <= bound {
+            cleared = at;
+        }
+        Ok(cleared)
     }
 }
 
