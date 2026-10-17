@@ -916,7 +916,7 @@
      "path": "src/agent_dispatch/project_conversation.rs",
      "purpose": "The skill a project conversation's run loads before it starts (OF-501, ARCH-0067)",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
