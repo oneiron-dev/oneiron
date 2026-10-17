@@ -44,6 +44,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 mod ask;
+mod check_repeat;
+mod run_loop;
 pub use ask::{
     AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
     AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
@@ -70,7 +72,8 @@ pub const HEALTH_LOOP_REPEATS: SettingSpec = SettingSpec {
     seed: 3.0,
 };
 
-/// `failed_check_repeat`: the canon failure-ladder N. No capture reads it yet.
+/// `failed_check_repeat`: the same tool run failing the same way, the canon
+/// failure-ladder N.
 pub const HEALTH_CHECK_FAILS: SettingSpec = SettingSpec {
     key: "health.check.fails",
     min: 2.0,
@@ -126,6 +129,16 @@ pub const HEALTH_ESCALATE_TTL_HOURS: SettingSpec = SettingSpec {
     min: 1.0,
     max: 720.0,
     seed: 24.0,
+};
+
+/// The lowest card impact that still makes a card: struggling 100, off
+/// course 150, concern 200, so a concern always does. A finding below it
+/// writes its DIAGNOSTIC and no card.
+pub const HEALTH_CARD_FLOOR: SettingSpec = SettingSpec {
+    key: "health.card.floor",
+    min: 0.0,
+    max: 200.0,
+    seed: 0.0,
 };
 
 /// How far back one review reads receipts and settled attempts.
@@ -357,12 +370,14 @@ type Traps = BTreeMap<[u8; 16], Vec<OpenTrapWait>>;
 /// The dials in force for one review.
 struct Dials {
     loop_repeats: u64,
+    check_fails: u64,
     wait_share: f64,
     wait_secs: u64,
     silent_secs: u64,
     widen_denials: u64,
     cost_spike: f64,
     ttl_secs: u64,
+    card_floor: f64,
 }
 
 /// One review: detect, emit, merge, escalate. Returns the cards it touched.
@@ -375,12 +390,14 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
         }
         Dials {
             loop_repeats: value(&HEALTH_LOOP_REPEATS)?.round() as u64,
+            check_fails: value(&HEALTH_CHECK_FAILS)?.round() as u64,
             wait_share: value(&HEALTH_WAIT_SHARE)?,
             wait_secs: (value(&HEALTH_WAIT_MINUTES)? * 60.0).round() as u64,
             silent_secs: (value(&HEALTH_SILENT_MINUTES)? * 60.0).round() as u64,
             widen_denials: value(&HEALTH_WIDEN_DENIALS)?.round() as u64,
             cost_spike: value(&HEALTH_COST_SPIKE)?,
             ttl_secs: (value(&HEALTH_ESCALATE_TTL_HOURS)? * 3600.0).round() as u64,
+            card_floor: value(&HEALTH_CARD_FLOOR)?,
         }
     };
     let since = now.saturating_sub(LOOKBACK_SECS);
@@ -404,6 +421,21 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     }
 
     let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
+    findings.extend(run_loop::run_loop_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        dials.loop_repeats,
+        since,
+    )?);
+    findings.extend(check_repeat::check_repeat_findings(
+        vault,
+        &calls,
+        &dispatched,
+        &attempts,
+        dials.check_fails,
+        since,
+    )?);
     findings.extend(silent_findings(
         vault,
         &calls,
@@ -464,6 +496,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     vault.with_write_txn_grouped(|txn| {
         let mut touched = BTreeSet::new();
         for ((finding, diagnostic), route) in findings.iter().zip(&emitted).zip(&routes) {
+            if f64::from(AgentHealthTone::of(finding.signal).impact()) < dials.card_floor {
+                continue;
+            }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
             let card = merge(card, finding, *diagnostic, route, &owners, now);
@@ -590,7 +625,8 @@ fn live_attempt(
 
 /// `loop`: one actor's identical `(verb, request_digest)` calls in a row, with
 /// no other call by that actor between them. A call receipt names no attempt,
-/// so the card's task is none.
+/// so the card's task is none. An agent run's own calls leave no receipt and
+/// are judged per attempt (`run_loop`).
 fn loop_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
