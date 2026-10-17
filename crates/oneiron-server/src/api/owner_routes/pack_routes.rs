@@ -52,6 +52,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/hooks", get(hook_bindings))
         .route("/packs/hooks/bind", post(bind_hooks))
         .route("/packs/hooks/enabled", post(set_hook_enabled))
+        .route("/packs/remove", post(remove_pack))
         .route("/packs/ref-sync", get(ref_sync).put(set_ref_sync))
         .route("/packs/sync", post(sync_pack))
         .route("/packs/organs", get(pack_organs))
@@ -343,6 +344,20 @@ async fn set_hook_enabled(
     })
     .await?;
     Ok(Json(()))
+}
+
+/// `POST /v1/owner/packs/remove`: the owner removes an installed pack. Its
+/// receipt leaves the Active catalog and every hook binding of it stops; a
+/// built-in goes back to its Candidate. Replies with the removed receipt.
+async fn remove_pack(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<BindHooks>, JsonRejection>,
+) -> OwnerReply<PackInstallReceipt> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let removed = blocking(move || Ok(server.vault().remove_pack(&owner, &request.pack)?)).await?;
+    Ok(Json(removed))
 }
 
 /// `GET /v1/owner/packs/organs`: every organ of an Active installation, with
