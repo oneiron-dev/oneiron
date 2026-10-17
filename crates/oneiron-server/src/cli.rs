@@ -313,6 +313,12 @@ pub enum HostCommand {
     Vm(Box<HostVmArgs>),
     /// Run a blind iroh relay room and a ciphertext-only locker, never an engine.
     Relay(HostRelayArgs),
+    /// Recover a shared vault's Owner on proof of control, on a stopped
+    /// self-host vault: you judged the claimant's proof that they control
+    /// the organization owning it, and this host's key signs the handover.
+    /// A running `serve` answers the same at
+    /// `/v1/operator/shared/recover-owner`, under the host's root credential.
+    RecoverSharedOwner(Box<HostRecoverSharedOwnerArgs>),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -349,6 +355,30 @@ pub struct HostReRootArgs {
     /// instead of `ONEIRON_NEW_AUTH_SECRET`.
     #[arg(long, value_name = "FILE")]
     pub new_secret_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// The host secret comes from the config or `ONEIRON_AUTH_SECRET`, never argv.
+#[derive(Args, Clone, Debug)]
+pub struct HostRecoverSharedOwnerArgs {
+    /// The shared vault, by the id its creation named.
+    #[arg(long)]
+    pub vault_id: u64,
+
+    /// The Owner who is gone, PERSON id hex: still holding the Owner role.
+    #[arg(long)]
+    pub from: String,
+
+    /// The person taking the Owner role, PERSON id hex: a live person.
+    #[arg(long)]
+    pub claimant: String,
+
+    /// The proof of control you judged. The engine keeps no note; its BLAKE3
+    /// is printed beside the receipt id for your own record.
+    #[arg(long)]
+    pub proof_note: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -888,6 +918,9 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
+        Command::Host(HostCommand::RecoverSharedOwner(args)) => {
+            commands::host_recover_shared_owner(*args)
+        }
         Command::Host(HostCommand::Relay(args)) => crate::managed::run_relay(&args.config).await,
         #[cfg(target_os = "linux")]
         Command::Host(HostCommand::Vm(args)) => {
