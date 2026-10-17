@@ -4611,7 +4611,7 @@ pub fn self_decisions_asks(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::llm::decision::DecisionAsk>> {
-    crate::task_verb::sdk::host_only(memory, "self.decisions.asks", &input)
+    crate::task_verb::sdk::host_only(memory, "self.decisions.asks", &EmptyRequest {})
 }
 pub fn connector_list(
     memory: &Memory<'_>,
