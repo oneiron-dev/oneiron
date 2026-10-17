@@ -46,6 +46,9 @@ impl Vault {
     /// The manifest explicitly marks hub configuration and foreign skill signals
     /// archive-only. They are never restored as local policy or trusted verdicts;
     /// imported file bundles run the native scanner and Candidate admission door.
+    /// The archive's embedding setup (OF-370) declares the spaces and binds the
+    /// slots this vault lacks; it never overwrites this vault's own setup, and
+    /// a conflict with it is reported, never a refusal of the import.
     pub fn import_whole_vault_archive(&self, bytes: &[u8]) -> Result<WholeVaultImportReceipt> {
         self.import_whole_vault_archive_as(bytes, None)
     }
@@ -344,7 +347,13 @@ impl Vault {
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
         let (restored_secrets, unchanged_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &secrets, &document)?;
+        // OF-370: the embedding setup declares and binds only what is absent
+        // here; its vectors are recomputed after the commit, never before.
+        let embedding_setup =
+            super::import_embedding_setup_in_txn(&self.store, &mut wtxn, &document)?;
+        let setup_rows = self.publish_embedding_setup_in_txn(&mut wtxn)?;
         wtxn.commit()?;
+        self.embedding_setup_committed(setup_rows);
         Ok(WholeVaultImportReceipt {
             authority,
             inserted_entities,
@@ -361,6 +370,7 @@ impl Vault {
             restored_secrets,
             unchanged_secrets,
             missing_secrets,
+            embedding_setup,
         })
     }
 }
@@ -483,8 +493,13 @@ fn put_run_results_in_txn(
             vault.put_code_run_output_in_txn(wtxn, finished, &occurrence, Some(run_id))?;
             imported += 1;
         }
-        // A receipt comes back with the occurrence it describes, and only
-        // whole: a withheld one's refs stay in the archive.
+    }
+    // A receipt comes back with the occurrence it describes, and only whole:
+    // a withheld one's refs stay in the archive. Every run's outputs are in
+    // first, so a ref to another run's output resolves; one that resolves to
+    // nothing (not in the archive, nor in this vault) is named unresolved.
+    for run in &results.runs {
+        let run_id = parse_id(&run.run_id)?;
         for fold in run.receipts.iter().filter(|fold| fold.withheld.is_none()) {
             let came_back = run.outputs.iter().any(|output| {
                 output.path == fold.path
@@ -497,12 +512,22 @@ fn put_run_results_in_txn(
             if !came_back {
                 continue;
             }
-            let receipt: crate::code_run::ReaderFoldReceipt =
+            let mut receipt: crate::code_run::ReaderFoldReceipt =
                 serde_json::from_value(fold.receipt.clone())
                     .map_err(|_| invalid("run fold receipt"))?;
             if receipt.folded.owner != run_id || receipt.folded.path != fold.path {
                 return Err(invalid("run fold receipt names another occurrence"));
             }
+            let rtxn: &heed::RoTxn<'_> = wtxn;
+            receipt.mark_unresolved(|named| {
+                Ok(crate::provenance::body::owned_body_in_txn(
+                    &vault.store,
+                    rtxn,
+                    &named.owner,
+                    &named.occurrence,
+                )?
+                .is_some())
+            })?;
             vault.put_code_run_reader_fold_in_txn(wtxn, &receipt)?;
         }
     }

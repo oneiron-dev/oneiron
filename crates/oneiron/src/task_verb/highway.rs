@@ -10,9 +10,10 @@
 //! transaction; return the durable handle.
 //!
 //! The door invents no check. It verifies the actor binding as every facade
-//! does, reads the immutable authority facts, and runs the per-leaf write
-//! gate `tasks_create` already runs. Payer, membership and admission are
-//! neither read nor written here.
+//! does, proves the actor's TASK role through L02's rule over the immutable
+//! authority facts ([`Memory::highway_task_actor_in`]), and runs the
+//! per-leaf write gate `tasks_create` already runs. Payer, membership and
+//! admission are neither read nor written here.
 
 use std::collections::BTreeMap;
 
@@ -20,13 +21,15 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::authority::{TaskActorProof, TaskActorVerb, actor_binding_is_active};
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{ClaimError, Error};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
     verify_actor_binding,
 };
-use crate::task_authority::BindingGeneration;
+use crate::task_authority::{BindingGeneration, TaskStanding};
+use crate::write_envelope::WriteActor;
 
 use super::brief::StoredBrief;
 use super::consult_result::TaskVerbBody;
@@ -47,19 +50,24 @@ const LEASE_OWNER_DOMAIN: &[u8] = b"oneiron.tasks.lease_owner.v1";
 impl Memory<'_> {
     /// The one task-domain door. The actor is this surface's, verified per
     /// call exactly as every facade verifies it; `via` carries a host's
-    /// lease, which the actor alone cannot prove.
+    /// lease, which the actor alone cannot prove. Its surface questions go
+    /// through the decision path a host bound
+    /// ([`Memory::with_task_decisions`]), if any.
     pub fn tasks_highway(&self, via: TaskVia, call: TaskCall) -> MemoryResult<TaskCallReceipt> {
-        self.tasks_highway_with_decisions(via, call, None)
+        self.tasks_highway_with_decisions(via, call, self.task_decisions())
     }
 
-    /// [`Self::tasks_highway`] under a host's decision path. With `None`,
-    /// every surface question asks up, so a person is asked.
+    /// [`Self::tasks_highway`] under a host's decision path. An explicit
+    /// path overrides the one bound on this surface; with `None` the bound
+    /// one is used, and only when neither exists does every surface question
+    /// ask up, so a person is asked.
     pub fn tasks_highway_with_decisions(
         &self,
         via: TaskVia,
         call: TaskCall,
         decisions: Option<&TaskDecisions<'_>>,
     ) -> MemoryResult<TaskCallReceipt> {
+        let decisions = decisions.or_else(|| self.task_decisions());
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         match call {
             TaskCall::Post(post) => self.highway_post(&via, post, decisions),
@@ -87,6 +95,58 @@ impl Memory<'_> {
     /// Status, or a poll when `after` names the last observation.
     pub fn tasks_status(&self, query: TaskStatusQuery) -> MemoryResult<TaskCallReceipt> {
         self.tasks_highway(TaskVia::Wire, TaskCall::Status(query))
+    }
+
+    /// Proves this surface's actor may run `verb` on `task`, in the caller's
+    /// snapshot, through L02's rule (OF-220), and answers the TASK's
+    /// standing. The proof is the actor's live binding of its own class;
+    /// else the slip its request presented, whose refusal stands; else, for
+    /// the in-process host's own caller, its store truth; else a binding,
+    /// which it then lacks. A TASK the actor is no party to is not found; a
+    /// party the verb does not admit is told why, with `suggestion`.
+    pub(super) fn highway_task_actor_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task: EntityId,
+        verb: TaskActorVerb<'_>,
+        suggestion: &str,
+    ) -> MemoryResult<TaskStanding> {
+        let refusal = |error: Error| match error {
+            Error::EntityNotFound => not_found(),
+            Error::Claim(ClaimError::ActorLacksClaimAuthority { reason }) => {
+                forbidden(reason, suggestion)
+            }
+            other => MemoryError::from(other),
+        };
+        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let fold = self
+            .vault()
+            .authority_view_readonly_in_txn(txn)
+            .map_err(refusal)?;
+        let bound =
+            actor_binding_is_active(&fold, &self.actor(), self.actor_class().gate_actor_class());
+        let writer = if bound {
+            self.vault()
+                .observed_write_actor_in_txn(txn, actor)
+                .map_err(refusal)?
+        } else {
+            actor
+        };
+        let proof = if bound {
+            TaskActorProof::Bound(&writer)
+        } else if let Some(slip) = self.presented_credential() {
+            TaskActorProof::Slip {
+                actor: self.actor(),
+                slip,
+            }
+        } else if self.native_invocation() {
+            TaskActorProof::Native(&writer)
+        } else {
+            TaskActorProof::Bound(&writer)
+        };
+        self.vault()
+            .prove_task_actor_by_in_txn(txn, task, proof, verb)
+            .map_err(refusal)
     }
 
     /// Rewrites one TASK body inside the caller's transaction through the

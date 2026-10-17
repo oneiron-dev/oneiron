@@ -221,6 +221,9 @@ side_tables! {
     /// which keeps none. Key: hex64 (blake3 of the offer's adapter, origin, key binding and wire
     /// model).
     MODEL_OFFER_COOLDOWN: SyncState b"models:offer-cooldown:v1:" Named;
+    /// One paired-machine mesh connection's path receipt (OF-535): direct or relayed, admitted,
+    /// refused or failed; local only, never synced. Key: hex16 (open time, ms) hex32 (minted id).
+    SYNC_MESH_PATH_RECEIPT: SyncState b"mp:" Named;
     /// Durable receipt for one applied/rejected NOTE-operation request, kept for reconnect/reopen.
     /// Key: hex32 (entity id) ":" hex32 (request id).
     SYNC_NC_E: SyncState b"nc:e:" LegacyJson;
@@ -299,6 +302,9 @@ side_tables! {
     /// The serve skill judge (OF-495): its typed-decision journal, and person-time on receipts.
     /// Key: "decision:" hex32 (row id) | "minutes:" string (receipt id) "|" hex32 (row id).
     SKILL_JUDGE: SyncState b"skill:judge:v1:" Named;
+    /// The Coach's tradeoff router (FIX-LIST 817): each route call it handed a project's leader.
+    /// Key: string (proposal hex32 ":" project hex32 ":" question digest).
+    SKILL_TRADEOFF_ROUTE: SyncState b"skill:tradeoff:route:v1:" Named;
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
     /// notice's receipt id).

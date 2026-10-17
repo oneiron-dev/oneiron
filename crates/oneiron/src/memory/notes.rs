@@ -4,8 +4,14 @@ use crate::note::{NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEdi
 use crate::write_envelope::WriteActor;
 
 impl Memory<'_> {
-    /// Creates any registered NOTE kind using its first edit as birth.
+    /// Creates any registered NOTE kind using its first edit as birth. An
+    /// agent's birth meets its kind's minimum length (OF-073 stage 1).
     pub fn create_note(&self, kind: &str, markdown: &str) -> MemoryResult<EntityRefReceipt> {
+        self.vault.check_auto_note_birth(
+            &self.vault.note_kind(kind)?,
+            self.actor_class,
+            markdown,
+        )?;
         let id = self.vault.create_note(
             kind,
             markdown,

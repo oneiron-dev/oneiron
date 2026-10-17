@@ -519,6 +519,9 @@ side_tables! {
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
     /// Declared so bytes written by older engines stay owned. Key: ().
     TASK_FANOUT_POLICY: VaultMeta b"tasks/fanout_policy/v1" Named;
+    /// A team deliverable's owner review: team, leader, root TASK, output revision, reviewed
+    /// claim fingerprint and what the review asks. Key: id16 (reviewed claim).
+    TEAM_DELIVERABLE: VaultMeta b"team:deliverable:v1:" Named;
     /// One run's market: signed referee, lease shares, central ledger, submissions and result.
     /// Key: string (team reference).
     TEAM_MARKET: VaultMeta b"team:market:v1:" Named;
@@ -528,6 +531,9 @@ side_tables! {
     /// One team run's receipt (type, pattern, models, shape, who decided, coverage, confessions,
     /// anchored outcome). Key: string (team reference).
     TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named;
+    /// One team start as the host saw it: stamp, leader, root TASK, queued members and widenings.
+    /// Key: string (leader attempt hex, `:`, team reference).
+    TEAM_RUN: VaultMeta b"team:run:v1:" Named;
     /// The pinned text analyzer manifest (JSON) and, under '_hash', its SHA-256. Key: string.
     TEXT_ANALYZER_MANIFEST: VaultMeta b"text_analyzer_manifest" Raw;
     /// BM25F field schema hash. Key: ().

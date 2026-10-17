@@ -160,11 +160,11 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// `questions` over `state` through the host's ladder, the verdict role's generation
-    /// the dial's first read, on the time the pass has left, any ask going to `to`. Each
-    /// generation that finished joins `charges`, even when a later one traps or fails.
-    /// None when the step trapped: the attempt is parked.
+    /// the dial's first read, on the time the pass has left, any ask going to `to` for
+    /// the work `correlation` names. Each generation that finished joins `charges`, even
+    /// when a later one traps or fails. None when the step trapped: the attempt is parked.
     ///
-    /// A question already put to `to` over this evidence is not put again: an open ask
+    /// A question already put to `to` for this work is not put again: an open ask
     /// still holds its work, and an answered one is the answer, so the read stops below
     /// the person rung. Each decision keeps its ask, and its receipt names the version
     /// of every evidence body the branch pinned.
@@ -178,6 +178,7 @@ impl ConsolidationExecutor<'_> {
         pass: &WakePassDeadline,
         resources: &BranchResources<'_>,
         to: &AskTo,
+        correlation: EntityId,
         questions: &[DecisionQuestion],
         evidence: &[EntityId],
         state: &serde_json::Value,
@@ -189,7 +190,7 @@ impl ConsolidationExecutor<'_> {
             .iter()
             .map(|question| {
                 Ok(vault
-                    .decision_ask_for(question, principal, evidence, to)?
+                    .decision_ask_for(question, principal, evidence, to, Some(correlation))?
                     .filter(holds))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -225,6 +226,7 @@ impl ConsolidationExecutor<'_> {
         let mut spent = Vec::new();
         let mut ladder = self.decisions.ladder.ladder();
         ladder.ask_to = Some(to);
+        ladder.correlation = Some(correlation);
         let decided = ladder
             .run_pack_generated_spent(
                 &rung,
@@ -267,7 +269,13 @@ impl ConsolidationExecutor<'_> {
                 None if went_up(&decision)
                     && decision.human_ask != Some(HumanAskReason::Deadline) =>
                 {
-                    vault.decision_ask_for(question, principal, evidence, to)?
+                    vault.decision_ask_for(
+                        question,
+                        principal,
+                        evidence,
+                        to,
+                        Some(correlation),
+                    )?
                 }
                 None => None,
             };

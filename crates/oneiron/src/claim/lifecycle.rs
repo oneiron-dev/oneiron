@@ -386,8 +386,11 @@ impl Vault {
     /// this method is transition mechanics only.
     pub fn supersede_claim(&self, new_id: &EntityId, old_id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         self.supersede_claim_in_txn(&mut wtxn, new_id, old_id, now)?;
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         Ok(())
     }
 
@@ -449,6 +452,9 @@ impl Vault {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
+        // A closed head moves what the host's timers read; the mark fires
+        // only if this transaction commits.
+        crate::batch::queue_proactivity_change(self, wtxn);
 
         let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
         Self::require_active_claim(&new_body)?;
@@ -629,6 +635,7 @@ impl Vault {
     /// reason: its own door has a contract this one cannot honour.
     pub fn retract_claim(&self, id: &EntityId, now: u64) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         // The typed door does not merely AUTHORIZE an expression-preference
         // retraction; it restores the direct predecessor as part of closing the
         // head. Retracting one generically performs half of that contract and
@@ -642,7 +649,9 @@ impl Vault {
             ));
         }
         self.retract_claim_in_txn(&mut wtxn, id, now)?;
+        rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         Ok(())
     }
 
@@ -671,6 +680,9 @@ impl Vault {
         now: u64,
         actor: Option<crate::WriteActor>,
     ) -> Result<Option<GateDecisionRecord>> {
+        // A retracted head moves what the host's timers read; the mark fires
+        // only if this transaction commits.
+        crate::batch::queue_proactivity_change(self, wtxn);
         // The NAMED target, guarded before the pending-consent closure and the
         // gate receipt below: a stale retract must leave the consent row and
         // every receipt exactly as it found them.
