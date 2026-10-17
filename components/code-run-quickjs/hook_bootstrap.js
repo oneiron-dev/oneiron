@@ -4,7 +4,8 @@
   "use strict";
   const abi = globalThis.__oneironHookAbi;
   delete globalThis.__oneironHookAbi;
-  const scopedRead = abi["scoped-read"], emitOutcome = abi["emit-outcome"];
+  const scopedRead = abi["scoped-read"], aiVerdict = abi["ai-verdict"];
+  const emitOutcome = abi["emit-outcome"];
   const encode = JSON.stringify, decode = JSON.parse, finite = Number.isFinite;
   const isArray = Array.isArray, keys = Object.keys, frozen = Object.isFrozen;
   const freezeOne = Object.freeze, push = Function.prototype.call.bind(Array.prototype.push);
@@ -50,10 +51,17 @@
     if (!isRecord(request)) throw new TypeError("invalid_read_request");
     resolve(decode(scopedRead(text(request, "read_request"))));
   });
+  // ai.verdict: only a fact hook that declares the generative class gets an
+  // answer; any other body's call is refused by the host.
+  const verdict = request => new PromiseType(resolve => {
+    if (!isRecord(request)) throw new TypeError("invalid_verdict_request");
+    resolve(decode(aiVerdict(text(request, "verdict_request"))));
+  });
   const set = (name, item) => Object.defineProperty(globalThis, name,
     {value: item, writable: false, configurable: false});
   set("input", freeze(value));
   set("oneiron", freezeOne({read, emit}));
+  set("ai", freezeOne({verdict}));
   // No entropy reaches a hook; a seeded stand-in would repeat across runs.
   Object.defineProperty(Math, "random", {value: () => { throw new TypeError("hook_has_no_random"); },
     writable: false, configurable: false});

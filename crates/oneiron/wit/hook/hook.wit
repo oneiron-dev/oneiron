@@ -1,11 +1,13 @@
 package oneiron:hook@1.0.0;
 
-// A hook body's world: one scoped read and the one outcome return. Nothing
-// else is imported: no clock (`now` is in the input), no random, no files,
-// no verbs, no WASI. It sits in its own directory because `wit/` is parsed
-// as the single code-run package.
+// A hook body's world: one scoped read, `ai.verdict` and the one outcome
+// return. Only a fact hook that declares the generative class gets a verdict
+// answered; a verb hook calls no model. Nothing else is imported: no clock
+// (`now` is in the input), no random, no files, no verbs, no WASI. It sits in
+// its own directory because `wit/` is parsed as the single code-run package.
 world hook {
     import scoped-read: func(request-json: string) -> result<string, string>;
+    import ai-verdict: func(request-json: string) -> result<string, string>;
     import emit-outcome: func(outcome-json: string) -> result<_, string>;
     export run-hook: func(source: string, input-json: string) -> result<_, string>;
 }

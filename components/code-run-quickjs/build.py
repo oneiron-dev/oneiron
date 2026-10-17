@@ -130,7 +130,8 @@ def main():
         (stage / "bootstrap.h").write_text("static const char bootstrap[] = {" + ",".join(str(v) for v in bootstrap.encode()) + ",0};\n")
         defines = ["-DONEIRON_FOREIGN"] if tier == "foreign" else []
         artifacts[tier] = build_component(sdk, source, stage, "guest.c", "guest", defines, out / f"quickjs-{tier}.wasm")
-    # The hook guest: its own two-import world (scoped read, outcome return),
+    # The hook guest: its own three-import world (scoped read, ai.verdict,
+    # outcome return),
     # none of the code-mode SDK, the same interpreter and denied libc.
     hook_wit = ROOT / "crates/oneiron/wit/hook/hook.wit"
     stage = out / "hook"

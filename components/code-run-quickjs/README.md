@@ -38,7 +38,7 @@ The build emits:
 
 - `quickjs-foreign.wasm`: only the six non-write imports;
 - `quickjs-hook.wasm`: the hook guest (below), world `oneiron:hook/hook@1.0.0`
-  from `crates/oneiron/wit/hook/hook.wit`, with its own two imports;
+  from `crates/oneiron/wit/hook/hook.wit`, with its own three imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
 
 The foreign WIT file is a generated import projection of the same world, not
@@ -109,14 +109,17 @@ The host refuses any first-party proposal rather than silently committing it.
 ## Hook guest
 
 `quickjs-hook.wasm` runs a hook body (`hook_guest.c`, `hook_bootstrap.js`), not
-a code-mode step. Its world imports only `scoped-read` and `emit-outcome` and
-exports `run-hook(source, input-json)`. None of the code-mode SDK is linked:
+a code-mode step. Its world imports only `scoped-read`, `ai-verdict` and
+`emit-outcome` and exports `run-hook(source, input-json)`. None of the code-mode SDK is linked:
 no files, credentials, verbs, asks, clock or random, and no WASI.
 
 The body is plain JS run as an async function body. `input` is the parsed,
 frozen input JSON. `await oneiron.read(request)` sends the request as JSON
 through `scoped-read` and resolves to the parsed answer; a host refusal
-rejects with its code. The body returns its one outcome or calls
+rejects with its code. `await ai.verdict(request)` sends an `ai.verdict`
+input through `ai-verdict` the same way. The host answers it only for a fact
+hook that declares `render_class: generative`; any other body's call is
+refused. The body returns its one outcome or calls
 `oneiron.emit(outcome)` once. Returning nothing without an emit is
 `{"kind":"nothing"}`. A second outcome is refused. `Date` reads `input.now`
 (Unix ms, UTC), and `Math.random` throws `hook_has_no_random`. The guest
@@ -124,14 +127,14 @@ keeps the code-mode 24 MiB JS heap, 256 KiB JS stack and interrupt cap.
 
 The host is `oneiron::runtime_hooks::sandbox::HookSandbox` (feature
 `code-sandbox-wasmtime`). `HookSandbox::from_component(bytes, blake3_pin)`
-checks the pin, refuses any import outside the two, checks the `run-hook`
+checks the pin, refuses any import outside the three, checks the `run-hook`
 export and runs a real-JS readiness probe. `hook_component_bytes()` returns
 the checked-in artifact and its BLAKE3 pin, `HOOK_COMPONENT_BLAKE3`, which
 must be replaced along with the artifact. Each `run_hook` gets a fresh Store
 under the code-mode fuel, memory, stack, host-call and message limits. The
 deadline is the hook's `budget_ms`, and it covers start-up and reads. Every
-read debits the host-call budget. A request may carry 4 KiB and an answer
-256 KiB.
+read and verdict debits the host-call budget. A read request may carry 4 KiB,
+a verdict request 64 KiB, and an answer 256 KiB.
 
 ## Production MCP binding
 

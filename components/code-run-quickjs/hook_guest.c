@@ -70,6 +70,22 @@ static JSValue call_scoped_read(JSContext *ctx, JSValueConst this_val, int argc,
     return value;
 }
 
+static JSValue call_ai_verdict(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {
+    (void)this_val;
+    const char *text;
+    size_t length;
+    if (!host_text(ctx, argc, argv, &text, &length)) return JS_EXCEPTION;
+    hook_string_t request = {(uint8_t *)text, length};
+    hook_string_t result = {0};
+    hook_string_t error = {0};
+    bool ok = hook_ai_verdict(&request, &result, &error);
+    JS_FreeCString(ctx, text);
+    if (!ok) return throw_host_error(ctx, &error);
+    JSValue value = JS_NewStringLen(ctx, (const char *)result.ptr, result.len);
+    hook_string_free(&result);
+    return value;
+}
+
 static JSValue call_emit_outcome(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {
     (void)this_val;
     const char *text;
@@ -86,6 +102,7 @@ static JSValue call_emit_outcome(JSContext *ctx, JSValueConst this_val, int argc
 static JSValue make_abi(JSContext *ctx) {
     JSValue abi = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, abi, "scoped-read", JS_NewCFunction(ctx, call_scoped_read, "scoped-read", 1));
+    JS_SetPropertyStr(ctx, abi, "ai-verdict", JS_NewCFunction(ctx, call_ai_verdict, "ai-verdict", 1));
     JS_SetPropertyStr(ctx, abi, "emit-outcome", JS_NewCFunction(ctx, call_emit_outcome, "emit-outcome", 1));
     return abi;
 }

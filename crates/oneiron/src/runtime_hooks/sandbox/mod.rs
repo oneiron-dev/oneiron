@@ -1,8 +1,9 @@
 //! The pinned QuickJS sandbox a hook body runs in.
 //!
-//! The `hook` world (`wit/hook/hook.wit`) imports a scoped read and the one
-//! outcome return, and exports `run-hook`. No WASI, clock, random, file,
-//! network or verb import is linked. Each run gets a fresh Store under the
+//! The `hook` world (`wit/hook/hook.wit`) imports a scoped read,
+//! `ai.verdict` and the one outcome return, and exports `run-hook`. No WASI,
+//! clock, random, file, network or verb import is linked. A verdict is
+//! answered only for a fact hook the runner lets call one. Each run gets a fresh Store under the
 //! code-mode limits, with a deadline from the hook's `budget_ms` that also
 //! covers start-up and host reads.
 
@@ -11,7 +12,7 @@ pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit/hook/hook.wit", world: "hook" });
 }
 
-use super::{HookBodyRun, HookBodyRuntime};
+use super::{HookBodyRun, HookBodyRuntime, HookVerdictCall};
 use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
 use crate::{Error, Result};
 use std::sync::mpsc;
@@ -28,17 +29,22 @@ const HOOK_COMPONENT: &[u8] =
 
 /// BLAKE3 of the checked-in hook component; its manifest row carries the SHA-256.
 pub const HOOK_COMPONENT_BLAKE3: [u8; 32] = [
-    0x72, 0x90, 0x3a, 0xb7, 0x3b, 0xd7, 0xba, 0x0a, 0x04, 0xdd, 0x44, 0x11, 0x3d, 0x8e, 0x43, 0xaa,
-    0xe1, 0xb3, 0xe7, 0x80, 0x85, 0x30, 0xe3, 0xc7, 0x5c, 0x46, 0xc2, 0x0f, 0x5d, 0x32, 0x2e, 0x04,
+    0xb5, 0x64, 0xbe, 0x6f, 0xf8, 0x30, 0x63, 0x76, 0xc6, 0xba, 0xf4, 0xa3, 0xad, 0x62, 0x0b, 0x18,
+    0x89, 0xf4, 0xf7, 0x77, 0x33, 0x46, 0x67, 0x40, 0x2d, 0x64, 0x9b, 0xca, 0x30, 0xa0, 0x71, 0x3e,
 ];
 
-/// The two imports of the hook world, sorted. A component importing anything
-/// else is refused before it runs.
-const HOOK_IMPORTS: [&str; 2] = ["emit-outcome", "scoped-read"];
+/// The three imports of the hook world, sorted. A component importing
+/// anything else is refused before it runs.
+const HOOK_IMPORTS: [&str; 3] = ["ai-verdict", "emit-outcome", "scoped-read"];
 /// Bytes one read request may carry.
 const READ_REQUEST_BYTES: usize = 4 * 1024;
 /// Bytes one read answer may carry.
 const READ_RESPONSE_BYTES: usize = 256 * 1024;
+/// Bytes one `ai.verdict` request may carry: a question, its options, its
+/// evidence refs and its state.
+const VERDICT_REQUEST_BYTES: usize = 64 * 1024;
+/// What a body that may not call a model hears from `ai.verdict`.
+const NO_VERDICT: &str = "ai_verdict_is_a_generative_fact_hooks";
 /// The longest body budget a hook selector may name.
 const MAX_BUDGET_MS: u32 = 60_000;
 /// Wasm stack, as code mode sets it.
@@ -73,11 +79,22 @@ impl HookBodyRuntime for HookSandbox {
     ) -> Result<HookBodyRun> {
         Self::run_hook(self, body, input_json, budget_ms, read)
     }
+
+    fn run_fact_hook(
+        &self,
+        body: &str,
+        input_json: &str,
+        budget_ms: u32,
+        read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+        verdict: HookVerdictCall<'_>,
+    ) -> Result<HookBodyRun> {
+        self.run(body, input_json, budget_ms, read, verdict)
+    }
 }
 
 impl HookSandbox {
     /// Checks the BLAKE3 pin, compiles the component, checks that it imports
-    /// exactly the hook world's two functions and exports `run-hook`, then runs
+    /// exactly the hook world's three functions and exports `run-hook`, then runs
     /// a plain-JS readiness probe through it.
     pub fn from_component(bytes: &[u8], pin: [u8; 32]) -> Result<Self> {
         if !bytes.starts_with(b"\0asm\x0d\0\x01\0")
@@ -119,13 +136,26 @@ impl HookSandbox {
         Ok(sandbox)
     }
 
-    /// Runs one body; `read` answers `oneiron.read`. Returns the emitted outcome JSON.
+    /// Runs one body; `read` answers `oneiron.read`, and `ai.verdict` is
+    /// refused. Returns the emitted outcome JSON.
     pub fn run_hook(
         &self,
         body: &str,
         input_json: &str,
         budget_ms: u32,
         read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> Result<HookBodyRun> {
+        let mut verdict = |_: &str| Err(NO_VERDICT.to_owned());
+        self.run(body, input_json, budget_ms, read, &mut verdict)
+    }
+
+    fn run(
+        &self,
+        body: &str,
+        input_json: &str,
+        budget_ms: u32,
+        read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+        verdict: HookVerdictCall<'_>,
     ) -> Result<HookBodyRun> {
         if budget_ms == 0 || budget_ms > MAX_BUDGET_MS {
             return Err(failure("hook budget_ms is out of bounds"));
@@ -147,7 +177,7 @@ impl HookSandbox {
                 let result = execute(pre, budget, body, input_json, events.clone(), deadline);
                 let _ = events.send(Event::Finished(result));
             });
-            let result = serve_reads(&requests, read, deadline);
+            let result = serve_reads(&requests, read, verdict, deadline);
             // Wakes a worker still running after a timeout; its own deadline
             // check then stops it. Siblings re-check theirs and go on.
             drop(requests);
@@ -161,7 +191,7 @@ impl HookSandbox {
         let body = "const row = await oneiron.read({claim: input.hook.binding}); \
             return row.seen === 7 && Date.now() === input.now && typeof process === 'undefined' \
             && typeof fetch === 'undefined' && typeof require === 'undefined' \
-            ? {kind: 'nothing'} : {kind: 'skip', reason: 'probe'};";
+            && typeof ai.verdict === 'function' ? {kind: 'nothing'} : {kind: 'skip', reason: 'probe'};";
         let input =
             r#"{"hook":{"binding":"00000000000000000000000000000001"},"now":1700000000000}"#;
         let run = self.run_hook(body, input, 5_000, &mut |request: &str| {
@@ -190,6 +220,10 @@ struct State {
 
 enum Event {
     Read {
+        request: String,
+        reply: mpsc::SyncSender<std::result::Result<String, String>>,
+    },
+    Verdict {
         request: String,
         reply: mpsc::SyncSender<std::result::Result<String, String>>,
     },
@@ -229,6 +263,33 @@ impl State {
         })
     }
 
+    /// One `ai.verdict` call, on the same host-call budget as a read. The
+    /// host answers it, or refuses it for a body that may not call a model.
+    fn verdict(&mut self, request: String) -> wasmtime::Result<Reply<String>> {
+        self.host_calls = self.host_calls.saturating_add(1);
+        if self.remaining_reads == 0 {
+            return Err(self.refuse("hook host call budget exceeded"));
+        }
+        self.remaining_reads -= 1;
+        if request.len() > VERDICT_REQUEST_BYTES {
+            return Ok(Err("verdict_request_over_budget".into()));
+        }
+        let (reply, response) = mpsc::sync_channel(1);
+        if self.events.send(Event::Verdict { request, reply }).is_err() {
+            return Err(self.refuse("hook host stopped"));
+        }
+        let Ok(answer) = response.recv() else {
+            return Err(self.refuse("hook host stopped"));
+        };
+        Ok(match answer {
+            Ok(verdict) if verdict.len() > READ_RESPONSE_BYTES => {
+                Err("verdict_response_over_budget".into())
+            }
+            Err(text) if text.len() > READ_RESPONSE_BYTES => Err("verdict_refused".into()),
+            answer => answer,
+        })
+    }
+
     /// The one outcome. A malformed or oversized outcome comes back as a code;
     /// a second outcome after one was taken traps the body.
     fn emit(&mut self, outcome: String) -> wasmtime::Result<Reply<()>> {
@@ -259,6 +320,13 @@ fn link_imports(linker: &mut Linker<State>) -> Result<()> {
         },
     )
     .map_err(|_| failure("hook scoped-read link failed"))?;
+    root.func_wrap(
+        "ai-verdict",
+        |mut cx: StoreContextMut<'_, State>, (request,): (String,)| {
+            Ok((cx.data_mut().verdict(request)?,))
+        },
+    )
+    .map_err(|_| failure("hook ai-verdict link failed"))?;
     root.func_wrap(
         "emit-outcome",
         |mut cx: StoreContextMut<'_, State>, (outcome,): (String,)| {
@@ -340,6 +408,7 @@ fn execute(
 fn serve_reads(
     requests: &mpsc::Receiver<Event>,
     read: &mut dyn FnMut(&str) -> Reply<String>,
+    verdict: HookVerdictCall<'_>,
     deadline: Instant,
 ) -> Result<HookBodyRun> {
     loop {
@@ -350,6 +419,9 @@ fn serve_reads(
         match requests.recv_timeout(remaining) {
             Ok(Event::Read { request, reply }) => {
                 let _ = reply.send(read(&request));
+            }
+            Ok(Event::Verdict { request, reply }) => {
+                let _ = reply.send(verdict(&request));
             }
             Ok(Event::Finished(result)) => return result,
             Err(_) => return Err(failure("hook deadline exceeded or worker failed")),

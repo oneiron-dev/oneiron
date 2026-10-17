@@ -11,6 +11,7 @@
 mod ask;
 mod chain;
 mod redact;
+mod served;
 mod state;
 
 use serde::{Deserialize, Serialize};
