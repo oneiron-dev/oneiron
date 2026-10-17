@@ -1362,7 +1362,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/settle.rs` | src | m | 5 struct · 1 enum · 3 fn · 1 const · 4 crate-vis | ConflictSettleDecisions, ConflictSettleReceipt, ConflictSettlement, OpenConflict, ParkedConflictPass, SettledConflict | Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`) |
 | `src/dreamer_consolidation/sieve_attempt.rs` | src | m | 1 crate-vis | — | The sieve's owed novelty/typing rungs and its sampled expensive-path audit |
 | `src/dreamer_consolidation/step_charge.rs` | src | s | 6 crate-vis | — | Attempt-local step spend due to the shared wake ledger after memo replay |
-| `src/dreamer_consolidation/strength.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | ConsolidationStrengthPolicy, ConsolidationStrengthSnapshot | Consolidation strength observations and an archive-only lifecycle (OF-216) |
+| `src/dreamer_consolidation/strength.rs` | src | m | 2 struct · 3 fn · 3 crate-vis | ConsolidationStrengthPolicy, ConsolidationStrengthSnapshot | Consolidation strength observations and an archive-only lifecycle (OF-216) |
 | `src/dreamer_consolidation/support.rs` | src | s | 12 const · 30 crate-vis | — | — |
 | `src/dreamer_consolidation/task_realize.rs` | src | s | 1 struct · 1 fn · 1 const | TaskRealizeModel | A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer |
 | `src/dreamer_consolidation/tests.rs` | test | XL | 1 crate-vis | — | — |
