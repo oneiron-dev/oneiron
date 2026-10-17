@@ -299,7 +299,7 @@ impl Memory<'_> {
             }
             self.put_block_question_in_txn(txn, group, continuation, &label)?;
         }
-        Ok(Ok(self.tasks_ask_in_txn(txn, &spec, |_, _| Ok(()))?.handle))
+        Ok(Ok(self.tasks_ask_composed_in_txn(txn, &spec, None)?.handle))
     }
 }
 

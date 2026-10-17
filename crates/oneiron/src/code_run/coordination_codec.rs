@@ -124,6 +124,7 @@ fn hold_value(hold: Option<TaskAskHoldReason>) -> Value {
     match hold {
         None => Value::Nil,
         Some(TaskAskHoldReason::NoLiveRoute) => Value::from("no_live_route"),
+        Some(TaskAskHoldReason::ApprovalRequired) => Value::from("approval_required"),
     }
 }
 fn hold_decode(value: &Value) -> Result<Option<TaskAskHoldReason>> {
@@ -131,6 +132,9 @@ fn hold_decode(value: &Value) -> Result<Option<TaskAskHoldReason>> {
         Value::Nil => Ok(None),
         value if value.as_str() == Some("no_live_route") => {
             Ok(Some(TaskAskHoldReason::NoLiveRoute))
+        }
+        value if value.as_str() == Some("approval_required") => {
+            Ok(Some(TaskAskHoldReason::ApprovalRequired))
         }
         _ => Err(invalid_code_run_replay("ask hold")),
     }

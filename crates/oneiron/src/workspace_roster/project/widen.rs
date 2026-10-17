@@ -3,7 +3,7 @@ use super::leader_chat::{denied, lineage, project_in};
 use super::*;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::task_verb::{
-    TaskAskDefault, TaskAskQuestion, TaskAskReceipt, TaskAskSpec, TaskAskTarget,
+    ProjectWidenRoute, TaskAskDefault, TaskAskQuestion, TaskAskReceipt, TaskAskSpec, TaskAskTarget,
 };
 
 const PREFIX: &[u8] = b"project.widen_ask.v1/";
@@ -83,66 +83,87 @@ impl Memory<'_> {
             axis,
             spec.intent_key
         );
-        self.tasks_ask_with_txn_effect(&spec, |txn, ask| {
-            // Revalidate route and fallback in the same writer snapshot. A
-            // changed policy cannot land an ask with a stale fallback choice.
-            let current = crate::gate::resolve_policy_manifest(&vault.store, txn)?
-                .project_collaboration()
-                .ok_or_else(|| MemoryError::from(denied()))?;
-            let selected = match current.widen_ask_fallback {
-                crate::gate::ProjectWidenAskFallback::Hold => TaskAskDefault::Hold,
-                crate::gate::ProjectWidenAskFallback::AskMe => TaskAskDefault::AskMe,
-            };
-            if selected != fallback
-                || project_in(vault, txn, requesting)?.leader != self.actor().to_hex()
-            {
-                return Err(MemoryError::from(denied()));
-            }
-            let other_lineage: BTreeSet<_> = lineage(vault, txn, other)?.into_iter().collect();
-            let current_board = lineage(vault, txn, requesting)?
-                .into_iter()
-                .find(|id| other_lineage.contains(id))
-                .ok_or_else(|| MemoryError::from(denied()))?;
-            let (mut board, effective) = vault
-                .effective_project_in_txn(txn, current_board)?
-                .ok_or_else(|| MemoryError::from(denied()))?;
-            let current_people = effective
-                .board
-                .iter()
-                .map(|id| EntityId::from_hex(id))
-                .collect::<Result<BTreeSet<_>>>()?;
-            if current_board != board_project || current_people != people {
-                return Err(MemoryError::from(denied()));
-            }
-            let binding = ProjectWidenAsk {
+        self.tasks_ask_widen(
+            &spec,
+            ProjectWidenRoute {
                 requesting_project: requesting,
                 other_project: other,
                 board_project,
                 axis,
-                ask,
-            };
-            vault.store.vault_meta.put(
-                txn,
-                &[PREFIX, ask.as_bytes()].concat(),
-                &encode(&binding)?,
-            )?;
-            board.asks.push(ask.to_hex());
-            let now = vault.store.clock.now_recorded_at();
-            vault
-                .batch_in()
-                .put(
-                    &board_project,
-                    vault.project_type_byte()?,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&board)?,
-                )
-                .apply(txn)?;
-            Ok(())
-        })
+                people,
+                fallback,
+            },
+        )
+    }
+
+    /// A widening ask's effect: the route and the policy's fallback are
+    /// revalidated in the writer, so a changed policy cannot land an ask
+    /// with a stale fallback choice, and the binding lands on the common
+    /// board.
+    pub(crate) fn widen_ask_effect_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ask: EntityId,
+        route: &ProjectWidenRoute,
+    ) -> MemoryResult<()> {
+        let vault = self.vault();
+        let current = crate::gate::resolve_policy_manifest(&vault.store, txn)?
+            .project_collaboration()
+            .ok_or_else(|| MemoryError::from(denied()))?;
+        let selected = match current.widen_ask_fallback {
+            crate::gate::ProjectWidenAskFallback::Hold => TaskAskDefault::Hold,
+            crate::gate::ProjectWidenAskFallback::AskMe => TaskAskDefault::AskMe,
+        };
+        if selected != route.fallback
+            || project_in(vault, txn, route.requesting_project)?.leader != self.actor().to_hex()
+        {
+            return Err(MemoryError::from(denied()));
+        }
+        let other_lineage: BTreeSet<_> = lineage(vault, txn, route.other_project)?
+            .into_iter()
+            .collect();
+        let current_board = lineage(vault, txn, route.requesting_project)?
+            .into_iter()
+            .find(|id| other_lineage.contains(id))
+            .ok_or_else(|| MemoryError::from(denied()))?;
+        let (mut board, effective) = vault
+            .effective_project_in_txn(txn, current_board)?
+            .ok_or_else(|| MemoryError::from(denied()))?;
+        let current_people = effective
+            .board
+            .iter()
+            .map(|id| EntityId::from_hex(id))
+            .collect::<Result<BTreeSet<_>>>()?;
+        if current_board != route.board_project || current_people != route.people {
+            return Err(MemoryError::from(denied()));
+        }
+        let binding = ProjectWidenAsk {
+            requesting_project: route.requesting_project,
+            other_project: route.other_project,
+            board_project: route.board_project,
+            axis: route.axis,
+            ask,
+        };
+        vault
+            .store
+            .vault_meta
+            .put(txn, &[PREFIX, ask.as_bytes()].concat(), &encode(&binding)?)?;
+        board.asks.push(ask.to_hex());
+        let now = vault.store.clock.now_recorded_at();
+        vault
+            .batch_in()
+            .put(
+                &route.board_project,
+                vault.project_type_byte()?,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode(&board)?,
+            )
+            .apply(txn)?;
+        Ok(())
     }
 }
 
