@@ -226,8 +226,10 @@ export class Oneiron {
    * saying so). `effort: "call"` is call mode for live calls: light
    * effort under a hard deadline (`deadlineMs`, or the vault's call-mode
    * deadline), answering with the best results ready, marked `partial`.
+   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server
+   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */
@@ -460,6 +462,8 @@ export class Oneiron {
       discard: (request: Facade.ProposalSettleRequest): Facade.DiscardedProposal => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsDiscard(keyedJson(request))) as Facade.DiscardedProposal; return result }),
       /** Undoes one Keep with a new version; the settle stays consumed. */
       undo: (request: Facade.ProposalSettleRequest): Facade.UndoneKeep => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsUndo(keyedJson(request))) as Facade.UndoneKeep; return result }),
+      /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */
+      create: (input: Facade.ArtifactCreateRequest): Facade.ArtifactView | null => this.#call(() => this.#client.vaultArtifactsCreate(input) as Facade.ArtifactView | null),
       /** Registers one blob artifact; its bytes ride vault.artifacts.append. */
       put: (input: Facade.BlobArtifactInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultArtifactsPut(input) as Facade.EntityRefReceipt),
       /** Appends one version of bytes to a blob artifact's append-only chain. */
@@ -546,6 +550,10 @@ export class Oneiron {
         /** Queues a new answer to the user turn an assistant turn answered; the old reply stays. */
         retry: (input: Facade.TurnActionRequest): Facade.TurnActionReceipt => this.#call(() => this.#client.vaultConversationsTurnRetry(input) as Facade.TurnActionReceipt),
       },
+    },
+    messages: {
+      /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
+      react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
     },
     companions: {
       sharing: {

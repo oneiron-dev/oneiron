@@ -255,6 +255,7 @@ async fn recall(
         format: Some("md".to_owned()),
         as_of: None,
         deadline_ms: None,
+        media: None,
     };
     let (pack, listed) = server
         .recall_off_runtime_listing(

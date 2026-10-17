@@ -133,6 +133,7 @@ declare const vault: {
   artifacts: {
     append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
+    create(input: { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null }): Promise<unknown>;
     discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     export(input: { artifact_ref: string; version?: number | null }): Promise<unknown>;
     keep(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
@@ -270,6 +271,9 @@ declare const vault: {
     remove(input: { member: string; vault_id: number }): Promise<unknown>;
     withdraw_invitation(input: { invitation: string; member: string; vault_id: number }): Promise<unknown>;
   };
+  messages: {
+    react(input: { message: string; by: string; glyph: string; occurred_at?: number | null; remove?: boolean; external?: { connector: string; id: string; origin?: string | null } | null }): Promise<unknown>;
+  };
   neighbors(input: { entity_ref: string; opts: object }): Promise<unknown>;
   notes: {
     create(input: { kind: string; markdown: string }): Promise<unknown>;
@@ -308,7 +312,7 @@ declare const vault: {
     pause(input: { id: string; paused: boolean }): Promise<unknown>;
     read(input: { id: string; version?: number | null }): Promise<unknown>;
   };
-  recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; query: string; scope?: object | null }): Promise<unknown>;
+  recall(input: { as_of?: number | null; deadline_ms?: number | null; effort?: "light" | "medium" | "high" | "xhigh" | "max" | "call" | null; format?: string | null; limit?: number | null; media?: { bytes_b64: string; kinds?: ("text" | "image" | "audio")[]; mime: string; space: string } | null; query: string; scope?: object | null }): Promise<unknown>;
   receipts: ((input: { kinds?: string[]; limit?: number | null }) => Promise<unknown>) & {
     get(input: { receipt_ref: string }): Promise<unknown>;
   };
