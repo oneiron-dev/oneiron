@@ -502,9 +502,9 @@ pub(super) fn compose_weave_lens(
 }
 
 /// What a live lens render keeps (OF-499): the skill and model that
-/// rendered it, when, and the links it showed. It holds no report body: it
-/// only settles the corrections axis when the reader's next live lens
-/// renders.
+/// rendered it, when, and the links and health cards it showed, the items
+/// that carry a wrong control. It holds no report body: it only settles the
+/// corrections axis when the reader's next live lens renders.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KeptLiveLens {
@@ -513,6 +513,8 @@ pub(crate) struct KeptLiveLens {
     rendered_at: u64,
     /// Each link as `(source hex, edge kind byte, target hex)`.
     links: Vec<(String, u8, String)>,
+    /// Each health card's `health:` handle.
+    cards: Vec<String>,
 }
 
 impl KeptLiveLens {
@@ -521,19 +523,10 @@ impl KeptLiveLens {
             skill_ref: render.skill_ref.clone(),
             model: render.model.clone(),
             rendered_at: render.rendered_at,
-            links: report
-                .sections
-                .iter()
-                .flat_map(|section| &section.items)
-                .filter_map(|item| match item {
-                    WeaveItem::Link {
-                        source,
-                        kind,
-                        target,
-                    } => Some((source.to_hex(), *kind as u8, target.to_hex())),
-                    _ => None,
-                })
+            links: report_links(report)
+                .map(|link| (link.source.to_hex(), link.kind as u8, link.target.to_hex()))
                 .collect(),
+            cards: report_cards(report).collect(),
         }
     }
 
@@ -555,12 +548,42 @@ impl KeptLiveLens {
     }
 }
 
-/// Whether `reader` marked any of `links` wrong at or after `since`.
+/// The links `report` shows.
+fn report_links(report: &WeaveReport) -> impl Iterator<Item = EdgeRef> + '_ {
+    report
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .filter_map(|item| match item {
+            WeaveItem::Link {
+                source,
+                kind,
+                target,
+            } => Some(EdgeRef::new(*source, *kind, *target)),
+            _ => None,
+        })
+}
+
+/// The `health:` handles of the cards `report` shows.
+fn report_cards(report: &WeaveReport) -> impl Iterator<Item = String> + '_ {
+    report
+        .sections
+        .iter()
+        .flat_map(|section| &section.items)
+        .filter_map(|item| match item {
+            WeaveItem::AgentHealth { card } => Some(card.card_ref()),
+            _ => None,
+        })
+}
+
+/// Whether `reader` used a wrong control on any of the items at or after
+/// `since`: labelled one of `links` wrong, or dismissed one of `cards`.
 fn corrected_since(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     reader: EntityId,
     links: impl IntoIterator<Item = EdgeRef>,
+    cards: &[String],
     since: u64,
 ) -> Result<bool> {
     for link in links {
@@ -572,12 +595,28 @@ fn corrected_since(
             return Ok(true);
         }
     }
+    for card in cards {
+        let Some(card) =
+            crate::dreamer_runner::maintenance::agent_health::agent_health_card_in_txn(
+                vault, txn, card,
+            )?
+        else {
+            continue;
+        };
+        if card.outcome
+            == crate::dreamer_runner::maintenance::agent_health::AgentHealthOutcome::Dismissed
+            && card.outcome_by == Some(reader)
+            && card.outcome_at.is_some_and(|at| at >= since)
+        {
+            return Ok(true);
+        }
+    }
     Ok(false)
 }
 
 /// Settle one live lens render on the skill's corrections axis once the
-/// reader's next live lens renders: whether they marked any link it showed
-/// wrong since it rendered. A live lens has no notice to open, so it settles
+/// reader's next live lens renders: whether they used the wrong control on
+/// any link or card it showed since it rendered. A live lens has no notice to open, so it settles
 /// no read rate (CALLS: weave live lens axes). Keyed by the render, so a
 /// replay replaces its own row.
 pub(crate) fn settle_live_weave_lens(
@@ -594,7 +633,14 @@ pub(crate) fn settle_live_weave_lens(
         .executor(kept.model.clone())
         .axis(WEAVE_LENS_CORRECTIONS_AXIS);
     vault.with_write_txn_grouped(|txn| {
-        let corrected = corrected_since(vault, txn, id, links.iter().copied(), kept.rendered_at)?;
+        let corrected = corrected_since(
+            vault,
+            txn,
+            id,
+            links.iter().copied(),
+            &kept.cards,
+            kept.rendered_at,
+        )?;
         crate::learning::record_evidence_in_txn(
             vault,
             txn,
@@ -612,8 +658,11 @@ pub(crate) fn settle_live_weave_lens(
 }
 
 /// Settle one rendered period on the skill's axes once the reader's next
-/// period has rendered: whether the reader opened the period's notice, and
-/// whether they marked any of its links wrong since it rendered. Each lands
+/// period has rendered, or its schedule stopped: whether the reader opened
+/// the period's notice, and whether they used the wrong control on any of
+/// its links or cards since it rendered. A period the reader never opened
+/// and never corrected says nothing about corrections, so it settles only
+/// its read rate (CALLS: OF-499 weave corrections need a read). Each lands
 /// as world-anchored evidence keyed by the period, so a replay replaces its
 /// own row.
 pub(crate) fn settle_weave_lens_axes(
@@ -633,8 +682,10 @@ pub(crate) fn settle_weave_lens_axes(
             .executor(render.model.clone())
             .axis(axis)
     };
+    let cards: Vec<String> = report_cards(report).collect();
     vault.with_write_txn_grouped(|txn| {
-        if let Some(seen) = vault.notification_seen_in_txn(txn, &source, &id)? {
+        let seen = vault.notification_seen_in_txn(txn, &source, &id)?;
+        if let Some(seen) = seen {
             crate::learning::record_evidence_in_txn(
                 vault,
                 txn,
@@ -648,19 +699,11 @@ pub(crate) fn settle_weave_lens_axes(
                 now,
             )?;
         }
-        let links = report
-            .sections
-            .iter()
-            .flat_map(|section| &section.items)
-            .filter_map(|item| match item {
-                WeaveItem::Link {
-                    source,
-                    kind,
-                    target,
-                } => Some(EdgeRef::new(*source, *kind, *target)),
-                _ => None,
-            });
-        let corrected = corrected_since(vault, txn, id, links, render.rendered_at)?;
+        let corrected =
+            corrected_since(vault, txn, id, report_links(report), &cards, render.rendered_at)?;
+        if !corrected && seen != Some(true) {
+            return Ok(());
+        }
         crate::learning::record_evidence_in_txn(
             vault,
             txn,

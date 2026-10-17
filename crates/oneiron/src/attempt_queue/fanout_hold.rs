@@ -26,6 +26,10 @@ use crate::error::Result;
 /// hold and an approval never releases a person's pause.
 pub const FANOUT_HOLD_ACTOR: &str = "engine:fanout_hold";
 
+/// Refusal for an intervention that names [`FANOUT_HOLD_ACTOR`].
+pub(in crate::attempt_queue) const ERR_FANOUT_HOLD_ACTOR_RESERVED: &str =
+    "intervention actor is reserved for the fan-out launch hold";
+
 /// The prefix of a fan-out hold's event note; the launch ref follows.
 const HOLD_NOTE_PREFIX: &str = "fanout launch ";
 
