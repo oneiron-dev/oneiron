@@ -466,7 +466,13 @@ async fn answered(
         )
     };
     match answer {
-        Ok(_) if voices.as_ref().is_some_and(|voices| !voices.answered_current()) => withdrawn(),
+        Ok(_)
+            if voices
+                .as_ref()
+                .is_some_and(|voices| !voices.answered_current()) =>
+        {
+            withdrawn()
+        }
         Err(_) if voices.as_ref().is_some_and(RungVoices::withdrawn) => withdrawn(),
         Ok(response) => Json(AiAnswer::new(response)).into_response(),
         Err(error) => failure(&error),

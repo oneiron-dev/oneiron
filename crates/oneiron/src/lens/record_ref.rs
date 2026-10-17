@@ -507,8 +507,13 @@ impl Memory<'_> {
                 &["Drop `after` and `limit`, or read a TURN by `turn_ref`."],
             ));
         }
-        let total = texts.iter().map(String::len).fold(0usize, usize::saturating_add);
-        if texts.iter().any(|text| text.len() > RECORD_LINKS_TEXT_MAX_BYTES)
+        let total = texts
+            .iter()
+            .map(String::len)
+            .fold(0usize, usize::saturating_add);
+        if texts
+            .iter()
+            .any(|text| text.len() > RECORD_LINKS_TEXT_MAX_BYTES)
             || total > RECORD_LINKS_TEXTS_MAX_BYTES
         {
             return Err(MemoryError::bad_request_with(
@@ -540,18 +545,21 @@ impl Memory<'_> {
     /// the text names twice is read once.
     pub fn link_spans(&self, text: &str) -> MemoryResult<Vec<ProseSpan>> {
         let parsed = crate::gate::record_references::parse_prose_links(text);
-        let mut pieces: Vec<(usize, usize, Option<&crate::gate::record_references::ProseLink>)> =
-            parsed
-                .links
-                .iter()
-                .map(|link| (link.start, link.end, Some(link)))
-                .chain(
-                    parsed
-                        .definitions
-                        .iter()
-                        .map(|range| (range.start, range.end, None)),
-                )
-                .collect();
+        let mut pieces: Vec<(
+            usize,
+            usize,
+            Option<&crate::gate::record_references::ProseLink>,
+        )> = parsed
+            .links
+            .iter()
+            .map(|link| (link.start, link.end, Some(link)))
+            .chain(
+                parsed
+                    .definitions
+                    .iter()
+                    .map(|range| (range.start, range.end, None)),
+            )
+            .collect();
         pieces.sort_unstable_by_key(|piece| piece.0);
         let mut records: BTreeMap<&str, LinkedRecord> = BTreeMap::new();
         let mut spans = Vec::with_capacity(pieces.len() * 2 + 1);

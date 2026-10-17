@@ -37,15 +37,10 @@ pub enum AnswerContract {
     /// Yes or no, with P(yes).
     Noul,
     /// One of `options`.
-    Choice {
-        options: Vec<String>,
-    },
+    Choice { options: Vec<String> },
     /// One number from `min` to `max` (both included, `min` below `max`), in the units and
     /// direction the question names.
-    Score {
-        min: f64,
-        max: f64,
-    },
+    Score { min: f64, max: f64 },
     /// Where the target the question names sits in an image the call carries: one box,
     /// or none when the target is absent.
     Box,
