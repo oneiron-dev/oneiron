@@ -140,7 +140,7 @@ impl CompactionDriver {
     ///
     /// One vault write transaction carries the H-S3 probe, the epoch
     /// derivation, the SUMMARY put, its pending-embedding marker and the
-    /// capped `DerivedFrom` edge set. The session's message-log splice
+    /// `DerivedFrom` edge set. The session's message-log splice
     /// (prefix out, summary in, `accumulated` replayed on top) is the caller's
     /// in-memory step: the engine never holds the session's log.
     pub fn integrate(

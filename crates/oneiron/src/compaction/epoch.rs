@@ -45,11 +45,9 @@ pub const EPOCH_SUMMARY_BODY_VERSION: u64 = 1;
 /// for grains are display-layer property owned elsewhere.
 pub const EPOCH_SUMMARY_LEVEL: u64 = 0;
 
-/// Hard cap on the `DerivedFrom` edges one epoch summary emits.
-///
-/// The body's full turn RANGE remains truth; capped edges are provenance
-/// accelerators, never the fence oracle. The mint's H-S3 probe reads every
-/// covered turn regardless of this cap.
+/// The width at which a conversation window's `DerivedFrom` set was once
+/// cut. Nothing cuts it now (OF-013): every TURN and MESSAGE the window was
+/// read from is a source, as erasure and disclosure need.
 pub const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
 
 /// Hard cap on the sources a host-numbered log's summary derives from.
@@ -534,7 +532,7 @@ pub(super) fn prior_epoch_in_txn(
 /// Everything that decides what the row IS happens inside a single write
 /// transaction: the H-S3 probe over every covered turn, the epoch derivation
 /// from durable prior summaries, the body encode, the put, its
-/// pending-embedding marker and the capped `DerivedFrom` edge set. A refusal
+/// pending-embedding marker and the `DerivedFrom` edge set. A refusal
 /// on any axis rolls the whole transaction back, so a half-minted keyframe
 /// cannot exist.
 ///
@@ -610,9 +608,9 @@ pub(super) fn mint_epoch_summary_guarded(
 ) -> Result<(u64, EntityId)> {
     let (turn_start, turn_end) = check_mint(session_ref, request, product)?;
 
-    // `DerivedFrom` targets are the sealed request's sources: a conversation
-    // window's turns (deduplicated, hard-capped; the body's turn range stays
-    // truth), or every record a host-numbered log was read from.
+    // `DerivedFrom` targets are the sealed request's sources: every record
+    // the window was read from (a conversation window's TURNs and MESSAGEs,
+    // or what a host-numbered log names).
     let derived = &request.sources;
 
     // The keyframe's temporal position IS the compaction moment: the recorded
@@ -933,12 +931,10 @@ pub(super) fn mint_epoch_summary_in_overlay(
 /// refusal is the landed [`OffRecordError::OffRecordTaintedBaseWrite`](crate::error::OffRecordError::OffRecordTaintedBaseWrite) the K4 taint
 /// guard already raises for the same class of write.
 ///
-/// The probe covers EVERY covered turn, so it is independent of
-/// [`EPOCH_SUMMARY_MAX_DERIVED_EDGES`]: a room turn at window position 1000
-/// refuses the mint even though no edge is emitted for it. Membership is read
-/// from live registry state INSIDE the applying transaction, which is the
-/// state the transaction applies against — the same TOCTOU-free discipline
-/// the K4 guard uses.
+/// The probe covers EVERY covered turn: a room turn at window position 1000
+/// refuses the mint. Membership is read from live registry state INSIDE the
+/// applying transaction, which is the state the transaction applies against
+/// — the same TOCTOU-free discipline the K4 guard uses.
 fn refuse_overlay_derived_mint(
     store: &Store,
     covered: impl Iterator<Item = EntityId>,
