@@ -47,6 +47,8 @@ mod live_mirror;
 mod promotion;
 mod replacement;
 
+pub(crate) use self::live_mirror::import_scope;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 

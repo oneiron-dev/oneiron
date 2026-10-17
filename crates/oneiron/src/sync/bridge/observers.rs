@@ -588,6 +588,9 @@ fn subscribe_map_observer(
                 }
                 return;
             }
+            // What this import writes is already in the doc: the live mirror
+            // must not rewrite a carrier with it.
+            let _import = crate::sync::manager::import_scope();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
                     let (replayed_entities, changes) = {

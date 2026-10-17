@@ -575,17 +575,19 @@ pub fn export_window_replacement_for(
     history_free_snapshot(doc, check.as_ref(), baseline).map(Some)
 }
 
-/// The snapshot a residence promotion ships: the replacement the export door would cut, rooted no
-/// earlier than the window's newest root, so it carries no history, after the same withholding,
-/// scrubs and history check. `None` for a window withheld as device-only; typed
-/// `HistoryFreeRootUnavailable` when no root passes the check, never the stored fallback root.
+/// The snapshot a residence promotion ships to the machine `withhold` names: the replacement the
+/// export door would cut, rooted no earlier than the window's newest root, so it carries no
+/// history, after the same withholding, scrubs and history check. `None` for a window withheld
+/// from that machine; typed `HistoryFreeRootUnavailable` when no root passes the check, never the
+/// stored fallback root.
 pub fn export_promotion_snapshot(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
+    withhold: super::Withhold<'_>,
 ) -> Result<Option<Vec<u8>>> {
     let newest = promotion_baseline(doc)?;
-    export_window_replacement(vault, key, doc, Some(&newest))
+    export_window_replacement_for(vault, key, doc, Some(&newest), withhold)
 }
 
 /// What the export scrubs left.

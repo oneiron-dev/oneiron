@@ -35,7 +35,6 @@ pub(crate) use self::reader_runner::{
 };
 pub(crate) use self::recall::blocking;
 pub(crate) use self::run_host_door::answer_as_agent;
-pub(crate) use self::windows::withheld_from_peers;
 
 #[cfg(test)]
 mod housekeeping_tests;

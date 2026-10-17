@@ -1,7 +1,8 @@
 //! Export-time withholding for worlds flagged device-only.
 //!
 //! Rows in a device-local world never leave the device that holds the flag
-//! (DEC-0005). Packing skips them, but a row packed while its world was
+//! (DEC-0005). Packing skips them outside the world's own windows
+//! ([`canonical_withheld_worlds`]), and a row packed while its world was
 //! still portable stays resident in the stored window. Every claim of a world,
 //! and every edge naming one, lives in that world's own windows
 //! (`edge_worlds_match`), so an export door reads the flag when it runs and
@@ -89,6 +90,22 @@ impl Withhold<'_> {
             }
         }
     }
+}
+
+/// The worlds a canonical window doc leaves out of `key`'s packing: those
+/// withheld from an unknown destination, less a world window's own world.
+/// Its rows live only in its own windows, which each export door withholds
+/// whole, by key, from a destination that may not read it; a machine that may
+/// read it gets them live.
+pub(super) fn canonical_withheld_worlds(
+    vault: &Vault,
+    key: &WindowKey,
+) -> Result<BTreeSet<EntityId>> {
+    let mut worlds = Withhold::Unknown.worlds(vault)?;
+    if let Some(world) = key.world() {
+        worlds.remove(&world);
+    }
+    Ok(worlds)
 }
 
 /// Whether `key` is a window of a world flagged device-only on this device,
@@ -337,18 +354,10 @@ pub fn export_withheld_for(
         || (!remote.is_empty() && delta_carries_device_only_for(vault, doc, remote, withhold)?))
 }
 
-/// Whether the delta of `doc` past `from` inserts a row a flagged world keeps
-/// or an edge naming one, even one a later write removed. Such a delta must
-/// not ship; the window's history-free snapshot carries only what it holds now.
-pub(super) fn delta_carries_device_only(
-    vault: &Vault,
-    doc: &LoroDoc,
-    from: &VersionVector,
-) -> Result<bool> {
-    delta_carries_device_only_for(vault, doc, from, Withhold::Unknown)
-}
-
-/// [`delta_carries_device_only`] against the worlds `withhold` names.
+/// Whether the delta of `doc` past `from` inserts a row a world `withhold`
+/// names keeps, or an edge naming one, even one a later write removed. Such a
+/// delta must not ship; the window's history-free snapshot carries only what
+/// it holds now.
 pub(super) fn delta_carries_device_only_for(
     vault: &Vault,
     doc: &LoroDoc,

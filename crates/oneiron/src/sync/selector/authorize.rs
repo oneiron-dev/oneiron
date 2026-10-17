@@ -370,8 +370,9 @@ pub(super) fn filter_window_doc(
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
     crate::sync::note::refresh(vault, &refreshed, key)?;
     // The canonical window packs nothing an unknown destination may not
-    // read. A proved machine's export packs, into this detached copy, the
-    // private rows that machine may read.
+    // read but a world window's own world, which the filter below withholds
+    // by key. A proved machine's export packs, into this detached copy, the
+    // other private rows that machine may read.
     if matches!(withhold, Withhold::Worlds(_) | Withhold::Peer(_)) {
         reverse_rematerialize_with(vault, &refreshed, key, withhold)?;
     }

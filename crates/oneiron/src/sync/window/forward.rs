@@ -81,6 +81,9 @@ fn forward_with_recovery(
     window_key: &WindowKey,
     trusted: Option<&crate::recovery::CanonicalSnapshot>,
 ) -> Result<u32> {
+    // The rows this pass writes came from the doc: the live mirror must not
+    // rewrite a carrier with them.
+    let _import = crate::sync::manager::import_scope();
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     if window_key.world().is_some() {
         let mut witnesses = Vec::new();

@@ -586,14 +586,7 @@ fn replay_mirrors(
     let entities_map = doc.get_map("entities");
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let edges_map = doc.get_map("edges");
-    let device_only = {
-        let rtxn = vault.store.env.read_txn()?;
-        crate::settings::device_local_worlds_at(
-            vault,
-            &rtxn,
-            crate::claim::CallerLocality::OffDevice,
-        )?
-    };
+    let device_only = super::device_only::canonical_withheld_worlds(vault, window_key)?;
 
     let mut replayed = 0u32;
 

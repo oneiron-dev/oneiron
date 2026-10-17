@@ -403,7 +403,9 @@ pub fn promotion_snapshot_with(
         promotion_hook::run(source);
         // The checked door, never the persisted root: a pinned window with no clean root is
         // refused, typed.
-        let Some(bytes) = super::window::export_promotion_snapshot(vault, window, source)? else {
+        let Some(bytes) =
+            super::window::export_promotion_snapshot(vault, window, source, withhold)?
+        else {
             return Ok(None);
         };
         if bytes.len() > MAX_PROMOTION_SNAPSHOT_BYTES {
