@@ -710,7 +710,8 @@ pub(crate) fn note_fenced_fact_in_txn(
     entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    if crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &side_table::HexId(*id))? {
+    use crate::ports::{DeletionMarker, TombstoneStoreRead};
+    if store.port_deletion_marked(wtxn, DeletionMarker::RowFence, id)? {
         note_suppressed_fact_in_txn(store, wtxn, id, entity_type, body)?;
     }
     Ok(())
