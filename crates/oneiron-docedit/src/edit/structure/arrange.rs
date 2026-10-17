@@ -240,13 +240,11 @@ pub(super) fn copy_to_slide(
                         .iter()
                         .find(|rel| rel.id == old)
                         .ok_or(EditRefusal::Missing("relationship"))?;
-                    if link.external {
-                        return Err(EditRefusal::CloneDependencyUnsupported(format!(
-                            "external {}",
-                            link.kind
-                        )));
-                    }
-                    let id = next.relate(to, &link.kind, &link.target)?;
+                    let id = if link.external {
+                        next.relate_external(to, &link.kind, &link.target)?
+                    } else {
+                        next.relate(to, &link.kind, &link.target)?
+                    };
                     related.insert(old.to_owned(), id.clone());
                     id
                 }

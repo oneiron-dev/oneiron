@@ -114,6 +114,26 @@ impl Package {
     /// the part `target`, creating the source's relationship part when it
     /// has none. Returns the new id, one past the highest `rId<n>` in use.
     pub fn relate(&mut self, source: &str, kind: &str, target: &str) -> Result<String> {
+        self.add_relationship(source, kind, &relative(source, target), false)
+    }
+
+    /// Add an external relationship of `kind` from `source` to `target` (a
+    /// URL, written as given with `TargetMode="External"`), as
+    /// [`Package::relate`] does an internal one. Returns the new id.
+    pub fn relate_external(&mut self, source: &str, kind: &str, target: &str) -> Result<String> {
+        if target.is_empty() {
+            return Err(Error::Edit("an external relationship without a target"));
+        }
+        self.add_relationship(source, kind, target, true)
+    }
+
+    fn add_relationship(
+        &mut self,
+        source: &str,
+        kind: &str,
+        target: &str,
+        external: bool,
+    ) -> Result<String> {
         let rels = rels_name(source);
         let current = self.part(&rels)?;
         let bytes = current.clone().unwrap_or_else(|| SEED_RELS.to_vec());
@@ -130,10 +150,15 @@ impl Package {
             .ok_or(Error::Edit("relationship id overflow"))?;
         let id = format!("rId{next}");
         let element = format!(
-            "<{} Id=\"{id}\" Type=\"{}\" Target=\"{}\"/>",
+            "<{} Id=\"{id}\" Type=\"{}\" Target=\"{}\"{}/>",
             tree.nodes[0].child_name("Relationship"),
             escape_text(kind),
-            escape_text(&relative(source, target)),
+            escape_text(target),
+            if external {
+                " TargetMode=\"External\""
+            } else {
+                ""
+            },
         );
         let value = splice_last_child(&tree, &bytes, &element)?;
         self.transact(|package| match current {

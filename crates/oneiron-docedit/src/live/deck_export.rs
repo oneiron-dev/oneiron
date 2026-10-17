@@ -27,12 +27,12 @@
 use super::LiveError;
 use super::pptx::{
     LiveDeck, NodeBinding, NodeId, NodeKind, PreflightReport, RelationshipChange, RenderPair,
-    RenderSide, SlideRender, geometry_of, slide_of, text_body,
+    RenderSide, SlideRender, TextBody, geometry_of, slide_of, text_body,
 };
 use crate::deck::{DeckView, ShapeView};
 use crate::edit::{
-    Effect, IdMarks, NewGroup, NewShape, Preset, StructureEdit, Target, ValueEdit, Xfrm, edit,
-    structure_patch,
+    Effect, IdMarks, NewGroup, NewShape, Preset, RunProps, StructureEdit, Target, ValueEdit, Xfrm,
+    edit, structure_patch,
 };
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
@@ -617,6 +617,7 @@ pub fn project(
                     text: &plain,
                 })?;
             }
+            project_marks(&mut work, *id, &part, native, body)?;
         }
     }
 
@@ -672,6 +673,87 @@ pub fn project(
         opaque_parts,
         id_marks,
     })
+}
+
+/// The live run marks over the package's runs: a live run whose declared
+/// marks the package's characters under it do not read is written as one
+/// `SetRunProps` over its range, which splits package runs at its edges.
+/// A paragraph the package does not read as the live text is left as it is.
+fn project_marks(
+    work: &mut Work,
+    id: NodeId,
+    part: &str,
+    native: u32,
+    body: &TextBody,
+) -> Result<(), LiveError> {
+    for (index, paragraph) in body.paragraphs.iter().enumerate() {
+        let live_text = paragraph.text();
+        let mut from = 0;
+        for run in &paragraph.runs {
+            let range = (from, from + run.text.chars().count());
+            from = range.1;
+            if range.0 == range.1 {
+                continue;
+            }
+            let view = work.view()?;
+            let shape = shape_at(&view, part, native).ok_or(LiveError::UnknownNode)?;
+            let Some(held) = shape
+                .text
+                .as_ref()
+                .and_then(|text| text.paragraphs.get(index))
+            else {
+                break;
+            };
+            let held_text: String = held.runs.iter().map(|run| run.text.as_str()).collect();
+            if held_text != live_text {
+                break;
+            }
+            let mut props = RunProps::default();
+            let mut at = 0;
+            for under in &held.runs {
+                let span = (at, at + under.text.chars().count());
+                at = span.1;
+                if span.1 <= range.0 || span.0 >= range.1 {
+                    continue;
+                }
+                if run.bold.is_some() && under.bold.value != run.bold {
+                    props.bold = run.bold;
+                }
+                if run.italic.is_some() && under.italic.value != run.italic {
+                    props.italic = run.italic;
+                }
+                if run.size.is_some() && under.size.value != run.size {
+                    props.size = run.size;
+                }
+                if let Some(face) = &run.latin
+                    && under
+                        .latin
+                        .value
+                        .as_ref()
+                        .map(|font| font.typeface.as_str())
+                        != Some(face.as_str())
+                {
+                    props.latin = Some(face.as_str());
+                }
+            }
+            if props == RunProps::default() {
+                continue;
+            }
+            let (_, _, expected) = work.target(id)?;
+            work.value(&ValueEdit::SetRunProps {
+                target: Target {
+                    slide: part,
+                    shape: native,
+                    expected,
+                },
+                paragraph: index,
+                range,
+                expected: &held_text,
+                props,
+            })?;
+        }
+    }
+    Ok(())
 }
 
 impl LiveDeck {
