@@ -42507,7 +42507,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 36
      }
     },
     {
