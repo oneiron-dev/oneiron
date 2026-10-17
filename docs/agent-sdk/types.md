@@ -609,7 +609,11 @@ LensFrameToolReply = TypedDict(
     "LensFrameToolReply",
     {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
 )
-LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply
+LensFrameCallbackReply = TypedDict(
+    "LensFrameCallbackReply",
+    {"queued": bool, "callbackId": str},
+)
+LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply | LensFrameCallbackReply
 
 class CloseLensFrameReply(TypedDict):
     closed: bool
