@@ -93,7 +93,7 @@ pub enum PeerMachine {
 /// well-formed Genesis its own device key signed at seq 0 counts, as in the
 /// fold; none resident is `None`, and more than one refuses. Never the
 /// store's own id, a checkpoint's asserted id or another entry's `vault_id`.
-fn resident_genesis_vault_id_in_txn(
+pub(super) fn resident_genesis_vault_id_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<AuthorityVaultId>> {
@@ -219,7 +219,8 @@ impl Vault {
     /// The owner adds a machine. `role` is the owner's answer: only
     /// `Owned(Yours)` makes it mine; a hosted or rented node is never mine.
     /// The MACHINE row is created when absent. Lands one `MachineProfile`
-    /// under the host root, revalidating the owner in the write transaction.
+    /// under the host root, revalidating the owner in the write transaction,
+    /// then seals the portable credentials again for the roster it changed.
     pub fn enroll_machine(
         &self,
         issuer: &HostSlipIssuer,
@@ -231,7 +232,24 @@ impl Vault {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let folded = self.enroll_machine_in_txn(&mut txn, issuer, actor, request, role)?;
         txn.commit()?;
+        #[cfg(feature = "sync")]
+        self.reseal_after_machine_admission()?;
         Ok(folded)
+    }
+
+    /// Seals the portable credentials again for the roster a committed
+    /// machine admission changed (FIX 1780), outside its writer. The
+    /// admission stands whatever happens here: a failure is returned as a
+    /// re-seal after a committed admission, never a rollback. A sync lane's
+    /// upkeep re-seal runs again later; nothing else retries it.
+    #[cfg(feature = "sync")]
+    fn reseal_after_machine_admission(&self) -> Result<()> {
+        self.reseal_custody_for_roster().map(drop).map_err(|error| {
+            crate::error::Error::sync_engine(
+                crate::error::SyncEngineContext::CustodyResealAfterMachineAdmission,
+                error,
+            )
+        })
     }
 
     /// The host's own node: this install's machine in the roster as a
@@ -276,6 +294,7 @@ impl Vault {
 
     /// The owner changes a machine's answer or removes it, in the roster's
     /// chain. Removal is terminal there. An anchor's chain is the anchor's.
+    /// The credentials are sealed again for the roster it changed.
     pub fn set_machine_role(
         &self,
         issuer: &HostSlipIssuer,
@@ -304,6 +323,8 @@ impl Vault {
         };
         let folded = self.append_machine_profile_in_txn(&mut txn, issuer, &fold, profile)?;
         txn.commit()?;
+        #[cfg(feature = "sync")]
+        self.reseal_after_machine_admission()?;
         Ok(folded)
     }
 

@@ -79,8 +79,12 @@ pub(crate) use super::secret_use_doors::*;
 pub(crate) use super::reaction_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
+// The critic review door (OF-352), likewise.
+pub(crate) use super::critic_review_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
+// The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
+pub(crate) use crate::api::context_board::{vault_explain_gate, vault_explain_memory};
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -141,6 +145,45 @@ fn slide_reviewer(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
     })
 }
 
+/// `vault.artifacts.ask`: asks one typed question over an artifact's units
+/// (sheet rows, paragraphs or folder items) through the host's decide()
+/// ladder as the bound actor, from the host's starting dial and bands, and
+/// holds the answers as one proposal for Keep or Discard. The ladder runs on
+/// a blocking thread, one call per unit, as `vault.artifacts.review_slides`.
+pub(crate) async fn vault_artifacts_ask(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::blob_artifact::ArtifactAskSubmit,
+) -> MemoryResult<oneiron::blob_artifact::ArtifactAskOutcome> {
+    let (actor, class) = artifact_asker(auth)?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality());
+        let host = server.decision_host();
+        memory.artifacts_ask_through(
+            &input,
+            &crate::decision_artifact::HostUnitDecider::new(&server, class, "vault.artifacts.ask"),
+            host.dial(oneiron::llm::decision::DecisionRung::Big),
+            &host.bands(),
+        )
+    })
+    .await
+    .map_err(|_| internal("vault.artifacts.ask"))?
+}
+
+/// The principal an artifact ask binds its proposal to.
+fn artifact_asker(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "an artifact ask binds its proposal to an authenticated principal",
+            &["Present a slip paired from a link created with --principal-ref."],
+        )
+    })
+}
+
 /// `vault.artifacts.body.deck.preview`: the asked slides of a deck's head,
 /// drawn by this host's review renderer on a blocking thread, for a
 /// credential that reads the artifact.
@@ -194,6 +237,26 @@ pub(crate) async fn vault_authority_audit(
     })
     .await
     .map_err(|_| internal("vault.authority.audit"))?
+}
+
+/// `vault.mesh.path_receipts`: the newest path receipts this machine's
+/// paired-machine mesh left, newest first and bounded, the owner's view
+/// under the proof `/v1/owner` takes from the request.
+pub(crate) async fn vault_mesh_path_receipts(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::MeshPathReceiptsRequest,
+) -> MemoryResult<Vec<oneiron::sync::mesh_path::MeshPathReceipt>> {
+    let _owner = owner_proof(auth, server, "vault.mesh.path_receipts")?;
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        server
+            .vault()
+            .mesh_path_receipts(input.bound())
+            .map_err(MemoryError::from)
+    })
+    .await
+    .map_err(|_| internal("vault.mesh.path_receipts"))?
 }
 
 /// `ai.options`: the rows a call could use, where each runs, what it takes,
@@ -535,6 +598,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
     match verb {
         "vault.packs.put"
         | "vault.authority.audit"
+        | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
         | "vault.lenses.activate"
         | "vault.lenses.deactivate"
@@ -583,6 +647,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
+        "vault.artifacts.ask" => artifact_asker(auth).map(drop),
         "self.memory.diary.query" => diary_reader(auth).map(drop),
         "vault.decisions.asks.answer" | "vault.decisions.asks.climb" | "self.decisions.asks" => {
             super::decision_ask_doors::holder(auth, verb).map(drop)

@@ -6,7 +6,8 @@
 use rmpv::Value;
 
 use super::{
-    AgentHealthCounter, Attempts, DialBook, Dispatches, Finding, entity, settled, task_of,
+    AgentHealthCounter, Attempts, DialBook, Dispatches, Finding, entity, same_inputs, settled,
+    task_of,
 };
 use crate::attempt_queue::AttemptState;
 use crate::code_run::SelfEffect;
@@ -14,8 +15,9 @@ use crate::self_heal::AgentHealthSignal;
 use crate::{Result, Vault};
 
 /// `loop`: identical `(effect, request)` bridge calls in a row in one
-/// attempt's run, with no other call between. A repeated wait is a wait, not
-/// a loop. Judged over live attempts and those settled in the lookback.
+/// attempt's run, with no other call and no new input between (an equal
+/// action digest, [`same_inputs`]). A repeated wait is a wait, not a loop.
+/// Judged over live attempts and those settled in the lookback.
 pub(super) fn run_loop_findings(
     vault: &Vault,
     dispatched: &Dispatches,
@@ -45,7 +47,14 @@ pub(super) fn run_loop_findings(
             let first = &calls[start];
             let end = calls[start..]
                 .iter()
-                .position(|call| call.effect != first.effect || call.request != first.request)
+                .position(|call| {
+                    call.effect != first.effect
+                        || call.request != first.request
+                        || !same_inputs(
+                            call.action_digest.as_deref(),
+                            first.action_digest.as_deref(),
+                        )
+                })
                 .map_or(calls.len(), |offset| start + offset);
             let streak = &calls[start..end];
             start = end;
