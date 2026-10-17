@@ -31830,10 +31830,11 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "BodyCell",
+      "BodyFormat",
       "BodyName",
       "BodySheet",
       "XlsxBody",
@@ -31844,7 +31845,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -52811,7 +52812,7 @@
     "office_body": {
      "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
@@ -58543,7 +58544,7 @@
       "const": 2,
       "enum": 4,
       "fn": 11,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7
      }
     },
@@ -58562,6 +58563,27 @@
       "enum": 2,
       "fn": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "XlsxBorder",
+      "XlsxColor",
+      "XlsxEdge",
+      "XlsxFill",
+      "XlsxFont",
+      "XlsxFormat",
+      "XlsxNumberFormat"
+     ],
+     "path": "src/xlsx_styles.rs",
+     "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its font, fill, border or…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 1,
+      "struct": 5
      }
     },
     {
@@ -58718,11 +58740,18 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…"
+    },
+    "xlsx_styles": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Cell formats a body composes from the workbook's own: an imported cell format with its font, fill, border or…"
     }
    },
    "over_bar": 7,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 66,
+   "source_files": 67,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -72860,6 +72889,7 @@
       "BodyBlockKind",
       "BodyCell",
       "BodyConflict",
+      "BodyFormat",
       "BodyName",
       "BornFromArtifact",
       "BornFromRequest",
@@ -73657,9 +73687,16 @@
       "XlsxBodyOp",
       "XlsxBodyView",
       "XlsxBook",
+      "XlsxBorder",
       "XlsxCell",
+      "XlsxColor",
+      "XlsxEdge",
+      "XlsxFill",
+      "XlsxFont",
+      "XlsxFormat",
       "XlsxLock",
       "XlsxName",
+      "XlsxNumberFormat",
       "XlsxPreview",
       "XlsxSheet",
       "XlsxSheetView",
@@ -73669,8 +73706,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 249,
-      "struct": 624
+      "enum": 251,
+      "struct": 630
      }
     },
     {
