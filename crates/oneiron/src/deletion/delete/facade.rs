@@ -369,16 +369,9 @@ impl Vault {
                 header.learned_at,
                 TopologyDeletePhase::Committed,
             )?;
-            // Deleting a world destroys its keys (fix 7); a cleanup archive
-            // stays undoable and destroys nothing.
-            if reason != DeleteReason::ArchivedByCleanup {
-                self.destroy_world_keys_for_delete_in_txn(
-                    &mut wtxn,
-                    *id,
-                    crate::world_keys::WorldKeyDestroyCause::LocalDelete,
-                    Some(tombstone.request_id),
-                )?;
-            }
+            // A deleted world keeps its keys, pads and sealed copies, so it
+            // restores from old bundles until they age out (DEC-0006); only
+            // an erase destroys them (the hard arm's purge).
             let (existed, had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
             if had_vector {
@@ -750,8 +743,15 @@ impl Vault {
         scope
             .entity_ids
             .extend(cascaded_shells.iter().map(EntityId::to_hex));
-        let (existed, citing) =
-            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
+        // The erased world's pad tombstones publish once this commits
+        // (FIX 343); their windows are read before the purge erases the pads.
+        let pad_windows = self.world_pad_windows_in_txn(&wtxn, id)?;
+        let (existed, citing) = self.purge_entity_active_store_in_txn(
+            &mut wtxn,
+            id,
+            Some(&tombstone.request_id),
+            true,
+        )?;
         affected.extend(citing);
 
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
@@ -826,6 +826,7 @@ impl Vault {
         if crdt_persisted {
             self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
+        self.publish_pad_tombstones_after_commit(&pad_windows);
         Ok(DeleteEntityOutcome {
             existed,
             receipt_id: Some(receipt_id),

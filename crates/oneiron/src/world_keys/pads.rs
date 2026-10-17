@@ -1,4 +1,4 @@
-//! A world key's erasable half, and the world delete that destroys it (world
+//! A world key's erasable half, and the world erase that destroys it (world
 //! privacy fix 7).
 //!
 //! The signed `WorldKeyWraps` records are immutable, so no wrap in them can be
@@ -8,15 +8,20 @@
 //! vault's base rows, the host included, so a kit restore on a new machine can
 //! rebuild the key. A pad alone is noise, and so is an opened wrap without it.
 //!
-//! Deleting a world purges every pad of the world on each replica that applies
-//! the delete, and queues a hard tombstone for each, so every wrap of every
-//! generation, old root and old machine stops opening. The delete also leaves a
-//! permanent destroyed fact: it refuses a late pad for the world, a new key and
-//! an open, and carries the receipt, ids only. It also purges the world's sealed
-//! copies on this replica's shelf and its sealing mirrors (`content`). Old offline
-//! backups and a key a caller already holds are outside what the erasure reaches.
-//! A legal hold on the world, or on a claim its key seals, refuses the delete
-//! before any pad goes (ARCH-0038 #legal-hold).
+//! Erasing a world (a hard purge, a batch delete, or a peer's hard tombstone)
+//! purges every pad of the world on each replica that applies the erase, and
+//! queues a hard tombstone for each, so every wrap of every generation, old root
+//! and old machine stops opening. The erase also leaves a permanent destroyed
+//! fact: it refuses a late pad for the world, a new key and an open, and carries
+//! the receipt, ids only. It also purges the world's sealed copies on this
+//! replica's shelf and its sealing mirrors (`content`). Old offline backups and a
+//! key a caller already holds are outside what the erasure reaches. A legal hold
+//! on the world, or on a claim its key seals, refuses the erase before any pad
+//! goes (ARCH-0038 #legal-hold).
+//!
+//! Deleting a world destroys nothing: its keys, pads and sealed copies stay, so
+//! the world restores from old bundles until they age out (DEC-0006). Its
+//! content stays hidden by the ordinary delete marker.
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -96,15 +101,15 @@ impl WorldKeyPad {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldKeyDestroyCause {
-    /// This vault deleted the world through the delete door.
+    /// This vault erased the world through the delete door.
     LocalDelete,
-    /// A peer's tombstone for the world was applied here.
+    /// A peer's hard tombstone for the world was applied here.
     ReplayedTombstone,
     /// A batch delete removed the world's row.
     BatchDelete,
 }
 
-/// The receipt, and permanent fact, that a deleted world's keys were destroyed
+/// The receipt, and permanent fact, that an erased world's keys were destroyed
 /// here. Ids only: never a key, a pad or an envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -179,10 +184,10 @@ fn decode_pad_body(body: &[u8]) -> Result<(WorldKeyId, WorldKeyPad)> {
     ))
 }
 
-/// Whether `world`'s keys were destroyed here, or the world was deleted here in
-/// a way that forbids its keys: a hard-delete marker, or a soft delete once
-/// applied. Absence of the WORLD row alone is not destruction: a first sync
-/// can bring a pad before its world.
+/// Whether `world`'s keys were destroyed here, or the world was erased here: a
+/// hard-delete marker. A soft delete keeps the keys, so a soft-deleted world
+/// still takes its own pads. Absence of the WORLD row alone is not
+/// destruction: a first sync can bring a pad before its world.
 pub(crate) fn world_keys_destroyed_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -190,8 +195,7 @@ pub(crate) fn world_keys_destroyed_in_txn(
 ) -> Result<bool> {
     let id = HexId(world);
     Ok(DESTROYED.contains(store, txn, &id)?
-        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, &world)?
-        || store.port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, &world)?)
+        || store.port_deletion_marked(txn, DeletionMarker::HardDelete, &world)?)
 }
 
 /// The world whose key a pad row `raw` splits: `None` for a row that is not
@@ -303,6 +307,19 @@ fn world_pad_rows_in_txn(
         }
     }
     Ok(out)
+}
+
+/// When each pad row of `world` on this replica was learned: an erase stages
+/// each pad's tombstone in that month's window.
+pub(crate) fn world_pad_learned_at_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+) -> Result<Vec<u64>> {
+    Ok(world_pad_rows_in_txn(store, txn, world)?
+        .into_iter()
+        .map(|(_, _, learned_at, _)| learned_at)
+        .collect())
 }
 
 /// Whether some key whose pad is on this replica files its sealed content
@@ -436,8 +453,9 @@ pub(crate) fn held_pad_world_in_txn(
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
 /// purges every pad row of the world, stages each one's hard tombstone, and
 /// writes the permanent destroyed fact with its receipt. `target` is any row
-/// being deleted; nothing happens unless it is a WORLD here or has pads here.
-/// Idempotent: a second call keeps the first receipt and purges any pad left.
+/// being erased; nothing happens unless it is a WORLD here or has pads here.
+/// Only an erase calls it: a soft delete keeps the world's keys. Idempotent: a
+/// second call keeps the first receipt and purges any pad left.
 pub(crate) fn destroy_world_keys_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -537,7 +555,7 @@ impl Vault {
         )
     }
 
-    /// [`destroy_world_keys_in_txn`] for a delete door that holds the vault:
+    /// [`destroy_world_keys_in_txn`] for an erase door that holds the vault:
     /// it also drops the world's opened keys from this handle's ring.
     pub(crate) fn destroy_world_keys_for_delete_in_txn(
         &self,

@@ -63,6 +63,7 @@ pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, pad_body_world,
     reject_held_pad_world_in_txn, validate_pad_put_in_txn, world_keys_destroyed_in_txn,
+    world_pad_learned_at_in_txn,
 };
 pub(crate) use self::page_seal::{
     OpenedDataKey, admit_new_vault, page_seal_open_error, read_sealed, seal_read_only,

@@ -688,7 +688,9 @@ pub(super) fn apply_ops_with_origin(
                     mutation_recorded_at,
                     text_index_trusted,
                 )?;
-                // A batch-deleted world takes its keys with it (fix 7).
+                // A batch delete tears the row, a hard delete (ARCH-0038), so
+                // a batch-deleted world takes its keys with it (fix 7). There
+                // is no soft batch delete; a soft delete keeps the keys.
                 crate::world_keys::destroy_world_keys_in_txn(
                     store,
                     wtxn,

@@ -9,14 +9,14 @@ use super::loro_support::{
 use super::schema::create_window_doc;
 use super::types::WindowKey;
 use super::{
-    merge_persisted_state_into_doc, persist_window_doc_in_txn,
+    load_window_from_state, merge_persisted_state_into_doc, persist_window_doc_in_txn,
     prune_subsumed_window_updates_in_txn, write_window_svf_in_txn,
 };
 
 use crate::Vault;
 use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, SyncError};
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_FULL_RESYNC_MARKER};
 use loro::{CommitOptions, LoroDoc};
@@ -276,30 +276,7 @@ pub fn replay_pending_tombstones(
     doc: &LoroDoc,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    let mut markers: Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)> = Vec::new();
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        for entry in vault
-            .store
-            .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(window_key.as_str()))?
-        {
-            match entry {
-                Ok(row) => markers.push((
-                    crate::sync::window_rows::WindowEntityHexKey {
-                        window: row.window_label,
-                        id: row.id,
-                    },
-                    row.raw,
-                )),
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        "pt replay: malformed pending-tombstone marker left in place"
-                    );
-                }
-            }
-        }
-    }
+    let markers = pending_tombstone_markers(vault, window_key)?;
     if markers.is_empty() {
         return Ok(0);
     }
@@ -308,6 +285,90 @@ pub fn replay_pending_tombstones(
     // doc so the full snapshot below subsumes it, and remember which `u:`
     // rows it covered (only those may be scrubbed).
     let merged_update_keys = merge_persisted_state_into_doc(vault, doc, window_key)?;
+    replay_tombstone_markers(vault, doc, window_key, &markers, &merged_update_keys, false)
+}
+
+/// [`replay_pending_tombstones`] now rather than at the window's next load,
+/// for a door whose own transaction staged `pt:` markers it could not
+/// publish there: an erase stages its world's pad tombstones in each pad's
+/// window (FIX 343). It takes `Vault::write_crdt_tombstone`'s two paths: the
+/// live doc under the materializer lock when the window is open here, else
+/// a transient load, whose persist also keeps the delta as a `u:` row so an
+/// open racing it still loads the tombstones.
+pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) -> Result<u32> {
+    let markers = pending_tombstone_markers(vault, window_key)?;
+    if markers.is_empty() {
+        return Ok(0);
+    }
+    if let Some((window, materializer, _manager)) = vault.live_window(window_key) {
+        // Merged outside the materializer lock: an import into an observed
+        // doc fires Observer B, which takes the lock itself. The commit runs
+        // under it, and Observer A persists and routes the delta as usual.
+        let merged_update_keys = merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
+        let _guard = materializer.lock();
+        return replay_tombstone_markers(
+            vault,
+            &window.doc,
+            window_key,
+            &markers,
+            &merged_update_keys,
+            false,
+        );
+    }
+    let doc = match load_window_from_state(vault, "local", window_key) {
+        Ok(doc) => doc,
+        Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+            create_window_doc("local", window_key)
+        }
+        Err(err) => return Err(err),
+    };
+    let merged_update_keys = merge_persisted_state_into_doc(vault, &doc, window_key)?;
+    replay_tombstone_markers(vault, &doc, window_key, &markers, &merged_update_keys, true)
+}
+
+/// The `pt:` markers staged in `window_key`. A malformed marker key is left
+/// in place and logged: a deletion intent is never silently dropped.
+fn pending_tombstone_markers(
+    vault: &Vault,
+    window_key: &WindowKey,
+) -> Result<Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)>> {
+    let mut markers: Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)> = Vec::new();
+    let rtxn = vault.store.env.read_txn()?;
+    for entry in vault
+        .store
+        .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(window_key.as_str()))?
+    {
+        match entry {
+            Ok(row) => markers.push((
+                crate::sync::window_rows::WindowEntityHexKey {
+                    window: row.window_label,
+                    id: row.id,
+                },
+                row.raw,
+            )),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "pt replay: malformed pending-tombstone marker left in place"
+                );
+            }
+        }
+    }
+    Ok(markers)
+}
+
+/// Replays `markers` into `doc`, whose persisted state `merged_update_keys`
+/// was merged in, and persists the result ([`replay_pending_tombstones`]).
+/// `keep_update` also stores the delta as a `u:` row, for a doc no Observer
+/// A watches.
+fn replay_tombstone_markers(
+    vault: &Vault,
+    doc: &LoroDoc,
+    window_key: &WindowKey,
+    markers: &[(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)],
+    merged_update_keys: &[String],
+    keep_update: bool,
+) -> Result<u32> {
     let any_hard = markers
         .iter()
         .any(|(_, value)| decode_tombstone_value(value).is_hard());
@@ -320,7 +381,7 @@ pub fn replay_pending_tombstones(
         CarrierRemoval::PendingTombstoneReplay,
         &entity_carriers(doc, &ids),
     )?;
-    for (key, value) in &markers {
+    for (key, value) in markers {
         apply_tombstone_to_indexed_window_doc(doc, &tombstones, &key.id, value)?;
     }
     // Bridge origin: local LMDB already reflects the delete (the marker was
@@ -340,7 +401,7 @@ pub fn replay_pending_tombstones(
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
-            prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, &merged_update_keys)?;
+            prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, merged_update_keys)?;
             WINDOW_FULL_RESYNC_MARKER.put(
                 &vault.store,
                 wtxn,
@@ -349,6 +410,14 @@ pub fn replay_pending_tombstones(
             )?;
         }
         if let Some(update) = &delete_update {
+            if keep_update {
+                crate::sync::bridge::persist_window_update_in_txn(
+                    vault,
+                    wtxn,
+                    window_key.as_str(),
+                    update.as_bytes(),
+                )?;
+            }
             crate::sync::queue::push_delete_bearing_in_txn(
                 vault,
                 wtxn,
@@ -356,7 +425,7 @@ pub fn replay_pending_tombstones(
                 update,
             )?;
         }
-        for (key, value) in &markers {
+        for (key, value) in markers {
             // A pending tombstone is also a crash-replay path for an owned
             // topology deletion. Release only this exact request, and only
             // after snapshot/export persistence in the same transaction.
