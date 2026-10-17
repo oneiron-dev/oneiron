@@ -333,8 +333,14 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
 fn unshare_written_anchors(book: &Book, changes: &[XlsxChange]) -> Result<Vec<XlsxChange>> {
     let mut written: BTreeMap<&str, HashSet<(u32, u32)>> = BTreeMap::new();
     for change in changes {
-        if let XlsxChange::Cell { sheet, col, row, .. } = change {
-            written.entry(sheet.as_str()).or_default().insert((*col, *row));
+        if let XlsxChange::Cell {
+            sheet, col, row, ..
+        } = change
+        {
+            written
+                .entry(sheet.as_str())
+                .or_default()
+                .insert((*col, *row));
         }
     }
     let mut out = Vec::new();
