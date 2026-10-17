@@ -4,7 +4,10 @@
 //! launch's. Each row names its durable surface ref and the door's arguments
 //! verbatim. The doors are the owner's, whoever reads the board; a held
 //! launch bound to a project also names its live lead and board's door,
-//! which approves once or denies.
+//! which approves once or denies. Every row also states, from the frozen
+//! statement, the binding cap and what is still available (or that none
+//! meters the caller), and an exceptional width as a concern.
+use crate::agent_dispatch::{FanoutStatement, WidthCheckClass};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::task_verb::FanoutLaunchReceipt;
 
@@ -38,6 +41,8 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
     let tasks = launch.statement.task_count;
     // The statement's expected spend in dollars, never native units.
     let spend = launch.statement.expected.dollar_line();
+    let budget = budget_segment(&launch.statement);
+    let width = width_segment(&launch.statement);
     if let Some(pause) = &launch.paused {
         let (rank, state) = if pause.denied {
             (2, "denied_parked")
@@ -53,7 +58,7 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
         return Some((
             rank,
             format!(
-                "{} {state} tasks={tasks} {spend} resume=vault.fanout.resume \
+                "{} {state} tasks={tasks} {spend} {budget}{width} resume=vault.fanout.resume \
                  launch_ref={launch_ref} plan_digest={digest} \
                  ruling=approve_once|approve_and_remember|deny by=owner{holder}",
                 pause.surface_ref
@@ -67,8 +72,45 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
     Some((
         1,
         format!(
-            "{check} dispatched tasks={tasks} {spend} ack=vault.fanout.ack \
+            "{check} dispatched tasks={tasks} {spend} {budget}{width} ack=vault.fanout.ack \
              launch_ref={launch_ref} plan_digest={digest} answer=ack|ack_and_remember by=owner"
         ),
     ))
+}
+
+/// The statement's cap and what the caller's chain can still give, in the
+/// cap's own unit, with `over_available` when the expected spend exceeds it;
+/// `cap=none` when no lease tree meters the caller.
+fn budget_segment(statement: &FanoutStatement) -> String {
+    let Some(cap) = &statement.cap else {
+        return "cap=none".to_owned();
+    };
+    let over = if statement.over_available {
+        " over_available"
+    } else {
+        ""
+    };
+    format!(
+        "cap={} available={} cap_unit={}{over}",
+        cap.cap_units,
+        cap.available_units,
+        super::one_line_token(cap.unit.as_str())
+    )
+}
+
+/// The exceptional-width check the statement raised, as a concern: the
+/// width, its threshold and how the ladder classified it. Empty when the
+/// width raised none.
+fn width_segment(statement: &FanoutStatement) -> String {
+    let Some(check) = &statement.width_check else {
+        return String::new();
+    };
+    let class = match check.classification {
+        WidthCheckClass::AutoClear { .. } => "auto_clear",
+        WidthCheckClass::Asked { .. } => "asked",
+    };
+    format!(
+        " concern=exceptional_width width={} threshold={} class={class}",
+        check.count, check.threshold
+    )
 }
