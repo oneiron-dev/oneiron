@@ -812,14 +812,16 @@ oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt
 `issue` takes one `--home` per piece, in order: `paper`, `password-manager`, `own-email`,
 `file-elsewhere`, `file-here`, `file-on:<machine>`, `other-machine:<machine>`, `trusted-person`,
 `security-key` or `passphrase`. Each stored piece is written to `--out` as `piece-<x>.txt`, its
-recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`. Nothing
-is published yet: the kit is pending. Put each piece where its home says, then `confirm` with two
-of them, or with one and the passphrase. That re-entry is the proof you saved them. Confirm makes
-the kit's root live on this machine and marks every earlier kit replaced. When this machine's
-keystore opens the vault key, confirm also seals it to the root as the escrow wrap `world-kit`. A
-replaced kit's pieces still open their own old root;
-replacing a kit does not revoke it. `this-machine` is refused until a keystore slot can hold a
-piece.
+recovery code, readable by you alone; a passphrase is read from stdin or `--secret-file`.
+`file-on:<machine>` with this machine's own id counts as `file-here`, and `other-machine:<machine>`
+with it is refused. Nothing is published yet: the kit is pending. Put each piece where its home
+says, then `confirm` with two of them, or with one and the passphrase. That re-entry is the proof
+you saved them. Confirm makes the kit's root live on this machine and marks every earlier kit
+replaced. When the vault has a key, confirm also seals it to the root as the escrow wrap
+`world-kit`, replacing the earlier kit's. It opens the key with this machine's keystore, and a key
+that stays locked refuses the confirm before anything changes. A replaced kit's pieces still open
+their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
+slot can hold a piece.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
@@ -829,6 +831,7 @@ run only from the CLI, so no piece crosses HTTP.
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own:
 pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
+A kit this vault still lists as pending is refused: `confirm` it instead.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap. `--vault-id` is the id
 `status` prints:
