@@ -281,7 +281,9 @@ pub(crate) fn reconcile_project_rooms(
         // a wrong kind or erased source is terminal at every write door.
         if let Some(source) = &body.born_from {
             let source = EntityId::from_hex(source).map_err(|_| invalid())?;
-            let Some(message) = store.entities.get(txn, source.as_bytes())? else {
+            let Some(message) =
+                crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &source)?
+            else {
                 if HARD_DELETE_MARKERS.contains(store, txn, &HexId(source))? {
                     return Err(invalid());
                 }

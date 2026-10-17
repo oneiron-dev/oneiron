@@ -48,6 +48,9 @@ pub(crate) struct VaultKeyReport {
     pub(crate) vault_id: String,
     pub(crate) status: VaultKeyStatus,
     pub(crate) wraps: Vec<WrapView>,
+    /// What keeps this install's device wrap and signing seeds at rest:
+    /// `hardware`, `platform` or `software`; none without a keystore.
+    pub(crate) keystore: Option<&'static str>,
 }
 
 pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> {
@@ -60,6 +63,9 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
             .into_iter()
             .map(|info| WrapView::of(&vault_id, info))
             .collect(),
+        keystore: vault
+            .device_keystore_assurance()
+            .map(oneiron_keystore::KeystoreAssurance::label),
     })
 }
 
