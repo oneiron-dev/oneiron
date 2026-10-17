@@ -2513,6 +2513,7 @@ class LensDefaultRequest(TypedDict):
     ledger: NotRequired[list[str]]
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
+    as_of: NotRequired[int | None]
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt

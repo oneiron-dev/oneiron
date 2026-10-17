@@ -6013,6 +6013,8 @@ pub struct LensDefaultRequest {
     pub dossiers: Option<Vec<LensDossierSource>>,
     #[serde(rename = "threads", default, skip_serializing_if = "Option::is_none")]
     pub threads: Option<Vec<String>>,
+    #[serde(rename = "as_of", default, skip_serializing_if = "Option::is_none")]
+    pub as_of: Option<u64>,
 }
 
 /// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `GeneratedLens`.

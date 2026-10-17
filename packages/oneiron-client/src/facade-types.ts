@@ -959,7 +959,7 @@ export type LensListPage = { rows: LensListRow[]; next_after?: string | null }
 /** `oneiron::lens::sdk::LensDossierSource` */
 export type LensDossierSource = { entity_ref: string; title: string }
 /** `oneiron::lens::sdk::LensDefaultRequest` */
-export type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[] }
+export type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null }
 /** `oneiron::claim::scoped_read::receipt::ScopedReadResult` */
 export type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt }
 /** `oneiron_authority::federation::scope::ScopeAxis` */

@@ -37,18 +37,21 @@ use oneiron::code_run::{
     summary_token_budget,
 };
 use oneiron::engine_executor::{
-    EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor, JsCodeModeRuntime,
+    ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor,
+    JsCodeModeRuntime,
 };
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::BudgetDenied;
+use oneiron::llm::seat::{ModelSeat, SeatKind, SeatTask};
 use oneiron::off_record::OffRecordSession;
 use oneiron::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, LlmBackend, LlmError,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelLocality, ModelTierRef, ResponseFormat,
+    TierPrecedence, Vault,
 };
 
 use crate::admission::Permit;
-use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider};
+use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
 
 /// The window a run with no decision clock gives its children: one, fixed
 /// at its first spawn.
@@ -536,6 +539,38 @@ impl Child {
         }
     }
 
+    /// The seat a job's model calls are bound to, born under its own run as
+    /// a run's is (`run_seat`): a manifest-backed vault refuses a seatless
+    /// executor. A job in an off-record session takes none (the seat row is
+    /// the base vault's) and runs its configured model.
+    fn seat(
+        &self,
+        vault: &Vault,
+        session: Option<&OffRecordSession<'_>>,
+        task: &str,
+        purpose: CallPurpose,
+        min_context_tokens: u64,
+        locality: ModelLocality,
+    ) -> Result<Option<ModelSeat>, String> {
+        if session.is_some() {
+            return Ok(None);
+        }
+        run_seat(vault, self.provider.as_ref(), self.job.run, |facet| {
+            SeatTask {
+                kind: SeatKind::Child,
+                warm_scope: format!("reader-run:{}", self.job.run.to_hex()),
+                task: task.to_owned(),
+                purpose,
+                facet: facet.to_owned(),
+                required: Vec::new(),
+                min_context_tokens,
+                locality,
+                override_model: None,
+                override_effort: None,
+            }
+        })
+    }
+
     /// The child's run: a fresh sandbox and a dispatcher bound to its job
     /// and door, entered again after each yielded slice until it ends or its
     /// cutoff comes. The cutoff stops the run at its next await; a running
@@ -569,10 +604,29 @@ impl Child {
             Ok(dispatcher) => dispatcher.with_agent_verb_door(door),
             Err(error) => return failed("reader_binding_failed", &error),
         };
-        let config = match provider.executor_config(vault, job.run, &reader_task_brief(job)) {
+        let mut config = match provider.executor_config(vault, job.run, &reader_task_brief(job)) {
             Ok(config) => config,
             Err(error) => return failed("reader_config_failed", &error),
         };
+        let purpose = CallPurpose::Other {
+            name: ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+        };
+        let seat = match self.seat(
+            vault,
+            session,
+            &config.task,
+            purpose,
+            1,
+            config.model_locality,
+        ) {
+            Ok(seat) => seat,
+            Err(error) => return failed("reader_seat_failed", &error),
+        };
+        if let Some(seat) = &seat {
+            config.model = seat.model().clone();
+            config.model_locality = seat.locality();
+            config.seat_effort = Some(seat.effort());
+        }
         let reactor = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -602,6 +656,9 @@ impl Child {
         let Ok(mut executor) = executor else {
             return failed("reader_binding_failed", &"the run's executor did not bind");
         };
+        if let Some(seat) = &seat {
+            executor = executor.with_model_seat(seat);
+        }
         let cutoff = job.binding.child_cutoff_unix_ms;
         loop {
             let left = cutoff.saturating_sub(unix_millis_now());
@@ -712,10 +769,28 @@ impl Child {
                 return failed("reader_config_failed");
             }
         };
+        // Its seat sees only models whose window holds the window the group
+        // was sized against.
+        let seat = match self.seat(
+            vault,
+            session,
+            &config.task,
+            CallPurpose::Other {
+                name: SUMMARY_PURPOSE_NAME.to_owned(),
+            },
+            window_tokens,
+            config.model_locality,
+        ) {
+            Ok(seat) => seat,
+            Err(error) => {
+                tracing::warn!(%error, task = %job.task.to_hex(), "a summary's seat was not born");
+                return failed("reader_seat_failed");
+            }
+        };
         let purpose = CallPurpose::Other {
             name: SUMMARY_PURPOSE_NAME.to_owned(),
         };
-        let request = LlmRequest {
+        let mut request = LlmRequest {
             model: config.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -743,6 +818,9 @@ impl Child {
             params: std::collections::BTreeMap::new(),
             provider_options: std::collections::BTreeMap::new(),
         };
+        if let Some(seat) = &seat {
+            seat.bind(&mut request);
+        }
         let reactor = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

@@ -10,7 +10,7 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
 };
-use oneiron::llm::seat::{SeatDecisions, SeatKind, SeatTask};
+use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
 use std::collections::HashSet;
 use std::fmt;
@@ -643,6 +643,40 @@ fn planned_seat(plan: Option<&SpawnPlanReceipt>) -> Option<oneiron::ModelId> {
     plan.map(|plan| plan.plan.model.clone())
 }
 
+/// The seat a run's model calls are bound to: born once for `run_id` on a
+/// manifest-backed vault, or the one it was born on; `None` on a vault with
+/// neither, whose run takes its configured model. `task` builds the birth's
+/// task from the host's capability profile. A run, a reader child and a
+/// summary job are each born on one this way.
+pub(crate) fn run_seat(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    run_id: EntityId,
+    task: impl FnOnce(&str) -> SeatTask,
+) -> Result<Option<ModelSeat>, String> {
+    let has_seat = vault
+        .model_manifest()
+        .map_err(|error| error.to_string())?
+        .is_some()
+        || vault
+            .model_seat_receipt(run_id)
+            .map_err(|error| error.to_string())?
+            .is_some();
+    if !has_seat {
+        return Ok(None);
+    }
+    let decisions = provider
+        .seat_decisions()
+        .ok_or("manifest-backed run requires seat decisions")?;
+    let facet = provider
+        .seat_facet()
+        .ok_or("manifest-backed run requires a capability profile")?;
+    vault
+        .birth_model_seat(run_id, &task(facet), decisions)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn enter_on(
     vault: &Vault,
@@ -655,43 +689,23 @@ fn enter_on(
     reactor: &tokio::runtime::Runtime,
     plan: Option<&SpawnPlanReceipt>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
-    let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
-    let has_seat = vault.model_manifest().map_err(binding)?.is_some()
-        || vault
-            .model_seat_receipt(config.run_id)
-            .map_err(binding)?
-            .is_some();
-    let seat = if has_seat {
-        let decisions = provider.seat_decisions().ok_or_else(|| {
-            EngineRunError::Binding("manifest-backed run requires seat decisions".into())
-        })?;
-        let facet = provider.seat_facet().ok_or_else(|| {
-            EngineRunError::Binding("manifest-backed run requires a capability profile".into())
-        })?;
-        let task = SeatTask {
-            kind: SeatKind::Attempt,
-            warm_scope,
-            task: config.task.clone(),
-            purpose: oneiron::CallPurpose::Other {
-                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
-            },
-            facet: facet.to_owned(),
-            required: Vec::new(),
-            min_context_tokens: 1,
-            locality: config.model_locality,
-            override_model: planned_seat(plan),
-            override_effort: None,
-        };
-        Some(
-            vault
-                .birth_model_seat(config.run_id, &task, decisions)
-                .map_err(binding)?,
-        )
-    } else {
-        None
-    };
+    let seat = run_seat(vault, provider, config.run_id, |facet| SeatTask {
+        kind: SeatKind::Attempt,
+        warm_scope,
+        task: config.task.clone(),
+        purpose: oneiron::CallPurpose::Other {
+            name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+        },
+        facet: facet.to_owned(),
+        required: Vec::new(),
+        min_context_tokens: 1,
+        locality: config.model_locality,
+        override_model: planned_seat(plan),
+        override_effort: None,
+    })
+    .map_err(EngineRunError::Binding)?;
     let mut routed_config = config.clone();
     let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound);
     if let Some(seat) = &seat {
