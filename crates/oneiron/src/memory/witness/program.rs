@@ -598,6 +598,11 @@ impl Memory<'_> {
                         .collect();
                     session.note_on_record_messages(plan.turn_id, &messages);
                 }
+                // A room row this turn extended reaches the room's live window
+                // after commit: an append-only extension re-puts no TURN for
+                // the live mirror to carry. No room row, no window: a no-op.
+                #[cfg(feature = "sync")]
+                self.vault.refresh_room_turn_in_live_window(&plan.turn_id);
                 Ok(receipt)
             }
             Landed::Overlay { segment, aliases } => {

@@ -589,6 +589,8 @@ change back:
   newest first, each with its id, its kind (`claim`, `settlement`, `evidence`, `summary` or
   `note`), the claim's predicate or the note's kind, and when it landed. The list reads the
   vault's newest 20,000 rows. `people_about` names each person whose newest `about` line the Dreamer wrote.
+  `maintenance` lists the maintenance the Dreamer applied that still stands (a curator rung, a
+  digest policy, a retune finding), each by its finding's id with its kind as the label.
 - `POST /v1/owner/dreamer/revert` with `{"change": "<32 hex>"}` reverts it, with one receipt:
   - a claim (a promotion, a merged replacement, a nightly same-as, conflict or arc output) is
     retracted, and each claim it superseded stands again, as in a settlement's revert. The
@@ -601,6 +603,9 @@ change back:
   - a scope summary is archived; the summary it replaced is current again, and the header that
     announced it on the asking turn is retracted.
   - a note the Dreamer wrote to answer a task is archived. The task stays done.
+  - an applied maintenance finding reverts through its own inverse, as
+    `/v1/owner/dreamer/maintenance/revert` does: its effect is undone where no later write changed
+    it, the finding is retracted, and the reply names the settings put back and what was left alone.
   - a person's id puts back the `about` lines the Dreamer's newest pass replaced. A line shows
     only while the facts it was written from still hold; the Dreamer writes again once they move.
     Erasing a fact about a person drops that person's `about` lines and the replaced ones too, so
@@ -651,6 +656,23 @@ archived until you accept, and the engine refuses the automatic posture.
   attempt, which returns to the queue listing. An item that is not archived is a 409.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
+
+## Review NOTE tombstones
+
+Once a month the Dreamer's NOTE review proposes a tombstone for each archived note that has
+stayed archived past twice its kind's retention (a handoff's 60 days makes 120), that nothing
+links to (no edge into it, no note citing it, nothing derived from it), and that nobody has read
+since it was archived. A kind with no fixed retention is never proposed. Nothing is tombstoned
+until you accept, and a tombstone cannot be undone: the note's words are scrubbed and every
+device drops them.
+
+- `GET /v1/owner/notes/tombstones`: the open proposals, oldest first, each with its note id,
+  kind, retention days, and when it was archived and proposed.
+- `POST /v1/owner/notes/tombstones/accept` with `{"note": "<id>"}` tombstones the note. The
+  engine checks again that the note is still in the same archive and still qualifies. If it
+  does not, or the proposal is gone, the call is a 409.
+- `POST /v1/owner/notes/tombstones/decline` with `{"note": "<id>"}` leaves the note archived. It
+  is not proposed again unless it is restored and archived anew.
 
 ## Export a persona card
 
