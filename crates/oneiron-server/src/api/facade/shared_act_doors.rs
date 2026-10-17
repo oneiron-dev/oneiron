@@ -15,7 +15,9 @@
 //!   vault owner's, as `/v1/owner/authority/handoff-alarms` takes it;
 //! - the host's slip issuer (`api/pairing.rs`'s), wherever the engine revokes
 //!   the slips of whoever lost a role or signs an owner handover;
-//! - nothing, for the deletion marker the engine reads for anyone.
+//! - nothing, for the deletion marker the engine reads for anyone;
+//! - nothing but the host's slip issuer, for proof-of-control owner recovery,
+//!   whose operator route (`api/operator_routes.rs`) checks the host's root.
 use std::sync::Arc;
 
 use oneiron::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
@@ -304,6 +306,30 @@ pub(crate) async fn vault_authority_handoff_alarms_acknowledge(
     let owner = owner_proof(server, auth, VERB)?;
     off_runtime(server, VERB, move |server| {
         sdk::acknowledge_handoff_alarm(server.vault(), &owner, input)
+    })
+    .await
+}
+
+/// Proof-of-control owner recovery (ARCH-0043, OF-163), for the host
+/// operator's route alone (`/v1/operator/shared/recover-owner`): no verb row
+/// reaches it, so no agent does. The operator has judged, outside the engine,
+/// the claimant's proof that they control the organization owning the vault.
+/// The engine checks only what it holds (no live Owner left, `from` still an
+/// Owner, `claimant` a live person) and signs the handover with the host's
+/// slip issuer. It answers the receipt the membership doors answer.
+pub(crate) async fn operator_recover_shared_owner(
+    server: &Arc<SyncServer>,
+    vault_id: u64,
+    from: oneiron::EntityId,
+    claimant: oneiron::EntityId,
+) -> MemoryResult<SharedActExecutionReceipt> {
+    const VERB: &str = "operator.shared.recover_owner";
+    off_runtime(server, VERB, move |server| {
+        with_slips(server, VERB, |issuer| {
+            Ok(server
+                .vault()
+                .recover_shared_owner(issuer, vault_id, from, claimant)?)
+        })
     })
     .await
 }

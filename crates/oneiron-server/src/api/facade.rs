@@ -420,6 +420,18 @@ fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), FacadeApiEr
     Ok(())
 }
 
+/// [`host_doors::door_admits`] for the generated MCP and code-mode dispatch,
+/// which crosses a host-door row's pre chain outside this facade: the door's
+/// own authority check, run before that chain, so a hook never fires on a
+/// call the door refuses (OF-580).
+pub(crate) fn host_door_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> Result<(), MemoryError> {
+    host_doors::door_admits(server, auth, verb)
+}
+
 /// The post chain over that row's result: the caller's view of it.
 async fn facade_hooks_post(
     server: &Arc<SyncServer>,
