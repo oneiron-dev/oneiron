@@ -155,6 +155,10 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody
         | ErrorKind::InvalidAgentDefBody
+        // OF-370: a replicated embedding setup row failing its codec or its writer's checks,
+        // or waiting on the row it rests on, is remote data.
+        | ErrorKind::InvalidEmbeddingSetupBody
+        | ErrorKind::EmbeddingSetupDependencyPending
         // F25 H32: artifact bodies are validated on every replicated put, so a
         // malformed one is peer bytes; left unclassified it aborted the replay.
         | ErrorKind::InvalidCodeArtifactBody
