@@ -7,8 +7,9 @@
 //! waiter on the ask wakes.
 //!
 //! Asks are numbered in arrival order, from 1, so an owner's list pages after the last
-//! number it read. Queueing the same open ask again (same question version, principal and
-//! evidence) is that ask: a caller that re-runs a decision while its ask is open adds no row.
+//! number it read. Queueing the same open ask again (same question version, principal,
+//! evidence, route and correlation) is that ask: a caller that re-runs a decision while its
+//! ask is open adds no row, and two calls that decide different work keep apart asks.
 //! The ask carries what the ladder hands the queue and nothing more; the host renders its
 //! own text from the question's.
 
@@ -61,6 +62,9 @@ pub struct DecisionAsk {
     pub queue_pin: ProviderPin,
     /// Who the ask goes to, as its caller bound it.
     pub to: AskTo,
+    /// The work it decides, as its caller named it; none when the caller named none.
+    #[serde(with = "super::codec::optional_entity")]
+    pub correlation: Option<EntityId>,
     /// The role it is at and the live holders it was put to, resolved when it was queued
     /// or last climbed; none while no role up to its ceiling has one.
     pub role: Option<ResolvedRole>,
@@ -118,6 +122,7 @@ impl DecisionAsk {
             prior_provider: self.prior.as_ref().map(|prior| prior.provider.clone()),
             queue_pin: self.queue_pin.clone(),
             to: self.to.clone(),
+            correlation: self.correlation,
         }
     }
 
@@ -128,13 +133,14 @@ impl DecisionAsk {
             && self.principal == request.principal
             && self.evidence == request.evidence
             && self.to == request.to
+            && self.correlation == request.correlation
     }
 }
 
 impl Vault {
     /// Keeps one ladder ask, put to the first role on its chain with a live holder, and
     /// returns its arrival number. An open ask for the same question version, principal,
-    /// evidence and role is that ask, and its number is returned.
+    /// evidence, route and correlation is that ask, and its number is returned.
     pub fn queue_decision_ask(&self, request: &HumanDecisionRequest) -> Result<u64> {
         request.question.validate()?;
         request.to.validate()?;
@@ -180,6 +186,7 @@ impl Vault {
                 prior,
                 queue_pin: request.queue_pin.clone(),
                 to: request.to.clone(),
+                correlation: request.correlation,
                 role,
                 answer: None,
             };
@@ -250,14 +257,16 @@ impl Vault {
     }
 
     /// The newest ask for this question version and principal over exactly `evidence`, put
-    /// to `to`, open or answered: how a caller that binds its own route finds the one ask its
-    /// decision went up as, where one question serves many units.
+    /// to `to` for the work `correlation` names, open or answered: how a caller that binds
+    /// its own route finds the one ask its decision went up as, where one question serves
+    /// many units.
     pub fn decision_ask_for(
         &self,
         question: &DecisionQuestion,
         principal: EntityId,
         evidence: &[EntityId],
         to: &AskTo,
+        correlation: Option<EntityId>,
     ) -> Result<Option<DecisionAsk>> {
         let txn = self.store.env.read_txn()?;
         for row in ASKS.iter_rev_from(&self.store, &txn, &[])? {
@@ -267,6 +276,7 @@ impl Vault {
                 && ask.principal == principal
                 && ask.evidence == evidence
                 && ask.to == *to
+                && ask.correlation == correlation
             {
                 return Ok(Some(ask));
             }

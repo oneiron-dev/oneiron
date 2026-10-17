@@ -43,6 +43,7 @@ declare namespace self {
     library: {
       find(input: { site?: string | null; subgoal?: string | null }): Promise<unknown>;
       propose(input: { args?: object; params?: string[]; postcondition: object[]; steps: (object | object | object | object | object | object | object | object | object | object | object)[]; subgoal: string }): Promise<unknown>;
+      retire(input: { workflow: string }): Promise<unknown>;
       run(input: { args?: object; workflow: string }): Promise<unknown>;
     };
     observe(input: { since?: number | null }): Promise<unknown>;
@@ -143,6 +144,22 @@ declare const tasks: {
 declare const vault: {
   artifacts: {
     append(input: { artifact_ref: string; content_base64: string; learned_at?: number | null; occurred_at: number; run_ref?: string | null }): Promise<unknown>;
+    body: {
+      commits(input: { artifact_ref: string }): Promise<unknown>;
+      edit(input: { artifact_ref: string; base?: number[] | null; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+      export(input: { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown }): Promise<unknown>;
+      fork: {
+        diff(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
+        discard(input: { artifact_ref: string; fork_ref: string }): Promise<unknown>;
+        edit(input: { artifact_ref: string; fork_ref: string; ops: { format: "docx"; ops: object[] } | { format: "xlsx"; ops: object[] }; made_by?: unknown }): Promise<unknown>;
+        merge(input: { artifact_ref: string; fork_ref: string; reviewed_head: number[] }): Promise<unknown>;
+        open(input: { artifact_ref: string; run_root_ref?: string | null }): Promise<unknown>;
+      };
+      head(input: { artifact_ref: string }): Promise<unknown>;
+      import(input: { artifact_ref: string; version?: number | null; made_by?: unknown }): Promise<unknown>;
+      preview(input: { artifact_ref: string }): Promise<unknown>;
+      read(input: { artifact_ref: string; at?: number[] | null }): Promise<unknown>;
+    };
     born_from(input: { agent_run?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; task_ref?: string | null }): Promise<unknown>;
     create(input: { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null }): Promise<unknown>;
     discard(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
@@ -299,6 +316,8 @@ declare const vault: {
     create(input: { kind: string; markdown: string }): Promise<unknown>;
     edit(input: { edit: object; note_ref: string }): Promise<unknown>;
     from_entity(input: { kind: string; source_ref: string }): Promise<unknown>;
+    lifecycle(input: { note_ref: string }): Promise<unknown>;
+    seal(input: { note_ref: string }): Promise<unknown>;
   };
   packs: {
     put(input: { files: object[] }): Promise<unknown>;
@@ -323,6 +342,9 @@ declare const vault: {
     };
     proposals(input: { conversation_ref: string }): Promise<unknown>;
     propose(input: { card_id: string; goal: object; picks: object; source_message_ref: string }): Promise<unknown>;
+    roster: {
+      write(input: { project: string; record: unknown }): Promise<unknown>;
+    };
     route_tradeoff(input: { proposal_ref: string; task_ref: string }): Promise<unknown>;
   };
   questions: {
@@ -347,7 +369,7 @@ declare const vault: {
   remember(input: { confidence: number; id?: string | null; learned_at?: number | null; occurred_at?: number | null; predicate: string; relationship_ref?: string | null; salience?: number | null; scope?: unknown; source: string; subject_ref: string; valid_from?: number | null; valid_to?: number | null; value: unknown; world_ref?: string | null }): Promise<unknown>;
   rooms: {
     claim(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
-    consent(input: { grant: boolean; join_ref: string; part: "spend" | "membership" | "admission"; spend_scope?: string | null }): Promise<unknown>;
+    consent(input: { grant: boolean; join_ref: string; part: "subject" | "spend" | "membership" | "admission"; spend_scope?: string | null }): Promise<unknown>;
     find(input: { after?: string | null; limit?: number | null; room_ref: string }): Promise<unknown>;
     get(input: { room_ref: string; turn_ref: string }): Promise<unknown>;
     host: ((input: { room_ref: string; session_ref?: string | null }) => Promise<unknown>) & {

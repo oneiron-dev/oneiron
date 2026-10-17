@@ -873,16 +873,12 @@ impl Memory<'_> {
         let base_rev = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let body = task_body_in_txn(self.vault(), &txn, task_ref)?;
-            let standing = self
-                .vault()
-                .task_standing_in(&txn, task_ref)?
-                .ok_or_else(not_found)?;
-            if standing.owner != self.actor() {
-                return Err(forbidden(
-                    "only the task's owner revises its brief",
-                    "Ask the task's owner to revise the brief.",
-                ));
-            }
+            self.highway_task_actor_in(
+                &txn,
+                task_ref,
+                TaskActorVerb::Owner,
+                "Ask the task's owner to revise the brief.",
+            )?;
             if body.terminal().is_some() {
                 return Err(invalid_state(
                     "a settled task's brief cannot change",
