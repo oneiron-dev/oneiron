@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 348 code-mode rows (328 host rows, 20 run rows), 1196 declarations.
-// Replies: 286 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 363 code-mode rows (343 host rows, 20 run rows), 1275 declarations.
+// Replies: 301 fully typed, 47 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
 declare namespace Sdk {
@@ -499,6 +499,85 @@ declare namespace Sdk {
   type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
   type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
+  type SearchAxis = { name: string; values: string[] };
+  type MetricDirection = "higher" | "lower";
+  type MetricRole = "primary" | "floor" | "cost";
+  type MetricAxis = { name: string; direction: MetricDirection; role: MetricRole };
+  type MetricSet = { set_id: string; revision: string; axes: MetricAxis[] };
+  type CampaignDatasetRef = { dataset_id: string; revision: string };
+  type CampaignSplits = { search: CampaignDatasetRef; held_out: CampaignDatasetRef; sealed: CampaignDatasetRef };
+  type BudgetLease = { budget_id: string; max_units: number; exploration_units: number };
+  type DecideRules = { kind: "dominance"; min_primary_gain: number } | { kind: "of366"; verdict_epsilon: number };
+  type MergeCrossover = { requested?: boolean; min_validation_overlap: number };
+  type CampaignKnobs = { merge_crossover?: MergeCrossover };
+  type CampaignConfig = { campaign_id: string; search_axes: SearchAxis[]; metric_set: MetricSet; splits: CampaignSplits; budget: BudgetLease; decide: DecideRules; knobs?: CampaignKnobs };
+  type ResearchTarget = { skill: { skill: EntityId } } | { config: { subject: string } };
+  type EvalSeat = "companion" | "decision" | "extraction_tagger" | "embedder" | "router" | { named: string };
+  type ResearchConfirmationSeat = { seat: EvalSeat; cohort: EntityId };
+  type CandidateRef = { config_ref: string; config_sha256: string };
+  type PriorRung = "user" | "persona" | "global";
+  type PriorSeed = { rung: PriorRung; alpha: number; beta: number; source_ref: string };
+  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[] };
+  type ResearchGoalPin = { goal_id: EntityId; revision: string; project?: [EntityId, EntityId] | null };
+  type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; bound_at: number };
+  type ForkKind = "variation" | "debug";
+  type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
+  type ExperimentKind = "root" | "variation" | "debug" | "weave";
+  type Measurement = { dataset: CampaignDatasetRef; metric_set_id: string; metric_set_revision: string; scores: Record<string, number> };
+  type SearchEvidence = { measurement: Measurement; confirmed_hits: number; attribution: number; hop_cost: number; expected_gain: number; estimator_version: string; knob_reliability?: number | null; receipt_refs: string[] };
+  type HeldOutEvidence = { measurement: Measurement; receipt_refs: string[]; recorded_at: number };
+  type InvalidReceipt = { reason: string; evidence_refs: string[]; at: number };
+  type WeaveReceipt = { common_ancestor: AttemptId; validation_overlap: number; claim: EntityId; claim_approval: ClaimApprovalStatus; at: number };
+  type PruneReason = { dominated: { by: AttemptId } } | { floor_regression: { axis: string } } | "gain_below_floor" | { stopped: { by: EntityId } };
+  type PruneReceipt = { reason: PruneReason; evidence_refs: string[]; at: number };
+  type ExperimentNode = { attempt: AttemptId; kind: ExperimentKind; parents: AttemptId[]; candidate: CandidateRef; search?: SearchEvidence | null; held_out?: HeldOutEvidence | null; invalid?: InvalidReceipt | null; weave?: WeaveReceipt | null; pruned?: PruneReceipt | null; recorded_at: number };
+  type ResearchWeaveWire = { root: EntityId; parents: EntityId[]; child: EntityId; common_ancestor: EntityId; validation_overlap: number; candidate: CandidateRef; claim: EntityId };
+  type ResearchSearchWire = { root: EntityId; attempt: EntityId; evidence: SearchEvidence };
+  type ResearchHeldOutWire = { root: EntityId; attempt: EntityId; measurement: Measurement; receipt_refs: string[] };
+  type ResearchInvalidWire = { root: EntityId; attempt: EntityId; reason: string; evidence_refs: string[] };
+  type ResearchPruneCause = { kind: "dominated"; by: EntityId } | { kind: "floor_regression"; axis: string } | { kind: "gain_below_floor" } | { kind: "stopped" };
+  type ResearchPruneWire = { root: EntityId; attempt: EntityId; cause: ResearchPruneCause; evidence_refs: string[] };
+  type ResearchSelectWire = { root: EntityId; goal_met?: boolean };
+  type ResearchStep = { fork: { parent: AttemptId; stagnation: boolean } } | "paused_budget" | "stopped_plateau" | "escalate_plateau" | "stopped_oracle";
+  type BranchBelief = { alpha: number; beta: number; p_beat: number; information_gain: number };
+  type BranchSnapshot = { attempt: AttemptId; reward: number; expected_gain: number; estimator_version: string; belief?: BranchBelief | null };
+  type SelectionRanking = { kind: "dgm" } | { kind: "information_gain"; estimator_version: string };
+  type SelectionReceipt = { root: AttemptId; round: number; step: ResearchStep; branches: BranchSnapshot[]; best_quality: number; best_gain: number; ranking: SelectionRanking; policy_digest: string; budget_available: boolean; oracle_goal_met: boolean; at: number };
+  type ArchiveQualityMetric = { metric_id: string; revision: string };
+  type ArchiveOutputRef = { entity: EntityId; revision: string };
+  type ArchiveAxis = { name: string; bins: string[] };
+  type ArchiveDescriptor = { kind: "axes"; axes: ArchiveAxis[] } | { kind: "embedding_clusters"; model_revision: string; centers: number[][] };
+  type CampaignArchivePin = { campaign_id: string; task: EntityId; goal_ref: EntityId; goal_digest: string; quality_metric: ArchiveQualityMetric; proposal_receipt: EntityId; sample_outputs: ArchiveOutputRef[]; descriptor: ArchiveDescriptor };
+  type ResearchBasisWire = { root: EntityId; candidate: EntityId; archive?: CampaignArchivePin | null };
+  type HeldOutCall = "promote" | "reject" | "escalate_tradeoff";
+  type ConfirmationReceipt = { cohort: EntityId; consumed_at: number; exposure?: EntityId | null };
+  type SufficiencyInput = { families: number; floor_slices: Record<string, number>; min_families_per_slice: number; retest_noise?: number | null; owner_margin?: number | null; paired_interval?: [number, number] | null; detectable_effect?: number | null; set_changed: boolean; rubric_changed: boolean; canary_diverged: boolean };
+  type UnknownReason = "no_retest_noise" | "no_interval" | "interval_spans_margin" | { too_few_families: { slice: string; families: number } } | "set_changed" | "rubric_changed" | "canary_diverged";
+  type SufficiencyVerdict = "not_worse" | "worse" | { unknown: UnknownReason[] };
+  type SufficiencyCard = { input: SufficiencyInput; margin?: number | null; verdict: SufficiencyVerdict };
+  type PromotionDisposition = "promoted" | "lost_sealed" | "held_insufficient" | "held_gate";
+  type ResearchBudgetRead = { max_units: number; exploration_units: number; work_reserved: number; work_spent: number; exploration_reserved: number; exploration_spent: number };
+  type CampaignPromotionReceipt = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; parents: AttemptId[]; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; cohort: EntityId; exposures: EntityId[]; sufficiency: SufficiencyCard; sealed_won: boolean; sealed_digest: string; referee_pin: string; skill_proposal?: EntityId | null; disposition: PromotionDisposition; budget: ResearchBudgetRead; at: number };
+  type PromotionBasis = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; incumbent_pin: CandidateRef; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; incumbent_held_out: Measurement; candidate_held_out: Measurement; call: HeldOutCall; merge_crossover_enabled: boolean; decided_at: number; confirmation?: ConfirmationReceipt | null; promotion?: CampaignPromotionReceipt | null };
+  type ResearchCandidateWire = { root: EntityId; candidate: EntityId };
+  type EvalExposureKind = "candidate" | "query" | "promotion";
+  type EvalExposure = { id: EntityId; cohort: EntityId; kind: EvalExposureKind; consumer: string; candidate_pin?: string | null; at: number };
+  type DerivationKind = "receipt" | "repair" | "paraphrase" | "summary" | "translation" | "synthetic" | "rubric";
+  type EvalLabelKind = "world_outcome" | "owner_pick" | "adjudicated_audit" | "judge_verdict";
+  type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number };
+  type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[] };
+  type EvalRelease = { exposure: EvalExposure; cases: EvalCase[] };
+  type ResearchRefereeScores = { candidate: number; incumbent: number; referee_pin: string };
+  type ResearchPromoteWire = { root: EntityId; candidate: EntityId; referee: ResearchRefereeScores; sufficiency: SufficiencyInput; skill_proposal?: EntityId | null };
+  type RsiSpendPurpose = "Experiment" | "Judge" | "HeldOut";
+  type ResearchWorkWire = { root: EntityId; purpose: RsiSpendPurpose; units: number; attempt?: EntityId | null };
+  type ResearchSettleWire = { root: EntityId; reservation: EntityId; actual: number };
+  type ResearchReservationLine = { work: { purpose: RsiSpendPurpose } } | "exploration";
+  type RsiSettlement = { Spent: number } | { Exposure: number } | "Refunded";
+  type ResearchReservation = { id: EntityId; line: ResearchReservationLine; units: number; attempt?: AttemptId | null; settlement?: RsiSettlement | null; reserved_at: number };
+  type ResearchRefundWire = { root: EntityId; reservation: EntityId };
+  type ResearchBenchmarkWire = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[] };
+  type SelectionBenchmark = { estimator_version: string; benchmark: CampaignDatasetRef; cases: number; dgm_score: number; estimator_score: number; receipt_refs: string[]; recorded_at: number };
   type AuthorityHandoffAlarmAck = { by: string; at: number };
   type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] };
   type HandoffAlarmRequest = { signer: string };
@@ -877,12 +956,12 @@ declare namespace Sdk {
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError };
   type AiVideoCancelled = { job: string };
-  type AiVerdictReversibility = "reversible_read" | "outbound_effect";
-  type AiVerdictRequest = { question: string; options?: string[]; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; locate?: boolean; misses?: number; until_ms?: number | null };
-  type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
-  type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
-  type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
   type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
+  type AiVerdictReversibility = "reversible_read" | "outbound_effect";
+  type AiVerdictRequest = { question: string; contract?: AnswerContract; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; misses?: number; until_ms?: number | null };
+  type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
+  type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
+  type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
   type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type GraphAskSelection = { entity_type: number; limit: number };
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
@@ -1224,7 +1303,7 @@ declare const ai: {
   speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** Text out of speech audio, from the host's transcription model. */
   transcribe(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
-  /** The caller's own typed question through the host's decision ladder, answered with a probability and a decision receipt. */
+  /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
   verdict(input: Sdk.AiVerdictRequest): Promise<Sdk.AiVerdict | StoredResult>;
   /** Starts a video render as a provider job and answers with its ticket. */
   video: ((input: Sdk.AiCallRequest) => Promise<Sdk.AiVideoTicket | StoredResult>) & {
@@ -1893,6 +1972,38 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits one claim through the gate, the same as vault.claims.upsert. */
   remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+  research: {
+    /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
+    bind(input: Sdk.ResearchBindWire): Promise<Sdk.ResearchBinding | StoredResult>;
+    /** Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent. */
+    fork(input: Sdk.ResearchForkWire): Promise<Sdk.ExperimentNode | StoredResult>;
+    /** Marks a node buggy: it stays as evidence and takes debug children. */
+    mark_invalid(input: Sdk.ResearchInvalidWire): Promise<Sdk.ExperimentNode | StoredResult>;
+    /** Records a node's held-out evidence, once; only the promotion basis reads it. */
+    measure_held_out(input: Sdk.ResearchHeldOutWire): Promise<Sdk.ExperimentNode | StoredResult>;
+    /** Records a node's search-split evidence, its selection signal, once. */
+    measure_search(input: Sdk.ResearchSearchWire): Promise<Sdk.ExperimentNode | StoredResult>;
+    /** Settles a candidate on the sealed referee's scores of it and the incumbent: a strict win, a not-worse sufficiency card and, for a skill, the gate's accepted verdict make it the incumbent. */
+    promote(input: Sdk.ResearchPromoteWire): Promise<Sdk.CampaignPromotionReceipt | StoredResult>;
+    /** Decides a candidate's held-out promotion basis against the incumbent, once. */
+    promotion_basis(input: Sdk.ResearchBasisWire): Promise<Sdk.PromotionBasis | StoredResult>;
+    /** Stops exploring a branch for a stated cause; its attempts, claims and outputs stay. A stop names the caller. */
+    prune(input: Sdk.ResearchPruneWire): Promise<Sdk.ExperimentNode | StoredResult>;
+    /** Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents. */
+    record_benchmark(input: Sdk.ResearchBenchmarkWire): Promise<Sdk.SelectionBenchmark | StoredResult>;
+    /** Refunds a work reservation nothing was spent on. */
+    refund_work(input: Sdk.ResearchRefundWire): Promise<Sdk.ResearchReservation | StoredResult>;
+    /** Spends a Promote candidate's one sealed confirmation and releases the campaign's sealed cohort to the controller's referee, counted as a serving. */
+    reserve_confirmation(input: Sdk.ResearchCandidateWire): Promise<Sdk.EvalRelease | StoredResult>;
+    /** Reserves token work for the campaign on the RSI line under its share, and returns the reservation's id. */
+    reserve_work(input: Sdk.ResearchWorkWire): Promise<Sdk.EntityId | StoredResult>;
+    /** Runs one selection round through the trusted selection floor and records it; only the owner can say the goal is met. */
+    select(input: Sdk.ResearchSelectWire): Promise<Sdk.SelectionReceipt | StoredResult>;
+    /** Settles a work reservation at its actual spend. */
+    settle_work(input: Sdk.ResearchSettleWire): Promise<Sdk.ResearchReservation | StoredResult>;
+    /** Records a crossover child of several parents whose candidate landed as a claim through the gate, once a held-out win turned merge crossover on. */
+    weave(input: Sdk.ResearchWeaveWire): Promise<Sdk.ExperimentNode | StoredResult>;
+  };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
     claim(input: Sdk.RoomClaimRequest): Promise<Sdk.RoomClaimOutcome | StoredResult>;
