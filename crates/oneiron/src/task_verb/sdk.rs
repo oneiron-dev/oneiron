@@ -417,6 +417,7 @@ pub use super::sdk_legal_hold::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_scratchpad::*;
 pub use super::sdk_secret::*;
+pub use super::sdk_secret_use::*;
 pub use super::sdk_self::*;
 pub use super::sdk_share::*;
 pub use super::sdk_shared::*;

@@ -4,10 +4,10 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 312 code-mode rows (294 host rows, 18 run rows), 1020 declarations.
-// Replies: 254 fully typed, 45 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 313 code-mode rows (295 host rows, 18 run rows), 1024 declarations.
+// Replies: 254 fully typed, 46 typed down to an opaque serde_json::Value leaf, 12 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 72; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
+// Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
   type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true; error?: string } | { waitId: string }) & { budget?: BudgetLegibilityEnvelope };
@@ -445,6 +445,10 @@ declare namespace Sdk {
   type RevealDescribeRequest = { handle: string };
   type RevealProvenance = { record: string; place: string; kind: string; masked_at: number };
   type RevealHandleCard = { handle: string; label: string; class: string; status: string; band: string; provenance?: RevealProvenance | null; reveal: string; grant_ref?: string | null; refusal?: string | null };
+  type SecretUseRequest = { handle: string; operation: string; arguments?: unknown };
+  type SecretUseStatus = "answered" | "failed" | "withheld";
+  type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number };
+  type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord };
   type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
   type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
@@ -1243,6 +1247,8 @@ declare namespace self {
     start(input: Sdk.TeamStartInput): Promise<Sdk.Reply<Sdk.TeamRunAnswer>>;
   };
   const unfold: (input: Sdk.FoldUnfoldInput) => Promise<Sdk.Reply<Sdk.FoldReply<Sdk.FoldUnfolded>>>;
+  /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
+  const use: (input: Sdk.SecretUseRequest) => Promise<Sdk.Reply<Sdk.SecretUseAnswer>>;
 }
 /** The TASK's spawner nudges its live run; a resend with the same key answers the first receipt. */
 declare function steer(input: Sdk.SteerRequest): Promise<Sdk.Reply<Sdk.SteerReceipt>>;

@@ -1684,6 +1684,18 @@
       "section": false
     },
     {
+      "name": "self.use",
+      "description": "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value.",
+      "input": "crate::task_verb::sdk::SecretUseRequest",
+      "output": "crate::task_verb::sdk::SecretUseAnswer",
+      "call": "crate::task_verb::sdk::use_secret_as_caller(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.shares.create",
       "description": "The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels.",
       "input": "crate::task_verb::sdk::ShareCreateRequest",

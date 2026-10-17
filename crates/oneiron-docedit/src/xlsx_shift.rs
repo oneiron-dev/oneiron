@@ -118,11 +118,19 @@ struct Part {
 
 impl Part {
     fn moved(self, by: i64, max: i64, render: fn(i64) -> String) -> Option<String> {
-        let value = if self.fixed { self.value } else { self.value + by };
+        let value = if self.fixed {
+            self.value
+        } else {
+            self.value + by
+        };
         if !(1..=max).contains(&value) {
             return None;
         }
-        Some(format!("{}{}", if self.fixed { "$" } else { "" }, render(value)))
+        Some(format!(
+            "{}{}",
+            if self.fixed { "$" } else { "" },
+            render(value)
+        ))
     }
 }
 
@@ -205,7 +213,9 @@ fn row(text: &str) -> Option<Part> {
         return None;
     }
     let value: i64 = digits.parse().ok()?;
-    (1..=MAX_ROW).contains(&value).then_some(Part { fixed, value })
+    (1..=MAX_ROW)
+        .contains(&value)
+        .then_some(Part { fixed, value })
 }
 
 /// `$B$12`, `B$12`, `$B12` or `B12`.
