@@ -243,6 +243,9 @@ pub enum JudgeOutcomeLink {
     /// A tradeoff call: the responsible person's or role's answer to the ask
     /// on exactly this question.
     Tradeoff { proposal: String, digest: String },
+    /// A blind preference: the owner's pick between exactly this pair's two
+    /// responses.
+    ResponsePair { pair_ref: String },
 }
 
 /// One case the two judges answered differently.
@@ -809,8 +812,8 @@ where
 }
 
 /// Where the settled outcome of a case asked under `kind` is read; `None`
-/// for a blind preference and a structural or contrastive audit, which
-/// nothing settles, and for a state that lacks what its kind reads.
+/// for a structural or contrastive audit, which nothing settles, and for a
+/// state that lacks what its kind reads.
 fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
     let text = |value: &Value, field: &str| value.get(field)?.as_str().map(str::to_owned);
     let receipts = |value: &Value| {
@@ -842,8 +845,10 @@ fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
             proposal: text(state.get("question")?, "proposal")?,
             digest: text(state, "digest")?,
         }),
-        // `axis.<name>`; a preference, structural or contrastive case has
-        // none.
+        "preference" => Some(JudgeOutcomeLink::ResponsePair {
+            pair_ref: text(state, "pair_ref")?,
+        }),
+        // `axis.<name>`; a structural or contrastive case has none.
         _ => {
             let axis = kind.strip_prefix("axis.")?;
             Some(JudgeOutcomeLink::Axis {
@@ -985,6 +990,17 @@ impl Anchors {
             }
             JudgeOutcomeLink::Tradeoff { proposal, digest } => {
                 tradeoff_answer(vault, proposal, digest)?.map(DecisionAnswer::Choice)
+            }
+            JudgeOutcomeLink::ResponsePair { pair_ref } => {
+                super::response_pair::response_pair_pick(vault, pair_ref)?.map(|preferred| {
+                    DecisionAnswer::Choice(
+                        match preferred {
+                            super::PreferredResponse::First => "first",
+                            super::PreferredResponse::Second => "second",
+                        }
+                        .to_owned(),
+                    )
+                })
             }
         })
     }
