@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 210 facade rows, 587 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 170.
+// UniFFI census: 212 facade rows, 596 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 172.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -5001,6 +5001,158 @@ pub struct CodeBlameView {
     pub at: CodeStateView,
     #[serde(rename = "units")]
     pub units: Vec<CodeUnitBlameView>,
+}
+
+/// `oneiron::code_document::review_views::CodeProposalViewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeProposalViewRequest {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+}
+
+/// `oneiron::repo_mutation::proposal::RepoProposalStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RepoProposalStatus {
+    #[serde(rename = "Proposed")]
+    Proposed,
+    #[serde(rename = "Approved")]
+    Approved,
+    #[serde(rename = "Applied")]
+    Applied,
+    #[serde(rename = "Failed")]
+    Failed,
+}
+
+/// `oneiron::code_document::review_views::CodeProposedStamp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeProposedStamp {
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "provenance_claim_ref")]
+    pub provenance_claim_ref: String,
+    #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]
+    pub turn_ref: Option<String>,
+    #[serde(
+        rename = "activity_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub activity_ref: Option<String>,
+    #[serde(
+        rename = "intent_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub intent_ref: Option<String>,
+    #[serde(rename = "model_ref", default, skip_serializing_if = "Option::is_none")]
+    pub model_ref: Option<String>,
+    #[serde(
+        rename = "reasoning_effort",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reasoning_effort: Option<String>,
+}
+
+/// `oneiron::code_document::review_views::CodeProposalView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeProposalView {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "status")]
+    pub status: RepoProposalStatus,
+    #[serde(rename = "proposed")]
+    pub proposed: CodeProposedStamp,
+    #[serde(rename = "changes")]
+    pub changes: Vec<CodeChangeView>,
+    #[serde(rename = "landed", default, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<CodeOperationView>,
+    #[serde(rename = "rendered")]
+    pub rendered: String,
+}
+
+/// `oneiron::code_document::review_views::CodeTreeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeTreeRequest {
+    #[serde(
+        rename = "revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub revision_ref: Option<String>,
+    #[serde(rename = "repo", default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(
+        rename = "snapshot_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_ref: Option<String>,
+}
+
+/// `oneiron::code_document::review_views::CodeRepoDiffRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeRepoDiffRequest {
+    #[serde(rename = "before")]
+    pub before: CodeTreeRequest,
+    #[serde(rename = "after")]
+    pub after: CodeTreeRequest,
+}
+
+/// `oneiron::code_document::review_views::CodeFileChange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeFileChange {
+    #[serde(rename = "added")]
+    Added,
+    #[serde(rename = "removed")]
+    Removed,
+    #[serde(rename = "modified")]
+    Modified,
+    #[serde(rename = "renamed")]
+    Renamed,
+}
+
+/// `oneiron::code_document::review_views::CodeFileDiffView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeFileDiffView {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "change")]
+    pub change: CodeFileChange,
+    #[serde(
+        rename = "renamed_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub renamed_from: Option<String>,
+    #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<CodeStateView>,
+    #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<CodeStateView>,
+    #[serde(rename = "changes")]
+    pub changes: Vec<CodeChangeView>,
+}
+
+/// `oneiron::code_document::review_views::CodeRepoDiffView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeRepoDiffView {
+    #[serde(rename = "files")]
+    pub files: Vec<CodeFileDiffView>,
+    #[serde(rename = "not_text")]
+    pub not_text: Vec<String>,
+    #[serde(rename = "rendered")]
+    pub rendered: String,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportRequest`.

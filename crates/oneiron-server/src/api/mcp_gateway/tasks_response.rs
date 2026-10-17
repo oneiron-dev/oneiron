@@ -749,6 +749,8 @@ fn mcp_agent_verb_input(
         "vault.artifacts.view" => a.spec.clone().ok_or_else(invalid),
         "vault.code.diff" => a.spec.clone().ok_or_else(invalid),
         "vault.code.blame" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.proposal_view" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.repo_diff" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
@@ -1324,6 +1326,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.blame" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.proposal_view" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.repo_diff" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.export" => {
@@ -3164,6 +3172,22 @@ async fn execute_agent_verb_row(
             let input: oneiron::code_document::CodeStateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_code_blame(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.proposal_view" => {
+            let input: oneiron::code_document::CodeProposalViewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_proposal_view(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.repo_diff" => {
+            let input: oneiron::code_document::CodeRepoDiffRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_code_repo_diff(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

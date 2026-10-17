@@ -927,6 +927,12 @@ class Oneiron:
         def blame(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every unit of one tested code file state, blamed by the operations that wrote it."""
             return json.loads(_translate(lambda: self._client.vault_code_blame(json.dumps(request, allow_nan=False))))
+        def proposal_view(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """One repo proposal's semantic change from its base, under the provenance it was proposed with."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_view(json.dumps(request, allow_nan=False))))
+        def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
+            """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
+            return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
     class _VaultRoomsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
