@@ -81,6 +81,11 @@ declare namespace self {
     answer(input: { ask: string; choice: string }): Promise<unknown>;
     settle(input: { conversation?: string | null; effect: "send" | "pay" | "invite" | "share"; name: string; prompt: string; someone_new: string }): Promise<unknown>;
   };
+  const inbox: {
+    concern: ((input: { card: string }) => Promise<unknown>) & {
+      outcome(input: { card: string; outcome: "confirmed" | "dismissed" | "unresolved" }): Promise<unknown>;
+    };
+  };
   const memory: {
     diary: ((input: { content: string; kind?: string | null }) => Promise<unknown>) & {
       query(input: { agent: string; reason: string }): Promise<unknown>;
@@ -95,6 +100,7 @@ declare namespace self {
     fork(input: { id?: string | null; parent: string; skill_id: string }): Promise<unknown>;
     save(input: { expected_version?: string | null; files: { content: string; path: string }[]; id?: string | null }): Promise<unknown>;
   };
+  const spawn: (input: { ask: string; intent_key: string; source: unknown }) => Promise<unknown>;
   const unfold: (input: { fold: string }) => Promise<unknown>;
 }
 declare function steer(input: { instruction: string; key: string; task_ref: string }): Promise<unknown>;
@@ -103,7 +109,8 @@ declare const tasks: {
   create(input: { assignee?: "dreamer" | object | object | object | object | null; label?: string | null; spec: unknown }): Promise<unknown>;
   outcomes(input: { group_ref: string }): Promise<unknown>;
   refuse(input: { at?: number | null; domain: "bond" | "logistics"; reasonRef: string; taskRef?: string | null }): Promise<unknown>;
-  update(input: { task_ref: string }): Promise<unknown>;
+  update(input: { resultRef?: string | null; task_ref: string }): Promise<unknown>;
+  wait(input: { all?: boolean | null; n_of?: number | null; step_key: string; tasks: string[]; until?: number | null }): Promise<unknown>;
 };
 declare const vault: {
   artifacts: {
@@ -118,7 +125,7 @@ declare const vault: {
     put(input: { id?: string | null; learned_at?: number | null; media_type: string; name: string; occurred_at: number }): Promise<unknown>;
     read(input: { artifact_ref: string; version: number }): Promise<unknown>;
     release_wait(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
-    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image: string; target: unknown }[] }): Promise<unknown>;
+    review_slides(input: { artifact_ref: string; author: unknown; deadline_ms?: number | null; evidence_refs?: string[]; labels: unknown; made_by?: unknown; question: unknown; reversibility?: unknown; run_ref: string; unit_budget_ms?: number | null; units: { renderer: string; review_image?: string | null; review_image_ref?: string | null; target: unknown }[] }): Promise<unknown>;
     undo(input: { artifact_ref: string; brief_ref?: string | null; proposal_ref: string; reason?: string | null }): Promise<unknown>;
     view(input: { artifact_ref: string }): Promise<unknown>;
     waits(input: { artifact_ref: string }): Promise<unknown>;
