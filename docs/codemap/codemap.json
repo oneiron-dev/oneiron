@@ -988,7 +988,7 @@
      "purpose": "Per-agent spend calibration, learned from settled launches (OF-532)",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 7,
       "struct": 3,
@@ -2816,7 +2816,7 @@
      "path": "src/authority/slip_pairing.rs",
      "purpose": "Single-use pairing links bind a throwaway key and mint one log-backed slip",
      "surface": {
-      "fn": 15,
+      "fn": 16,
       "struct": 5
      }
     },
@@ -3782,7 +3782,7 @@
       "crate-vis": 9,
       "enum": 5,
       "fn": 15,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 15
      }
     },
@@ -3801,6 +3801,26 @@
       "enum": 1,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BranchBelief",
+      "PriorRung",
+      "PriorSeed",
+      "SelectionBenchmark",
+      "SelectionRanking"
+     ],
+     "path": "src/autoreason_campaign/research/estimator.rs",
+     "purpose": "The engine's parent-selection estimator (OF-351, ARCH-0053 \"DECIDE reward\")",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -3829,6 +3849,7 @@
      "notable": [
       "MeasuredBranch",
       "OracleSignal",
+      "ParentRanking",
       "SelectionDecision",
       "SelectionError",
       "SelectionPolicy",
@@ -3841,7 +3862,7 @@
      "purpose": "Read-only DECIDE floor for an experiment campaign over the durable run tree",
      "surface": {
       "crate-vis": 4,
-      "enum": 5,
+      "enum": 6,
       "fn": 2,
       "struct": 4
      }
@@ -10970,7 +10991,7 @@
      "path": "src/code_revision/storage.rs",
      "purpose": "Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 8
      }
     },
@@ -11268,6 +11289,16 @@
      "purpose": "`self.team.submit` (OF-540): a team's leader submits one pinned output of its team for the owner's…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/team_submit_output.rs",
+     "purpose": "The output a `self.team.submit` names (OF-540), as one snapshot reads it: proven to exist as pinned, and the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -11684,7 +11715,7 @@
      "path": "src/code_run/team_submit.rs",
      "purpose": "`self.team.submit` (OF-540): what a team's leader submits for the owner's review, and what the host answers",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 2
      }
     },
@@ -13797,7 +13828,7 @@
      "purpose": "The OpenAI proxy's own connector (ARCH-0028): the proxy registers as a connector with its own key and takes…",
      "surface": {
       "const": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -16020,7 +16051,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -17782,9 +17813,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 3,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -17874,7 +17905,7 @@
      "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -17986,6 +18017,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DreamerChange",
+      "DreamerChangeKind",
+      "DreamerChanges",
+      "DreamerRevertReceipt",
+      "RevertedDreamerChange"
+     ],
+     "path": "src/dreamer_consolidation/revert.rs",
+     "purpose": "The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -18081,7 +18131,7 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 3,
       "struct": 8
@@ -29691,6 +29741,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/dreamer_revert.rs",
+     "purpose": "The owner's door to the Dreamer's own changes (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/entity_delete.rs",
      "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
      "surface": {
@@ -30679,7 +30739,7 @@
      "purpose": "One conversation's transcript, read as the bound actor: its turns in order, each with the messages it holds…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 3
      }
@@ -30752,8 +30812,8 @@
      "path": "src/memory/witness/stream/admission.rs",
      "purpose": "Begin, append and flush",
      "surface": {
-      "crate-vis": 6,
-      "fn": 5
+      "crate-vis": 7,
+      "fn": 6
      }
     },
     {
@@ -38808,7 +38868,7 @@
      "path": "src/scope_summary/derivation.rs",
      "purpose": "Scope-summary derivation envelopes and change-driven re-derivation",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1,
       "struct": 3
      }
@@ -40393,8 +40453,43 @@
       "crate-vis": 7,
       "enum": 2,
       "fn": 7,
+      "mod": 1,
+      "re-export": 1,
       "struct": 2,
       "type": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AgentPackBudgetSplit",
+      "AgentPackCeiling",
+      "AgentPackCompaction",
+      "AgentPackDreaming",
+      "AgentPackKnowledge",
+      "AgentPackMcp",
+      "AgentPackMemoryProfile",
+      "AgentPackOptionalMemory",
+      "AgentPackOptionalMemoryProfile",
+      "AgentPackOutputDecay",
+      "AgentPackPolicy",
+      "AgentPackRefusal",
+      "AgentPackRefusalLevel",
+      "AgentPackScope",
+      "AgentPackSkill",
+      "AgentPackSkillRef",
+      "AgentPackTravelProjection",
+      "AgentPackView",
+      "AgentPackWakeCadence"
+     ],
+     "path": "src/share_travel/agent_pack.rs",
+     "purpose": "The AgentPack a sharer sends to another party (OF-491, FIX 2040): a reference-free projection of an agent…",
+     "surface": {
+      "const": 1,
+      "enum": 8,
+      "fn": 8,
+      "struct": 11
      }
     },
     {
@@ -46346,7 +46441,7 @@
      "purpose": "Module-level constants shared across the task-verb files",
      "surface": {
       "const": 1,
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -46463,6 +46558,7 @@
       "ConsultExpiryReport",
       "ConsultFanOutReceipt",
       "ConsultFanOutSpec",
+      "ConsultMeasuredSpend",
       "ConsultResultInput",
       "ConsultResultKind",
       "TaskResultReceipt"
@@ -46472,7 +46568,7 @@
      "surface": {
       "crate-vis": 10,
       "enum": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -46736,7 +46832,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "mod": 2,
       "re-export": 24
      }
@@ -46818,7 +46914,7 @@
      "path": "src/task_verb/project_tradeoff.rs",
      "purpose": "A project-bound skill tradeoff over the project's own doors (ARCH-0053 §10a, ARCH-0067 tasks and asks)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -46901,7 +46997,7 @@
      "path": "src/task_verb/report_journal.rs",
      "purpose": "The per-attempt report journal (OF-220)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -49881,16 +49977,12 @@
       "AdmissionBasis",
       "AdmissionConsent",
       "ConsentDenial",
-      "ConsentNeed",
-      "ConsentPart",
       "ConsentSet",
       "ConsentState",
       "JoinDecision",
       "JoinRefusal",
       "JoinRequest",
-      "JoinSubject",
       "MembershipConsent",
-      "RequiredParty",
       "RoomWork",
       "SpendConsent"
      ],
@@ -49898,9 +49990,10 @@
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
       "crate-vis": 5,
-      "enum": 9,
-      "fn": 6,
-      "struct": 6
+      "enum": 6,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 5
      }
     },
     {
@@ -50943,7 +51036,6 @@
      "path": "src/workspace_roster/work_companion.rs",
      "purpose": "The org's `work_companion` policy (ONEIRON-ARCH-0063)",
      "surface": {
-      "const": 1,
       "enum": 1,
       "fn": 9
      }
@@ -52216,7 +52308,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -52384,7 +52476,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52622,7 +52714,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52986,7 +53078,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53364,10 +53456,10 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 1,
+     "files": 2,
      "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file",
+     "largest_src_bucket": "L",
+     "layout": "file+dir",
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
@@ -53658,9 +53750,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 175,
+   "over_bar": 176,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3257,
+   "source_files": 3262,
    "test_files": 902
   },
   "oneiron-android": {
@@ -56561,7 +56653,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 46,
+      "const": 48,
       "crate-vis": 1
      }
     },
@@ -56814,7 +56906,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 22,
+      "mod": 23,
       "re-export": 2
      }
     },
@@ -57046,6 +57138,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConsentNeed",
+      "ConsentPart",
+      "JoinSubject",
+      "RequiredParty",
+      "RoomJoinHold"
+     ],
+     "path": "src/room_join.rs",
+     "purpose": "The consent vocabulary of a room join (OF-531): who asks, which consents a join collects, and the party each…",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CustodyClass",
       "CustodyTier"
      ],
@@ -57258,6 +57368,13 @@
      "layout": "file",
      "purpose": "The retrieval signal and blend-weight vocabulary: what retrieval's fusion scores with, what the retrieval…"
     },
+    "room_join": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The consent vocabulary of a room join (OF-531): who asks, which consents a join collects, and the party each…"
+    },
     "secret_custody": {
      "files": 1,
      "impl_vault": false,
@@ -57296,7 +57413,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 55,
+   "source_files": 56,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -66448,6 +66565,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/dreamer_routes.rs",
+     "purpose": "`/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72529,7 +72656,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 303,
+     "files": 304,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72923,7 +73050,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 603,
+   "source_files": 604,
    "test_files": 182
   },
   "oneiron-spawn": {
