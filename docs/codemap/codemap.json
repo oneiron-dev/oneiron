@@ -31751,7 +31751,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "BodyCell",
@@ -31761,7 +31761,7 @@
       "XlsxBodyOp"
      ],
      "path": "src/office_body/xlsx.rs",
-     "purpose": "The XLSX body inside its Loro document, schema 1 (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
+     "purpose": "The XLSX body inside its Loro document, schema 2 (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
      "surface": {
       "crate-vis": 7,
       "enum": 1,
@@ -53341,7 +53341,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 169,
+   "over_bar": 170,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3237,
    "test_files": 902
@@ -58415,7 +58415,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "XlsxArea",
@@ -58426,6 +58426,7 @@
       "XlsxLock",
       "XlsxName",
       "XlsxSheet",
+      "XlsxSheetPlan",
       "XlsxStyle",
       "XlsxValue"
      ],
@@ -58434,18 +58435,23 @@
      "surface": {
       "const": 2,
       "enum": 4,
-      "fn": 10,
-      "struct": 6
+      "fn": 11,
+      "re-export": 1,
+      "struct": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SheetFate"
+     ],
      "path": "src/xlsx_shift.rs",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -58592,14 +58598,14 @@
     "xlsx_body": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")"
     },
     "xlsx_shift": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Moving a formula's relative references by a row and column offset: what a shared formula's member reads, its…"
     }
