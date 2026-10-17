@@ -17113,13 +17113,13 @@
      "path": "src/dreamer_consolidation/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 1,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsolidationDecisions"
@@ -17127,7 +17127,7 @@
      "path": "src/dreamer_consolidation/executor/decisions.rs",
      "purpose": "The consolidation's typed questions through the host's ladder: how a conflict set resolves and which…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -17139,7 +17139,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch, and the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -17149,7 +17149,7 @@
      "path": "src/dreamer_consolidation/executor/merge_resolution.rs",
      "purpose": "A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -17305,13 +17305,15 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ConsolidationEvidenceEnvelope",
       "ConsolidationProvenanceHop",
       "ConsolidationProvenanceHopKind",
       "ConsolidationSink",
+      "KeptAsk",
+      "KeptDecision",
       "PeerAnswerLineage",
       "PeerTrustDigestLine",
       "PeerTrustDigestSink",
@@ -17320,10 +17322,10 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 7,
-      "struct": 5,
+      "fn": 10,
+      "struct": 7,
       "trait": 2
      }
     },
@@ -17360,7 +17362,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "re-export": 1
      }
     },
@@ -17918,7 +17920,7 @@
      "path": "src/dreamer_promotion.rs",
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 1,
       "fn": 4,
       "re-export": 4,
@@ -27177,7 +27179,7 @@
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
       "crate-vis": 2,
-      "fn": 20,
+      "fn": 21,
       "struct": 4
      }
     },
@@ -51947,7 +51949,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 147,
+   "over_bar": 148,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3140,
    "test_files": 903
