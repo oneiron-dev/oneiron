@@ -468,9 +468,10 @@ pub fn promotion_covers_full_window(
 
 /// [`promotion_covers_full_window`] for the machine `destination` names. A
 /// machine of this vault's that proved itself also covers the window's
-/// custody transitions (OF-422), each sealed to the owner's machines, and its
-/// room turn rows (OF-522); the selector copies neither. Any other
-/// destination does not, so a window that carries one is not promoted to it.
+/// custody transitions (OF-422), each sealed to the owner's machines, its
+/// room turn rows (OF-522) and its withdrawn cutoffs (OF-013); the selector
+/// copies none of them. Any other destination does not, so a window that
+/// carries one is not promoted to it.
 pub fn promotion_covers_full_window_for(
     vault: &Vault,
     source: &LoroDoc,
@@ -489,6 +490,7 @@ pub fn promotion_covers_full_window_for(
         for name in [
             super::custody::CUSTODY_MAP,
             super::room_turns::ROOM_TURNS_MAP,
+            super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
         }

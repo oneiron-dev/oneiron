@@ -68,6 +68,7 @@ pub mod transport;
 pub mod types;
 pub mod window;
 pub(crate) mod window_rows;
+pub(crate) mod withdrawn_cutoffs;
 
 pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
