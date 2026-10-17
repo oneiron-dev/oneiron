@@ -117,6 +117,15 @@ pub const TASK_ASK_SOFT_CONFIRM: &[u8] = b"oneiron.tasks.ask.soft_confirm.v1";
 /// person.
 pub const TASK_ASK_GUEST_GRANT: &[u8] = b"oneiron.tasks.ask.guest.v1";
 
+/// The TASK an Auto post names (`task_verb::highway_post`). Parts: actor,
+/// intent key. The store-local vault id is left out on purpose: every replica
+/// of one vault holds its own, and one post must name one TASK on all of them.
+pub const TASK_POST: &[u8] = b"oneiron.tasks.post.v1";
+
+/// The TASK a settled create proposal names (`task_verb::proposal_create`).
+/// Parts: the proposal claim id.
+pub const TASK_SETTLE: &[u8] = b"oneiron.tasks.settle.v1";
+
 /// The CONNECTOR_SEND event a delivered connector receipt projects
 /// (`comm::projector`). Parts: task.
 pub const COMM_CONNECTOR_SEND_EVENT: &[u8] = b"oneiron.comm.connector_send_event.v1\0";
@@ -181,7 +190,7 @@ pub const GLOBAL_SETTING_SUBJECT: &[u8] = b"oneiron.learning.setting.global_subj
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 45] = [
+pub(crate) const ALL: [&[u8]; 47] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -212,6 +221,8 @@ pub(crate) const ALL: [&[u8]; 45] = [
     TASK_ASK_SETTLEMENT,
     TASK_ASK_SOFT_CONFIRM,
     TASK_ASK_GUEST_GRANT,
+    TASK_POST,
+    TASK_SETTLE,
     COMM_CONNECTOR_SEND_EVENT,
     OUTBOUND_RECEIPT_RECORD,
     FIRST_PARTY_SKILL_HUB,

@@ -26,8 +26,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use super::super::join_consent::{
-    JoinDecision, JoinRequest, JoinSubject, home_room_seats_in_txn, person_of_actor_in_txn,
-    require_join_for_branch_in_txn,
+    JoinDecision, JoinRequest, JoinSubject, RoomJoinHold, home_room_seats_in_txn,
+    person_of_actor_in_txn, require_join_for_branch_in_txn,
 };
 use super::super::join_door::rooms_join_in_txn;
 use super::super::join_receipt::JoinReceiptRef;
@@ -593,11 +593,14 @@ fn write_join_in_txn(
                 .as_deref()
                 .ok_or(Error::CorruptedIndex("a Ready join has no receipt"))?,
         ),
-        JoinDecision::Hold { needs } => Err(Error::InvalidConfig(format!(
-            "the write waits on its room join, which holds on {}; vault.rooms.join with intent_key {} files it for those parties",
-            json(needs)?,
-            request.intent_key
-        ))),
+        JoinDecision::Hold { needs } => Err(Error::Record(RecordError::RoomJoinHeld(Box::new(
+            RoomJoinHold {
+                room,
+                person,
+                intent_key: request.intent_key.clone(),
+                needs: needs.clone(),
+            },
+        )))),
         JoinDecision::Refuse(refusal) => Err(Error::InvalidConfig(format!(
             "the write's room join is refused: {}",
             json(refusal)?
@@ -688,7 +691,7 @@ pub(super) fn admit_speech_in(
             if super::hosting::eligible_room_speaker_in(vault, txn, actor)? {
                 Ok(())
             } else {
-                Err(Error::Record(RecordError::ConversationDenied))
+                Err(Error::Record(RecordError::RoomSpeakerIneligible { actor }))
             }
         }
         _ => super::hosting::admit_room_speech_in(vault, txn, room, actor),
