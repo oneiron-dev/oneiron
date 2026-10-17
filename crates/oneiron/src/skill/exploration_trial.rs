@@ -64,13 +64,24 @@ const MAX_PROJECT_LINEAGE: usize = 256;
 
 /// Hours an unanswered overrun ask waits on the role it went to before it
 /// climbs to the next role up its chain: the ask's reminder. At the chain's
-/// top it waits on.
+/// top it waits on, until [`EXPLORATION_ASK_LAPSE_HOURS`].
 pub(crate) const EXPLORATION_ASK_CLIMB_HOURS: crate::learning_setting::SettingSpec =
     crate::learning_setting::SettingSpec {
         key: "exploration.ask.climb_hours",
         min: 1.0,
         max: 720.0,
         seed: 24.0,
+    };
+
+/// Hours an unanswered overrun ask waits at the top of its chain, counted
+/// from its last climb, before it lapses as a decline: the trial closes and
+/// its routed runs are measured. Checked once the climb window has passed too.
+pub(crate) const EXPLORATION_ASK_LAPSE_HOURS: crate::learning_setting::SettingSpec =
+    crate::learning_setting::SettingSpec {
+        key: "exploration.ask.lapse_hours",
+        min: 1.0,
+        max: 2160.0,
+        seed: 72.0,
     };
 
 /// The engine's own versioned queue identity for an overrun ask: the cost
@@ -94,6 +105,9 @@ pub(crate) enum ExplorationTrialClose {
     VerdictRecorded,
     /// The board declined a run past the goal's exploration slice.
     OverrunDeclined,
+    /// The overrun ask went unanswered at the top of its chain for
+    /// [`EXPLORATION_ASK_LAPSE_HOURS`].
+    OverrunLapsed,
     /// An offline floor regressed on the held-out set.
     FloorsRegressed,
 }
@@ -804,30 +818,45 @@ pub(super) fn queue_trial_ask(vault: &Vault, proposal: &EntityId) -> Result<()> 
 
 /// Climbs `proposal`'s unanswered overrun ask `seq` one role up its chain
 /// once [`EXPLORATION_ASK_CLIMB_HOURS`] have passed `since`, and restarts
-/// that clock. An ask at its chain's top stays where it is.
+/// that clock. An ask at its chain's top keeps its clock, and lapses once
+/// [`EXPLORATION_ASK_LAPSE_HOURS`] have passed it too: the trial closes as
+/// declined. A later answer to the lapsed ask changes nothing. `true` when
+/// it lapsed.
 fn climb_stale_ask(
     vault: &Vault,
     proposal: &EntityId,
     seq: u64,
     since: u64,
     at: u64,
-) -> Result<()> {
+) -> Result<bool> {
+    let waited = at.saturating_sub(since) as f64;
     let hours = crate::learning_setting::setting_value(vault, &EXPLORATION_ASK_CLIMB_HOURS)?;
-    if (at.saturating_sub(since) as f64) < hours * 3600.0 {
-        return Ok(());
+    if waited < hours * 3600.0 {
+        return Ok(false);
     }
-    vault.climb_decision_ask(seq)?;
+    let climbed = vault.climb_decision_ask(seq)?.is_some();
+    let lapsed = !climbed
+        && waited
+            >= crate::learning_setting::setting_value(vault, &EXPLORATION_ASK_LAPSE_HOURS)?
+                * 3600.0;
+    if !climbed && !lapsed {
+        return Ok(false);
+    }
     vault.with_write_txn_grouped(|txn| {
         let Some(mut now) = TRIALS.get(&vault.store, txn, proposal)? else {
-            return Ok(());
+            return Ok(false);
         };
-        if let TrialState::AskPending(held) = &mut now.state
-            && held.seq == Some(seq)
-        {
-            held.climbed_at = Some(at);
-            TRIALS.put(&vault.store, txn, proposal, &now)?;
+        let held = matches!(&now.state, TrialState::AskPending(held) if held.seq == Some(seq));
+        if !held {
+            return Ok(false);
         }
-        Ok(())
+        if lapsed {
+            now.state = TrialState::Closed(ExplorationTrialClose::OverrunLapsed);
+        } else if let TrialState::AskPending(held) = &mut now.state {
+            held.climbed_at = Some(at);
+        }
+        TRIALS.put(&vault.store, txn, proposal, &now)?;
+        Ok(lapsed)
     })
 }
 
@@ -904,8 +933,12 @@ pub(crate) fn drive_exploration_trial(
                 return Ok(ExplorationTrialStatus::Waiting);
             };
             let Some(answer) = ask.answer else {
-                climb_stale_ask(vault, proposal, seq, climbed_at.unwrap_or(ask.asked_at), at)?;
-                return Ok(ExplorationTrialStatus::Waiting);
+                let since = climbed_at.unwrap_or(ask.asked_at);
+                return Ok(if climb_stale_ask(vault, proposal, seq, since, at)? {
+                    ExplorationTrialStatus::Measurable
+                } else {
+                    ExplorationTrialStatus::Waiting
+                });
             };
             vault.with_write_txn_grouped(|txn| {
                 answer_in_txn(vault, txn, proposal, seq, &answer.answer)

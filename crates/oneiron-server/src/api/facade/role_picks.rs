@@ -1,7 +1,7 @@
-//! OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE). An agent holding a
-//! responsible role a skill tradeoff ask has climbed to lists the asks it may
-//! answer and picks, as the owner does at `/v1/owner/skills/judge`. The role
-//! check is the authorization; the pick is learned as that role's preference
+//! OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE). A person or an
+//! agent, owner or not, holding a responsible role a skill tradeoff ask has
+//! climbed to lists the asks it may answer and picks, as the owner does at
+//! `/v1/owner/skills/judge`. The role check is the authorization; the pick is learned as that role's preference
 //! like a person's and, for a project-bound goal, proposed for the project's
 //! goal record, which only its interview revises.
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL};
 use oneiron::skill_optimize::{
-    SkillTradeoffAsk, TradeoffChoice, settle_skill_tradeoff_ask_as_agent, skill_tradeoff_asks_for,
+    SkillTradeoffAsk, TradeoffChoice, settle_skill_tradeoff_ask_as, skill_tradeoff_asks_for,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
@@ -63,8 +63,9 @@ async fn asks(
     Ok(Json(asks))
 }
 
-/// `POST /v1/core/skills/tradeoff-asks/pick`: an agent role holder's A/B
-/// pick. A person's pick is the owner door's.
+/// `POST /v1/core/skills/tradeoff-asks/pick`: a person or agent role
+/// holder's A/B pick, as the credential's principal: a board member who is
+/// not a vault owner picks here.
 async fn pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -73,10 +74,10 @@ async fn pick(
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
     let (actor, class) = facade_actor(&auth)?;
-    if class != EdgeActorClass::Agent {
+    if !matches!(class, EdgeActorClass::Human | EdgeActorClass::Agent) {
         return Err(FacadeApiError::forbidden(
-            "this door takes an agent's pick",
-            ["A person picks at POST /v1/owner/skills/judge/tradeoff-asks/pick."],
+            "this door takes a person's or an agent's pick",
+            ["Pick as the person or agent that holds the ask's role."],
         ));
     }
     let request: Pick = facade_input(facade_json(payload)?)?;
@@ -90,9 +91,9 @@ async fn pick(
     })?;
     let vault = Arc::clone(&server.vault);
     let verdict = tokio::task::spawn_blocking(move || {
-        settle_skill_tradeoff_ask_as_agent(
+        settle_skill_tradeoff_ask_as(
             &vault,
-            &WriteActor::new(actor, EdgeActorClass::Agent),
+            &WriteActor::new(actor, class),
             &proposal,
             &request.question_digest,
             request.choice,
