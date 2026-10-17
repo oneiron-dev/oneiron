@@ -14,9 +14,7 @@ use crate::edge::EdgeProvenanceFlags;
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::ports::{
-    EntityStoreMaintenance, RetrievalIndexMaintenance, ScrubbedRecord, ShortIdStoreMaintenance,
-};
+use crate::ports::{EntityStoreMaintenance, RetrievalIndexMaintenance, ShortIdStoreMaintenance};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;

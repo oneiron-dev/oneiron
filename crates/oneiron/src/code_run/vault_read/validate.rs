@@ -210,9 +210,11 @@ pub(super) fn validate_request(
     request: VaultReadRequest,
 ) -> VaultReadResult<sealed::ValidatedVaultReadRequest> {
     match &request {
+        // A media query seeds a query on its own, as on the accepted route
+        // and the context pack; a vector beside it is still checked.
         VaultReadRequest::Query(query) => validate_query_seeds(
             VaultReadMethod::Query,
-            query.query.as_deref(),
+            non_empty_query(query.query.as_deref()).or(query.media.as_ref().map(|_| "media")),
             query.query_vector.as_deref(),
         )?,
         VaultReadRequest::ContextPack(pack) => validate_context_pack_request(pack)?,

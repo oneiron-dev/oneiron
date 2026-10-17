@@ -43,7 +43,7 @@ use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
 use oneiron::browser_library::{
-    WorkflowRecord, file_workflow, record_workflow_run, site_workflows,
+    Retired, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow, site_workflows,
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -418,6 +418,19 @@ impl WorkflowLibrary for VaultLibrary {
             self.server.vault.now_recorded_at(),
         )
         .map_err(library_failed)
+    }
+
+    fn retire(&mut self, workflow: &str) -> Result<Option<LibraryCard>, BrowserError> {
+        let Ok(id) = oneiron::EntityId::from_hex(workflow) else {
+            return Ok(None);
+        };
+        match retire_workflow(&self.server.vault, id, self.by).map_err(library_failed)? {
+            Retired::Taken(record) => Ok(Some(record.card())),
+            Retired::NotFiled => Ok(None),
+            Retired::NotFiler => Err(BrowserError::Library(format!(
+                "workflow {workflow} was filed from another caller's run; only that caller retires it"
+            ))),
+        }
     }
 }
 
@@ -988,8 +1001,22 @@ async fn run_code_mode_verb(
     mcp_verb_gate(server, tool, &arguments, actor)?;
     // A run's call is answered once and never continued.
     let mut served = Vec::new();
-    let (output, ..) =
-        execute_agent_verb_input(server, tool.name, input, actor, Some(origin), &mut served)
-            .await?;
+    let mut board_hooks = None;
+    let (output, ..) = execute_agent_verb_input(
+        server,
+        tool.name,
+        input,
+        actor,
+        Some(origin),
+        &mut served,
+        &mut board_hooks,
+    )
+    .await?;
+    // A board read answers the run here: the receipt its hook rows owe is
+    // recorded and their blocks spent as the answer returns (OF-579).
+    if let Some(mut hooks) = board_hooks {
+        hooks.record_receipt(server).await?;
+        hooks.spend(server);
+    }
     Ok((output, served))
 }

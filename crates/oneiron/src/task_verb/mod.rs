@@ -76,6 +76,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use project_tradeoff::{project_tradeoff_routed_in, task_created_at_in};
 pub(crate) use wire_decode::{
     TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
     task_is_blocked_in, task_text_in,
@@ -225,6 +226,7 @@ mod recall_door;
 pub mod sdk;
 mod sdk_catalog_fragment;
 mod sdk_connector;
+mod sdk_connector_call;
 mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_embedding_space;
@@ -246,6 +248,8 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
+pub(crate) use ask_guest::ask_guest_grant_in;
+pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
     ack_option_void_generation, has_option_link_void, option_void_generation,
 };
@@ -258,6 +262,7 @@ pub(crate) use ask_record::{
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
+pub(crate) use lifecycle_facade::deliver_task_result_in_txn;
 
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 

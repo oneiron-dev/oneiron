@@ -230,7 +230,6 @@ async fn supervise(
             windows,
             weaver: None,
             task_route: None,
-            line: None,
             inner: None,
             status: Arc::clone(&status),
             decisions,
@@ -350,16 +349,17 @@ struct ObservedFactory {
     weaver: Option<RoleBackend>,
     /// The route a TASK realizes on: narrative, else extraction.
     task_route: Option<(ModelRole, RoleBackend)>,
-    /// The pass's budget line, which a resident's own model also runs on.
-    line: Option<oneiron::BudgetGuard>,
     inner: Option<ConsolidationExecutorFactory>,
     status: Arc<StatusCell>,
     /// The server's decision host: a pass asks its typed questions on its
     /// ladder and promotes through its auto check. Until the server staffs
     /// it, a pass runs on the shipped, unstaffed ladder.
     decisions: Arc<std::sync::OnceLock<DecisionHost>>,
+    /// The bound server: the standing-question pump's, and the connector
+    /// responder's chat budget and LINE plan.
     question_timer: QuestionTimer,
-    /// The server's runtime, which the Coach's drafts block on.
+    /// The server's runtime, which the Coach's drafts and the connector
+    /// responder's model calls block on.
     serve: tokio::runtime::Handle,
     admission: PassAdmission,
 }
@@ -428,7 +428,6 @@ impl ObservedFactory {
         self.task_route = [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE]
             .into_iter()
             .find_map(|role| roles.get(role).cloned().map(|route| (role, route)));
-        self.line = Some(line.clone());
         let extraction = roles
             .get(DREAMER_EXTRACTION_ROLE)
             .cloned()
@@ -458,6 +457,19 @@ impl ObservedFactory {
         if let Some(host) = host {
             factory = factory.with_decisions(host.consolidation_decisions()?);
         }
+        // A subscribed Slack or LINE message wakes the agent it addressed,
+        // which answers on the chat seat through the served sink (OF-519).
+        // With no chat seat the wake is delivered and nothing answers.
+        if self.runtime.seat(super::CHAT_ROLE).is_some() {
+            factory = factory.with_connector_event_responder(Box::new(
+                super::connector_event::ServedConnectorResponder::new(
+                    Arc::clone(&self.vault),
+                    Arc::clone(&self.runtime),
+                    self.serve.clone(),
+                    Arc::clone(&self.question_timer),
+                ),
+            ));
+        }
         self.inner = Some(factory);
         Ok(())
     }
@@ -477,16 +489,11 @@ impl PassExecutorFactory for ObservedFactory {
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
         self.prepare(guard)?;
-        let resident = match (
-            &self.weaver,
-            &self.line,
-            self.resident_instruction.as_deref(),
-        ) {
-            (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
+        let resident = match (&self.weaver, self.resident_instruction.as_deref()) {
+            (Some(weaver), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,
                 weaver,
-                line,
                 guard,
                 egress: self.egress,
                 instruction,
@@ -523,16 +530,11 @@ impl PassExecutorFactory for ObservedFactory {
         self.prepare(guard)?;
         let status = self.status.as_ref();
         let decisions = &self.decisions;
-        let resident = match (
-            &self.weaver,
-            &self.line,
-            self.resident_instruction.as_deref(),
-        ) {
-            (Some(weaver), Some(line), Some(instruction)) => Some(ResidentLend {
+        let resident = match (&self.weaver, self.resident_instruction.as_deref()) {
+            (Some(weaver), Some(instruction)) => Some(ResidentLend {
                 vault: &self.vault,
                 runtime: &self.runtime,
                 weaver,
-                line,
                 guard,
                 egress: self.egress,
                 instruction,
@@ -721,15 +723,21 @@ impl TaskLend<'_> {
     }
 }
 
+/// A resident's own dreaming model as this server serves it.
+type OwnModel = (
+    ModelId,
+    oneiron::ModelLocality,
+    Arc<crate::models::OfferLadder>,
+);
+
 /// The host's loan to one resident's dreaming (OF-490): its own model when
-/// it dreams on its own and this server serves that model, else the
-/// weaver's narrative route and window. The diary stays its own.
+/// it dreams on its own and this server serves that model, on a line of its
+/// own, else the weaver's narrative route and window. The diary stays its own.
 #[derive(Clone, Copy)]
 struct ResidentLend<'p> {
     vault: &'p Vault,
     runtime: &'p ModelRuntime,
     weaver: &'p RoleBackend,
-    line: &'p oneiron::BudgetGuard,
     guard: &'p oneiron::BudgetGuard,
     egress: bool,
     instruction: &'p str,
@@ -743,21 +751,31 @@ impl ResidentLend<'_> {
         ctx: &WakeAttemptContext<'_>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
         let resident = resident_of_dream_input(&attempt.status.payload.input)?;
-        let own = self
+        let slot = self
             .vault
             .get_agent_definition(&resident)?
             .filter(|definition| definition.dreaming_mode() == DreamingMode::Own)
-            .and_then(|definition| definition.dreaming_model.or(definition.model_tier))
-            .and_then(|slot| ModelId::new(slot.0).ok())
-            .and_then(|model| {
-                let (locality, ladder) = self.runtime.router()?.served(&model)?;
-                Some((model, locality, ladder))
-            });
+            .and_then(|definition| definition.dreaming_model.or(definition.model_tier));
+        let own = match &slot {
+            Some(slot) => self.own_model(slot)?,
+            None => None,
+        };
         if let Some((model, locality, ladder)) = own {
+            // The resident pays for its own model: a run line under its own
+            // budget policy rows, at the pass's limit, beside the pass's lease.
+            let line = self.vault.policy_budget_guard(
+                format!("{DREAMER_PASS_RUN}/resident/{}", resident.to_hex()),
+                self.guard.read().limit_units,
+                self.guard.reserve_units(),
+                oneiron::BudgetExhaustionPolicy::Suspend,
+                WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
+            )?;
             let backend = RunBackend::new(
                 ladder,
-                self.runtime
-                    .undeclared_run(format!("{DREAMER_PASS_RUN}/resident"), self.line.clone()),
+                self.runtime.undeclared_run(
+                    format!("{DREAMER_PASS_RUN}/resident/{}", resident.to_hex()),
+                    line,
+                ),
             );
             let egress = self
                 .egress
@@ -781,6 +799,13 @@ impl ResidentLend<'_> {
             )
             .await;
         }
+        if let Some(slot) = &slot {
+            tracing::warn!(
+                resident = %resident.to_hex(),
+                slot = %slot.0,
+                "a resident's own dreaming model is not served here; it dreams on the weaver's route"
+            );
+        }
         let egress = self
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.weaver.model.clone()])));
@@ -801,6 +826,44 @@ impl ResidentLend<'_> {
             },
         )
         .await
+    }
+
+    /// The model a resident's slot names, as this server serves it: a model
+    /// id as it stands, else a tier the vault's manifest binds a chat-wire
+    /// role to, on the vault's live route for that slot (the first such role
+    /// this server serves). None when the slot names nothing served here.
+    fn own_model(self, slot: &oneiron::ModelTierRef) -> oneiron::Result<Option<OwnModel>> {
+        let Some(router) = self.runtime.router() else {
+            return Ok(None);
+        };
+        let served = |model: ModelId| {
+            router
+                .served(&model)
+                .map(|(locality, ladder)| (model, locality, ladder))
+        };
+        if let Some(own) = ModelId::new(slot.0.clone()).ok().and_then(served) {
+            return Ok(Some(own));
+        }
+        let Some(manifest) = self.vault.model_manifest()? else {
+            return Ok(None);
+        };
+        let slot_kind = oneiron::llm::manifest::ModelSlot::Llm;
+        let Some(widest) = manifest.routes.get(&slot_kind).copied() else {
+            return Ok(None);
+        };
+        let route = self.vault.model_route(slot_kind)?.unwrap_or(widest);
+        Ok(manifest
+            .roles
+            .values()
+            .filter(|binding| binding.slot == slot_kind && binding.tier == *slot)
+            .filter_map(|binding| {
+                if route == widest {
+                    Some(binding.model.clone())
+                } else {
+                    binding.route_models.get(&route).cloned()
+                }
+            })
+            .find_map(served))
     }
 }
 
