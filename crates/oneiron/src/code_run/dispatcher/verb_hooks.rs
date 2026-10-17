@@ -375,6 +375,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::ReaderReport(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::TaskWaitSet(result) => json!({"output": result}),
+        SelfDispatchOutcome::Team(answer) => json!({"output": answer}),
     }
 }
 
@@ -464,6 +465,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
             "resultRef": report.result_ref,
         }),
         SelfCall::TasksWaitSet(wait) => to_json(wait)?,
+        SelfCall::Team(team) => to_json(team)?,
     })
 }
 
@@ -803,7 +805,8 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         | SelfCall::Context(_)
         | SelfCall::AgentVerb(_)
         | SelfCall::ReaderSpawn(_)
-        | SelfCall::ReaderReport(_) => {
+        | SelfCall::ReaderReport(_)
+        | SelfCall::Team(_) => {
             return Err(format!("{} takes no rewrite", call.effect().as_str()));
         }
     })
