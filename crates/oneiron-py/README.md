@@ -97,7 +97,7 @@ created for the actor you want to act as instead.
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
 | `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
-| `handle.lens_frame_event(card_id, request)` | sends one `{"event", "idempotencyKey"}` on a lens card the connected server rendered; answers `{"$state"}` or `{"outcome", "readReceipt"}` |
+| `handle.lens_frame_event(card_id, request)` | sends one `{"event", "idempotencyKey"}` on a lens card the connected server rendered; answers `{"$state"}`, `{"outcome", "readReceipt"}`, or a model round trip's `{"queued", "callbackId"}` |
 | `handle.close_lens_frame(card_id)` | closes that card and frees its frame; answers `{"closed"}` |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
