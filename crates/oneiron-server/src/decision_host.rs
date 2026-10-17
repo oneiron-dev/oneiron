@@ -34,6 +34,7 @@ use oneiron::policy_model::PolicyDecisions;
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::saved_query::MembershipDecisions;
 use oneiron::skill_hub::{ClaimReplayDecisions, UsefulUpstreamDecisions};
+use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::TaskDecisions;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, ConsolidationDecisions, EntityId, HostingPrivacyPosture,
@@ -57,6 +58,11 @@ const TASK_ASK_UP_WORDING: &str = "Should this task ask its owner now? Yes when 
 escalation trigger needs a person's answer before the work goes on.";
 /// How long one task surface question may take.
 const TASK_DECISION_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+/// The placement question (OF-541): this host's wording.
+const PLACEMENT_WORDING: &str = "Which node of the task-type tree is this task? Answer the most \
+specific live node whose kind fits the task's subgoal and site, or the root when none fits.";
+/// How long one placement may take before the rule rung's reading stands.
+pub(crate) const PLACEMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -288,6 +294,23 @@ impl DecisionHost {
             ask_up: question(b"ask_up".as_slice(), TASK_ASK_UP_WORDING)?,
             budget: TASK_DECISION_BUDGET,
         })
+    }
+
+    /// The placement question through this ladder for `principal`, up to the
+    /// Big rung (a placement never asks a person), within `deadline`.
+    pub(crate) fn placement_decisions<'a>(
+        &'a self,
+        principal: EntityId,
+        deadline: &'a RetrievalDeadline,
+    ) -> PlacementDecisions<'a> {
+        PlacementDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: self.dial(DecisionRung::Big),
+            bands: self.bands.clone(),
+            wording: PLACEMENT_WORDING.to_owned(),
+            deadline,
+        }
     }
 
     /// The Dreamer's consolidation questions through this ladder, in the
