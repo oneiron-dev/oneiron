@@ -6,24 +6,85 @@
 //! them. Each takes the person's own proof (`shared_act_doors::person`); the
 //! engine's roster, role, expiry and power checks decide. Beside them, the
 //! owner's guest slip mint (OF-232), under the owner's proof and the host's
-//! slip issuer.
+//! slip issuer. An invitee's own slip (FIX 1925) lists, accepts or declines
+//! only the invitation it names.
 use std::sync::Arc;
 
+use oneiron::EdgeActorClass;
 use oneiron::federation::{
     PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActExecutionReceipt,
     SharedEraseAsk, SharedInvitation,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, GuestSlipMintRequest, GuestSlipMinted, SharedActRequest, SharedEraseAskCloseRequest,
-    SharedEraseAskRequest, SharedInvitationRequest, SharedInvitationWithdrawRequest,
-    SharedVaultRequest,
+    self, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
+    RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest,
+    SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationRequest,
+    SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
 use super::host_doors::internal;
 use super::shared_act_doors::person;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+
+/// The invitation an invitee's own slip (FIX 1925) names, when the request
+/// came on one.
+fn slip_invitation(auth: &CoreAuth) -> Option<&str> {
+    auth.verified_slip()
+        .and_then(|slip| slip.claims().invitation_ref.as_deref())
+}
+
+/// Refuses an invitee's slip at an invitation other than its own.
+fn require_slip_invitation(auth: &CoreAuth, verb: &str, invitation: &str) -> MemoryResult<()> {
+    match slip_invitation(auth) {
+        Some(own) if !own.eq_ignore_ascii_case(invitation) => Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} names another invitation than this credential's"),
+            &["Present the credential minted with this invitation."],
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// `vault.records.erase_preview`: what erasing one record takes, read under
+/// the caller's own person proof; the engine's deletion authority decides.
+pub(crate) async fn vault_records_erase_preview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RecordEraseRequest,
+) -> MemoryResult<RecordErasePreview> {
+    const VERB: &str = "vault.records.erase_preview";
+    let caller = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        let memory = server.vault().memory(
+            caller.revalidate_person(server.vault())?,
+            EdgeActorClass::Human,
+        );
+        sdk::preview_record_erase(&memory, input)
+    })
+    .await
+}
+
+/// `vault.records.erase_confirm`: the caller's own erase of the record they
+/// previewed. Their proof starts a held record's `erase` act, which
+/// `vault.shared.execute` carries out after its veto window.
+pub(crate) async fn vault_records_erase_confirm(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RecordEraseConfirmRequest,
+) -> MemoryResult<RecordEraseOutcome> {
+    const VERB: &str = "vault.records.erase_confirm";
+    let caller = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        let memory = server.vault().memory(
+            caller.revalidate_person(server.vault())?,
+            EdgeActorClass::Human,
+        );
+        sdk::confirm_record_erase(&memory, &caller, input)
+    })
+    .await
+}
 
 /// `act` off the runtime: every engine door here reads or writes LMDB.
 async fn off_runtime<T: Send + 'static>(
@@ -45,10 +106,15 @@ pub(crate) async fn vault_members_invitations(
 ) -> MemoryResult<Vec<SharedInvitation>> {
     const VERB: &str = "vault.members.invitations";
     let reader = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
+    let own = slip_invitation(auth).map(str::to_owned);
+    let mut invitations = off_runtime(server, VERB, move |server| {
         sdk::read_shared_invitations(server.vault(), &reader, input)
     })
-    .await
+    .await?;
+    if let Some(own) = own {
+        invitations.retain(|invitation| invitation.id.eq_ignore_ascii_case(&own));
+    }
+    Ok(invitations)
 }
 
 /// `vault.members.accept`: the invitee's own acceptance.
@@ -59,8 +125,33 @@ pub(crate) async fn vault_members_accept(
 ) -> MemoryResult<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.accept";
     let invitee = person(server, auth, VERB)?;
+    require_slip_invitation(auth, VERB, &input.invitation)?;
     off_runtime(server, VERB, move |server| {
         sdk::accept_shared_invitation_as(server.vault(), &invitee, input)
+    })
+    .await
+}
+
+/// `vault.members.invitation_slip`: an `add_member` holder's mint of a
+/// pending invitation's slip (a founding invitation's, or a lost one), under
+/// the host's slip issuer.
+pub(crate) async fn vault_members_invitation_slip(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: InvitationSlipRequest,
+) -> MemoryResult<InvitationSlip> {
+    const VERB: &str = "vault.members.invitation_slip";
+    let admin = person(server, auth, VERB)?;
+    off_runtime(server, VERB, move |server| {
+        crate::api::pairing::with_issuer(server, |issuer| {
+            Ok(sdk::mint_invitation_slip_as(
+                server.vault(),
+                &admin,
+                issuer,
+                input,
+            ))
+        })
+        .map_err(|_| internal(VERB))?
     })
     .await
 }
@@ -73,6 +164,7 @@ pub(crate) async fn vault_members_decline(
 ) -> MemoryResult<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.decline";
     let invitee = person(server, auth, VERB)?;
+    require_slip_invitation(auth, VERB, &input.invitation)?;
     off_runtime(server, VERB, move |server| {
         sdk::decline_shared_invitation_as(server.vault(), &invitee, input)
     })

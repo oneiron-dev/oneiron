@@ -18,11 +18,12 @@ if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): ra
 # A `context: "run"` row is answered by the code run itself, over its own
 # dispatcher and storage route, as the typed `self.*` call its `effect` names.
 # Code mode serves it beside the host's rows; no host door, tool, route or
-# binding can carry a run, so it projects nowhere else.
+# binding can carry a run, so it projects nowhere else. Its optional `output`
+# is the type its reply carries, which only the catalog fragment reads.
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
 for row in RUN_ROWS:
-    if set(row) != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
-        raise ValueError(f'{row["name"]}: a run row names its input, scope and effect, and nothing else')
+    if set(row) - {'output'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+        raise ValueError(f'{row["name"]}: a run row names its input, scope, effect and output, and nothing else')
 # ARCH-0028: the MCP tool list and the code-mode method table ARE the verb table,
 # so a row carries no opt-out. A row's tool takes its whole typed input as `spec`
 # unless it names a projection, and refuses a world/facet-narrowed connector
@@ -55,6 +56,14 @@ for row in ROWS:
     # what an embedded handle answers instead.
     if row.get('host_door') and (row.get('server_door') or row.get('admission', {}).get('owner_grade') or row.get('context', 'memory') != 'memory'):
         raise ValueError(f'{row["name"]}: a host door is a memory row with no other server door')
+    # Rule 5: `task_work` marks a row whose run is one piece of task work. The
+    # server's dispatch and its MCP dispatch take one turn for it
+    # (`SyncServer::admit_task_work`, never refused) before the engine call and
+    # hold it until the call returns; the embedded SDK takes none. Only a plain
+    # memory row's doors all reach that one engine call.
+    if row.get('task_work') and (row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade')
+                                 or 'rows' in row.get('admission', {}).get('readable', []) or row.get('context', 'memory') != 'memory'):
+        raise ValueError(f'{row["name"]}: task work is a plain memory row')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -688,6 +697,13 @@ async fn execute_agent_verb_listing(
     // OF-063: the off-record session the request named; inside an anonymous
     // one a reference refusal writes no receipt (Engine ruling 10-17).
     let memory = match actor.off_record_session.as_deref() { Some(session) => memory.in_off_record_session(session), None => memory };
+    // Rule 5: a task-work row takes its one turn here, for MCP and code mode
+    // alike, and holds it through its hooks and its row.
+    let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work) {
+        Some(server.admit_task_work(actor.actor_ref).await)
+    } else {
+        None
+    };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, served).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
@@ -946,6 +962,14 @@ def facade_dispatch(facade_rows):
             return 'let position = facade_landing(server, call)?;'
         if admission.get('lane_record_scope'):
             return 'auth.require_lane_record_scope()?;'
+        # A read whose engine door filters its projection row by row through
+        # the credential's own scoped read carries the credential's worlds
+        # and facets (OF-250); any other narrowing, and any record or channel
+        # caveat, still fails closed.
+        if admission.get('projection_record_scope'):
+            return ('{ let (worlds, facets) = auth.verified_slip().map_or((oneiron::federation::ScopeAxis::All, oneiron::federation::ScopeAxis::All), '
+                    '|proof| (proof.scope().worlds.clone(), proof.scope().facets.clone())); '
+                    'auth.require_record_scope_carried(worlds, facets)?; }')
         if admission.get('unrestricted_record_scope'):
             return 'auth.require_unrestricted_record_scope()?;'
         # Any other door reads or writes around the lane, so it refuses a facet
@@ -1058,7 +1082,9 @@ def facade_dispatch(facade_rows):
         Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows }})
         }}\n'''
             continue
-        dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}
+        # Rule 5: a task-work row's turn, held until its engine call returns.
+        turn = '\nlet _turn = server.admit_task_work(actor).await;' if r.get('task_work') else ''
+        dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}{turn}
         let producers = oneiron::memory::ProducerRows::default();
         let output = {result}{landed}
         Ok(FacadeCallOutput::listed(output, &producers))
@@ -1240,6 +1266,7 @@ def outputs():
         ('born_in_scope', lambda r: r['mcp_scope'] == 'born'),
         ('writes', lambda r: r['scope'] == 'Write'),
         ('proposes', lambda r: r.get('proposes', False)),
+        ('is_task_work', lambda r: r.get('task_work', False)),
     ]:
         selected = ['Self::' + variants[r['name']] for r in ROWS if select(r)]
         catalog += f'pub const fn {method}(self) -> bool {{ matches!(self, ' + (' | '.join(selected) if selected else '_ if false') + ') }\n'
@@ -1376,9 +1403,9 @@ def uniffi_export(row, types, census):
     name, method = json.dumps(row['name']), row['name'].replace('.', '_')
     signature = row.get('uniffi')
     if 'call' not in row:
-        declaration = ', '.join(arg + ': ' + typ for arg, typ in signature['args'].items())
-        unused = ', '.join('&' + arg for arg in signature['args'])
-        return f'{name} => fn {method}(&self, {declaration}) -> {signature["output"]} = |_client| {{\n    let _ = ({unused},);\n    definition_only({name})\n}};\n'
+        # Every UniFFI row is callable (the last definition rows took calls in
+        # #2049), so the binding keeps no fail-closed stub for one.
+        raise ValueError(f'{row["name"]}: a definition row has no UniFFI export until it takes a call')
     binding = row.get('binding') or {}
     typed_args = binding['args'] if binding.get('args') and binding.get('wire') != 'json' else None
     engine_input = rust_type(row['input'])
@@ -1444,7 +1471,7 @@ def uniffi_export(row, types, census):
     return f'{name} => fn {method}({receiver}) -> {output} = |client| {{\n{body}}};\n'
 
 def uniffi_facade(facade_rows):
-    'The UniFFI verb surface (every facade row, then the definition rows it still names) and its generated types.'
+    'The UniFFI verb surface (every facade row; a definition row is refused) and its generated types.'
     rows = facade_rows + [row for row in DEFINITIONS if 'uniffi' in row]
     if any('uniffi' in row for row in ROWS if row not in facade_rows):
         raise ValueError('only a facade row carries a uniffi signature')

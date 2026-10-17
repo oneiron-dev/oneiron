@@ -1,7 +1,11 @@
 //! Begin, append and flush. The only pre-final durable row is the seed, which
-//! checkpoints each accepted delta before that text is published.
+//! checkpoints each accepted delta, admitted by the write door, before that
+//! text is published.
 use super::super::witness_message_envelope;
 use super::*;
+use crate::batch::secret_scan::{
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::Error;
@@ -98,7 +102,10 @@ impl Memory<'_> {
         let entry = Arc::new(Mutex::new(State {
             seed,
             base: String::new(),
-            pending: message.content.clone(),
+            pending: String::new(),
+            raw: message.content.clone(),
+            lifted: Lifted::default(),
+            withheld: false,
             // The idle clock starts once the stream holds its turn: time
             // spent waiting for it is not the stream's idleness.
             last_op_at_ms: at
@@ -133,7 +140,7 @@ impl Memory<'_> {
                         &id,
                     )?
                     .is_some();
-                    if state.seed.continuation && !state.pending.is_empty() {
+                    if state.seed.continuation && !state.raw.is_empty() {
                         return Err(MessageStreamError::InvalidRequest(
                             "continuation starts with empty content",
                         ));
@@ -146,6 +153,10 @@ impl Memory<'_> {
                         return Err(MessageStreamError::InvalidRequest(
                             "continuation requires entity documents (sync feature)",
                         ));
+                    }
+                    admit_opening(self.vault, txn, &mut state)?;
+                    if state.text().len() > MAX_MESSAGE_STREAM_BYTES {
+                        return Err(MessageStreamError::BufferOverflow);
                     }
                     authorize(self.vault, txn, &state.seed, &state.text())?;
                     // Container constraints are checked again by the canonical writer.
@@ -212,44 +223,73 @@ impl Memory<'_> {
         if state
             .base
             .len()
-            .saturating_add(state.pending.len())
+            .saturating_add(state.raw.len())
             .saturating_add(delta.len())
             > MAX_MESSAGE_STREAM_BYTES
         {
             return Err(MessageStreamError::BufferOverflow);
         }
-        let text = format!("{}{}", state.text(), delta);
-        let chars = text.chars().count();
         let next = state
             .sequence
             .checked_add(1)
             .ok_or(MessageStreamError::InvalidRequest(
                 "stream sequence overflow",
             ))?;
-        let emit = should_emit(
-            state.seed.mode,
-            &text,
-            chars.saturating_sub(state.emitted_chars),
-        );
+        let mut emit = false;
         #[cfg(feature = "sync")]
-        let partial = if emit {
-            super::presence::StreamPresence::prepare(&state.seed, &text, next)?
-        } else {
-            None
+        let mut partial = None;
+        // The text a partial would publish, prepared before anything is
+        // saved: a frame over budget refuses the delta.
+        let mut stage = |state: &State, text: &str| -> MessageStreamResult<()> {
+            emit = should_emit(
+                state.seed.mode,
+                text,
+                text.chars().count().saturating_sub(state.emitted_chars),
+            );
+            #[cfg(feature = "sync")]
+            if emit {
+                partial = super::presence::StreamPresence::prepare(&state.seed, text, next)?;
+            }
+            Ok(())
         };
+        let mut text = state.text();
         if delta.is_empty() {
+            stage(&*state, &text)?;
             let txn = self.vault.store.env.read_txn()?;
             authorize(self.vault, &txn, &state.seed, &text)?;
         } else {
-            let row = state.checkpoint(format!("{}{}", state.pending, delta));
-            self.vault
-                .try_with_write_txn_grouped(|txn| -> MessageStreamResult<()> {
-                    authorize(self.vault, txn, &row, &text)?;
-                    Ok(storage::checkpoint(self.vault, txn, &row)?)
-                })?;
+            let raw = format!("{}{}", state.raw, delta);
+            let mut lifted = state.lifted.clone();
+            // The whole text is admitted again, before its checkpoint saves
+            // it and before a partial publishes it (OF-067).
+            let (pending, withheld) =
+                self.vault
+                    .try_with_write_txn_grouped(|txn| -> MessageStreamResult<_> {
+                        let (pending, withheld) = admit_stream_text_in_txn(
+                            self.vault,
+                            txn,
+                            state.seed.message_id,
+                            CONTENT,
+                            &raw,
+                            true,
+                            &mut lifted,
+                        )?;
+                        text = format!("{}{}", state.base, pending);
+                        if text.len() > MAX_MESSAGE_STREAM_BYTES {
+                            return Err(MessageStreamError::BufferOverflow);
+                        }
+                        stage(&*state, &text)?;
+                        let row = state.checkpoint(pending.clone());
+                        authorize(self.vault, txn, &row, &text)?;
+                        storage::checkpoint(self.vault, txn, &row)?;
+                        Ok((pending, withheld))
+                    })?;
+            // Saved: the delta is accepted whatever its publication does.
+            state.raw = raw;
+            state.pending = pending;
+            state.lifted = lifted;
+            state.withheld = withheld;
         }
-        // Saved: the delta is accepted whatever its publication does.
-        state.pending.push_str(delta);
         state.sequence = next;
         state.last_op_at_ms = at;
         state.dirty = true;
@@ -258,7 +298,7 @@ impl Memory<'_> {
             if let Some(partial) = partial {
                 self.vault.message_streams.presence.publish(partial)?;
             }
-            state.emitted_chars = chars;
+            state.emitted_chars = text.chars().count();
             state.dirty = false;
         }
         Ok(())
@@ -338,6 +378,47 @@ impl Memory<'_> {
         };
         self.begin_message_stream(&turn, mode)
     }
+}
+/// Where a stream's text sits in its MESSAGE: a lifted secret's origin.
+pub(super) const CONTENT: &str = "text:content";
+/// Admits what a stream opens with, in the transaction of its first
+/// checkpoint (OF-067): its text, and a new MESSAGE's own axes. Its type is
+/// an identifier, so a hit refuses; its metadata masks as the body it joins
+/// would. A continuation's axes are its stored row's, admitted with it.
+fn admit_opening(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    state: &mut State,
+) -> MessageStreamResult<()> {
+    let State {
+        seed,
+        pending,
+        raw,
+        lifted,
+        withheld,
+        ..
+    } = state;
+    if !seed.continuation {
+        scan_content_in_txn(&vault.store, txn, seed.message_type.as_bytes())?;
+        if let Some(metadata) = seed.metadata.as_mut() {
+            let mut body = serde_json::to_vec(metadata)
+                .map_err(|_| Error::InvariantViolation("stream metadata did not encode"))?;
+            if admit_parts_in_txn(
+                vault,
+                txn,
+                seed.message_id,
+                &mut [("body", Part::Body(&mut body))],
+                lifted,
+            )? {
+                *metadata = serde_json::from_slice(&body).map_err(|_| {
+                    Error::InvariantViolation("masked stream metadata did not decode")
+                })?;
+            }
+        }
+    }
+    (*pending, *withheld) =
+        admit_stream_text_in_txn(vault, txn, seed.message_id, CONTENT, raw, true, lifted)?;
+    Ok(())
 }
 fn should_emit(mode: MessageWriteMode, text: &str, new_chars: usize) -> bool {
     match mode {

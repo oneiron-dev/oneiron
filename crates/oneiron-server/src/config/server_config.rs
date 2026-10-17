@@ -11,6 +11,7 @@ use super::failure_signals::FailureSignalsConfig;
 use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
+use super::line::LineConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
@@ -116,6 +117,9 @@ pub struct SyncServerConfig {
     /// Runtime mode and per-role model routing defaults. The single source of
     /// usage-mode truth: `runtime_usage_mode()` derives from `runtime.mode`.
     pub runtime: RuntimeConfig,
+    /// `[line]`: the plan of the LINE Official Account the built-in LINE
+    /// pack serves, and the pushes it includes each month.
+    pub line: LineConfig,
 }
 
 impl Default for SyncServerConfig {
@@ -150,6 +154,7 @@ impl Default for SyncServerConfig {
             limits: LimitsConfig::default(),
             feedback_inbox: FeedbackInboxConfig::default(),
             runtime: RuntimeConfig::default(),
+            line: LineConfig::default(),
         }
     }
 }
@@ -225,6 +230,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("limits", &self.limits)
             .field("feedback_inbox", &self.feedback_inbox)
             .field("runtime", &self.runtime)
+            .field("line", &self.line)
             .finish()
     }
 }
@@ -326,6 +332,9 @@ pub struct ServeConfig {
     /// The `[embedding]` section: spaces and kind slots seeded at start,
     /// absent until the config file names it.
     pub embedding: Option<super::EmbeddingConfig>,
+    /// The `[line]` section: the LINE Official Account's plan, a free
+    /// account unless the config file names one.
+    pub line: LineConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -336,6 +345,10 @@ pub struct ServeConfig {
     pub hosted_kms_key_ref: Option<String>,
     /// Whether serve starts the fact-hook runner; `--no-hooks` turns it off.
     pub hooks: bool,
+    /// `maximum_tier = true`: a vault created here seals every page (OF-570,
+    /// [`oneiron::PAGE_SEAL_WARNING`]). The tier is chosen when the vault is
+    /// created; a sealed vault opens sealed whatever this says.
+    pub maximum_tier: bool,
 }
 
 impl Default for ServeConfig {
@@ -396,6 +409,7 @@ impl Default for ServeConfig {
             native_mail: None,
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
+            line: server.line,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -403,6 +417,7 @@ impl Default for ServeConfig {
             failure_signal_training: false,
             hosted_kms_key_ref: None,
             hooks: true,
+            maximum_tier: false,
         }
     }
 }
@@ -471,12 +486,14 @@ impl fmt::Debug for ServeConfig {
             .field("native_mail", &self.native_mail)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
+            .field("line", &self.line)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
             .field("hooks", &self.hooks)
+            .field("maximum_tier", &self.maximum_tier)
             .finish()
     }
 }
@@ -519,6 +536,7 @@ impl ServeConfig {
             limits: self.limits.clone(),
             feedback_inbox: self.feedback.inbox,
             runtime: self.runtime.clone(),
+            line: self.line,
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(
@@ -569,7 +587,52 @@ impl ServeConfig {
             .oneironer
             .as_ref()
             .and_then(OneironerConfig::marker_config);
+        config.page_seal = self.device_page_seal();
         config
+    }
+
+    /// The page seal of a sealed vault (maximum tier), unlocked with this
+    /// device's keystore. A failure is logged without any secret, and the
+    /// open then refuses. A mirror whose vault's data is missing unlocks
+    /// nothing: no vault is created under another's seal.
+    fn device_page_seal(&self) -> Option<oneiron::VaultPageSeal> {
+        match oneiron::world_keys::vault_is_sealed(&self.vault_path) {
+            Ok(true) if !self.vault_path.join("data.mdb").exists() => {
+                tracing::warn!(
+                    "the vault's data is missing beside its page-seal mirror; move the mirror \
+                     away to create a new vault"
+                );
+                return None;
+            }
+            Ok(true) => {}
+            Ok(false) => return None,
+            Err(error) => {
+                tracing::warn!(%error, "the vault's page seal could not be read");
+                return None;
+            }
+        }
+        let keystore = match self.keystore.open(&self.vault_path) {
+            Ok(Some(keystore)) => keystore,
+            Ok(None) => {
+                tracing::warn!("the vault is sealed and the keystore backend is off");
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
+                    "the vault is sealed and this device has no keystore"
+                );
+                return None;
+            }
+        };
+        let unlock = oneiron::world_keys::VaultKeyUnlock::Device(keystore.as_ref());
+        match oneiron::world_keys::unlock_page_seal(&self.vault_path, &unlock) {
+            Ok(seal) => Some(seal),
+            Err(error) => {
+                tracing::warn!(%error, "the vault's pages did not unlock with this device");
+                None
+            }
+        }
     }
 
     /// Maps posture and custody without repairing invalid direct caller input.

@@ -217,6 +217,7 @@ impl Vault {
                 actor_class: Some("system".to_owned()),
                 org_ref: None,
                 grant_ref: None,
+                invitation_ref: None,
             },
         )?;
         txn.commit()?;

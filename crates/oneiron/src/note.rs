@@ -83,7 +83,10 @@ pub use documents::{
     NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
     NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
 };
-pub use kinds::{ContextDefault, ExtractionDefault, NoteKindDescriptor, RetentionDefault};
+pub(crate) use kinds::descriptor_in_txn;
+pub use kinds::{
+    ContextDefault, DISSENT_NOTE_KIND, ExtractionDefault, NoteKindDescriptor, RetentionDefault,
+};
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
 const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 
@@ -304,7 +307,8 @@ pub(crate) fn decode_note_body_in_txn(
     Ok(body)
 }
 
-/// Shared NOTE admission. Ordinary retrieval excludes every owner-only kind.
+/// Shared NOTE admission. Ordinary retrieval excludes every owner-only and
+/// explicit-only kind.
 pub(crate) fn note_body_readable(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -315,7 +319,23 @@ pub(crate) fn note_body_readable(
         return Ok(false);
     };
     let context = kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?;
-    Ok(context != ContextDefault::OwnerOnly || actor == Some(&body.author_ref))
+    Ok(match context {
+        ContextDefault::OwnerOnly | ContextDefault::ExplicitOnly => actor == Some(&body.author_ref),
+        ContextDefault::RelationshipScoped | ContextDefault::VaultReadable => true,
+    })
+}
+
+/// Whether `body`'s kind is explicit-only: out of default context, and
+/// readable on an explicit read by every reader its policy admits.
+pub(crate) fn note_explicit_only_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    body: &NoteBody,
+) -> Result<bool> {
+    Ok(
+        kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?
+            == ContextDefault::ExplicitOnly,
+    )
 }
 
 /// A refused private row must not disclose its existence through a receipt.

@@ -28,13 +28,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, ProjectConversationSkills,
-    ResidentAgentSpec, SpendScopeId, agent_dispatch_actor,
+    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
+    PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
+    agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
-    AgentVerbDoor, HostSelfDispatcher, SpawnHostSeat, park_and_bind_wait_trap,
+    AgentVerbDoor, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat,
+    park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
@@ -380,16 +382,17 @@ fn run_bound(
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
-    // it names the scope it would spend under, which is not open, so its
-    // spawns answer `reader_spawn_unmetered`. Its door withholds nothing, so
-    // its children's reads withhold nothing, as its own do.
+    // so do its children's. Its door withholds nothing, so its children's
+    // reads withhold nothing, as its own do.
     let metered = AgentDispatcher::new(vault)
         .spend_scope_for_attempt(status.attempt.id)
         .map_err(text)?;
-    let spend = metered
-        .clone()
-        .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
-    let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
+    let seat = seats.seat(
+        run_id,
+        metered.clone(),
+        CallerLocality::OnDevice,
+        provider.reader_window_tokens(),
+    );
     // One door for the whole run, so its browser lives as long as the run.
     let door: Arc<dyn AgentVerbDoor> = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
@@ -411,6 +414,7 @@ fn run_bound(
             metered.as_ref(),
             compaction.as_mut(),
             &reactor,
+            server.decision_host(),
         )?;
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
@@ -430,7 +434,9 @@ fn run_bound(
 /// reaches the TASK it realizes, a TASK it creates runs under it, its
 /// program calls the vault's callable skills, its host rows take `door`,
 /// its model calls spend under `spend`, and `seat`, which its reader
-/// children spawn under.
+/// children spawn under. With the host's `[models.planner]` seats, its
+/// spawns are planned on `decisions`' ladder and its leader calls answer.
+/// A run its parent planned is born on the model its plan picked.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -446,13 +452,18 @@ fn enter_run(
     spend: Option<&SpendScopeId>,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
+    decisions: &DecisionHost,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
-    let bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
+    let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
         .with_callable_skills(Arc::clone(vault))
         .map_err(text)?
         .with_agent_verb_door(Arc::clone(door))
         .with_reader_spawn(seat.clone());
+    let planner = decisions.host_planner_decisions(actor.entity_ref());
+    if let Some(planner) = planner_binding(vault, provider, config, planner)? {
+        bound = bound.with_planner(planner);
+    }
     enter_engine_native_run(
         vault,
         provider,
@@ -462,7 +473,59 @@ fn enter_run(
         compaction,
         reactor,
         spend,
+        status.input.plan.as_ref(),
     )
+}
+
+/// The host's planner for one entry of a leased agent run (OF-541, OF-389):
+/// the `[models.planner]` seats whose AGENT_DEF this vault holds, the shipped
+/// planner and leader skills, the run's own `model@revision` as the
+/// executor, and the host's ladder. `None` when no seat resolves.
+fn planner_binding<'a>(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    config: &EngineExecutorConfig,
+    decisions: HostPlannerDecisions<'a>,
+) -> Result<Option<HostPlannerBinding<'a>>, String> {
+    let Some(settings) = provider.planner() else {
+        return Ok(None);
+    };
+    let mut seats = Vec::with_capacity(settings.seats.len());
+    for seat in &settings.seats {
+        match planner_seat_agent(vault, &seat.agent).map_err(text)? {
+            Some(agent_def) => seats.push(PlannerSeat {
+                model: seat.model.clone(),
+                agent_def,
+            }),
+            None => tracing::warn!(
+                agent = %seat.agent,
+                model = seat.model.as_str(),
+                "a models.planner seat names no AGENT_DEF in this vault; the planner skips it"
+            ),
+        }
+    }
+    if seats.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(HostPlannerBinding {
+        skills: PlannerSkills::seeded().map_err(text)?,
+        seats,
+        executor: config.model.as_str().to_owned(),
+        decisions: Some(decisions),
+        leader: LeaderStarterSkills::seeded().map_err(text)?,
+        top: settings.top,
+    }))
+}
+
+/// A planner seat's AGENT_DEF: a hex ID this vault holds, or a seeded
+/// definition's logical ID.
+fn planner_seat_agent(vault: &Vault, agent: &str) -> oneiron::Result<Option<EntityId>> {
+    if let Ok(id) = EntityId::from_hex(agent) {
+        return Ok(vault.get_agent_definition(&id)?.map(|_| id));
+    }
+    Ok(vault
+        .get_seeded_agent_definition_by_logical_id(agent)?
+        .map(|(id, _)| id))
 }
 
 /// A resident run's task: its frozen definition's instructions, then what

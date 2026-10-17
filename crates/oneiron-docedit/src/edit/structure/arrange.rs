@@ -14,7 +14,7 @@ use super::{
 use crate::deck::{DeckView, ShapeView, SlideView};
 use crate::edit::{EditRefusal, Effect, Xfrm};
 use crate::retained_opc::{Package, rels_name};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const TYPES: &str = "[Content_Types].xml";
 
@@ -290,7 +290,11 @@ pub(super) fn verify(
     effects: &[Effect],
 ) -> Result<Vec<String>, EditRefusal> {
     let candidate = Package::open(&next.export()?, input.limits())?;
-    let changed = check::diff(input, &candidate)?;
+    let removed = match *op {
+        StructureEdit::DeleteSlide { slide, .. } => released(input, &candidate, slide)?,
+        _ => Vec::new(),
+    };
+    let changed = check::diff_removing(input, &candidate, &removed)?;
     let after = DeckView::read(&candidate)?;
     let fault = |why: &'static str| EditRefusal::ReadBack(why);
     let same = |a: &SlideView, b: &SlideView| {
@@ -350,6 +354,10 @@ pub(super) fn verify(
             let presentation = related(input, "", "officeDocument")?
                 .ok_or(EditRefusal::Missing("presentation"))?;
             allowed.extend([rels_name(&presentation), presentation]);
+            if !removed.is_empty() {
+                allowed.push(TYPES.to_owned());
+            }
+            allowed.extend(removed.iter().cloned());
             let rest: Vec<&SlideView> = before.slides.iter().filter(|s| s.part != slide).collect();
             if after.slides.len() != rest.len()
                 || !after.slides.iter().zip(rest).all(|(a, b)| same(a, b))
@@ -424,6 +432,30 @@ pub(super) fn verify(
         return Err(EditRefusal::PartDiffOutsideTransaction(part.clone()));
     }
     Ok(changed)
+}
+
+/// The parts a deleted slide must have released, read independently of the
+/// writer: every input part the slide reaches that the candidate's root no
+/// longer names, with its relationship part. A part a survivor still names,
+/// even one the candidate lost, is not among them.
+fn released(input: &Package, candidate: &Package, slide: &str) -> Result<Vec<String>, EditRefusal> {
+    let kept = candidate.reachable("")?;
+    if kept.contains(slide) {
+        return Ok(Vec::new());
+    }
+    let held: BTreeSet<&str> = input.names().collect();
+    let mut released = Vec::new();
+    for part in input.reachable(slide)? {
+        if kept.contains(&part) || !held.contains(part.as_str()) {
+            continue;
+        }
+        let rels = rels_name(&part);
+        if held.contains(rels.as_str()) {
+            released.push(rels);
+        }
+        released.push(part);
+    }
+    Ok(released)
 }
 
 fn slide_pair<'v>(

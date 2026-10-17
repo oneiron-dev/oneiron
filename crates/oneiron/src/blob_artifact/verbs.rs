@@ -583,7 +583,8 @@ impl Memory<'_> {
             deadline: started
                 + std::time::Duration::from_millis(input.deadline_ms.unwrap_or(300_000)),
             run_ref: &input.run_ref,
-            at,
+            // The comment writer stamps epoch milliseconds.
+            at: at.saturating_mul(1000),
         };
         let run = self
             .vault()
