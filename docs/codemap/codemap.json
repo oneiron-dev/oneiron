@@ -13420,6 +13420,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/compaction/epoch_intent.rs",
+     "purpose": "The intent a compaction epoch is born from (ARCH-0035 Rule A; owner 2026-09-17: a summary's birth names the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/compaction/fold_words.rs",
      "purpose": "Where a fold's words go when a record they came from is withdrawn (Docs Q23, Q24)",
      "surface": {
@@ -31604,7 +31614,7 @@
      "purpose": "Vault-resident PACK descriptor records; the shipped kinds are data, not variants",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 4,
       "struct": 1
@@ -53082,7 +53092,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -54281,7 +54291,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3296,
+   "source_files": 3297,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72519,7 +72529,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
