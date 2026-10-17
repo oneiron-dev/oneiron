@@ -38124,7 +38124,7 @@
      "path": "src/runtime_hooks/verb/ask.rs",
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 26
      }
     },
     {
@@ -38175,7 +38175,7 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 13,
       "re-export": 3,
@@ -38236,9 +38236,9 @@
      "path": "src/runtime_hooks/verb/state.rs",
      "purpose": "What a vault holds in memory for verb hooks: the process switch, the cached binding list, the sandbox, the…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
