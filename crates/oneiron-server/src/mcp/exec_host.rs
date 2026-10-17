@@ -498,23 +498,43 @@ fn run_engine_native_code_mode(
     )
     .map_err(|error| match error {
         EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
-        EngineRunError::Run(error) => McpCodeExecutionError::Run(error),
+        EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
     })
 }
 
 /// Why one entry of an engine-native run did not end: its seat could not be
-/// bound, or the executor failed.
+/// bound, or the executor failed, kept typed so a host can tell a model
+/// call that failed for a passing reason from any other failure; only the
+/// MCP wire states it as text.
 #[derive(Debug)]
 pub(crate) enum EngineRunError {
     Binding(String),
-    Run(String),
+    Run(oneiron::engine_executor::EngineExecutorError),
+}
+
+impl EngineRunError {
+    /// The model call's own failure, when that is why the run stopped.
+    pub(crate) fn llm(&self) -> Option<&oneiron::LlmError> {
+        match self {
+            Self::Run(oneiron::engine_executor::EngineExecutorError::Llm(error)) => Some(error),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for EngineRunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Binding(error) | Self::Run(error) => f.write_str(error),
+            Self::Binding(error) => f.write_str(error),
+            Self::Run(error) => write!(f, "{error}"),
         }
+    }
+}
+
+/// A host's own setup failure is a binding failure.
+impl From<String> for EngineRunError {
+    fn from(error: String) -> Self {
+        Self::Binding(error)
     }
 }
 
@@ -637,7 +657,7 @@ fn enter_on(
     }
     reactor
         .block_on(executor.run(&routed_config))
-        .map_err(|error| EngineRunError::Run(error.to_string()))
+        .map_err(EngineRunError::Run)
 }
 
 /// A disconnected caller cannot release single-flight while its worker writes.
