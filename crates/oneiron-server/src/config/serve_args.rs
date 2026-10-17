@@ -138,6 +138,13 @@ pub struct ServeArgs {
     #[arg(long = "escrow-outbox-dir")]
     pub escrow_outbox_dir: Option<PathBuf>,
 
+    /// Managed mode: a vault created at this start seals every page under the
+    /// data key the supervisor delivers (the maximum tier, OF-570). Off unless
+    /// given; a vault keeps the tier it was created with, and a sealed one
+    /// reopens with the delivered key either way.
+    #[arg(long = "maximum-tier", num_args = 0..=1, default_missing_value = "true")]
+    pub maximum_tier: Option<bool>,
+
     /// Managed mode: the unix socket the vault's artifact origin listens on,
     /// an absolute path the supervisor chose and routes `<vault>.<domain>` to
     /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
@@ -389,6 +396,7 @@ impl fmt::Debug for ServeArgs {
                 &self.break_glass_recipient_file,
             )
             .field("escrow_outbox_dir", &self.escrow_outbox_dir)
+            .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
             .field("models_file", &self.models_file)
             .field("host", &self.host)

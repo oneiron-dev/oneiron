@@ -58,8 +58,9 @@ pub(crate) use self::pads::{
     world_keys_destroyed_in_txn,
 };
 pub use self::page_seal::{
-    PAGE_SEAL_WARNING, VaultPageSeal, new_page_seal, page_seal_custody_path, page_seal_vault_id,
-    unlock_page_seal, vault_is_sealed,
+    PAGE_SEAL_WARNING, VaultPageSeal, new_delivered_page_seal, new_page_seal,
+    page_seal_custody_path, page_seal_vault_id, reopen_delivered_page_seal, unlock_page_seal,
+    vault_is_sealed,
 };
 pub(crate) use self::page_seal::{admit_new_vault, page_seal_open_error, seal_read_only};
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};

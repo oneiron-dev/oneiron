@@ -157,6 +157,10 @@ pub struct ManagedArgs {
     /// Where the vault spools its escrow capsules for the node to ship
     /// (`--escrow-outbox-dir`).
     pub escrow_outbox: Option<PathBuf>,
+    /// A vault created at this start seals its pages under the delivered
+    /// data key (`--maximum-tier`, `MANAGED_MAXIMUM_TIER_DEFAULT` unless
+    /// given).
+    pub maximum_tier: bool,
     /// The artifact origin's socket (`--artifact-http-socket`), when the
     /// supervisor gave the vault one.
     pub artifact_socket: Option<PathBuf>,
@@ -262,6 +266,7 @@ impl ManagedArgs {
             escrow_recipient: args.escrow_recipient_file.clone(),
             break_glass_recipient: args.break_glass_recipient_file.clone(),
             escrow_outbox: args.escrow_outbox_dir.clone(),
+            maximum_tier: args.maximum_tier.unwrap_or(MANAGED_MAXIMUM_TIER_DEFAULT),
             artifact_socket: args.artifact_http_socket.clone(),
             artifact_domains: args
                 .artifact_domains
@@ -464,6 +469,11 @@ fn refuse_fd_alias(
 /// credential frame in and the ready byte out.
 pub const NO_FD: RawFd = -1;
 
+/// Whether a managed vault created without `--maximum-tier` seals its pages:
+/// no. Canon keeps managed vaults plain unless the supervisor opts in
+/// (CROSS-ARCH-0019); a vault keeps the tier it was created with.
+pub(crate) const MANAGED_MAXIMUM_TIER_DEFAULT: bool = false;
+
 const VSOCK_BOOT_REASON: &str =
     "a vault VM reads its credentials and signals ready over the vsock boot channel";
 
@@ -580,6 +590,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "escrow-outbox-dir",
         |args| args.escrow_outbox_dir.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "maximum-tier",
+        |args| args.maximum_tier.is_some(),
         ArgvUse::Read,
     ),
     (
