@@ -220,6 +220,11 @@ declare const vault: {
     retire(input: { space: string }): Promise<unknown>;
   };
   export(input: { format?: string | null }): Promise<unknown>;
+  fanout: {
+    ack(input: { answer: "ack" | "ack_and_remember"; launch_ref: string; plan_digest: string; remembered_cap?: number | null }): Promise<unknown>;
+    launch(input: { launch_ref: string }): Promise<unknown>;
+    resume(input: { launch_ref: string; plan_digest: string; remembered_cap?: number | null; ruling: "approve_once" | "approve_and_remember" | "deny" }): Promise<unknown>;
+  };
   forget(input: object): Promise<unknown>;
   get(input: { entity_ref: string }): Promise<unknown>;
   graph: {

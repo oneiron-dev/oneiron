@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 223 facade rows, 765 declarations.
-Inputs: 192 of 223 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
-Results: 180 of 223 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
+Census: 226 facade rows, 772 declarations.
+Inputs: 195 of 226 fully typed, 30 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
+Results: 183 of 226 fully typed, 35 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 49; unread shapes: 1.
 """
 
@@ -591,6 +591,70 @@ class TaskWaveRequest(TypedDict):
 class TaskWaveReceipt(TypedDict):
     attempt_ref: str
     state: str
+class FanoutLaunchRequest(TypedDict):
+    launch_ref: EntityId
+class PeerCount(TypedDict):
+    peer: EntityId
+    count: int
+SpendBasis = Literal["calibrated", "prior"]
+class ExpectedSpend(TypedDict):
+    units: int
+    samples: int
+    basis: SpendBasis
+LeaseUnit = str
+SpendScopeId = str
+class SpendCapView(TypedDict):
+    scope: NotRequired[SpendScopeId | None]
+    unit: LeaseUnit
+    cap_units: int
+    available_units: int
+    hard: bool
+class WidthCheckClassAutoClear(TypedDict):
+    kind: Literal["auto_clear"]
+    policy_ref: NotRequired[str | None]
+class WidthCheckClassAsked(TypedDict):
+    kind: Literal["asked"]
+    row_ref: str
+WidthCheckClass = WidthCheckClassAutoClear | WidthCheckClassAsked
+class ExceptionalWidthCheck(TypedDict):
+    count: int
+    threshold: int
+    classification: WidthCheckClass
+class FanoutStatement(TypedDict):
+    agent_count: int
+    consult_count: int
+    task_count: int
+    per_peer: list[PeerCount]
+    expected: ExpectedSpend
+    unit: LeaseUnit
+    cap: NotRequired[SpendCapView | None]
+    over_available: bool
+    more_would_buy: NotRequired[str | None]
+    width_check: NotRequired[ExceptionalWidthCheck | None]
+    stated_at: int
+class FanoutLaunchHold(TypedDict):
+    surface_ref: str
+    denied: bool
+class FanoutLaunchView(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    statement: FanoutStatement
+    held: NotRequired[FanoutLaunchHold | None]
+    check_row_ref: NotRequired[str | None]
+    choice_receipt_ref: NotRequired[str | None]
+    task_refs: list[EntityId]
+FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
+class FanoutResumeRequest(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    ruling: FanoutLaunchRuling
+    remembered_cap: NotRequired[int | None]
+FanoutCheckChoice = Literal["ack", "ack_and_remember"]
+class FanoutAckRequest(TypedDict):
+    launch_ref: EntityId
+    plan_digest: str
+    answer: FanoutCheckChoice
+    remembered_cap: NotRequired[int | None]
 class TaskUpdateRequest(TypedDict):
     task_ref: str
     resultRef: NotRequired[str | None]
@@ -2545,45 +2609,6 @@ class TaskAskShort(TypedDict):
     default: NotRequired[TaskAskDefault]
 TaskAskRequest = TaskAskSpec | TaskAskShort
 TaskAskHoldReason = Literal["NoLiveRoute"]
-class PeerCount(TypedDict):
-    peer: EntityId
-    count: int
-SpendBasis = Literal["calibrated", "prior"]
-class ExpectedSpend(TypedDict):
-    units: int
-    samples: int
-    basis: SpendBasis
-LeaseUnit = str
-SpendScopeId = str
-class SpendCapView(TypedDict):
-    scope: NotRequired[SpendScopeId | None]
-    unit: LeaseUnit
-    cap_units: int
-    available_units: int
-    hard: bool
-class WidthCheckClassAutoClear(TypedDict):
-    kind: Literal["auto_clear"]
-    policy_ref: NotRequired[str | None]
-class WidthCheckClassAsked(TypedDict):
-    kind: Literal["asked"]
-    row_ref: str
-WidthCheckClass = WidthCheckClassAutoClear | WidthCheckClassAsked
-class ExceptionalWidthCheck(TypedDict):
-    count: int
-    threshold: int
-    classification: WidthCheckClass
-class FanoutStatement(TypedDict):
-    agent_count: int
-    consult_count: int
-    task_count: int
-    per_peer: list[PeerCount]
-    expected: ExpectedSpend
-    unit: LeaseUnit
-    cap: NotRequired[SpendCapView | None]
-    over_available: bool
-    more_would_buy: NotRequired[str | None]
-    width_check: NotRequired[ExceptionalWidthCheck | None]
-    stated_at: int
 class TaskAskReceipt(TypedDict):
     handle: TaskAskHandle
     task_refs: list[EntityId]

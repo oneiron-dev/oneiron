@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 280 code-mode rows (262 host rows, 18 run rows), 866 declarations.
-// Replies: 227 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 283 code-mode rows (265 host rows, 18 run rows), 873 declarations.
+// Replies: 230 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 55; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -129,6 +129,22 @@ declare namespace Sdk {
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
   type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
   type TaskWaveReceipt = { attempt_ref: string; state: string };
+  type FanoutLaunchRequest = { launch_ref: EntityId };
+  type PeerCount = { peer: EntityId; count: number };
+  type SpendBasis = "calibrated" | "prior";
+  type ExpectedSpend = { units: number; samples: number; basis: SpendBasis };
+  type LeaseUnit = string;
+  type SpendScopeId = string;
+  type SpendCapView = { scope?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; available_units: number; hard: boolean };
+  type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null } | { kind: "asked"; row_ref: string };
+  type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass };
+  type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
+  type FanoutLaunchHold = { surface_ref: string; denied: boolean };
+  type FanoutLaunchView = { launch_ref: EntityId; plan_digest: string; statement: FanoutStatement; held?: FanoutLaunchHold | null; check_row_ref?: string | null; choice_receipt_ref?: string | null; task_refs: EntityId[] };
+  type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
+  type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
+  type FanoutCheckChoice = "ack" | "ack_and_remember";
+  type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null };
   type TaskUpdateRequest = { task_ref: string; resultRef?: string | null };
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean };
   type QuoteSpan = { message: EntityId; start: number; end: number };
@@ -517,15 +533,6 @@ declare namespace Sdk {
   type TaskAskShort = { who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault };
   type TaskAskRequest = TaskAskSpec | TaskAskShort;
   type TaskAskHoldReason = "NoLiveRoute";
-  type PeerCount = { peer: EntityId; count: number };
-  type SpendBasis = "calibrated" | "prior";
-  type ExpectedSpend = { units: number; samples: number; basis: SpendBasis };
-  type LeaseUnit = string;
-  type SpendScopeId = string;
-  type SpendCapView = { scope?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; available_units: number; hard: boolean };
-  type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null } | { kind: "asked"; row_ref: string };
-  type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass };
-  type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[] };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
   type TaskAskEffectAuthorization = "not_evaluated_by_ask";
@@ -1227,6 +1234,14 @@ declare const vault: {
   };
   /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. */
   export(input: Sdk.ExportOptions): Promise<Sdk.Reply<Sdk.MemoryExport>>;
+  fanout: {
+    /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
+    ack(input: Sdk.FanoutAckRequest): Promise<Sdk.Reply<Sdk.FanoutLaunchView>>;
+    /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none. */
+    launch(input: Sdk.FanoutLaunchRequest): Promise<Sdk.Reply<Sdk.FanoutLaunchView | null>>;
+    /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
+    resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.Reply<Sdk.FanoutLaunchView>>;
+  };
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
   forget(input: Sdk.ForgetRequest): Promise<Sdk.Reply<Sdk.CommitReceipt[]>>;
   /** Reads one entity as a typed view, or none when absent or withheld; the receipt says which. */

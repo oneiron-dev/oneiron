@@ -337,6 +337,8 @@ class Oneiron:
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
+        @property
+        def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
@@ -442,6 +444,13 @@ class Oneiron:
             """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
         def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
+    class _VaultFanoutVerbs:
+        def launch(self, spec: Facade.FanoutLaunchRequest) -> Facade.FanoutLaunchView | None:
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+        def resume(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
+            """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
+        def ack(self, spec: Facade.FanoutAckRequest) -> Facade.FanoutLaunchView:
+            """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
     class _VaultClaimsVerbs:
         def upsert(self, claim: ClaimInput) -> CommitReceipt: ...
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:

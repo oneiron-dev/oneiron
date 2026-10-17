@@ -28,6 +28,9 @@ pub enum AgentVerb {
     Describe,
     TasksCreate,
     TasksWave,
+    VaultFanoutLaunch,
+    VaultFanoutResume,
+    VaultFanoutAck,
     TasksUpdate,
     VaultWitness,
     VaultClaimsUpsert,
@@ -293,6 +296,9 @@ impl AgentVerb {
         Self::Describe,
         Self::TasksCreate,
         Self::TasksWave,
+        Self::VaultFanoutLaunch,
+        Self::VaultFanoutResume,
+        Self::VaultFanoutAck,
         Self::TasksUpdate,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
@@ -561,6 +567,9 @@ impl AgentVerb {
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
+            Self::VaultFanoutLaunch => "vault.fanout.launch",
+            Self::VaultFanoutResume => "vault.fanout.resume",
+            Self::VaultFanoutAck => "vault.fanout.ack",
             Self::TasksUpdate => "tasks.update",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
@@ -829,6 +838,9 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1101,6 +1113,9 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1399,6 +1414,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
+                | Self::VaultFanoutLaunch
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -1647,6 +1665,8 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutResume
+                | Self::VaultFanoutAck
                 | Self::TasksUpdate
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -1830,6 +1850,9 @@ impl AgentVerb {
             Self::Describe => &["task_ref", "self", "session_id", "key", "frame_epoch"],
             Self::TasksCreate => &["spec", "label", "assignee"],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutLaunch => &["spec"],
+            Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -2096,6 +2119,9 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutLaunch => &["spec"],
+            Self::VaultFanoutResume => &["spec"],
+            Self::VaultFanoutAck => &["spec"],
             Self::TasksUpdate => &["task_ref"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -2404,6 +2430,15 @@ impl AgentVerb {
             }
             Self::TasksWave => {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
+            }
+            Self::VaultFanoutLaunch => {
+                "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."
+            }
+            Self::VaultFanoutResume => {
+                "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
+            }
+            Self::VaultFanoutAck => {
+                "The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."
             }
             Self::TasksUpdate => {
                 "Records the owner's acknowledgement of a failed TASK; any other task stays as it was."

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 223 facade rows, 635 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 183.
+// UniFFI census: 226 facade rows, 642 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 186.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -1726,6 +1726,216 @@ pub struct TaskWaveReceipt {
     pub attempt_ref: String,
     #[serde(rename = "state")]
     pub state: String,
+}
+
+/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutLaunchRequest {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+}
+
+/// `oneiron::agent_dispatch::fanout_statement::PeerCount`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PeerCount {
+    #[serde(rename = "peer")]
+    pub peer: String,
+    #[serde(rename = "count")]
+    pub count: u64,
+}
+
+/// `oneiron::agent_dispatch::spend_calibration::SpendBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpendBasis {
+    #[serde(rename = "calibrated")]
+    Calibrated,
+    #[serde(rename = "prior")]
+    Prior,
+}
+
+/// `oneiron::agent_dispatch::spend_calibration::ExpectedSpend`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ExpectedSpend {
+    #[serde(rename = "units")]
+    pub units: u64,
+    #[serde(rename = "samples")]
+    pub samples: u64,
+    #[serde(rename = "basis")]
+    pub basis: SpendBasis,
+}
+
+/// `oneiron::agent_dispatch::launch::SpendCapView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SpendCapView {
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "cap_units")]
+    pub cap_units: u64,
+    #[serde(rename = "available_units")]
+    pub available_units: u64,
+    #[serde(rename = "hard")]
+    pub hard: bool,
+}
+
+/// `oneiron::agent_dispatch::fanout_statement::WidthCheckClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum WidthCheckClass {
+    #[serde(rename = "auto_clear")]
+    AutoClear {
+        #[serde(
+            rename = "policy_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        policy_ref: Option<String>,
+    },
+    #[serde(rename = "asked")]
+    Asked {
+        #[serde(rename = "row_ref")]
+        row_ref: String,
+    },
+}
+
+/// `oneiron::agent_dispatch::fanout_statement::ExceptionalWidthCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ExceptionalWidthCheck {
+    #[serde(rename = "count")]
+    pub count: u64,
+    #[serde(rename = "threshold")]
+    pub threshold: u64,
+    #[serde(rename = "classification")]
+    pub classification: WidthCheckClass,
+}
+
+/// `oneiron::agent_dispatch::fanout_statement::FanoutStatement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutStatement {
+    #[serde(rename = "agent_count")]
+    pub agent_count: u64,
+    #[serde(rename = "consult_count")]
+    pub consult_count: u64,
+    #[serde(rename = "task_count")]
+    pub task_count: u64,
+    #[serde(rename = "per_peer")]
+    pub per_peer: Vec<PeerCount>,
+    #[serde(rename = "expected")]
+    pub expected: ExpectedSpend,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "cap", default, skip_serializing_if = "Option::is_none")]
+    pub cap: Option<SpendCapView>,
+    #[serde(rename = "over_available")]
+    pub over_available: bool,
+    #[serde(
+        rename = "more_would_buy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub more_would_buy: Option<String>,
+    #[serde(
+        rename = "width_check",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub width_check: Option<ExceptionalWidthCheck>,
+    #[serde(rename = "stated_at")]
+    pub stated_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutLaunchHold {
+    #[serde(rename = "surface_ref")]
+    pub surface_ref: String,
+    #[serde(rename = "denied")]
+    pub denied: bool,
+}
+
+/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FanoutLaunchView {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+    #[serde(rename = "plan_digest")]
+    pub plan_digest: String,
+    #[serde(rename = "statement")]
+    pub statement: FanoutStatement,
+    #[serde(rename = "held", default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<FanoutLaunchHold>,
+    #[serde(
+        rename = "check_row_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub check_row_ref: Option<String>,
+    #[serde(
+        rename = "choice_receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub choice_receipt_ref: Option<String>,
+    #[serde(rename = "task_refs")]
+    pub task_refs: Vec<String>,
+}
+
+/// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchRuling`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FanoutLaunchRuling {
+    #[serde(rename = "approve_once")]
+    ApproveOnce,
+    #[serde(rename = "approve_and_remember")]
+    ApproveAndRemember,
+    #[serde(rename = "deny")]
+    Deny,
+}
+
+/// `oneiron::task_verb::sdk_fanout_launch::FanoutResumeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutResumeRequest {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+    #[serde(rename = "plan_digest")]
+    pub plan_digest: String,
+    #[serde(rename = "ruling")]
+    pub ruling: FanoutLaunchRuling,
+    #[serde(
+        rename = "remembered_cap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remembered_cap: Option<u64>,
+}
+
+/// `oneiron::task_verb::fanout_launch::FanoutCheckChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FanoutCheckChoice {
+    #[serde(rename = "ack")]
+    Ack,
+    #[serde(rename = "ack_and_remember")]
+    AckAndRemember,
+}
+
+/// `oneiron::task_verb::sdk_fanout_launch::FanoutAckRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FanoutAckRequest {
+    #[serde(rename = "launch_ref")]
+    pub launch_ref: String,
+    #[serde(rename = "plan_digest")]
+    pub plan_digest: String,
+    #[serde(rename = "answer")]
+    pub answer: FanoutCheckChoice,
+    #[serde(
+        rename = "remembered_cap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remembered_cap: Option<u64>,
 }
 
 /// `oneiron::task_verb::sdk::TaskUpdateRequest`.
@@ -6512,116 +6722,6 @@ pub enum TaskAskRequest {
 pub enum TaskAskHoldReason {
     #[serde(rename = "NoLiveRoute")]
     NoLiveRoute,
-}
-
-/// `oneiron::agent_dispatch::fanout_statement::PeerCount`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct PeerCount {
-    #[serde(rename = "peer")]
-    pub peer: String,
-    #[serde(rename = "count")]
-    pub count: u64,
-}
-
-/// `oneiron::agent_dispatch::spend_calibration::SpendBasis`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum SpendBasis {
-    #[serde(rename = "calibrated")]
-    Calibrated,
-    #[serde(rename = "prior")]
-    Prior,
-}
-
-/// `oneiron::agent_dispatch::spend_calibration::ExpectedSpend`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ExpectedSpend {
-    #[serde(rename = "units")]
-    pub units: u64,
-    #[serde(rename = "samples")]
-    pub samples: u64,
-    #[serde(rename = "basis")]
-    pub basis: SpendBasis,
-}
-
-/// `oneiron::agent_dispatch::launch::SpendCapView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct SpendCapView {
-    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    #[serde(rename = "unit")]
-    pub unit: String,
-    #[serde(rename = "cap_units")]
-    pub cap_units: u64,
-    #[serde(rename = "available_units")]
-    pub available_units: u64,
-    #[serde(rename = "hard")]
-    pub hard: bool,
-}
-
-/// `oneiron::agent_dispatch::fanout_statement::WidthCheckClass`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-pub enum WidthCheckClass {
-    #[serde(rename = "auto_clear")]
-    AutoClear {
-        #[serde(
-            rename = "policy_ref",
-            default,
-            skip_serializing_if = "Option::is_none"
-        )]
-        policy_ref: Option<String>,
-    },
-    #[serde(rename = "asked")]
-    Asked {
-        #[serde(rename = "row_ref")]
-        row_ref: String,
-    },
-}
-
-/// `oneiron::agent_dispatch::fanout_statement::ExceptionalWidthCheck`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ExceptionalWidthCheck {
-    #[serde(rename = "count")]
-    pub count: u64,
-    #[serde(rename = "threshold")]
-    pub threshold: u64,
-    #[serde(rename = "classification")]
-    pub classification: WidthCheckClass,
-}
-
-/// `oneiron::agent_dispatch::fanout_statement::FanoutStatement`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct FanoutStatement {
-    #[serde(rename = "agent_count")]
-    pub agent_count: u64,
-    #[serde(rename = "consult_count")]
-    pub consult_count: u64,
-    #[serde(rename = "task_count")]
-    pub task_count: u64,
-    #[serde(rename = "per_peer")]
-    pub per_peer: Vec<PeerCount>,
-    #[serde(rename = "expected")]
-    pub expected: ExpectedSpend,
-    #[serde(rename = "unit")]
-    pub unit: String,
-    #[serde(rename = "cap", default, skip_serializing_if = "Option::is_none")]
-    pub cap: Option<SpendCapView>,
-    #[serde(rename = "over_available")]
-    pub over_available: bool,
-    #[serde(
-        rename = "more_would_buy",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub more_would_buy: Option<String>,
-    #[serde(
-        rename = "width_check",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub width_check: Option<ExceptionalWidthCheck>,
-    #[serde(rename = "stated_at")]
-    pub stated_at: u64,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskReceipt`.

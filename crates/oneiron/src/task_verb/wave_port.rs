@@ -9,6 +9,10 @@ use super::create_origin::{
     task_create_origin_in_txn, wave_plan_origin_in,
 };
 use super::create_validation::ValidatedTaskCreate;
+use super::fanout_launch::{
+    WaveCheck, WaveLaunchAdmission, WaveLaunchGate, WaveLaunchInput, admit_wave_launch_in,
+    hold_planning_attempt_in, mark_launched_in, record_wave_check_in, wave_check_keys,
+};
 use super::{TaskAssignee, TaskKind};
 use crate::agent_dispatch::{
     AgentDispatchTarget, AgentDispatcher, DispatchAgent, FanoutCaller, FanoutStatement, FanoutWork,
@@ -64,6 +68,9 @@ pub struct VaultWaveTaskPort<'a> {
     /// holds it; `None` or a root witness: host-created planning, whose
     /// TASKs stay roots (a root witness carries only its conversation).
     origin: Option<TaskCreateOrigin>,
+    /// The launch approval a gated apply's cut waits on (OF-393); `None`:
+    /// the ungated apply, whose cut lands at once.
+    gate: Option<WaveLaunchGate>,
 }
 impl<'a> VaultWaveTaskPort<'a> {
     pub fn new(vault: &'a Vault, actor: EntityId, actor_class: EdgeActorClass) -> Self {
@@ -73,6 +80,7 @@ impl<'a> VaultWaveTaskPort<'a> {
             actor_class,
             attempt: None,
             origin: None,
+            gate: None,
         }
     }
 }
@@ -99,8 +107,8 @@ fn statement_key(plan: &str) -> [u8; 32] {
 /// person a peer TASK, one with no assignee the default realization. A
 /// host-created plan's TASKs dispatch as roots, so its statement states no
 /// cap; an agent-created plan's dispatch under their creator, so its
-/// statement states the creator's cap (OF-532). Width is checked, never
-/// refused.
+/// statement states the creator's cap (OF-532). Width is never refused: the
+/// caller classifies its check.
 fn wave_statement_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -137,15 +145,25 @@ fn wave_statement_in(
         parent_attempt: origin.and_then(TaskCreateOrigin::parent_attempt),
         ..FanoutCaller::default()
     };
-    let mut statement = AgentDispatcher::new(vault).plan_fanout_in_txn(txn, &caller, &work, now)?;
-    super::fanout_check::raise_unheld_width_check(
-        vault,
-        txn,
-        &mut statement,
-        &format!("wave:{}:{}", actor.to_hex(), plan.epic_task_ref().to_hex()),
-        format!("fanout_check_row:wave:{}", plan.plan_ref()),
-    )?;
-    Ok(statement)
+    Ok(AgentDispatcher::new(vault).plan_fanout_in_txn(txn, &caller, &work, now)?)
+}
+
+/// [`wave_statement_in`] for a cut that lands with no hold: the width check
+/// is raised as the ungated fan-outs raise it. `true`: it asked, naming the
+/// durable row the apply records beside the cut.
+fn unheld_wave_statement_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    plan: &ValidatedWavePlan,
+    origin: Option<&TaskCreateOrigin>,
+    now: u64,
+) -> Result<(FanoutStatement, bool), MemoryError> {
+    let mut statement = wave_statement_in(vault, txn, actor, plan, origin, now)?;
+    let (scope, row_ref) = wave_check_keys(actor, plan)?;
+    let asked =
+        super::fanout_check::raise_unheld_width_check(vault, txn, &mut statement, &scope, row_ref)?;
+    Ok((statement, asked))
 }
 
 fn decode_statement(raw: &[u8]) -> crate::Result<FanoutStatement> {
@@ -167,15 +185,11 @@ fn fingerprint(plan: &ValidatedWavePlan) -> Vec<u8> {
         .to_string()
         .into_bytes()
 }
-impl WaveTaskPort for VaultWaveTaskPort<'_> {
-    fn apply_validated_plan(
-        &mut self,
-        plan: &ValidatedWavePlan,
-        now: u64,
-    ) -> WaveResult<Vec<WaveTaskWrite>> {
-        // Keep a production-side check before vault writes. The carrier is
-        // sealed outside wave_orchestration, but this port also rejects any
-        // future internal path that skips validation.
+impl VaultWaveTaskPort<'_> {
+    /// A production-side check before vault writes. The carrier is sealed
+    /// outside wave_orchestration, but this port also rejects any future
+    /// internal path that skips validation.
+    fn require_validated(plan: &ValidatedWavePlan) -> WaveResult<()> {
         let checked = WaveOrchestrator::<Self>::validate(WavePlan {
             schema_version: WAVE_PLAN_SCHEMA_VERSION,
             plan_ref: plan.plan_ref().to_owned(),
@@ -185,63 +199,247 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
         if &checked != plan {
             return Err(Error::InvariantViolation("unvalidated wave ordering").into());
         }
-        let memory = self.vault.memory(self.actor, self.actor_class);
-        memory
-            .with_verified_actor_write_txn(|txn| {
-                if let Some(attempt) = &self.attempt {
-                    let current = crate::attempt_queue::AttemptQueue::new(self.vault)
-                        .get_in_write_txn(txn, attempt.id)?;
-                    if current.as_ref().is_none_or(|current| {
-                        current.state != crate::attempt_queue::AttemptState::Leased
-                            || current.lease_owner != attempt.lease_owner
-                            || current.attempt_count != attempt.attempt_count
-                    }) {
-                        return Err(MemoryError::bad_request(
-                            "wave planner lease is no longer current",
-                        ));
+        Ok(())
+    }
+
+    /// The writer's checks before any apply of `plan` writes: the planner's
+    /// lease is current, the creator still stands, the actor may create
+    /// TASKs, the epic is a TASK and the plan_ref names this one cut.
+    /// Returns the cut's fingerprint, which seals it.
+    fn check_cut_in(
+        &self,
+        memory: &Memory<'_>,
+        txn: &mut heed::RwTxn<'_>,
+        plan: &ValidatedWavePlan,
+    ) -> MemoryResult<Vec<u8>> {
+        if let Some(attempt) = &self.attempt {
+            let current = crate::attempt_queue::AttemptQueue::new(self.vault)
+                .get_in_write_txn(txn, attempt.id)?;
+            if current.as_ref().is_none_or(|current| {
+                current.state != crate::attempt_queue::AttemptState::Leased
+                    || current.lease_owner != attempt.lease_owner
+                    || current.attempt_count != attempt.attempt_count
+            }) {
+                return Err(MemoryError::bad_request(
+                    "wave planner lease is no longer current",
+                ));
+            }
+        }
+        // A plan an agent queued lands under its creator only while
+        // that creator's run and spend lease still stand.
+        if let Some(origin) = &self.origin {
+            require_creator_in_txn(memory, &*txn, origin)?;
+        }
+        if super::rate_limit::task_actor_ceiling(self.vault, txn, self.actor, self.actor_class)?
+            != PolicyApprovalCeiling::Auto
+        {
+            return Err(MemoryError::bad_request(
+                "wave plan requires task-create authority",
+            ));
+        }
+        if self
+            .vault
+            .get_entity_type_in_txn(txn, &plan.epic_task_ref())?
+            != Some(crate::registry::ENTITY_TYPE_TASK)
+        {
+            return Err(MemoryError::bad_request("wave epic must be a TASK"));
+        }
+        let fingerprint = fingerprint(plan);
+        if WAVE_PLAN_INDEX
+            .get(&self.vault.store, txn, &index_key(plan.plan_ref(), ""))?
+            .is_some_and(|raw| raw != fingerprint)
+        {
+            return Err(MemoryError::bad_request(
+                "wave plan_ref reused for a different cut",
+            ));
+        }
+        Ok(fingerprint)
+    }
+
+    /// Freezes `statement` as the cut's, before any TASK row; a re-apply of
+    /// the same cut keeps the statement its first apply froze.
+    fn freeze_statement_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        plan: &ValidatedWavePlan,
+        statement: &FanoutStatement,
+    ) -> MemoryResult<()> {
+        let frozen_key = statement_key(plan.plan_ref());
+        if WAVE_PLAN_INDEX
+            .get(&self.vault.store, txn, &frozen_key)?
+            .is_none()
+        {
+            let encoded = serde_json::to_vec(statement)
+                .map_err(|_| Error::InvariantViolation("wave statement encoding"))?;
+            WAVE_PLAN_INDEX.put(&self.vault.store, txn, &frozen_key, &encoded)?;
+        }
+        Ok(())
+    }
+
+    /// Mints the cut's TASKs and `blocked_by` edges, idempotently per local
+    /// key, seals the cut and completes the planning attempt this port
+    /// holds, in one transaction.
+    fn land_cut_in(
+        &self,
+        memory: &Memory<'_>,
+        txn: &mut heed::RwTxn<'_>,
+        plan: &ValidatedWavePlan,
+        fingerprint: &[u8],
+        now: u64,
+    ) -> MemoryResult<Vec<WaveTaskWrite>> {
+        let mut ids = BTreeMap::new();
+        for local in plan.topological_order() {
+            let task = &plan.tasks()[local];
+            let key = index_key(plan.plan_ref(), local);
+            let id = if let Some(raw) = WAVE_PLAN_INDEX.get(&self.vault.store, txn, &key)? {
+                let id = EntityId::from_bytes(
+                    raw.as_slice()
+                        .try_into()
+                        .map_err(|_| Error::CorruptedIndex("wave task index"))?,
+                )?;
+                if self.vault.get_entity_type_in_txn(txn, &id)?
+                    != Some(crate::registry::ENTITY_TYPE_TASK)
+                {
+                    return Err(Error::EntityNotFound.into());
+                }
+                id
+            } else {
+                let assignee = match task.assignee_ref {
+                    None => None,
+                    Some(actor_ref) => {
+                        Some(match self.vault.get_entity_type_in_txn(txn, &actor_ref)? {
+                            Some(crate::registry::ENTITY_TYPE_PERSON) => {
+                                TaskAssignee::Peer { actor_ref }
+                            }
+                            Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => {
+                                TaskAssignee::AgentDef {
+                                    agent_def_ref: actor_ref,
+                                }
+                            }
+                            _ => {
+                                return Err(MemoryError::bad_request(
+                                    "wave assignee must be an actor or agent definition",
+                                ));
+                            }
+                        })
                     }
-                }
-                // A plan an agent queued lands under its creator only while
-                // that creator's run and spend lease still stand.
-                if let Some(origin) = &self.origin {
-                    require_creator_in_txn(&memory, &*txn, origin)?;
-                }
-                if super::rate_limit::task_actor_ceiling(
+                };
+                let encoded = rmp_serde::to_vec_named(&task.spec)
+                    .map_err(|_| Error::InvariantViolation("wave spec encoding"))?;
+                let spec = rmpv::decode::read_value(&mut encoded.as_slice())
+                    .map_err(|_| Error::InvariantViolation("wave spec decoding"))?;
+                let validated = ValidatedTaskCreate {
+                    kind: TaskKind::Standard,
+                    assignee,
+                    consult: None,
+                    ttl: None,
+                    spec,
+                    type_ref: crate::task_type::TaskTypeRef::seeded_root(),
+                };
+                super::rate_limit::record_task_create(
                     self.vault,
                     txn,
                     self.actor,
-                    self.actor_class,
-                )? != PolicyApprovalCeiling::Auto
-                {
-                    return Err(MemoryError::bad_request(
-                        "wave plan requires task-create authority",
-                    ));
-                }
-                if self
-                    .vault
-                    .get_entity_type_in_txn(txn, &plan.epic_task_ref())?
-                    != Some(crate::registry::ENTITY_TYPE_TASK)
-                {
-                    return Err(MemoryError::bad_request("wave epic must be a TASK"));
-                }
-                let seal_key = index_key(plan.plan_ref(), "");
-                let fingerprint = fingerprint(plan);
-                if WAVE_PLAN_INDEX
-                    .get(&self.vault.store, txn, &seal_key)?
-                    .is_some_and(|raw| raw != fingerprint)
-                {
-                    return Err(MemoryError::bad_request(
-                        "wave plan_ref reused for a different cut",
-                    ));
-                }
+                    self.vault.now_recorded_at(),
+                    super::TaskCreateRateLimit::default(),
+                )?;
+                let id = memory.mint_task_in_txn(
+                    txn,
+                    &validated,
+                    Some(task.label.clone()),
+                    self.actor,
+                    &facade_provenance(WAVE_PLAN_ATTEMPT_KIND),
+                    now,
+                )?;
+                memory.route_created_task_with_origin_in_txn(
+                    txn,
+                    id,
+                    &validated,
+                    self.origin.as_ref(),
+                    now,
+                )?;
+                WAVE_PLAN_INDEX.put(&self.vault.store, txn, &key, &id.as_bytes().to_vec())?;
+                id
+            };
+            ids.insert(local.clone(), id);
+        }
+        let mut writes = Vec::new();
+        for local in plan.topological_order() {
+            let task = &plan.tasks()[local];
+            let id = ids[local];
+            let blockers = task
+                .blocked_by
+                .iter()
+                .map(|local| ids[local])
+                .collect::<Vec<_>>();
+            for blocker in &blockers {
+                let edge = blocked_by_edge_write(
+                    id,
+                    self.vault
+                        .get_entity_type_in_txn(txn, &id)?
+                        .ok_or(Error::EntityNotFound)?,
+                    *blocker,
+                    self.vault
+                        .get_entity_type_in_txn(txn, blocker)?
+                        .ok_or(Error::EntityNotFound)?,
+                )
+                .map_err(|e| MemoryError::bad_request(e.to_string()))?;
+                self.vault
+                    .batch_in()
+                    .edge(&edge.dependent(), edge.kind(), &edge.blocker(), 1.0)
+                    .apply(txn)?;
+            }
+            writes.push(WaveTaskWrite {
+                local_key: local.clone(),
+                task_ref: id,
+                label: task.label.clone(),
+                assignee_ref: task.assignee_ref,
+                blocker_refs: blockers,
+            });
+        }
+        WAVE_PLAN_INDEX.put(
+            &self.vault.store,
+            txn,
+            &index_key(plan.plan_ref(), ""),
+            &fingerprint.to_vec(),
+        )?;
+        if let Some(attempt) = &self.attempt {
+            let owner = attempt
+                .lease_owner
+                .as_ref()
+                .ok_or_else(|| MemoryError::bad_request("wave planner lease has no owner"))?;
+            AttemptQueue::new(self.vault).complete_in_txn(
+                txn,
+                CompleteAttempt {
+                    id: attempt.id,
+                    lease_owner: owner.clone(),
+                    attempt_count: attempt.attempt_count,
+                    now,
+                },
+            )?;
+        }
+        Ok(writes)
+    }
+}
+
+impl WaveTaskPort for VaultWaveTaskPort<'_> {
+    fn apply_validated_plan(
+        &mut self,
+        plan: &ValidatedWavePlan,
+        now: u64,
+    ) -> WaveResult<Vec<WaveTaskWrite>> {
+        Self::require_validated(plan)?;
+        let memory = self.vault.memory(self.actor, self.actor_class);
+        memory
+            .with_verified_actor_write_txn(|txn| {
+                let fingerprint = self.check_cut_in(&memory, txn, plan)?;
                 // Stated before any TASK row; a re-apply of the same cut keeps
                 // the statement its first apply froze.
-                let frozen_key = statement_key(plan.plan_ref());
-                if WAVE_PLAN_INDEX
-                    .get(&self.vault.store, txn, &frozen_key)?
+                let asked = if WAVE_PLAN_INDEX
+                    .get(&self.vault.store, txn, &statement_key(plan.plan_ref()))?
                     .is_none()
                 {
-                    let statement = wave_statement_in(
+                    let (statement, asked) = unheld_wave_statement_in(
                         self.vault,
                         txn,
                         self.actor,
@@ -249,141 +447,91 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                         self.origin.as_ref(),
                         now,
                     )?;
-                    let encoded = serde_json::to_vec(&statement)
-                        .map_err(|_| Error::InvariantViolation("wave statement encoding"))?;
-                    WAVE_PLAN_INDEX.put(&self.vault.store, txn, &frozen_key, &encoded)?;
-                }
-                let mut ids = BTreeMap::new();
-                for local in plan.topological_order() {
-                    let task = &plan.tasks()[local];
-                    let key = index_key(plan.plan_ref(), local);
-                    let id = if let Some(raw) = WAVE_PLAN_INDEX.get(&self.vault.store, txn, &key)? {
-                        let id = EntityId::from_bytes(
-                            raw.as_slice()
-                                .try_into()
-                                .map_err(|_| Error::CorruptedIndex("wave task index"))?,
-                        )?;
-                        if self.vault.get_entity_type_in_txn(txn, &id)?
-                            != Some(crate::registry::ENTITY_TYPE_TASK)
-                        {
-                            return Err(Error::EntityNotFound.into());
-                        }
-                        id
-                    } else {
-                        let assignee = match task.assignee_ref {
-                            None => None,
-                            Some(actor_ref) => {
-                                Some(match self.vault.get_entity_type_in_txn(txn, &actor_ref)? {
-                                    Some(crate::registry::ENTITY_TYPE_PERSON) => {
-                                        TaskAssignee::Peer { actor_ref }
-                                    }
-                                    Some(crate::registry::ENTITY_TYPE_AGENT_DEF) => {
-                                        TaskAssignee::AgentDef {
-                                            agent_def_ref: actor_ref,
-                                        }
-                                    }
-                                    _ => {
-                                        return Err(MemoryError::bad_request(
-                                            "wave assignee must be an actor or agent definition",
-                                        ));
-                                    }
-                                })
-                            }
-                        };
-                        let encoded = rmp_serde::to_vec_named(&task.spec)
-                            .map_err(|_| Error::InvariantViolation("wave spec encoding"))?;
-                        let spec = rmpv::decode::read_value(&mut encoded.as_slice())
-                            .map_err(|_| Error::InvariantViolation("wave spec decoding"))?;
-                        let validated = ValidatedTaskCreate {
-                            kind: TaskKind::Standard,
-                            assignee,
-                            consult: None,
-                            ttl: None,
-                            spec,
-                            type_ref: crate::task_type::TaskTypeRef::seeded_root(),
-                        };
-                        super::rate_limit::record_task_create(
-                            self.vault,
-                            txn,
-                            self.actor,
-                            self.vault.now_recorded_at(),
-                            super::TaskCreateRateLimit::default(),
-                        )?;
-                        let id = memory.mint_task_in_txn(
-                            txn,
-                            &validated,
-                            Some(task.label.clone()),
-                            self.actor,
-                            &facade_provenance(WAVE_PLAN_ATTEMPT_KIND),
-                            now,
-                        )?;
-                        memory.route_created_task_with_origin_in_txn(
-                            txn,
-                            id,
-                            &validated,
-                            self.origin.as_ref(),
-                            now,
-                        )?;
-                        WAVE_PLAN_INDEX.put(
-                            &self.vault.store,
-                            txn,
-                            &key,
-                            &id.as_bytes().to_vec(),
-                        )?;
-                        id
-                    };
-                    ids.insert(local.clone(), id);
-                }
-                let mut writes = Vec::new();
-                for local in plan.topological_order() {
-                    let task = &plan.tasks()[local];
-                    let id = ids[local];
-                    let blockers = task
-                        .blocked_by
-                        .iter()
-                        .map(|local| ids[local])
-                        .collect::<Vec<_>>();
-                    for blocker in &blockers {
-                        let edge = blocked_by_edge_write(
-                            id,
-                            self.vault
-                                .get_entity_type_in_txn(txn, &id)?
-                                .ok_or(Error::EntityNotFound)?,
-                            *blocker,
-                            self.vault
-                                .get_entity_type_in_txn(txn, blocker)?
-                                .ok_or(Error::EntityNotFound)?,
-                        )
-                        .map_err(|e| MemoryError::bad_request(e.to_string()))?;
-                        self.vault
-                            .batch_in()
-                            .edge(&edge.dependent(), edge.kind(), &edge.blocker(), 1.0)
-                            .apply(txn)?;
-                    }
-                    writes.push(WaveTaskWrite {
-                        local_key: local.clone(),
-                        task_ref: id,
-                        label: task.label.clone(),
-                        assignee_ref: task.assignee_ref,
-                        blocker_refs: blockers,
-                    });
-                }
-                WAVE_PLAN_INDEX.put(&self.vault.store, txn, &seal_key, &fingerprint)?;
-                if let Some(attempt) = &self.attempt {
-                    let owner = attempt.lease_owner.as_ref().ok_or_else(|| {
-                        MemoryError::bad_request("wave planner lease has no owner")
-                    })?;
-                    AttemptQueue::new(self.vault).complete_in_txn(
+                    self.freeze_statement_in(txn, plan, &statement)?;
+                    asked.then_some(statement)
+                } else {
+                    None
+                };
+                let writes = self.land_cut_in(&memory, txn, plan, &fingerprint, now)?;
+                // An asked width check names a durable row the owner
+                // acknowledges; it holds nothing.
+                if let Some(statement) = &asked {
+                    record_wave_check_in(
+                        self.vault,
                         txn,
-                        CompleteAttempt {
-                            id: attempt.id,
-                            lease_owner: owner.clone(),
-                            attempt_count: attempt.attempt_count,
+                        WaveCheck {
+                            actor: self.actor,
+                            actor_class: self.actor_class,
+                            cut: plan,
+                            origin: self.origin.as_ref(),
+                            statement,
+                            writes: &writes,
                             now,
                         },
                     )?;
                 }
                 Ok(writes)
+            })
+            .map_err(engine_error)
+            .inspect(|_| {
+                if self.attempt.is_some() {
+                    self.vault.store.notify_attempt_observers();
+                }
+            })
+    }
+
+    fn apply_validated_plan_gated(
+        &mut self,
+        plan: &ValidatedWavePlan,
+        now: u64,
+    ) -> WaveResult<WaveTaskApplyOutcome> {
+        let Some(gate) = self.gate.as_ref() else {
+            return self
+                .apply_validated_plan(plan, now)
+                .map(WaveTaskApplyOutcome::Applied);
+        };
+        Self::require_validated(plan)?;
+        let memory = self.vault.memory(self.actor, self.actor_class);
+        memory
+            .with_verified_actor_write_txn(|txn| {
+                let fingerprint = self.check_cut_in(&memory, txn, plan)?;
+                let statement = wave_statement_in(
+                    self.vault,
+                    txn,
+                    self.actor,
+                    plan,
+                    self.origin.as_ref(),
+                    now,
+                )?;
+                let admission = admit_wave_launch_in(
+                    self.vault,
+                    txn,
+                    WaveLaunchInput {
+                        actor: self.actor,
+                        actor_class: self.actor_class,
+                        cut: plan,
+                        origin: self.origin.as_ref(),
+                        statement,
+                        gate,
+                        now,
+                    },
+                )?;
+                match admission {
+                    WaveLaunchAdmission::Launch(mut launch) => {
+                        self.freeze_statement_in(txn, plan, &launch.statement)?;
+                        let writes = self.land_cut_in(&memory, txn, plan, &fingerprint, now)?;
+                        mark_launched_in(self.vault, txn, &mut launch, &writes)?;
+                        Ok(WaveTaskApplyOutcome::Applied(writes))
+                    }
+                    // Nothing is minted or sealed; the planning attempt parks
+                    // with the exact cut and creator frozen on the launch.
+                    WaveLaunchAdmission::Held(mut launch) => {
+                        if let Some(attempt) = &self.attempt {
+                            hold_planning_attempt_in(self.vault, txn, &mut launch, attempt, now)?;
+                        }
+                        Ok(WaveTaskApplyOutcome::Paused(launch.receipt()))
+                    }
+                }
             })
             .map_err(engine_error)
             .inspect(|_| {
@@ -408,7 +556,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
         {
             return Ok(Some(decode_statement(&raw)?));
         }
-        wave_statement_in(
+        unheld_wave_statement_in(
             self.vault,
             &txn,
             self.actor,
@@ -416,7 +564,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
             self.origin.as_ref(),
             now,
         )
-        .map(Some)
+        .map(|(statement, _)| Some(statement))
         .map_err(engine_error)
     }
 
@@ -654,6 +802,55 @@ impl Vault {
         plan: WavePlan,
         now: u64,
     ) -> WaveResult<WavePlanReceipt> {
+        let origin = self.bound_wave_origin(attempt, &plan)?;
+        let mut port = VaultWaveTaskPort::new(self, actor, actor_class);
+        port.attempt = Some(attempt.clone());
+        port.origin = origin;
+        let validated = WaveOrchestrator::<VaultWaveTaskPort<'_>>::validate(plan)?;
+        WaveOrchestrator::new(port).apply(validated, now)
+    }
+
+    /// [`Self::apply_wave_plan_attempt`] under the vault's fan-out approval
+    /// mode (OF-393): `manual` holds the cut, `auto` launches it on the
+    /// learned decider's allow (`decisions`, the host's ladder) and otherwise
+    /// holds it for the escalated role, `full-access` launches it. The
+    /// threshold only marks the width check: on a launched cut it is a
+    /// non-blocking question row ([`Memory::ack_task_fanout_check`]).
+    ///
+    /// A held cut mints nothing, seals nothing and completes nothing: it is
+    /// frozen whole with its creator, and its planning attempt parks under
+    /// the fan-out hold until the owner rules ([`Memory::resume_task_fanout`]).
+    /// An approval launches that exact cut and completes the attempt in one
+    /// transaction; a denial leaves both held and visible. A cut already
+    /// held or launched for this actor and plan_ref replays that launch.
+    pub fn apply_wave_plan_attempt_gated(
+        &self,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        plan: WavePlan,
+        decisions: Option<&crate::fanout_auto::FanoutDecisions<'_>>,
+        now: u64,
+    ) -> WaveResult<WaveApplyOutcome> {
+        let origin = self.bound_wave_origin(attempt, &plan)?;
+        let validated = WaveOrchestrator::<VaultWaveTaskPort<'_>>::validate(plan)?;
+        // Decision IO never holds the writer; the writer rechecks the snapshot.
+        let gate = WaveLaunchGate::decide(self, actor, &validated, origin.as_ref(), decisions)
+            .map_err(engine_error)?;
+        let mut port = VaultWaveTaskPort::new(self, actor, actor_class);
+        port.attempt = Some(attempt.clone());
+        port.origin = origin;
+        port.gate = Some(gate);
+        WaveOrchestrator::new(port).apply_gated(validated, now)
+    }
+
+    /// The creator a leased planning attempt's cut lands under, once the cut
+    /// is bound to that attempt.
+    fn bound_wave_origin(
+        &self,
+        attempt: &crate::attempt_queue::AttemptRecord,
+        plan: &WavePlan,
+    ) -> WaveResult<Option<TaskCreateOrigin>> {
         let payload: serde_json::Value = serde_json::from_slice(&attempt.payload)
             .map_err(|_| Error::InvalidConfig("invalid wave request".to_owned()))?;
         if attempt.kind != WAVE_PLAN_ATTEMPT_KIND
@@ -666,16 +863,45 @@ impl Vault {
             )
             .into());
         }
-        let origin = {
-            let txn = self.store.env.read_txn().map_err(Error::from)?;
-            wave_plan_origin_in(self, &txn, attempt.id).map_err(engine_error)?
-        };
-        let mut port = VaultWaveTaskPort::new(self, actor, actor_class);
-        port.attempt = Some(attempt.clone());
-        port.origin = origin;
-        let validated = WaveOrchestrator::<VaultWaveTaskPort<'_>>::validate(plan)?;
-        WaveOrchestrator::new(port).apply(validated, now)
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        wave_plan_origin_in(self, &txn, attempt.id).map_err(engine_error)
     }
+}
+
+/// A held cut the owner approved, as its launch froze it.
+pub(super) struct ApprovedCut<'a> {
+    pub(super) actor: EntityId,
+    pub(super) actor_class: EdgeActorClass,
+    pub(super) origin: Option<TaskCreateOrigin>,
+    pub(super) cut: WavePlan,
+    pub(super) statement: &'a FanoutStatement,
+    pub(super) now: u64,
+}
+
+/// Lands an approved cut in the approval's transaction, as its actor: the
+/// writer's checks every apply runs (the creator's run and spend lease, the
+/// actor's task-create authority, the epic, one cut per plan_ref), then the
+/// TASKs, edges and seal under the statement frozen at the hold. The
+/// approval settles the planning attempts parked under it.
+pub(super) fn land_approved_cut_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    approved: ApprovedCut<'_>,
+) -> MemoryResult<Vec<WaveTaskWrite>> {
+    let cut = WaveOrchestrator::<VaultWaveTaskPort<'_>>::validate(approved.cut)
+        .map_err(|_| Error::InvariantViolation("a frozen wave cut no longer validates"))?;
+    let port = VaultWaveTaskPort {
+        vault,
+        actor: approved.actor,
+        actor_class: approved.actor_class,
+        attempt: None,
+        origin: approved.origin,
+        gate: None,
+    };
+    let memory = vault.memory(approved.actor, approved.actor_class);
+    let fingerprint = port.check_cut_in(&memory, txn, &cut)?;
+    port.freeze_statement_in(txn, &cut, approved.statement)?;
+    port.land_cut_in(&memory, txn, &cut, &fingerprint, approved.now)
 }
 
 impl Memory<'_> {

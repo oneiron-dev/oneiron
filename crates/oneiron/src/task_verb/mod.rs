@@ -42,6 +42,7 @@ mod entity_delta_facade;
 mod external_attempt;
 pub(crate) use external_attempt::decode as decode_external_task_attempt;
 mod fanout_check;
+mod fanout_launch;
 mod follow_up;
 mod highway;
 mod highway_accept;
@@ -211,6 +212,7 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
+pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
@@ -228,6 +230,7 @@ mod sdk_connector;
 mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_embedding_space;
+mod sdk_fanout_launch;
 mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_legal_hold;
