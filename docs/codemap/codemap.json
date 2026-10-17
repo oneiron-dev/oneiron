@@ -1131,7 +1131,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 21,
       "struct": 1
      }
     },
@@ -17845,7 +17845,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health.rs",
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
-      "const": 11,
+      "const": 12,
       "crate-vis": 4,
       "enum": 6,
       "fn": 12,
@@ -27376,7 +27376,7 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 6,
-      "fn": 15,
+      "fn": 16,
       "re-export": 2,
       "struct": 4
      }
@@ -35008,7 +35008,7 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -61350,7 +61350,7 @@
      "path": "src/ai_host/coach_health.rs",
      "purpose": "The host Coach's answer to an agent-health ask (agent-mind §3.5, OF-568)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -61370,7 +61370,7 @@
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -62356,13 +62356,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/core/hydrate.rs",
      "purpose": "Hydrate and short-id hydrate DTOs, routes, and mappers",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -65228,6 +65228,7 @@
       "BigReply",
       "BigSettings",
       "DecisionsSettings",
+      "ImagePickSettings",
       "SeatPickSettings",
       "SystemOneSettings"
      ],
@@ -65236,7 +65237,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -65566,7 +65567,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "crate-vis": 9,
-      "fn": 13,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -66204,7 +66205,7 @@
      "path": "src/livequery/error.rs",
      "purpose": "The HTTP facade error body on app frames",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -69276,7 +69277,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 33,
+   "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 532,
    "test_files": 182
