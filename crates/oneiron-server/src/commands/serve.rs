@@ -231,6 +231,8 @@ pub(super) async fn serve_with_config(
     workers.push(crate::ai_host::identity::spawn(&sync_server));
     // Failure cases and blocked reports reach the Coach as proposed heals (OF-418).
     workers.push(crate::ai_host::coach_heal::spawn(&sync_server));
+    // The nightly Coach jobs that need the host's model or rules (OF-420).
+    workers.push(crate::ai_host::coach_host::spawn(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).
     workers.extend(crate::ai_host::failure_signals::spawn(
         &sync_server,

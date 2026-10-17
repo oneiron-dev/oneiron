@@ -106,6 +106,7 @@ mod maintain;
 pub use maintain::maintain;
 mod owner;
 pub use owner::legal_holds;
+pub use owner::learning_settings;
 pub use owner::{
     backup, doctor, export, handoff_alarms, import, recover_clock, recover_window, restore, runs,
     secret_scan, secrets, vault_key, whoami,

@@ -62,6 +62,7 @@ pub enum AgentVerb {
     VaultMembersDecline,
     VaultMembersWithdrawInvitation,
     VaultGuestsRevoke,
+    VaultGuestsMintSlip,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultLegalHoldsPlace,
@@ -69,6 +70,9 @@ pub enum AgentVerb {
     VaultLegalHoldsList,
     VaultLegalHoldsLog,
     VaultLegalHoldsLiftAndErase,
+    VaultSettingsLearning,
+    VaultSettingsLearningPut,
+    VaultSettingsLearningClear,
     VaultLensesPropose,
     VaultLensesActivate,
     VaultLensesDeactivate,
@@ -274,6 +278,7 @@ impl AgentVerb {
         Self::VaultMembersDecline,
         Self::VaultMembersWithdrawInvitation,
         Self::VaultGuestsRevoke,
+        Self::VaultGuestsMintSlip,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultLegalHoldsPlace,
@@ -281,6 +286,9 @@ impl AgentVerb {
         Self::VaultLegalHoldsList,
         Self::VaultLegalHoldsLog,
         Self::VaultLegalHoldsLiftAndErase,
+        Self::VaultSettingsLearning,
+        Self::VaultSettingsLearningPut,
+        Self::VaultSettingsLearningClear,
         Self::VaultLensesPropose,
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
@@ -489,6 +497,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => "vault.members.decline",
             Self::VaultMembersWithdrawInvitation => "vault.members.withdraw_invitation",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
+            Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
@@ -498,6 +507,9 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
             Self::VaultLegalHoldsLog => "vault.legal_holds.log",
             Self::VaultLegalHoldsLiftAndErase => "vault.legal_holds.lift_and_erase",
+            Self::VaultSettingsLearning => "vault.settings.learning",
+            Self::VaultSettingsLearningPut => "vault.settings.learning.put",
+            Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
             Self::VaultLensesPropose => "vault.lenses.propose",
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
@@ -702,6 +714,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -709,6 +722,9 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultSettingsLearning
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -921,6 +937,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -928,6 +945,9 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultSettingsLearning
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1159,6 +1179,7 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
@@ -1166,6 +1187,9 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultSettingsLearning
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1340,10 +1364,13 @@ impl AgentVerb {
                 | Self::VaultMembersDecline
                 | Self::VaultMembersWithdrawInvitation
                 | Self::VaultGuestsRevoke
+                | Self::VaultGuestsMintSlip
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
+                | Self::VaultSettingsLearningPut
+                | Self::VaultSettingsLearningClear
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
@@ -1498,6 +1525,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1505,6 +1533,9 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultSettingsLearning => &["spec"],
+            Self::VaultSettingsLearningPut => &["spec"],
+            Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -1711,6 +1742,7 @@ impl AgentVerb {
             Self::VaultMembersDecline => &["spec"],
             Self::VaultMembersWithdrawInvitation => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
+            Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -1718,6 +1750,9 @@ impl AgentVerb {
             Self::VaultLegalHoldsList => &[],
             Self::VaultLegalHoldsLog => &[],
             Self::VaultLegalHoldsLiftAndErase => &["spec"],
+            Self::VaultSettingsLearning => &["spec"],
+            Self::VaultSettingsLearningPut => &["spec"],
+            Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultLensesPropose => &["spec"],
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
@@ -2023,6 +2058,9 @@ impl AgentVerb {
                 "An Admin with the add_member power takes back a pending invitation."
             }
             Self::VaultGuestsRevoke => "",
+            Self::VaultGuestsMintSlip => {
+                "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+            }
             Self::VaultAuthorityHandoffAlarms => {
                 "Every saved authority handoff fork alarm, for the owner."
             }
@@ -2039,6 +2077,15 @@ impl AgentVerb {
             Self::VaultLegalHoldsLog => "The owner-visible legal hold log, oldest first.",
             Self::VaultLegalHoldsLiftAndErase => {
                 "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."
+            }
+            Self::VaultSettingsLearning => {
+                "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."
+            }
+            Self::VaultSettingsLearningPut => {
+                "The owner lays one seed or pin on a learned setting at the vault, a project or a task type, replacing the row of the same key, mode and scope."
+            }
+            Self::VaultSettingsLearningClear => {
+                "The owner clears one learned-setting row of a key, mode and scope."
             }
             Self::VaultLensesPropose => {
                 "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."
