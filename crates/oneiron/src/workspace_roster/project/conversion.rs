@@ -125,7 +125,7 @@ impl Vault {
             // passes the policy's task threshold, its census raises the
             // owner's question for the thread and the bind goes on.
             let mut census = crate::scan_check::ScanCount::start_at(
-                crate::scan_check::EngineScan::RoomThreadTasks,
+                crate::scan_check::EngineScan::ThreadTaskCensus,
                 thread.as_bytes(),
                 u64::try_from(policy.max_tasks).unwrap_or(u64::MAX),
             );
@@ -350,7 +350,7 @@ impl Vault {
             // the policy's task threshold its census raises the owner's
             // question for the thread and the conversion goes on.
             let mut census = crate::scan_check::ScanCount::start_at(
-                crate::scan_check::EngineScan::RoomThreadTasks,
+                crate::scan_check::EngineScan::ThreadTaskCensus,
                 thread.as_bytes(),
                 u64::try_from(policy.max_tasks).unwrap_or(u64::MAX),
             );
@@ -706,7 +706,7 @@ impl Vault {
         let mut children = crate::scan_check::ScanCount::start(
             &self.store,
             &txn,
-            crate::scan_check::EngineScan::RoomHistoryRows,
+            crate::scan_check::EngineScan::RoomThreadChildRows,
             &prefix,
         )?;
         for item in rooms::THREAD_CHILDREN.iter_from(&self.store, &txn, &prefix)? {
@@ -727,7 +727,7 @@ impl Vault {
         let mut born = crate::scan_check::ScanCount::start(
             &self.store,
             &txn,
-            crate::scan_check::EngineScan::RoomPageRows,
+            crate::scan_check::EngineScan::MessageOriginRows,
             message.as_bytes(),
         )?;
         let mut projects = Vec::new();
