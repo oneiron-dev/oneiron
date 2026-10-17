@@ -154,6 +154,17 @@ export class Oneiron {
   }
 
   /**
+   * Returns a NEW handle whose every verb runs inside the off-record session
+   * `sessionRef` names, bound to this handle's principal: the app host's actor
+   * when embedded, the credential's when connected (OF-063). It grants
+   * nothing: inside an anonymous session that principal is verified in, a
+   * refusal writes no receipt; anywhere else verbs record as before.
+   */
+  inOffRecordSession(sessionRef: string): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.inOffRecordSession(sessionRef)))
+  }
+
+  /**
    * The lasting call receipt the last verb's reply stated, as `call:<32hex>`,
    * whether it answered or refused; `vault.receipts.get` resolves it for the
    * same actor or the vault's owner.

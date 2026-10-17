@@ -798,9 +798,13 @@ impl Memory<'_> {
     /// and that principal is verified in (its room's roster, or the actor
     /// who entered it alone), a reference refusal or an unlinked prose link
     /// is refused or unlinked as anywhere else but writes no receipt
-    /// (OF-063, Engine ruling 10-17, matching OF-538's call receipts). A
-    /// caller whose principal provably differs writes its receipts as
-    /// anywhere else; one with no principal keeps the unchecked rule.
+    /// (OF-063, Engine ruling 10-17, matching OF-538's call receipts). Every
+    /// other caller writes its receipts as anywhere else, and so does one
+    /// with no principal: it binds no session (Engine ruling 2137/2271).
+    /// Every authenticated host or embedded surface that writes for a
+    /// principal binds the session its caller names here (FIX 1668): the
+    /// server's transport handles through `credential_memory`, an embedded
+    /// host's for its app host's principal, the actor it bound.
     #[must_use]
     pub fn in_off_record_session(mut self, session_ref: &str) -> Self {
         self.off_record_session = Some(session_ref.trim().to_owned());
@@ -815,8 +819,10 @@ impl Memory<'_> {
     ///
     /// The principal is the one the bound credential names (its holder,
     /// the same one the transports' call receipts compare), or none for the
-    /// host root, which names no person; a surface no credential is bound
-    /// to calls for its bound actor.
+    /// host root, which names no person and so binds no session; a surface
+    /// no credential is bound to calls for its bound actor, the principal its
+    /// host authenticated (an embedded app host's, MCP's configured root's
+    /// registered actor).
     pub(crate) fn keeps_no_record(&self) -> bool {
         self.off_record_session.as_deref().is_some_and(|session| {
             let principal = match &self.read_proof {

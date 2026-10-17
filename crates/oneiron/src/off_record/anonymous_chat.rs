@@ -95,6 +95,9 @@ pub struct AnonymousChatSession<'vault> {
 impl Vault {
     /// Open a traceless chat. Close explicitly when done. This does not
     /// record a session row in the vault and cannot flip into on-record mode.
+    /// It names no principal, so no call can bind its stretch (FIX 2137); a
+    /// host that authenticated its caller opens through
+    /// [`Self::open_anonymous_chat_for`].
     pub fn open_anonymous_chat(
         &self,
         session_ref: &str,
@@ -104,6 +107,25 @@ impl Vault {
             session: self
                 .off_record_session_vault()
                 .enter_anonymous(session_ref, backend)?,
+        })
+    }
+
+    /// [`Self::open_anonymous_chat`] mapped to `principal`, the person or
+    /// actor the host authenticated for this chat (OF-063, FIX 2137): its
+    /// stretch keeps that principal as the one caller it serves, and no
+    /// placeholder participant is minted.
+    pub fn open_anonymous_chat_for(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        principal: crate::EntityId,
+    ) -> Result<AnonymousChatSession<'_>> {
+        Ok(AnonymousChatSession {
+            session: self.off_record_session_vault().enter_anonymous_for(
+                session_ref,
+                backend,
+                principal,
+            )?,
         })
     }
 }

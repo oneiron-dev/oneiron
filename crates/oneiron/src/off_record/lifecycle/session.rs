@@ -88,8 +88,9 @@ impl<'vault> OffRecordSessionVault<'vault> {
 
     /// Enters anonymous mode. No session content or receipt is retained, and
     /// the mode cannot be flipped or promoted into persistence. It names no
-    /// entering actor; a door that verified one enters through
-    /// [`Self::enter_anonymous_as`].
+    /// entering actor and mints none, so no call can bind it (FIX 2137); a
+    /// door that verified one enters through [`Self::enter_anonymous_as`] or
+    /// [`Self::enter_anonymous_for`].
     pub fn enter_anonymous(
         &self,
         session_ref: &str,
@@ -98,6 +99,23 @@ impl<'vault> OffRecordSessionVault<'vault> {
         let entry = self
             .vault
             .enter_anonymous_session_entry(session_ref, backend, None)?;
+        Ok(self.handle(session_ref.to_owned(), entry))
+    }
+
+    /// [`Self::enter_anonymous`] mapped to `principal`, the person or actor
+    /// the entering door authenticated (OF-063, FIX 2137): the stretch keeps
+    /// it as the one caller its no-record exception serves. An embedded host
+    /// passes its app host's principal; the owner's door uses
+    /// [`Self::enter_anonymous_as`].
+    pub fn enter_anonymous_for(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        principal: crate::EntityId,
+    ) -> Result<OffRecordSession<'vault>> {
+        let entry =
+            self.vault
+                .enter_anonymous_session_entry(session_ref, backend, Some(principal))?;
         Ok(self.handle(session_ref.to_owned(), entry))
     }
 

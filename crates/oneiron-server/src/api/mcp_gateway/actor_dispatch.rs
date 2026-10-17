@@ -72,7 +72,12 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     )
     .map_err(|_| mcp_proof_error())?;
     mcp_proof_admits(server, &actor, &auth)?;
-    actor.auth = Some(auth.at(locality));
+    // OF-063 (FIX 1668): its handles act inside the session the request
+    // names, as an HTTP caller's do.
+    actor.auth = Some(
+        auth.at(locality)
+            .in_off_record_session(crate::api::call_receipt::request_session_ref(headers)),
+    );
     // Where this request's writes land, judged once from the session it
     // names (owner ruling FACET-READ).
     let session = crate::api::write_facet::request_session(headers).map_err(|()| {

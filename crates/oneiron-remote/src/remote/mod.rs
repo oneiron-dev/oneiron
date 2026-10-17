@@ -56,6 +56,8 @@ const LENS_FRAMES_PREFIX: &str = "v1/core/lens-frames";
 const BINDING_HEADER: &str = "x-oneiron-binding";
 /// Names the room turn a verb runs in; the server resolves its roster.
 const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
+/// Names the off-record session a call runs inside (OF-063).
+const SESSION_HEADER: &str = "x-oneiron-session";
 /// The call receipt every facade reply states (OF-538): `call:<32hex>`, or
 /// `none; no-record` for a call inside an anonymous off-record session.
 const RECEIPT_REF_HEADER: &str = "x-oneiron-receipt-ref";
@@ -88,6 +90,9 @@ pub(crate) struct RemoteClient {
     export_limit: usize,
     /// The room turn every verb runs in, named to the server per request.
     room_turn: Option<oneiron::EntityId>,
+    /// The off-record session every verb runs inside, named to the server
+    /// per request (OF-063, FIX 1668).
+    off_record_session: Option<HeaderValue>,
     /// The call receipt the last verb's reply stated, success or refusal
     /// (OF-538). Per handle: a clone starts with none.
     last_receipt_ref: std::sync::Mutex<Option<String>>,
@@ -115,6 +120,7 @@ impl Clone for RemoteClient {
             wire: self.wire.clone(),
             export_limit: self.export_limit,
             room_turn: self.room_turn,
+            off_record_session: self.off_record_session.clone(),
             last_receipt_ref: std::sync::Mutex::new(None),
         }
     }
@@ -181,6 +187,7 @@ impl RemoteClient {
             wire: Wire::InProcess(transport),
             export_limit: MAX_REMOTE_EXPORT_BYTES,
             room_turn: None,
+            off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
         })
     }
@@ -190,6 +197,22 @@ impl RemoteClient {
         crate::embedded::refuse_other_room(self.room_turn, room)?;
         Ok(Self {
             room_turn: Some(room),
+            ..self.clone()
+        })
+    }
+
+    /// The same connection with every verb run inside the off-record
+    /// session `session_ref` names; the server binds it to this credential's
+    /// principal (OF-063, FIX 1668).
+    pub(crate) fn in_off_record_session(&self, session_ref: &str) -> Result<Self, MemoryError> {
+        let session = HeaderValue::from_str(session_ref).map_err(|_| {
+            bad_request(
+                "invalid off-record session reference",
+                &["Name the session by the ref it was entered under."],
+            )
+        })?;
+        Ok(Self {
+            off_record_session: Some(session),
             ..self.clone()
         })
     }
@@ -219,6 +242,9 @@ impl RemoteClient {
                 HeaderValue::from_str(&room.to_hex())
                     .map_err(|_| transport_error("could not name the room turn"))?,
             );
+        }
+        if let Some(session) = &self.off_record_session {
+            headers.insert(SESSION_HEADER, session.clone());
         }
         Ok(headers)
     }

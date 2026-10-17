@@ -198,6 +198,16 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
 
+    def in_off_record_session(self, session_ref: str) -> "Oneiron":
+        """Returns a NEW handle whose every verb runs inside an off-record session.
+
+        It binds this handle's principal: the app host's actor when embedded,
+        the credential's when connected (OF-063). It grants nothing: inside an
+        anonymous session that principal is verified in, a refusal writes no
+        receipt; anywhere else verbs record as before.
+        """
+        return Oneiron(_translate(lambda: self._client.in_off_record_session(session_ref)))
+
     def last_receipt_ref(self) -> str | None:
         """The lasting call receipt the last verb's reply stated, as ``call:<32hex>``.
 
