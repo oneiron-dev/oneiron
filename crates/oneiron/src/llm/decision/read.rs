@@ -68,6 +68,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             questions: &[call.question],
             evidence: call.evidence,
             images: call.images,
+            audio: call.audio,
             state: call.state,
             deadline: call.deadline,
         })?;

@@ -50,6 +50,19 @@ pub(crate) fn validate_request(
         )?;
     }
 
+    if request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .any(|part| matches!(part, ContentPart::Audio { .. }))
+    {
+        require_capability(
+            descriptor,
+            LlmCapability::AudioInput,
+            "loaded model metadata does not advertise audio input",
+        )?;
+    }
+
     if matches!(
         request.envelope.response_format,
         ResponseFormat::Json { .. }

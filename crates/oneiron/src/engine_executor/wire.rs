@@ -82,7 +82,8 @@ pub(super) fn heal_executor_reply(
             ContentPart::Reasoning { .. }
             | ContentPart::ToolCall { .. }
             | ContentPart::ToolResult { .. }
-            | ContentPart::Image { .. } => None,
+            | ContentPart::Image { .. }
+            | ContentPart::Audio { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n");

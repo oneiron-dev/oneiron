@@ -289,6 +289,8 @@ fn anthropic_content_part(part: &ContentPart) -> JsonValue {
             "is_error": is_error,
         }),
         ContentPart::Image { media_type, image } => anthropic_image_part(media_type, image),
+        // `validate_capabilities` refuses audio before any part is built.
+        ContentPart::Audio { .. } => JsonValue::Null,
     }
 }
 

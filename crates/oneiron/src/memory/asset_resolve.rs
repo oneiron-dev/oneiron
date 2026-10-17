@@ -967,6 +967,50 @@ pub(crate) fn asset_image_in_lane(
         .and_then(|forms| forms.image))
 }
 
+/// The audio clip `asset` holds, as its media type and encoded bytes, read
+/// through `lane` with no text decoded: `None` when the lane withholds the
+/// asset, it is no ASSET, or it holds no audio. The bytes are checked against
+/// the body's recorded content hash. No transcript stands in for the clip.
+pub(crate) fn asset_audio_in_lane(
+    lane: &ScopedRead<'_>,
+    asset: EntityId,
+) -> MemoryResult<Option<(String, Vec<u8>)>> {
+    let Some(row) = lane
+        .read(&[PointRead::id(asset)], None)?
+        .value
+        .into_iter()
+        .next()
+        .flatten()
+        .filter(|row| row.entity_type == ENTITY_TYPE_ASSET)
+    else {
+        return Ok(None);
+    };
+    let Some(Value::Map(entries)) = row.body.as_deref().and_then(decode_whole) else {
+        return Ok(None);
+    };
+    let field = |name: &str| {
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    let (Some(Value::Binary(bytes)), Some(media_type)) = (
+        field(BODY_BYTES),
+        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
+    ) else {
+        return Ok(None);
+    };
+    if bytes.is_empty() || !media_type.starts_with("audio/") {
+        return Ok(None);
+    }
+    if let Some(recorded) = field(BODY_BLAKE3)
+        && recorded.as_str() != Some(blake3::hash(bytes).to_hex().as_str())
+    {
+        return Err(crate::error::Error::CorruptedIndex("asset content hash").into());
+    }
+    Ok(Some((media_type.to_owned(), bytes.clone())))
+}
+
 /// Reads the forms of `asset` through `lane`. The lane admits the ASSET and
 /// each ASSET_TEXT derived from it; only admitted rows become forms. With
 /// `images_only`, an ASSET that holds no image reads no text. Texts decode

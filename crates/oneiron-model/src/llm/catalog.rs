@@ -25,6 +25,9 @@ pub enum LlmCapability {
     /// The model continues a trailing assistant message as its own answer
     /// (native prefill), so an interrupted reply resumes from its saved text.
     AssistantPrefill,
+    /// The model hears input audio clips in a chat message
+    /// ([`super::ContentPart::Audio`]).
+    AudioInput,
 }
 
 impl LlmCapability {
@@ -39,6 +42,7 @@ impl LlmCapability {
             Self::Reasoning => "reasoning",
             Self::Voice => "voice",
             Self::AssistantPrefill => "assistant_prefill",
+            Self::AudioInput => "audio_input",
         }
     }
 }
@@ -100,6 +104,7 @@ impl LlmCatalogEntry {
                     self.require(LlmCapability::ToolResults)?;
                 }
                 super::ContentPart::Image { .. } => self.require(LlmCapability::ImageInput)?,
+                super::ContentPart::Audio { .. } => self.require(LlmCapability::AudioInput)?,
                 super::ContentPart::Reasoning { .. } => self.require(LlmCapability::Reasoning)?,
                 _ => {}
             }
@@ -141,6 +146,9 @@ impl LlmCatalogEntry {
         let mut caps = MediaCaps::for_operation(AiOperation::Text);
         if self.supports(&LlmCapability::ImageInput) {
             caps.inputs.insert(Modality::Image);
+        }
+        if self.supports(&LlmCapability::AudioInput) {
+            caps.inputs.insert(Modality::Audio);
         }
         caps
     }

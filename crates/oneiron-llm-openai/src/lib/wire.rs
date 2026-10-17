@@ -238,6 +238,9 @@ fn openai_message(message: &LlmMessage) -> JsonValue {
             ContentPart::Image { media_type, image } => {
                 content_parts.push(openai_image_part(media_type, image));
             }
+            ContentPart::Audio { media_type, data } => {
+                content_parts.push(openai_audio_part(media_type, data));
+            }
             ContentPart::ToolCall {
                 call_id,
                 name,
@@ -290,6 +293,28 @@ fn openai_image_part(media_type: &str, image: &ImageContent) -> JsonValue {
         "type": "image_url",
         "image_url": { "url": url },
     })
+}
+
+/// An input clip as chat `input_audio`. [`validate_capabilities`] refuses a
+/// clip of no format this wire names before any part is built.
+fn openai_audio_part(media_type: &str, data: &str) -> JsonValue {
+    json!({
+        "type": "input_audio",
+        "input_audio": {
+            "data": data,
+            "format": openai_audio_format(media_type).unwrap_or_default(),
+        },
+    })
+}
+
+/// The chat wire's `input_audio.format` for a clip's media type: `wav` or
+/// `mp3`, the two formats the chat audio input takes.
+pub(super) fn openai_audio_format(media_type: &str) -> Option<&'static str> {
+    match media_type.to_ascii_lowercase().as_str() {
+        "audio/wav" | "audio/x-wav" | "audio/wave" | "audio/vnd.wave" => Some("wav"),
+        "audio/mpeg" | "audio/mp3" => Some("mp3"),
+        _ => None,
+    }
 }
 
 fn openai_tool(tool: &LlmToolSpec) -> JsonValue {

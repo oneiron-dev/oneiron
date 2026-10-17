@@ -127,6 +127,7 @@ impl DecisionLadder<'_> {
             principal,
             evidence,
             &[],
+            &[],
             state,
             dial,
             policy,
@@ -145,6 +146,7 @@ impl DecisionLadder<'_> {
                 questions: chunk,
                 evidence,
                 images: &[],
+                audio: &[],
                 state,
                 deadline,
             };

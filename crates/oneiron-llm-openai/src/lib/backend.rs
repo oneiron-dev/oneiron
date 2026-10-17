@@ -161,6 +161,24 @@ pub(crate) fn validate_capabilities(
             "request includes image content",
         )?;
     }
+    if request.messages.iter().any(message_has_audio) {
+        require(
+            catalog,
+            LlmCapability::AudioInput,
+            "request includes audio content",
+        )?;
+        if request
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .any(|part| {
+                matches!(part, ContentPart::Audio { media_type, .. }
+                    if super::wire::openai_audio_format(media_type).is_none())
+            })
+        {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+    }
     if matches!(
         request.envelope.response_format,
         ResponseFormat::Json { .. }
@@ -206,6 +224,13 @@ fn message_has_image(message: &LlmMessage) -> bool {
         .content
         .iter()
         .any(|part| matches!(part, ContentPart::Image { .. }))
+}
+
+fn message_has_audio(message: &LlmMessage) -> bool {
+    message
+        .content
+        .iter()
+        .any(|part| matches!(part, ContentPart::Audio { .. }))
 }
 
 fn message_has_tool_result(message: &LlmMessage) -> bool {

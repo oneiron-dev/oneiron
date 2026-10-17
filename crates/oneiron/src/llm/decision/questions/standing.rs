@@ -414,8 +414,8 @@ pub(super) fn backfill_graph_answer(
 }
 
 /// [`backfill_graph_answer`] for a full ladder decision: its band, readings,
-/// clock and owner-ask reason stay its own, over the engine's source and
-/// image versions.
+/// clock and owner-ask reason stay its own, over the engine's source, image
+/// and audio versions.
 pub(super) fn backfill_graph_decision(
     vault: &Vault,
     principal: EntityId,
@@ -424,11 +424,12 @@ pub(super) fn backfill_graph_decision(
     context: super::GraphUnitContext,
     frontier: [u8; 32],
     images: &[crate::llm::decision::DecisionImage],
+    audio: &[crate::llm::decision::DecisionAudio],
     decision: TypedDecision,
     proposals: &[AnswerRecord],
     now: u64,
 ) -> Result<AnswerRecord> {
-    let decision = super::graph_ask::decided(&context, images, decision);
+    let decision = super::graph_ask::decided(&context, images, audio, decision);
     let input = StandingAnswer {
         unit: context.unit,
         answer: decision.answer.clone(),

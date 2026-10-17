@@ -1,6 +1,7 @@
 //! Typed judgments over graph units (ARCH-0076, OF-506): the host's decision
 //! ladder answers a graph question. A unit's sources ride as the call's
-//! state, its image assets as images read at the Local-vision rung, and the
+//! state, its image assets as images read at the Local-vision rung, its
+//! audio assets as clips heard at the first rung that reads audio, and the
 //! ladder's full decision comes back for the engine to land, keeping its
 //! receipt. The standing pump answers each due standing question here, as
 //! the question's own principal under the question's own dial.
@@ -11,8 +12,8 @@ use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, refresh_due_questions_with,
 };
 use oneiron::llm::decision::{
-    DecisionAnswer, DecisionDial, DecisionImage, DecisionProvider, DecisionQuestion, DecisionRung,
-    Reversibility,
+    DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionProvider, DecisionQuestion,
+    DecisionRung, Reversibility,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::AI_VERDICT_DEADLINE_MS;
@@ -76,7 +77,7 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         question: &DecisionQuestion,
         context: &GraphUnitContext,
     ) -> Result<Option<GraphPrediction>> {
-        let Some(GraphDecision::Decision(decision)) = self.decide(question, context, &[])? else {
+        let Some(GraphDecision::Decision(decision)) = self.decide(question, context, &[], &[])? else {
             return Ok(None);
         };
         let decision = *decision;
@@ -106,24 +107,38 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         self.vision
     }
 
+    /// A rung inside the dial hears audio: the Big rung over a model its
+    /// binding says hears it.
+    fn reads_audio(&self) -> bool {
+        self.server
+            .decision_host()
+            .ladder()
+            .ladder()
+            .first_media_reader(self.dial.first, self.dial.ceiling, false, true)
+            .is_some()
+    }
+
     /// The unit through the ladder. Its images are read from the
-    /// Local-vision rung, seated on a run of the asker's own; a rung above
-    /// it that reads no image is skipped.
+    /// Local-vision rung, seated on a run of the asker's own; its clips
+    /// start at the first rung in the dial that hears them. A unit with
+    /// both starts at a rung that reads both, or abstains: no rung is
+    /// handed one of the two alone. A rung above that cannot read the
+    /// call's media is skipped.
     fn decide(
         &mut self,
         question: &DecisionQuestion,
         context: &GraphUnitContext,
         images: &[DecisionImage],
+        audio: &[DecisionAudio],
     ) -> Result<Option<GraphDecision>> {
         let host = self.server.decision_host();
-        let state = context.state(images);
+        let state = context.state(images, audio);
         let evidence: Vec<EntityId> = context.sources.iter().map(|source| source.id).collect();
         let deadline = RetrievalDeadline::hard(Instant::now(), self.budget);
         let mut dial = self.dial;
         let local = if images.is_empty() {
             None
         } else {
-            dial.first = DecisionRung::Local;
             Some(
                 vision_rung(self.server, self.principal, self.class, images, "graph.ask")
                     .map_err(|error| Error::InvalidConfig(error.to_string()))?,
@@ -133,11 +148,23 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         if let Some(rung) = &local {
             ladder.local = Some(rung as &dyn DecisionProvider);
         }
-        let decision = ladder.run_images(
+        if !(images.is_empty() && audio.is_empty()) {
+            let Some(first) = ladder.first_media_reader(
+                dial.first,
+                dial.ceiling,
+                !images.is_empty(),
+                !audio.is_empty(),
+            ) else {
+                return Ok(None);
+            };
+            dial.first = first;
+        }
+        let decision = ladder.run_media(
             question,
             self.principal,
             &evidence,
             images,
+            audio,
             &state,
             dial,
             &host.bands(),
