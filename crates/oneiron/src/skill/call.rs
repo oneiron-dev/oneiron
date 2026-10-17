@@ -2,15 +2,18 @@
 
 use serde_json::Value as JsonValue;
 
+mod answer;
 #[cfg(test)]
 mod tests;
+
+pub use self::answer::CallableSkillAnswer;
 
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ClaimSource;
 use crate::code_run::{CodeRunDeterminism, SelfCall};
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, SelfDispatchResponse,
+    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream, SelfDispatchResponse,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::SkillRole;
@@ -20,18 +23,38 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
 
-/// The caller's host, lent to a callable skill, with the skill's streamed
-/// result kept in its outcome: its answer is JSON the call checks against
-/// its contract, never a body for the caller's store.
-struct SkillHost<'h>(&'h mut dyn JsCodeModeHost);
+/// The caller's host, lent to a callable skill. The skill's `finish` answer
+/// streams into a spool of its own, never the caller's store: it is JSON the
+/// call checks against its contract. A step that finishes answers with its
+/// finish alone, so its console lines and files reach no one.
+struct SkillHost<'h> {
+    host: &'h mut dyn JsCodeModeHost,
+    answer: CallableSkillAnswer,
+}
 
 impl JsCodeModeHost for SkillHost<'_> {
+    fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
+        match stream {
+            JsCodeModeStream::Finish { start } => {
+                if start {
+                    self.answer.restart()?;
+                }
+                self.answer.write(frame)?;
+            }
+            // A stored value is a result of the run: the skill's host has
+            // nowhere to keep it.
+            JsCodeModeStream::Store { .. } => return Err(invalid("store needs a result store")),
+            JsCodeModeStream::Console | JsCodeModeStream::File(_) => {}
+        }
+        Ok(true)
+    }
+
     fn read_recoverable_output(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
-        self.0.read_recoverable_output(path)
+        self.host.read_recoverable_output(path)
     }
 
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
-        self.0.dispatch_self(call)
+        self.host.dispatch_self(call)
     }
 }
 
@@ -103,6 +126,8 @@ fn matches_shape(value: &JsonValue, shape: &JsonValue) -> bool {
 /// The invocation witness names the entity the load door chose: the skill,
 /// or its open proposal while an exploration trial routes this attempt.
 /// An outcome is credited separately once the attempt has a terminal receipt.
+/// The answer is checked as it is read and handed back spooled, never
+/// refused for size.
 #[expect(
     clippy::too_many_arguments,
     reason = "the caller lends its existing lease, runtime, host, and deterministic step identity"
@@ -119,7 +144,7 @@ pub fn execute_callable_skill(
     seq: u64,
     determinism: CodeRunDeterminism,
     at: u64,
-) -> Result<JsCodeModeStepOutcome> {
+) -> Result<CallableSkillAnswer> {
     // Validate before appending a manifest entry; failed argument admission
     // must not assert that the body was loaded.
     let record = vault
@@ -180,6 +205,10 @@ pub fn execute_callable_skill(
             ),
         ))?;
     }
+    let mut lent = SkillHost {
+        host,
+        answer: CallableSkillAnswer::spool(),
+    };
     let outcome = runtime.run_step(
         JsCodeModeStep {
             run_id,
@@ -190,16 +219,18 @@ pub fn execute_callable_skill(
             boundary: SandboxBoundaryContract::for_tier(tier).without_host_services(),
             determinism,
         },
-        &mut SkillHost(host),
+        &mut lent,
     )?;
     if !outcome.done {
         return Err(invalid("callable skill did not finish"));
     }
-    let output: JsonValue = serde_json::from_str(&outcome.observation)
-        .map_err(|_| invalid("callable skill returned non-JSON output"))?;
-    if !matches_shape(&output, &call.returns) {
-        return Err(invalid("callable skill return differs from its contract"));
-    }
+    let mut answer = lent.answer;
+    // What a runtime returned instead of streaming it (a component that does
+    // not stream) follows what was streamed, as a store host takes it.
+    answer.write(outcome.observation.as_bytes())?;
+    let digest = answer
+        .check(&call.returns)?
+        .ok_or(invalid("callable skill return differs from its contract"))?;
     crate::skill_reliability::record_callable_invocation(
         vault,
         leased,
@@ -207,7 +238,7 @@ pub fn execute_callable_skill(
         executor,
         &loaded.record.version,
         seq,
-        Some(&outcome.observation),
+        Some(&digest),
     )?;
-    Ok(outcome)
+    Ok(answer)
 }

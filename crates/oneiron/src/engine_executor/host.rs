@@ -197,11 +197,22 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         if size.0 <= RESULT_REPLY_INLINE_BYTES {
             return Ok(outcome);
         }
+        *answer = self.store_answer(seq, |sink| write_json(sink, &*answer))?;
+        Ok(outcome)
+    }
+
+    /// Stores what `write` puts in a sink as a body of the run, bound to the
+    /// next auto name: the card the guest and the replay row get for it.
+    fn store_answer(
+        &mut self,
+        seq: u64,
+        write: impl FnOnce(&mut BodySink) -> Result<()>,
+    ) -> Result<serde_json::Value> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
         let mut sink = storage.code_run_output_sink()?;
-        write_json(&mut sink, &*answer)?;
+        write(&mut sink)?;
         let output = storage.publish_code_run_output(
             bridge_result_output_path(seq),
             sink,
@@ -210,10 +221,36 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         )?;
         let name = self.next_auto_name();
         self.bind(name.clone(), output.handle.clone());
-        *answer = result_handle_json(&output);
-        answer["name"] = json!(name);
+        let mut card = result_handle_json(&output);
+        card["name"] = json!(name);
         self.captured.push(output);
-        Ok(outcome)
+        Ok(card)
+    }
+
+    /// A callable skill's checked answer as the guest gets it: its JSON up
+    /// to the inline reply size, else its card, the answer copied whole from
+    /// the call's spool into a body of the run, never read into one value.
+    fn skill_answer(
+        &mut self,
+        seq: u64,
+        mut answer: crate::skill::CallableSkillAnswer,
+    ) -> Result<serde_json::Value> {
+        if answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
+            return serde_json::from_reader(std::io::BufReader::new(answer.reader()?)).map_err(
+                |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
+            );
+        }
+        self.store_answer(seq, |sink| {
+            let reader = answer.reader()?;
+            let mut frame = vec![0; 64 * 1024];
+            loop {
+                let read = std::io::Read::read(reader, &mut frame)?;
+                if read == 0 {
+                    return Ok(());
+                }
+                sink.write(&frame[..read])?;
+            }
+        })
     }
 
     /// `self.skills.call` (OF-353): an agent-callable skill run as a step of
@@ -287,15 +324,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         if self.declined.is_some() {
             return Ok(failed("task_declined".to_owned()));
         }
-        let output = ran.and_then(|step| {
-            serde_json::from_str::<serde_json::Value>(&step.observation).map_err(|_| {
-                Error::InvalidConfig("callable skill returned non-JSON output".to_owned())
-            })
-        });
-        let outcome = match output {
-            Ok(output) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
+        let outcome = match ran {
+            Ok(answer) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
                 skill: skill.skill,
-                output,
+                output: self.skill_answer(seq, answer)?,
             }),
             Err(error) => failed(error.to_string()),
         };

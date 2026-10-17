@@ -799,7 +799,7 @@ pub(super) fn output(bridge: &mut Bridge<'_>, target: StreamTarget, frame: Vec<u
     };
     let len = frame.len() as u64;
     if !bridge.host.write_output(target.stream(), &frame)? {
-        bridge.held.take(target, frame, bridge.held_limit)?;
+        bridge.held.take(target, frame)?;
     }
     Ok(len)
 }
