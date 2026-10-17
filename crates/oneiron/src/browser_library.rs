@@ -19,7 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::TypeRef;
 use crate::side_table::{self, Named, SideTable};
-use crate::task_type::{PlacementRequest, place_type_ref};
+use crate::task_type::{PlacementDecisions, PlacementRequest, place_type_ref};
 
 /// The library's programs. Key: the site's BLAKE3 hash, then the program's id.
 const WORKFLOWS: SideTable<([u8; 32], EntityId), WorkflowRecord, Named> =
@@ -110,8 +110,9 @@ pub fn workflow(vault: &Vault, id: EntityId) -> Result<Option<WorkflowRecord>> {
 }
 
 /// Files `program` for `site` once both checks passed (`proof`), from
-/// `by`'s run. The same program filed again keeps its id and its runs and
-/// takes the new proof.
+/// `by`'s run, stamped with the task type the host's placement ladder
+/// (`decisions`) reads; without one the rule rung reads alone. The same
+/// program filed again keeps its id and its runs and takes the new proof.
 ///
 /// # Errors
 ///
@@ -123,6 +124,7 @@ pub fn file_workflow(
     program: &WorkflowProgram,
     proof: &WorkflowProof,
     at: u64,
+    decisions: Option<&PlacementDecisions<'_>>,
 ) -> Result<EntityId> {
     let same = serde_json::to_value(program).ok();
     let filed = site_workflows(vault, site, None)?
@@ -132,7 +134,7 @@ pub fn file_workflow(
         vault,
         None,
         &PlacementRequest::new(Some(program.subgoal.clone()), Some(site.to_owned())),
-        None,
+        decisions,
     )?;
     let record = match filed {
         Some(record) => WorkflowRecord {

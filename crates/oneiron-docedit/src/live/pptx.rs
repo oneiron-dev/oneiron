@@ -31,6 +31,19 @@ pub enum NodeKind {
     Connector,
 }
 
+impl NodeKind {
+    /// Whether a node of this kind may hold a child of `kind`: slides belong
+    /// under the root; groups and shapes under slides or groups. A group
+    /// cannot contain slides.
+    pub fn holds(self, kind: NodeKind) -> bool {
+        match kind {
+            NodeKind::Slide => self == NodeKind::Root,
+            NodeKind::Root => false,
+            _ => matches!(self, NodeKind::Slide | NodeKind::Group),
+        }
+    }
+}
+
 /// How a live node binds to retained package evidence. Absent for nodes born
 /// in the live body that no import produced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -634,16 +647,10 @@ impl LiveDeck {
         Ok(affected)
     }
 
-    /// Slides belong under the root; groups and shapes under slides or
-    /// groups. A group cannot contain slides.
+    /// The tree rules of [`NodeKind::holds`].
     fn check_parent(&self, parent: NodeId, kind: NodeKind) -> Result<(), LiveError> {
         let found = self.nodes.get(&parent).ok_or(LiveError::UnknownNode)?;
-        let allowed = match kind {
-            NodeKind::Slide => found.kind == NodeKind::Root,
-            NodeKind::Root => false,
-            _ => matches!(found.kind, NodeKind::Slide | NodeKind::Group),
-        };
-        if allowed {
+        if found.kind.holds(kind) {
             Ok(())
         } else {
             Err(LiveError::TreeShape("parent cannot hold this node kind"))

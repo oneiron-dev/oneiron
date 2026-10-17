@@ -8,18 +8,20 @@
 //! the imported package and lands it as a new version of the artifact, recorded
 //! with the body frontier it projects.
 //!
-//! DOCX and XLSX bodies are Loro documents on the entity-document plane's
-//! typed-body door ([`crate::typed_body`], schemas `office.docx.v1` and
-//! `office.xlsx.v1`), which keeps their commits, receipts and forks. A DOCX
-//! export lands as one tracked revision. An XLSX body is a map keyed by sheet
-//! and address; its export writes the changed cells and names and recalculates
-//! in process, and [`Vault::preview_xlsx_body`] shows the recalculated values
-//! without landing a version.
+//! Every body is a Loro document on the entity-document plane's typed-body
+//! door ([`crate::typed_body`], schemas `office.docx.v1`, `office.xlsx.v1` and
+//! `office.pptx.v1`), which keeps its commits and receipts. A DOCX export
+//! lands as one tracked revision. An XLSX body is a map keyed by sheet and
+//! address; its export writes the changed cells and names and recalculates in
+//! process, and [`Vault::preview_xlsx_body`] shows the recalculated values
+//! without landing a version. DOCX and XLSX forks are typed-body forks.
 //!
-//! A PPTX body is the OF-510 live deck, kept in this module's tables: its
-//! operations apply in order on one head, machine work lands through the deck
-//! preflight, and its export stays a proposal artifact until the deck export
-//! gate opens. Erasing the artifact erases its office rows ([`erase_in_txn`]).
+//! A PPTX body is the OF-510 live deck: one tree with a rich-text body per
+//! text shape, whose concurrent edits merge and must still keep the deck's
+//! tree rules. Its machine work runs on a deck fork kept in this module's
+//! tables and lands through the deck preflight, and its export stays a
+//! proposal artifact until the deck export gate opens. Erasing the artifact
+//! erases its office rows ([`erase_in_txn`]).
 
 mod docx;
 mod fork;
@@ -64,9 +66,10 @@ use serde::{Deserialize, Serialize};
 /// Each artifact's office facts: its format and the version it imported.
 const SOURCES: SideTable<EntityId, OfficeBodySource, Named> =
     SideTable::new(&side_table::OFFICE_BODY_HEAD);
-/// Deck bodies by artifact, and open deck forks by fork id.
+/// Open deck forks, by fork id.
 const DOCS: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::OFFICE_BODY_DOC);
-/// Deck commit receipts, by artifact or fork id and sequence.
+/// Deck fork receipts by fork id, and those of the forks landed into a deck by
+/// artifact, each by sequence.
 const COMMITS: SideTable<Vec<u8>, TextCommitReceipt, Named> =
     SideTable::new(&side_table::OFFICE_BODY_COMMIT);
 /// Deck forks, by artifact and fork.
@@ -255,11 +258,13 @@ impl Vault {
                 })?;
             }
             OfficeBodyKind::Pptx => {
-                check_made_by(actor, made_by)?;
-                let state = pptx::DeckState::import(&bytes, self.docedit_package_limits()?)?;
+                let deck = pptx::import_deck(&bytes, self.docedit_package_limits()?)?;
                 self.with_write_txn_grouped(|wtxn| {
                     claim_source(&self.store, wtxn, artifact, &source)?;
-                    self.birth_deck(wtxn, artifact, state, made_by)
+                    birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
+                        pptx::birth(doc, &deck)
+                    })
+                    .map(drop)
                 })?;
             }
         }
@@ -287,25 +292,28 @@ impl Vault {
         xlsx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Xlsx, at)?.1)
     }
 
-    /// Every commit receipt of the body, in commit order.
+    /// Every commit receipt of the body, in commit order. A deck's are then
+    /// followed by the receipts of the machine forks landed into it, in
+    /// landing order.
     pub fn office_body_commits(&self, artifact: &EntityId) -> Result<Vec<TextCommitReceipt>> {
-        let kind = {
+        let landed: Vec<TextCommitReceipt> = {
             let txn = self.store.env.read_txn()?;
-            source(&self.store, &txn, artifact)?.kind
+            match source(&self.store, &txn, artifact)?.kind {
+                OfficeBodyKind::Pptx => COMMITS
+                    .scan_from(&self.store, &txn, artifact.as_bytes())?
+                    .into_iter()
+                    .map(|(_, receipt)| receipt)
+                    .collect(),
+                _ => Vec::new(),
+            }
         };
-        if kind == OfficeBodyKind::Pptx {
-            let txn = self.store.env.read_txn()?;
-            return Ok(COMMITS
-                .scan_from(&self.store, &txn, artifact.as_bytes())?
-                .into_iter()
-                .map(|(_, receipt)| receipt)
-                .collect());
-        }
-        Ok(self
+        let mut receipts: Vec<TextCommitReceipt> = self
             .typed_body_receipts(artifact)?
             .into_iter()
             .flatten()
-            .collect())
+            .collect();
+        receipts.extend(landed);
+        Ok(receipts)
     }
 
     /// A person's operations on the live body. Operations read against an older
@@ -390,7 +398,7 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<OfficeBodyFork> {
         self.with_write_txn_grouped(|wtxn| match source(&self.store, wtxn, artifact)?.kind {
-            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor),
+            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, None),
             kind => Ok(fork_view(open_typed_body_fork_in_txn(
                 self,
                 wtxn,
@@ -732,21 +740,15 @@ impl Vault {
 
     fn head_in_txn(&self, txn: &RoTxn<'_>, artifact: &EntityId) -> Result<OfficeBodyHead> {
         let source = source(&self.store, txn, artifact)?;
-        let (import_frontier, frontier, commits) = match source.kind {
-            OfficeBodyKind::Pptx => pptx::DeckState::load(&self.store, txn, artifact)?.head(),
-            kind => {
-                let (head, _) = self.loro_body(txn, artifact, kind, None)?;
-                (head.birth, head.frontier, head.commits)
-            }
-        };
+        let (head, _) = self.loro_body(txn, artifact, source.kind, None)?;
         Ok(OfficeBodyHead {
             artifact: *artifact,
             kind: source.kind,
             source_version: source.source_version,
             source_hash: source.source_hash,
-            import_frontier,
-            frontier,
-            commits,
+            import_frontier: head.birth,
+            frontier: head.frontier,
+            commits: head.commits,
         })
     }
 
@@ -779,9 +781,10 @@ impl Vault {
     }
 }
 
-/// Removes `artifact`'s office rows: its format record, a deck body with its
-/// forks and their receipts, and its export records. A Loro body goes with the
-/// typed body's own eraser. Registered in `deletion/derived_rows.rs`.
+/// Removes `artifact`'s office rows: its format record, its deck forks with
+/// their receipts and the landed forks' receipts, and its export records. The
+/// body itself, a Loro document in every format, goes with the typed body's
+/// own eraser. Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     for (_, fork) in FORKS.scan_keys(store, txn, entity.as_bytes())? {
         DOCS.delete(store, txn, &fork)?;
@@ -790,7 +793,6 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     COMMITS.delete_from(store, txn, entity.as_bytes())?;
     EXPORTS.delete_from(store, txn, entity.as_bytes())?;
-    DOCS.delete(store, txn, entity)?;
     SOURCES.delete(store, txn, entity)?;
     Ok(())
 }
@@ -894,7 +896,7 @@ fn validate(kind: OfficeBodyKind, doc: &LoroDoc) -> Result<()> {
     match kind {
         OfficeBodyKind::Docx => docx::read(doc).map(drop),
         OfficeBodyKind::Xlsx => xlsx::read(doc).map(drop),
-        OfficeBodyKind::Pptx => Err(invalid("a deck body is not a Loro document")),
+        OfficeBodyKind::Pptx => pptx::validate(doc),
     }
 }
 
@@ -923,7 +925,11 @@ fn three_way(
             &xlsx::read(proposal)?,
             frontiers,
         ),
-        OfficeBodyKind::Pptx => return Err(invalid("a deck body is not a Loro document")),
+        OfficeBodyKind::Pptx => {
+            return Err(invalid(
+                "a deck fork is reviewed and landed through its own doors",
+            ));
+        }
     })
 }
 

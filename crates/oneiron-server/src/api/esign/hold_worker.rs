@@ -2,8 +2,9 @@
 //! #roles-everywhere): every tick it asks the vault owner role about each
 //! new hold and settles each answered one. The question starts at the owner
 //! role's rung: no rule or model rung answers whether a signature lands,
-//! because decide() advises and never grants. The owner answers on the
-//! decision-ask door. A hold that fails a tick stays as it was for the
+//! because decide() advises and never grants. The ask is an e-signature act,
+//! so it resolves only to a natural person holding the role, who answers on
+//! the decision-ask door. A hold that fails a tick stays as it was for the
 //! next, never dropped.
 
 use std::sync::Arc;
@@ -12,7 +13,9 @@ use std::time::{Duration, Instant};
 use oneiron::blob_artifact::esign::{
     HOLD_ALLOW, HOLD_DECLINE, HeldSigning, HeldSigningAnswer, HeldSigningState,
 };
-use oneiron::llm::decision::{DecisionAnswer, DecisionRung, Reversibility};
+use oneiron::llm::decision::{
+    AskAct, AskRole, AskTo, DecisionAnswer, DecisionRung, Reversibility, RoleRank,
+};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{EntityId, Error, Result};
 use serde_json::json;
@@ -80,6 +83,15 @@ fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
     let question = held.question()?;
     let mut dial = host.dial(DecisionRung::Human);
     dial.first = DecisionRung::Human;
+    // An e-signature goes to a natural person holding the owner role, never
+    // to a bound agent that holds it too.
+    let signer = AskTo {
+        role: AskRole::Owner,
+        ceiling: RoleRank::Owner,
+        act: AskAct::ESignature,
+    };
+    let mut ladder = host.ladder().ladder();
+    ladder.ask_to = Some(&signer);
     let state = json!({
         "document": held.document,
         "title": held.title,
@@ -89,7 +101,7 @@ fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
         "held_at": held.held_at,
         "calls": held.calls,
     });
-    host.ladder().ladder().run(
+    ladder.run(
         &question,
         owner,
         &[],
