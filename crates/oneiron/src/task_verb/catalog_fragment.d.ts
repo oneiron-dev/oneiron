@@ -4,7 +4,7 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 316 code-mode rows (298 host rows, 18 run rows), 1054 declarations.
+// Census: 316 code-mode rows (298 host rows, 18 run rows), 1055 declarations.
 // Replies: 258 fully typed, 46 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 74; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
@@ -330,7 +330,8 @@ declare namespace Sdk {
   type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty };
   type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
   type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
-  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null };
+  type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
+  type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: GeneratedLens | null; lens_refused?: WeaveLensRefusal | null };
   type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string };
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type PackFileInput = { path: string; text: string };

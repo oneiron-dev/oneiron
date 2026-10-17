@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 258 facade rows, 949 declarations.
+Census: 258 facade rows, 950 declarations.
 Inputs: 214 of 258 fully typed, 43 typed down to an opaque serde_json::Value leaf, 1 with a shape the generator could not read
 Results: 210 of 258 fully typed, 40 typed down to an opaque serde_json::Value leaf, 8 with a shape the generator could not read
 Opaque serde_json::Value leaves: 68; unread shapes: 1.
@@ -1676,12 +1676,19 @@ class GeneratedLens(TypedDict):
     kit_version: int
     apps_contract_version: int
     root: LensNode
+class WeaveLensRefusal(TypedDict):
+    reason: str
+    skill_ref: str
+    skill_version: str
+    model: str
+    refused_at: int
 class WeaveDigestView(TypedDict):
     scheduled_for: int
     rendered_at: int
     sections: list[WeaveSectionView]
     narrowing: ScopedReadReceipt
     lens: NotRequired[GeneratedLens | None]
+    lens_refused: NotRequired[WeaveLensRefusal | None]
 class WeaveWrongLinkRequest(TypedDict):
     source_ref: str
     kind: str
