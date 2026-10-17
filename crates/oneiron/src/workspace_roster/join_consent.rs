@@ -782,7 +782,10 @@ fn membership_in_txn(
     Ok(consent.map_or(Loaded::missing(need), Loaded::granted))
 }
 
-/// Whether the request names a live room, and a thread of that room.
+/// Whether the request names a live room, and a thread of that room whose
+/// audience holds its subject: a private thread (FIX 2951) admits no join,
+/// and its Ready re-proves none, for anyone else, and reads to them as an
+/// unknown thread.
 fn room_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, request: &JoinRequest) -> Result<bool> {
     if vault.get_entity_type_in_txn(txn, &request.room)? != Some(ENTITY_TYPE_CONVERSATION)
         || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &request.room)?.is_live()
@@ -799,13 +802,28 @@ fn room_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, request: &JoinRequest
     {
         return Ok(false);
     }
-    if let Some(turn) = super::rooms::TURNS.get(&vault.store, txn, &branch)? {
-        return Ok(turn.room_id == request.room.to_hex());
-    }
-    if vault.get_entity_type_in_txn(txn, &branch)?.is_none() {
+    let held = match super::rooms::TURNS.get(&vault.store, txn, &branch)? {
+        Some(turn) => turn.room_id == request.room.to_hex(),
+        None => {
+            vault.get_entity_type_in_txn(txn, &branch)?.is_some()
+                && crate::conversation::room_for_record_in(vault, txn, branch)?
+                    == Some(request.room)
+        }
+    };
+    if !held {
         return Ok(false);
     }
-    Ok(crate::conversation::room_for_record_in(vault, txn, branch)? == Some(request.room))
+    match super::rooms::thread_audience_allows_in(
+        vault,
+        txn,
+        request.room,
+        branch,
+        request.subject.id(),
+    ) {
+        Ok(allowed) => Ok(allowed),
+        Err(Error::EntityNotFound) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// A project home room's project and effective seats; `None` for any other
