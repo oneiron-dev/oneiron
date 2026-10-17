@@ -302,6 +302,7 @@ fn apply_admitted(
         batch.origin,
     )?;
     after_apply(wtxn)?;
+    crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;
     // OF-533: a delegated TASK's terminal result reaches its parked runs here.
     for task in &tasks {
         crate::task_verb::deliver_task_result_in_txn(vault, wtxn, *task)?;

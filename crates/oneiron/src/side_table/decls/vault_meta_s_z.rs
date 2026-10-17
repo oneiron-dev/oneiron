@@ -50,6 +50,13 @@ side_tables! {
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
+    /// The keys a mask on write lifted out of one record or file, each with its handle, its kind,
+    /// where it sat and what the owner did about it (OF-560's found-key notice). Holds no value.
+    /// Key: id16 (the record, or the file's ASSET).
+    SECRET_FOUND_KEY: VaultMeta b"secret_found_key:v1:" Named;
+    /// A record whose found keys still owe the owner their needs-you notice: raised at the next
+    /// write's commit boundary, then removed. Key: id16 (the record).
+    SECRET_FOUND_KEY_DUE: VaultMeta b"secret_found_key_due:v1:" Named;
     /// T1/T2 secret-materialization lease row (escalation ladder to local registration). Key:
     /// hex32(lease id).
     SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw;
