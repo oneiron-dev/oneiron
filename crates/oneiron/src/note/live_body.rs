@@ -24,17 +24,8 @@ pub(crate) fn live_body_in_txn<'b>(
         return Ok(Cow::Borrowed(body));
     }
     let note = super::decode_note_body_in_txn(store, txn, body)?;
-    let has_snapshot = store
-        .sync_state
-        .get(txn, &super::document_store::key(*id))?
-        .is_some();
-    let has_updates = store
-        .sync_state
-        .prefix_iter(txn, &format!("u:e:{}:", id.to_hex()))?
-        .next()
-        .transpose()?
-        .is_some();
-    if has_snapshot || has_updates {
+    let slot = crate::ports::DocumentSlot::of(*id);
+    if crate::ports::DocumentRowStore::port_document_present(store, txn, slot)? {
         let doc = super::storage::load_seeded(store, txn, *id, || {
             Ok(super::document::NoteDocument::birth(
                 *id,

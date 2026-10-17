@@ -526,6 +526,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             trigger_ref: record.task_ref.to_hex(),
             job_ref: None,
             occurred_at: None,
+            mention: None,
         }) else {
             return Ok(None);
         };

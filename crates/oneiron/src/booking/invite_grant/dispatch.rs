@@ -114,6 +114,7 @@ pub fn enqueue_confirm_invite(
         sequence: invite.sequence,
         ics_blob_ref: invite.ics_blob_ref.to_owned(),
         recipient: binding.recipient.clone(),
+        mention: None,
     };
 
     let admission = admit_calendar_invite(vault, actor, &payload, now).map_err(calendar_wrap)?;
