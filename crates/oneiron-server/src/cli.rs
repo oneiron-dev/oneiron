@@ -691,6 +691,13 @@ pub struct McpArgs {
     #[arg(long, value_enum)]
     pub surface: Option<McpSurface>,
 
+    /// The one connection the bridge holds. `socket` opens the server's
+    /// app-tier socket and sends every message over it, falling back to one
+    /// pooled HTTP client when the server offers no MCP carrier; `http` holds
+    /// that HTTP client from the start.
+    #[arg(long, value_enum, default_value_t = McpTransport::Socket)]
+    pub transport: McpTransport,
+
     /// File holding the paired credential, as `token agent --out` writes it.
     /// Only its owner may be able to read it. Without this flag the slip and
     /// its seed come from the two environment variables below.
@@ -720,6 +727,16 @@ pub struct McpArgs {
     /// request fails as `server_unreachable`.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
     pub idle_timeout_secs: u64,
+}
+
+/// The connection `oneiron mcp` holds to its server.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum McpTransport {
+    /// The app-tier socket, or one pooled HTTP client when the server offers
+    /// no MCP carrier there.
+    Socket,
+    /// One pooled HTTP client.
+    Http,
 }
 
 /// The two MCP endpoints a server registers.

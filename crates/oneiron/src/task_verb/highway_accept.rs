@@ -13,6 +13,7 @@ use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
     EnqueueOutcome,
 };
+use crate::authority::{RunnerLease, TaskActorVerb};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::task_authority::{
     BindingGeneration, TaskAuthorityFact, TaskAuthorityFactKind, TaskStanding,
@@ -116,24 +117,6 @@ pub(super) fn require_live_standard(
     Ok(())
 }
 
-/// The addressed-lane proof: the immutable facts name this actor. The owner
-/// is told why; anyone else gets the not-found shape.
-pub(super) fn require_assignee(
-    standing: &TaskStanding,
-    actor: crate::EntityId,
-) -> MemoryResult<()> {
-    if standing.assignee == Some(actor) {
-        Ok(())
-    } else if standing.owner == actor {
-        Err(forbidden(
-            "only the actor this task is assigned to takes it",
-            "The assignee accepts and reports; the owner reads its status.",
-        ))
-    } else {
-        Err(not_found())
-    }
-}
-
 enum Accepted {
     Taken {
         attempt: Option<AttemptRecord>,
@@ -156,6 +139,37 @@ struct AcceptStep {
 }
 
 impl Memory<'_> {
+    /// The Runner lane's proof under a host binding. The lease is checked
+    /// first, so a stale or missing one stays a receipt outcome; a held one
+    /// makes the runner a party to the TASK its try realizes, through L02's
+    /// rule ([`TaskActorVerb::RunnerTake`]). Answers the TASK's standing
+    /// with the fence.
+    pub(super) fn runner_standing_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &HostBinding,
+        task_ref: crate::EntityId,
+    ) -> MemoryResult<(TaskStanding, HostFence)> {
+        let fence = host_fence_in(self.vault(), txn, binding, &task_ref.to_hex())?;
+        let standing = match &fence {
+            HostFence::Held(_) => self.highway_task_actor_in(
+                txn,
+                task_ref,
+                TaskActorVerb::RunnerTake(RunnerLease {
+                    attempt: binding.parent(),
+                    lease_owner: binding.lease_owner(),
+                    attempt_count: binding.attempt_count(),
+                }),
+                "A runner takes only the task its own lease realizes.",
+            )?,
+            HostFence::Stale | HostFence::Missing => self
+                .vault()
+                .task_standing_in(txn, task_ref)?
+                .ok_or_else(not_found)?,
+        };
+        Ok((standing, fence))
+    }
+
     pub(super) fn highway_accept(
         &self,
         via: &TaskVia,
@@ -210,14 +224,29 @@ impl Memory<'_> {
         let task_hex = task_ref.to_hex();
         let queue = AttemptQueue::new(self.vault());
         let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-        let standing = self
-            .vault()
-            .task_standing_in(&*wtxn, task_ref)?
-            .ok_or_else(not_found)?;
         let lane = lane_of(body.assignee);
-        if lane != Lane::Runner {
-            require_assignee(&standing, self.actor())?;
-        }
+        let (standing, runner) = match (lane, via) {
+            (Lane::Runner, TaskVia::Host(binding)) => {
+                let (standing, fence) = self.runner_standing_in(&*wtxn, binding, task_ref)?;
+                (standing, Some((binding, fence)))
+            }
+            // Refused below: the runner's lane is never taken over the wire.
+            (Lane::Runner, TaskVia::Wire) => (
+                self.vault()
+                    .task_standing_in(&*wtxn, task_ref)?
+                    .ok_or_else(not_found)?,
+                None,
+            ),
+            (Lane::External | Lane::Human, _) => (
+                self.highway_task_actor_in(
+                    &*wtxn,
+                    task_ref,
+                    TaskActorVerb::Accept,
+                    "The assignee accepts and reports; the owner reads its status.",
+                )?,
+                None,
+            ),
+        };
         require_live_standard(&body, &standing)?;
         let generation = self
             .vault()
@@ -232,24 +261,22 @@ impl Memory<'_> {
                 body.state,
                 Some(TaskExecutionState::Working { .. } | TaskExecutionState::Blocked { .. })
             );
-        let accepted = match (lane, via) {
-            (Lane::Runner, TaskVia::Wire) => {
+        let accepted = match (lane, runner) {
+            (Lane::Runner, None) => {
                 return Err(invalid_state(
                     "the engine's runner takes this task; it is not addressed to an external taker",
                     "Address the task to a peer, child or person to take it over the wire.",
                 ));
             }
-            (Lane::Runner, TaskVia::Host(binding)) => {
-                match host_fence_in(self.vault(), &*wtxn, binding, &task_hex)? {
-                    HostFence::Held(record) => Accepted::Taken {
-                        attempt: Some(record),
-                        replay: taken_before,
-                        lease_owner: Some(binding.lease_owner().to_owned()),
-                    },
-                    HostFence::Stale => Accepted::Stale,
-                    HostFence::Missing => Accepted::WrongNode,
-                }
-            }
+            (Lane::Runner, Some((binding, fence))) => match fence {
+                HostFence::Held(record) => Accepted::Taken {
+                    attempt: Some(record),
+                    replay: taken_before,
+                    lease_owner: Some(binding.lease_owner().to_owned()),
+                },
+                HostFence::Stale => Accepted::Stale,
+                HostFence::Missing => Accepted::WrongNode,
+            },
             (Lane::Human, _) => Accepted::Taken {
                 attempt: None,
                 replay: taken_before,

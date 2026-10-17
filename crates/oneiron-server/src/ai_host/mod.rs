@@ -34,6 +34,7 @@ pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
 mod code_fix;
+mod connector_event;
 mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;
@@ -475,6 +476,7 @@ impl AiHost {
         if let Some(account) = account {
             runtime = runtime.with_host_account(account);
         }
+        runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {

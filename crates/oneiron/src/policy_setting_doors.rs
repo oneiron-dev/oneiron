@@ -143,6 +143,7 @@ fn run_embedded(
         ActionHostBinding {
             verb_door: None,
             owner,
+            live_run: None,
         },
     )?;
     Ok(PolicyActionOutcome::from_dispatch(&dispatch)?)
