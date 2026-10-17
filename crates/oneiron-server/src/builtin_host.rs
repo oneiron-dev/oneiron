@@ -1,10 +1,11 @@
 //! The served host's side of the built-in connector packs (OF-519): the
 //! connection checks only a served host can run, the channel handles it
-//! keeps for every checked built-in channel, and the provider webhooks
-//! those handles serve.
+//! keeps for every checked built-in channel, the provider webhooks those
+//! handles serve, and the Slack app's manifest and OAuth install.
 
 mod checks;
 mod handles;
+mod slack_app;
 mod webhooks;
 
 use std::sync::Arc;
@@ -12,6 +13,9 @@ use std::time::Duration;
 
 pub(crate) use checks::HostConnectionChecks;
 pub(crate) use handles::BuiltinHandles;
+pub(crate) use slack_app::{
+    ProviderSetup, SlackInstallLink, public_origin, slack_app_manifest, start_slack_install,
+};
 pub(crate) use webhooks::routes;
 
 use crate::server::{HousekeepingAdmission, SyncServer};
