@@ -1409,6 +1409,34 @@ pub(crate) fn retest_flip_ask(flip: &JudgeRetestMark) -> Option<(EntityId, Strin
     ))
 }
 
+/// Whether a pick on the incumbent's retest flip of `case` already names
+/// one of the case's answers: the label the next swap pass settles it by.
+/// `false` for a case that names no skill or no answers.
+///
+/// # Errors
+///
+/// Storage errors reading the skill's judge anchor.
+pub(crate) fn swap_case_retest_picked(vault: &Vault, case: &JudgeSwapDisagreement) -> Result<bool> {
+    let Some(skill) = case
+        .skill
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(false);
+    };
+    let Some(incumbent) = case.answers.first() else {
+        return Ok(false);
+    };
+    Ok(
+        judge_label_anchor(vault, skill, &retest_campaign(&incumbent.judge))?
+            .iter()
+            .any(|label| {
+                label.ask.evidence == case.case_ref
+                    && label_side(label, Some(incumbent.judge.as_str()), &case.answers).is_some()
+            }),
+    )
+}
+
 /// The same answer, or two scores within [`SCORE_AGREEMENT`].
 fn agree(first: &DecisionAnswer, second: &DecisionAnswer) -> bool {
     match (first, second) {
