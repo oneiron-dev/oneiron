@@ -159,6 +159,8 @@ pub struct DecisionHost {
     /// The big model on the Big rung, kept so one named model can be asked
     /// as it asks ([`Self::ladder_for_model`]).
     big_model: Option<Arc<crate::big_rung::BigModel>>,
+    /// Each caller's `ai.verdict` spend this window, for its check (FIX 1123).
+    verdict_spend: Arc<crate::decision_verdict::VerdictSpend>,
 }
 
 impl DecisionHost {
@@ -191,7 +193,13 @@ impl DecisionHost {
             connector_slate: None,
             remote_opt_in: false,
             big_model: None,
+            verdict_spend: Arc::default(),
         }
+    }
+
+    /// Each caller's `ai.verdict` spend this window (FIX 1123).
+    pub(crate) fn verdict_spend(&self) -> &crate::decision_verdict::VerdictSpend {
+        &self.verdict_spend
     }
 
     /// The house model's decision read on the escalation rung, each read
@@ -1040,14 +1048,16 @@ impl DecisionReadGate for HouseGate {
             .turns
             .admit_background_blocking()
             .map_err(|_| refused("waited out its turn"))?;
+        // Inside a verdict, the caller's own line (FIX 1123).
+        let meter = crate::decision_verdict::rung_meter(&self.meter);
         let run = crate::models::undeclared_run(
             HOUSE_READ_RUN,
-            self.meter.clone(),
+            meter.clone(),
             Some(Arc::clone(&self.admission.host)),
             Arc::clone(&self.admission.receipts),
         );
         let permit = run
-            .admit_paid(&self.connector, self.meter.reserve_units())
+            .admit_paid(&self.connector, meter.reserve_units())
             .map_err(|_| refused("refused by the budget"))?;
         run.dispatch_paid(permit.lease(), &self.connector)
             .map_err(|_| refused("refused at dispatch"))?;
@@ -1219,14 +1229,15 @@ impl DecisionProvider for SystemOneRung {
         request
             .validate_remote()
             .map_err(|_| failed("the posture or the request keeps this call local"))?;
-        let lease = self
-            .guard
+        // Inside a verdict, the caller's own line (FIX 1123).
+        let guard = crate::decision_verdict::rung_meter(&self.guard);
+        let lease = guard
             .admit()
             .map_err(|_| failed("refused by the budget"))?
             .lease;
         // A measurement admitted after the work time is spent never starts.
         if call.deadline.decision_time_left().is_zero() {
-            self.guard
+            guard
                 .settle_reserved(&lease)
                 .map_err(|_| failed("settlement refused"))?;
             return Err(failed("admitted after the work time"));
@@ -1238,14 +1249,14 @@ impl DecisionProvider for SystemOneRung {
         ));
         let answer = match asked {
             Ok(answer) => {
-                self.guard
+                guard
                     .settle_per_call(&lease, &answer.usage)
                     .map_err(|_| failed("settlement refused"))?;
                 answer
             }
             Err(error) => {
                 // The seat may still bill a failed call.
-                self.guard
+                guard
                     .settle_reserved(&lease)
                     .map_err(|_| failed("settlement refused"))?;
                 return Err(failed(&format!("the seat failed: {error}")));
