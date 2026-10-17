@@ -13,14 +13,16 @@
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
-    AnswerRecord, QuestionRecord, answer_records, create_question, edit_question, pause_question,
-    question_call_budget, read_question, run_graph_ask_receipted, select_graph_units_by_type,
+    AnswerRecord, QuestionRecord, ScheduledBackfill, answer_records, create_question,
+    edit_question, pause_question, question_call_budget, read_question, run_graph_ask_receipted,
+    schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::decision::{DecisionDial, DecisionRung};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
-    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
+    GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -141,6 +143,32 @@ pub(crate) async fn vault_questions_pause(
             id: input.id,
             paused: input.paused,
         })
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.backfill`: schedules the caller's standing question's
+/// backfill over `expected_version`, due at `at` or now. The pump runs it
+/// as it runs the question's scheduled refresh: once, over each covered
+/// unit that version has not answered.
+pub(crate) async fn vault_questions_backfill(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionBackfillRequest,
+) -> MemoryResult<ScheduledBackfill> {
+    const VERB: &str = "vault.questions.backfill";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<ScheduledBackfill> {
+        let now = oneiron_vault_contract::now_ts();
+        Ok(schedule_backfill(
+            server.vault(),
+            principal,
+            input.id,
+            input.expected_version,
+            input.at.unwrap_or(now),
+        )?)
     })
     .await
     .map_err(|_| internal(VERB))?

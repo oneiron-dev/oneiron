@@ -309,6 +309,7 @@ declare const vault: {
   };
   questions: {
     answers(input: { id: string }): Promise<unknown>;
+    backfill(input: { at?: number | null; expected_version: number; id: string }): Promise<unknown>;
     create(input: { definition: unknown }): Promise<unknown>;
     edit(input: { definition: unknown; expected_version: number; id: string }): Promise<unknown>;
     pause(input: { id: string; paused: boolean }): Promise<unknown>;

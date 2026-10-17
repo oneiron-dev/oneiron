@@ -4,8 +4,8 @@
 // typed input and reply. `Sdk` holds every type they reach; `StoredResult` is
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
-// Census: 279 code-mode rows (261 host rows, 18 run rows), 865 declarations.
-// Replies: 226 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 280 code-mode rows (262 host rows, 18 run rows), 867 declarations.
+// Replies: 227 fully typed, 41 typed down to an opaque serde_json::Value leaf, 11 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Opaque serde_json::Value leaves: 55; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence.
 declare namespace Sdk {
   /** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */
@@ -713,6 +713,8 @@ declare namespace Sdk {
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinition };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
   type QuestionPaused = { id: EntityId; paused: boolean };
+  type QuestionBackfillRequest = { id: EntityId; expected_version: number; at?: number | null };
+  type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
   type QuestionAnswersRequest = { id: EntityId };
   type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer };
@@ -1366,6 +1368,7 @@ declare const vault: {
   };
   questions: {
     answers(input: Sdk.QuestionAnswersRequest): Promise<Sdk.Reply<Sdk.AnswerRecord[]>>;
+    backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.Reply<Sdk.ScheduledBackfill>>;
     create(input: Sdk.QuestionCreateRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.Reply<Sdk.QuestionRecord>>;
     pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.Reply<Sdk.QuestionPaused>>;

@@ -81,8 +81,9 @@ pub use self::projection::{
 };
 pub use self::questions::{
     GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskDeclined, GraphAskOutcome,
-    GraphAskRequest, GraphAskSelection, QuestionAnswersRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
+    GraphAskRequest, GraphAskSelection, QuestionAnswersRequest, QuestionBackfillRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals,
