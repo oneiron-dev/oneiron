@@ -15,13 +15,23 @@
 //! must be the receipt's actor, or the vault's live owner. Any other caller
 //! reads `None`, exactly as for a ref that names nothing, so a guesser learns
 //! nothing.
+//!
+//! OF-568: a call whose inputs the transport captured before it ran also
+//! states its action digest ([`ActionInputs::action_digest`]): the verb, the
+//! request and those input versions, so the Coach reads an equal digest as
+//! the same action on the same inputs. A call whose inputs were not
+//! captured states none, and is never read as equal to another.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::memory::{
     Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn,
 };
+use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideTable};
+use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Result, Vault};
 
 /// The prefix every call receipt ref carries.
@@ -84,6 +94,11 @@ pub struct CallReceipt {
     /// same failure again reads as the same failure (OF-568); `None` when the
     /// transport had no refusal message.
     pub result_digest: Option<String>,
+    /// The call's action digest over its verb, its request and the input
+    /// versions the transport captured before it ran, lowercase hex
+    /// ([`ActionInputs::action_digest`], OF-568); `None` when they were not
+    /// captured.
+    pub action_digest: Option<String>,
     /// The row ids the reply was derived from, when the transport knows
     /// them; at most [`MAX_CALL_RECEIPT_SERVED`].
     pub served: Vec<String>,
@@ -107,7 +122,83 @@ pub struct CallReceiptInput {
     pub outcome: CallOutcome,
     pub request_digest: String,
     pub result_digest: Option<String>,
+    /// The input versions captured before the call ran; `None` when the
+    /// transport captured none, and the receipt then states no action digest.
+    pub inputs: Option<ActionInputs>,
     pub served: Vec<String>,
+}
+
+/// The versions of the inputs one tool or check run read, captured before
+/// it ran (agent-mind §4.3): each input's name and the version it had then.
+/// A run whose inputs were not captured has none, so its action digest is
+/// `None`: unknown inputs never read as equal ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActionInputs(BTreeMap<String, String>);
+
+/// The domain an action digest is taken in, so it never equals another
+/// digest of the same bytes.
+const ACTION_DIGEST_DOMAIN: &str = "oneiron.action_digest.v1";
+
+impl ActionInputs {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// These inputs, with `name` read at `version`.
+    #[must_use]
+    pub fn with(mut self, name: impl Into<String>, version: impl Into<String>) -> Self {
+        self.0.insert(name.into(), version.into());
+        self
+    }
+
+    /// The action digest of `action` run on the request `request_digest`
+    /// names, over these inputs: BLAKE3 of the three, canonically and in its
+    /// own domain, lowercase hex. Two runs with equal digests ran the same
+    /// action on the same request over the same input versions.
+    #[must_use]
+    pub fn action_digest(&self, action: &str, request_digest: &str) -> String {
+        call_json_digest(&serde_json::json!({
+            "domain": ACTION_DIGEST_DOMAIN,
+            "action": action,
+            "request": request_digest,
+            "inputs": self.0,
+        }))
+    }
+}
+
+/// The verb root whose calls read the world outside the vault: a connector
+/// answers from a live service, so its inputs are never captured whole.
+const WORLD_VERB_ROOT: &str = "connector";
+
+/// Whether a call of `verb` reads the world outside the vault, so its input
+/// versions cannot be captured and it states no action digest (OF-568).
+#[must_use]
+pub fn call_reads_world(verb: &str) -> bool {
+    verb.starts_with(WORLD_VERB_ROOT)
+}
+
+/// At most this many named entities are versioned for one action: a request
+/// that names more reads inputs too many to capture, and states no digest.
+pub const MAX_ACTION_INPUT_ENTITIES: usize = 64;
+
+/// The entity ids `value` names as 32-hex strings, at any depth: the
+/// entities a JSON request reads by name.
+#[must_use]
+pub fn json_entity_refs(value: &serde_json::Value) -> BTreeSet<EntityId> {
+    let mut named = BTreeSet::new();
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            serde_json::Value::String(text) if text.len() == 32 => {
+                named.extend(EntityId::from_hex(text).ok());
+            }
+            serde_json::Value::Array(items) => stack.extend(items),
+            serde_json::Value::Object(map) => stack.extend(map.values()),
+            _ => {}
+        }
+    }
+    named
 }
 
 /// `vault.receipts.get`'s one input.
@@ -204,6 +295,47 @@ fn call_receipt_id(receipt_ref: &str) -> Option<EntityId> {
 }
 
 impl Vault {
+    /// The input versions of an action that reads `named`, captured in one
+    /// read snapshot before it runs (OF-568): the newest change in the
+    /// vault's change log (every entity write), its graph version (every
+    /// edge change), and each named entity's live revision, `-` when it has
+    /// none. `None` past [`MAX_ACTION_INPUT_ENTITIES`].
+    ///
+    /// Not seen: a live document edit to an entity the request does not
+    /// name, side-table state, and the world outside the vault. A caller
+    /// whose action reads the world captures nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn action_inputs(&self, named: &BTreeSet<EntityId>) -> Result<Option<ActionInputs>> {
+        if named.len() > MAX_ACTION_INPUT_ENTITIES {
+            return Ok(None);
+        }
+        let txn = self.store.env.read_txn()?;
+        let head = self.port_changelog_head(&txn)?.map_or_else(
+            || "-".to_owned(),
+            |(id, _)| crate::entity_id::bytes_to_hex_lower(&id),
+        );
+        let graph = crate::ppr::read_graph_version(&self.store, &txn)?;
+        let mut inputs = ActionInputs::new()
+            .with("vault.changes", head)
+            .with("vault.graph", graph.to_string());
+        for id in named {
+            let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
+                &self.store,
+                &txn,
+                id,
+                ReadMode::Live,
+            )?;
+            inputs = inputs.with(
+                format!("entity:{}", id.to_hex()),
+                revision.map_or_else(|| "-".to_owned(), RevisionRef::to_hex),
+            );
+        }
+        Ok(Some(inputs))
+    }
+
     /// Writes one call's receipt and returns its `call:<32hex>` ref.
     ///
     /// Runs in its OWN grouped write transaction, which the transport opens
@@ -227,6 +359,9 @@ impl Vault {
         let receipt_ref = format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex());
         let mut served = input.served;
         served.truncate(MAX_CALL_RECEIPT_SERVED);
+        let action_digest = input
+            .inputs
+            .map(|inputs| inputs.action_digest(&input.verb, &input.request_digest));
         let receipt = CallReceipt {
             receipt_ref: receipt_ref.clone(),
             at: self.store.clock.now_recorded_at(),
@@ -243,6 +378,7 @@ impl Vault {
             },
             request_digest: input.request_digest,
             result_digest: input.result_digest,
+            action_digest,
             served: served.into_iter().map(bounded).collect(),
             served_records: Vec::new(),
         };

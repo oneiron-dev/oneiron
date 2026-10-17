@@ -1,13 +1,16 @@
 //! Shadow mode: before a generated program runs, it is type-checked against
 //! the declarations its prompt teaches. The report is recorded beside the
 //! step and traced with the step's outcome. Nothing is blocked: the program
-//! runs exactly as it would unchecked.
+//! runs exactly as it would unchecked. The record states the check's action
+//! digest over the program, each declaration file and the checker at its pin
+//! (OF-568).
 
 use super::host::executor_declarations;
 use super::store::{code_check_output_path, record_text_output};
 use super::types::EngineExecutorStatus;
 use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage};
 use crate::entity_id::EntityId;
+use crate::receipt::{ActionInputs, call_bytes_digest};
 use crate::session_overlay::RouteTarget;
 use oneiron_code_check::{BackendId, CheckFailure, CheckInput, CheckReport, ShadowCheck, StepThen};
 use serde_json::json;
@@ -19,6 +22,9 @@ use std::time::{Duration, Instant};
 const RECORDED_DIAGNOSTICS: usize = 32;
 const RECORDED_MESSAGE_BYTES: usize = 512;
 
+/// The action a shadow check's digest names.
+const SHADOW_CHECK_ACTION: &str = "code_check.shadow";
+
 /// One step's shadow check. Dropping it counts and traces the check, with
 /// the step taken as failed unless [`Self::ended`] says otherwise, so every
 /// way out of a step is counted.
@@ -28,6 +34,9 @@ pub(super) struct ShadowStep<'a> {
     seq: u64,
     /// The configured checker, which a failure is recorded against.
     backend: BackendId,
+    /// The check's action digest; `None` when the checker crashed before it
+    /// named itself, so its pin is unknown.
+    action_digest: Option<String>,
     result: Result<CheckReport, CheckFailure>,
     elapsed: Duration,
     then: StepThen,
@@ -49,6 +58,15 @@ impl<'a> ShadowStep<'a> {
                 program,
             })
         }));
+        let action_digest = checked.as_ref().ok().map(|(backend, _)| {
+            declarations
+                .iter()
+                .fold(ActionInputs::new(), |inputs, file| {
+                    inputs.with(file.name, call_bytes_digest(file.text.as_bytes()))
+                })
+                .with("checker", format!("{}@{}", backend.name, backend.pin))
+                .action_digest(SHADOW_CHECK_ACTION, &call_bytes_digest(program.as_bytes()))
+        });
         let (backend, result) = checked.unwrap_or_else(|_| {
             let backend = BackendId {
                 name: "unknown",
@@ -61,6 +79,7 @@ impl<'a> ShadowStep<'a> {
             run_id,
             seq,
             backend,
+            action_digest,
             result,
             elapsed: started.elapsed(),
             then: StepThen::Failed,
@@ -78,6 +97,7 @@ impl<'a> ShadowStep<'a> {
             "mode": "shadow",
             "backend": backend.name,
             "pin": backend.pin,
+            "action_digest": self.action_digest,
             "elapsed_us": u64::try_from(self.elapsed.as_micros()).unwrap_or(u64::MAX),
         });
         match &self.result {

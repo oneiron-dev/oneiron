@@ -444,6 +444,9 @@ impl RefusalReceipt {
             },
             request_digest: self.request_digest,
             result_digest: Some(crate::receipt::call_refusal_digest(code, message)),
+            // What the parked call read was not kept, and the drain cannot
+            // recover it (OF-568).
+            inputs: None,
             served: Vec::new(),
         }
     }

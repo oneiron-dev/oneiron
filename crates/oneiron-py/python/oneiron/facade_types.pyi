@@ -1341,6 +1341,7 @@ class CallReceipt(TypedDict):
     outcome: CallOutcome
     request_digest: str
     result_digest: NotRequired[str | None]
+    action_digest: NotRequired[str | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
 class KeyValueAddress(TypedDict):

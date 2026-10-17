@@ -272,7 +272,7 @@ declare namespace Sdk {
   type CallReceiptRequest = { receipt_ref: string };
   type CallTransport = "http_facade" | "mcp" | "ws";
   type CallOutcome = "ok" | { refused: { code: string } };
-  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; served: string[]; served_records?: RecordRef[] };
+  type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; served: string[]; served_records?: RecordRef[] };
   type KeyValueAddress = { namespace: string[]; key: string };
   type KeyValueItem = { namespace: string[]; key: string; value: unknown; created_at: number; updated_at: number; revision: string };
   type KeyValuePut = { namespace: string[]; key: string; value: unknown; request_id: string; source?: string };

@@ -46,6 +46,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 mod ask;
 mod check_repeat;
+mod duplicate;
 mod run_loop;
 pub use ask::{
     AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
@@ -1144,9 +1145,11 @@ const fn unix_secs(at: u64) -> u64 {
     if at >= 100_000_000_000 { at / 1000 } else { at }
 }
 
-/// `duplicate_work`: the run's audit-labelled duplicates. The card goes on the
-/// agent that did the second piece of work, unless that work cost less than
-/// its `health.dup.min_cost` (its launch scope's spend, children included).
+/// `duplicate_work`: each attempt that ran an action another attempt ran
+/// first on the same inputs, unplanned (`duplicate`, OF-568), and the run's
+/// audit-labelled duplicates. The card goes on the agent that did the second
+/// piece of work, once per attempt, unless that work cost less than its
+/// `health.dup.min_cost` (its launch scope's spend, children included).
 fn duplicate_findings(
     vault: &Vault,
     dispatched: &Dispatches,
@@ -1156,13 +1159,38 @@ fn duplicate_findings(
     now: u64,
 ) -> Result<Vec<Finding>> {
     let dispatcher = AgentDispatcher::new(vault);
+    let cheap = |record: &AttemptRecord, dispatch: &Dispatched| -> Result<bool> {
+        let floor = book.of(Some(dispatch)).dup_min_cost;
+        if floor > 0
+            && let Some(scope_id) = dispatcher.spend_scope_for_attempt(record.id)?
+            && let Some(scope) = dispatcher.read_spend_scope(&scope_id)?
+        {
+            return Ok(scope.unit == dup_cost_unit() && scope.spent_units < floor);
+        }
+        Ok(false)
+    };
+    let mut out = Vec::new();
+    let mut found = BTreeSet::new();
+    for (key, firsts) in duplicate::digest_duplicates(vault, dispatched, attempts, since)? {
+        let (Some(record), Some(dispatch)) = (attempts.get(&key), dispatched.get(&key)) else {
+            continue;
+        };
+        if cheap(record, dispatch)? {
+            continue;
+        }
+        let evidence = std::iter::once(record)
+            .chain(firsts.iter().filter_map(|first| attempts.get(first)))
+            .filter_map(|record| entity(record.id))
+            .collect();
+        found.insert(key);
+        out.push(dup_finding(record, dispatch, evidence));
+    }
     let runs: BTreeSet<&str> = dispatched
         .keys()
         .filter_map(|id| attempts.get(id))
         .filter(|record| record.updated_at >= since)
         .filter_map(|record| record.run_id.as_deref())
         .collect();
-    let mut out = Vec::new();
     for run in runs {
         let cost = project_run_coordination(vault, run, now)?;
         for label in &cost.duplicate_work {
@@ -1182,13 +1210,7 @@ fn duplicate_findings(
             let Some((record, dispatch)) = does(&label.second) else {
                 continue;
             };
-            let floor = book.of(Some(dispatch)).dup_min_cost;
-            if floor > 0
-                && let Some(scope_id) = dispatcher.spend_scope_for_attempt(record.id)?
-                && let Some(scope) = dispatcher.read_spend_scope(&scope_id)?
-                && scope.unit == dup_cost_unit()
-                && scope.spent_units < floor
-            {
+            if found.contains(record.id.as_bytes()) || cheap(record, dispatch)? {
                 continue;
             }
             let mut evidence: Vec<EntityId> =
@@ -1198,23 +1220,29 @@ fn duplicate_findings(
                     .filter_map(|record| entity(record.id))
                     .collect();
             evidence.extend(EntityId::from_hex(&label.audit_receipt).ok());
-            out.push(Finding {
-                subject: dispatch.actor,
-                signal: AgentHealthSignal::DuplicateWork,
-                task: task_of(record),
-                attempt: Some(record.id),
-                evidence,
-                window: (record.created_at, record.updated_at),
-                actual: 1,
-                dial: 0,
-                measured: 1,
-                counter: Vec::new(),
-                confession: None,
-                blocked: false,
-            });
+            out.push(dup_finding(record, dispatch, evidence));
         }
     }
     Ok(out)
+}
+
+/// One `duplicate_work` finding on the attempt that did the second piece of
+/// work.
+fn dup_finding(record: &AttemptRecord, dispatch: &Dispatched, evidence: Vec<EntityId>) -> Finding {
+    Finding {
+        subject: dispatch.actor,
+        signal: AgentHealthSignal::DuplicateWork,
+        task: task_of(record),
+        attempt: Some(record.id),
+        evidence,
+        window: (record.created_at, record.updated_at),
+        actual: 1,
+        dial: 0,
+        measured: 1,
+        counter: Vec::new(),
+        confession: None,
+        blocked: false,
+    }
 }
 
 /// `misalignment`: an audit found a flaw in an objective the agent's

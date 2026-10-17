@@ -17,7 +17,7 @@ use crate::code_run::{
     SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
     SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
     SelfSummarizeCall, SummarizeReply, agent_verb_rows_of, result_cannot, result_card,
-    result_refusal,
+    result_refusal, self_call_inputs,
 };
 use crate::code_run::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -363,6 +363,15 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome, None));
         }
+        // OF-568: what this call reads, captured before it runs, for its
+        // row's action digest. Only the vault's own storage is versioned: a
+        // session overlay's reads, or a capture that failed, stay unknown.
+        let inputs = match self.storage {
+            Some(ExecutorStorage::Canonical(vault)) => {
+                self_call_inputs(vault, &call).ok().flatten()
+            }
+            _ => None,
+        };
         // ONE-1314: the current step's own history, observed at the last
         // moment before this call dispatches. The durable half was observed
         // when the step opened; together they are every bridge call this run
@@ -418,14 +427,16 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                     &error_outcome,
                     started_at_ms,
                     started_at_ms,
-                )?;
+                )?
+                .with_inputs(inputs.as_ref());
                 self.bridge_calls.insert(place, row);
                 self.hard_failure = Some(err);
                 return Ok(self.respond(error_outcome, None));
             }
         };
         let finished_at_ms = started_at_ms;
-        let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?;
+        let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?
+            .with_inputs(inputs.as_ref());
         if self.durable_wait.is_none()
             && let SelfDispatchOutcome::DurableWait(wait) = &outcome
         {
