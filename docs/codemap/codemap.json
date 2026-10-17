@@ -16171,7 +16171,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/policy.rs",
@@ -23832,13 +23832,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -27343,7 +27343,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LinkedText",
@@ -27358,6 +27358,7 @@
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
       "const": 5,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 6
@@ -53102,7 +53103,7 @@
     "lens": {
      "files": 50,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
     },
@@ -53842,7 +53843,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 177,
+   "over_bar": 179,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3267,
    "test_files": 902
