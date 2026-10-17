@@ -21315,6 +21315,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/failure_signals/live.rs",
+     "purpose": "Live tier-1 counting (OF-380)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/failure_signals/policy.rs",
      "purpose": "Versioned tier-1 aggregation dials from trusted POLICY_MANIFEST rows",
      "surface": {
@@ -50195,7 +50205,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -51086,7 +51096,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3086,
+   "source_files": 3087,
    "test_files": 903
   },
   "oneiron-android": {
