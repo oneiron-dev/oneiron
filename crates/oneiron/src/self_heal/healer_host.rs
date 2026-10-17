@@ -287,7 +287,7 @@ impl Vault {
                 },
                 None => ProposalState::Denied,
             };
-            PROPOSAL.put(&self.store, txn, id, &record)?;
+            PROPOSAL.put(self, txn, id, &record)?;
             if let Some(pr) = &pr {
                 RELEASE.put(&self.store, txn, id, pr)?;
             }
@@ -306,7 +306,7 @@ fn reverse_receipt_in_txn(
             .ok_or(Error::EntityNotFound)?;
         if record.state == ProposalState::Proposed {
             record.state = ProposalState::Reversed;
-            PROPOSAL.put(&vault.store, txn, id, &record)?;
+            PROPOSAL.put(vault, txn, id, &record)?;
         }
     }
     receipt.reversed = true;
@@ -466,7 +466,7 @@ impl HealerRegistration<'_> {
                 });
             }
             PROPOSAL.put(
-                &self.vault.store,
+                self.vault,
                 txn,
                 &proposal_id,
                 &HealerProposalRecord {

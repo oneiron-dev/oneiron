@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::notifications::PolicyNotificationTarget;
+use crate::batch::secret_scan::admit_typed;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
 use crate::side_table::{self, Raw, SideTable};
@@ -11,6 +12,10 @@ const SEQUENCE: &[u8] = b"owner_policy:change:seq:v1";
 const RECEIPT: &[u8] = b"owner_policy:change:receipt:v1:";
 const EVENT: &[u8] = b"owner_policy:change:event:v1:";
 const PROPOSAL: &[u8] = b"owner_policy:change:proposal:v1:";
+/// Where the side-row wall says it found a secret in a ruling (OF-067).
+const RECEIPT_PLACE: &str = "side:OWNER_POLICY_CHANGE_RECEIPT";
+/// Where the side-row wall says it found a secret in a proposal (OF-067).
+const PROPOSAL_PLACE: &str = "side:OWNER_POLICY_CHANGE_PROPOSAL";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,7 +97,7 @@ pub(super) fn append_change_in_txn(
             previous_receipt_id = Some(old.receipt_id);
         }
     }
-    let receipt = PolicyRowReceipt {
+    let mut receipt = PolicyRowReceipt {
         receipt_id: id.clone(),
         revision: next,
         author: author.to_hex(),
@@ -100,6 +105,14 @@ pub(super) fn append_change_in_txn(
         previous_receipt_id,
         at: now,
     };
+    // OF-067: the owner's row text and reasons as the side-row wall keeps them.
+    let receipt_key = [RECEIPT, &next.to_be_bytes()].concat();
+    admit_typed(
+        vault,
+        txn,
+        (RECEIPT_PLACE, receipt_key.as_slice()),
+        &mut receipt,
+    )?;
     let event = PolicyChangedEvent {
         kind: "policy.changed".to_owned(),
         receipt_id: id.clone(),
@@ -112,11 +125,10 @@ pub(super) fn append_change_in_txn(
         .store
         .vault_meta
         .put(txn, SEQUENCE, &next.to_be_bytes())?;
-    vault.store.vault_meta.put(
-        txn,
-        &[RECEIPT, &next.to_be_bytes()].concat(),
-        &encode(&receipt)?,
-    )?;
+    vault
+        .store
+        .vault_meta
+        .put(txn, &receipt_key, &encode(&receipt)?)?;
     vault
         .store
         .vault_meta
@@ -161,16 +173,19 @@ pub(super) fn read_proposal_in(
         .transpose()
 }
 
+/// Writes `proposal` as the side-row wall keeps it (OF-067), and `proposal`
+/// takes its handles.
 pub(super) fn put_proposal_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    proposal: &PolicyRowProposal,
+    proposal: &mut PolicyRowProposal,
 ) -> Result<()> {
-    vault.store.vault_meta.put(
-        txn,
-        &key(PROPOSAL, &proposal.proposal_id),
-        &encode(proposal)?,
-    )?;
+    let row_key = key(PROPOSAL, &proposal.proposal_id);
+    admit_typed(vault, txn, (PROPOSAL_PLACE, row_key.as_slice()), proposal)?;
+    vault
+        .store
+        .vault_meta
+        .put(txn, &row_key, &encode(proposal)?)?;
     Ok(())
 }
 

@@ -198,7 +198,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         DESCRIPTIONS.put(
-            &self.store,
+            self,
             &mut txn,
             &description.model.as_str().to_owned(),
             description,

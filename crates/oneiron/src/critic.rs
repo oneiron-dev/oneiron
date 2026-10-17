@@ -456,7 +456,7 @@ impl<'a> CritiqueArtifactStore<'a> {
             artifact_id: artifact.artifact_id.clone(),
         };
         let mut wtxn = self.vault.store.env.write_txn()?;
-        CRITIQUE_ARTIFACT.put(&self.vault.store, &mut wtxn, &key, artifact)?;
+        CRITIQUE_ARTIFACT.put(self.vault, &mut wtxn, &key, artifact)?;
         wtxn.commit()?;
         Ok(())
     }

@@ -299,7 +299,7 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
             {
                 ISSUE_REVERSE.delete(&self.vault.store, txn, &issue_key(&old.issue))?;
             }
-            LINEAR_LINKS.put(&self.vault.store, txn, &link.task_ref, link)?;
+            LINEAR_LINKS.put(self.vault, txn, &link.task_ref, link)?;
             ISSUE_REVERSE.put(&self.vault.store, txn, &reverse, &link.task_ref)?;
             Ok(())
         })

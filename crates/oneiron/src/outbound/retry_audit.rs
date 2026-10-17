@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, CompleteAttempt, FailAttempt, RetryAttempt};
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::receipt::{SendReceiptOutcome, persist_send_receipt_in_txn};
+use crate::receipt::{SendReceiptOutcome, persist_admitted_send_receipt_in_txn};
 
 /// Commits the audit row, source finalization, successor and indexes together.
 /// No receipt may advertise a retry edge unless that retry also commits. A
@@ -52,8 +52,8 @@ pub(super) fn persist_send_receipt_and_retry(
         .insert("retry_at".to_owned(), retry_at.to_string());
     let queue = AttemptQueue::new(vault);
     vault.with_write_txn_grouped(|wtxn| {
-        if !persist_send_receipt_in_txn(
-            &vault.store,
+        if !persist_admitted_send_receipt_in_txn(
+            vault,
             wtxn,
             task_ref,
             receipt,
@@ -126,8 +126,8 @@ pub(super) fn persist_terminal_send_receipt_and_fail_in_txn(
         now,
     } = settlement;
     let queue = AttemptQueue::new(vault);
-    if !persist_send_receipt_in_txn(
-        &vault.store,
+    if !persist_admitted_send_receipt_in_txn(
+        vault,
         wtxn,
         task_ref,
         receipt,
@@ -332,8 +332,8 @@ pub(super) fn reconcile_connector_task(
         } else {
             None
         };
-        let wrote = persist_send_receipt_in_txn(
-            &vault.store,
+        let wrote = persist_admitted_send_receipt_in_txn(
+            vault,
             wtxn,
             task.task_ref,
             receipt,

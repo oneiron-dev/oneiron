@@ -61,25 +61,33 @@ impl<T: ManifestDbs> SideTableDbs for T {
 }
 
 /// One routed transaction's side databases: the vault's own, or an off-record session's view
-/// composed over them, which stages its writes into the session's overlay.
+/// composed over them, which stages its writes into the session's overlay. Only the vault's own
+/// holds the custody door, so an off-record view refuses a secret the side-row wall would mint.
 #[derive(Clone, Copy)]
 pub(crate) enum RoutedDbs<'v> {
-    Base(&'v crate::store::Store),
+    Base(&'v crate::Vault),
     Session(&'v crate::store::SessionStoreView<'v>),
 }
 
 impl SideTableDbs for RoutedDbs<'_> {
     fn side_vault_meta(&self) -> &OverlayDb {
         match self {
-            Self::Base(store) => store.side_vault_meta(),
+            Self::Base(vault) => vault.store.side_vault_meta(),
             Self::Session(view) => view.side_vault_meta(),
         }
     }
 
     fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
         match self {
-            Self::Base(store) => store.side_sync_state_opt(),
+            Self::Base(vault) => vault.store.side_sync_state_opt(),
             Self::Session(view) => view.side_sync_state_opt(),
+        }
+    }
+
+    fn side_custody(&self) -> Option<CustodyWrite<'_>> {
+        match self {
+            Self::Base(vault) => vault.side_custody(),
+            Self::Session(_) => None,
         }
     }
 }

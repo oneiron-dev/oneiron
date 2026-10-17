@@ -222,6 +222,6 @@ pub(super) fn put_critique_artifact_in_txn(
         branch_attempt: artifact.branch_attempt,
         artifact_id: artifact.artifact_id.clone(),
     };
-    CRITIQUE_ARTIFACT.put(&vault.store, wtxn, &key, artifact)?;
+    CRITIQUE_ARTIFACT.put(vault, wtxn, &key, artifact)?;
     Ok(())
 }

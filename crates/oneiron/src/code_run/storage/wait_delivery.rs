@@ -135,10 +135,11 @@ pub(crate) fn deliver_wait_in_txn(
     let settled = match SETTLED.get(&vault.store, txn, &(SETTLED_TAG, wait_id))? {
         Some(settled) => settled,
         None => {
-            let settled = WaitDelivery {
+            let mut settled = WaitDelivery {
                 reply: reply_text(reply)?,
                 delivered_at_ms: now_ms,
             };
+            SETTLED.admit(vault, txn, &(SETTLED_TAG, wait_id), &mut settled)?;
             SETTLED.put(&vault.store, txn, &(SETTLED_TAG, wait_id), &settled)?;
             settled
         }

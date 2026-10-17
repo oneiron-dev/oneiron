@@ -450,7 +450,7 @@ impl Vault {
     pub fn set_description_policy(&self, policy: &DescriptionPolicy) -> Result<()> {
         policy.validate()?;
         let mut txn = self.store.env.write_txn()?;
-        POLICY.put(&self.store, &mut txn, &(), policy)?;
+        POLICY.put(self, &mut txn, &(), policy)?;
         txn.commit()?;
         Ok(())
     }
@@ -473,7 +473,7 @@ impl Vault {
             .get(&self.store, &txn, &())?
             .unwrap_or_default();
         rows.insert(measurement.model.clone(), measurement);
-        MEASUREMENTS.put(&self.store, &mut txn, &(), &rows)?;
+        MEASUREMENTS.put(self, &mut txn, &(), &rows)?;
         txn.commit()?;
         Ok(())
     }
@@ -617,7 +617,7 @@ impl Vault {
         if reason.trim().is_empty() {
             return Err(invalid("a routed seat needs its reason"));
         }
-        let seat = RoutedSeat {
+        let mut seat = RoutedSeat {
             id: id.into(),
             role: role.into(),
             model: chosen.model.clone(),
@@ -645,6 +645,8 @@ impl Vault {
         {
             return Err(invalid("description evidence changed during seat birth"));
         }
+        // The pin as the side-row wall keeps it is the one every call binds, the first too.
+        SEATS.admit(self, &mut txn, &id.to_owned(), &mut seat)?;
         SEATS.put(&self.store, &mut txn, &id.to_owned(), &seat)?;
         txn.commit()?;
         Ok(seat)

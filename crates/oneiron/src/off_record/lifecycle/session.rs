@@ -563,7 +563,7 @@ impl OffRecordSession<'_> {
                     // unconditional read sees.
                     let view = self.vault.store.session_view(self.entry.overlay.clone())?;
                     accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
-                    table.put(&self.vault.store, wtxn, key, value)
+                    table.put(self.vault, wtxn, key, value)
                 })
             }
         }
@@ -609,11 +609,7 @@ impl OffRecordSession<'_> {
             RouteTarget::Base => self.with_saver_write_txn(self.saver_check_for(route)?, |wtxn| {
                 route.revalidate()?;
                 let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                f(
-                    wtxn,
-                    RoutedDbs::Session(&view),
-                    RoutedDbs::Base(&self.vault.store),
-                )
+                f(wtxn, RoutedDbs::Session(&view), RoutedDbs::Base(self.vault))
             }),
         }
     }
@@ -750,7 +746,7 @@ impl OffRecordSession<'_> {
                 table.put(&view, wtxn, key, value)?;
                 counter.put(&view, wtxn, counter_key, &next_counter)?;
             } else {
-                table.put(&self.vault.store, wtxn, key, value)?;
+                table.put(self.vault, wtxn, key, value)?;
                 counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
             }
             Ok((segment, total))

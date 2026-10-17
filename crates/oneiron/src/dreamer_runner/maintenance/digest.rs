@@ -226,7 +226,7 @@ impl Vault {
         row.validate()?;
         self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            PRESENTATION.put(&self.store, txn, &(), row)?;
+            PRESENTATION.put(self, txn, &(), row)?;
             Ok(())
         })?;
         self.store.notify_proactivity_changes();
@@ -264,7 +264,7 @@ impl Vault {
                 return Err(invalid());
             }
             CADENCE.put(&self.store, txn, &(), &proposal.request.cadence)?;
-            PRESENTATION.put(&self.store, txn, &(), &proposal.request.presentation)?;
+            PRESENTATION.put(self, txn, &(), &proposal.request.presentation)?;
             POLICY_CONFIRMED.put(&self.store, txn, &claim_ref, &expected_revision)?;
             Ok(())
         })?;
@@ -521,20 +521,8 @@ impl Vault {
                 }
             }
             let is_urgent = !due && breakthrough && !groups.is_empty();
-            let identity = serde_json::to_vec(&(
-                now,
-                recipient,
-                &groups,
-                &judge_asks,
-                &offers,
-                &cleanup,
-                is_urgent,
-                &rendered,
-                &presentation.voice_style,
-            ))
-            .map_err(|_| invalid())?;
-            let digest = ProactivityDigest {
-                id: *blake3::hash(&identity).as_bytes(),
+            let mut digest = ProactivityDigest {
+                id: [0; 32],
                 created_at: now,
                 recipient,
                 urgent: is_urgent,
@@ -546,6 +534,11 @@ impl Vault {
                 rendered,
                 voice_style: presentation.voice_style,
             };
+            // OF-067: the id hashes the digest as the side-row wall stores it, so the wall
+            // reads it first, under the id of the digest as rendered.
+            let rendered_id = digest_id(&digest)?;
+            DIGEST.admit(self, txn, &rendered_id, &mut digest)?;
+            digest.id = digest_id(&digest)?;
             DIGEST.put(&self.store, txn, &digest.id, &digest)?;
             // Delivery is the reader's inbox, in this same write: one
             // NOTIFICATION per reader, keyed by digest, whose seen and acked
@@ -627,25 +620,30 @@ impl Vault {
         DIGEST
             .get(&self.store, &txn, &id)?
             .map(|digest| {
-                let identity = serde_json::to_vec(&(
-                    digest.created_at,
-                    digest.recipient,
-                    &digest.groups,
-                    &digest.judge_asks,
-                    &digest.offers,
-                    &digest.cleanup,
-                    digest.urgent,
-                    &digest.rendered,
-                    &digest.voice_style,
-                ))
-                .map_err(|_| invalid())?;
-                if digest.id != id || blake3::hash(&identity).as_bytes() != &id {
+                if digest.id != id || digest_id(&digest)? != id {
                     return Err(invalid());
                 }
                 Ok(digest)
             })
             .transpose()
     }
+}
+
+/// The id a digest is stored under: the hash of what it shows.
+fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
+    let identity = serde_json::to_vec(&(
+        digest.created_at,
+        digest.recipient,
+        &digest.groups,
+        &digest.judge_asks,
+        &digest.offers,
+        &digest.cleanup,
+        digest.urgent,
+        &digest.rendered,
+        &digest.voice_style,
+    ))
+    .map_err(|_| invalid())?;
+    Ok(*blake3::hash(&identity).as_bytes())
 }
 #[cfg(test)]
 mod tests;

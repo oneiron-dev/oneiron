@@ -59,6 +59,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::batch::secret_scan::admitted_from;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_PEER_BINDING,
@@ -282,21 +283,30 @@ pub struct FinalizedProposalText {
 /// divergent history under the SAME key. Last-writer-wins would swap ED-09's
 /// reservoir pair (proposed, final) for a different history's pair with no
 /// trace, so the divergence is surfaced instead: identical bytes are idempotent
-/// (a retried finalize is not an error), different bytes are an error.
+/// (a retried finalize is not an error), different bytes are an error. A stored
+/// record that holds handles where the retried one holds the secrets the side-row
+/// wall lifted (OF-067) is the same record.
 pub fn put_finalized_proposal_text(vault: &Vault, record: &FinalizedProposalText) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         let stored =
             PROPOSAL_ARTIFACT.get(&vault.store, &*wtxn, &record.artifact_ref.entity_id())?;
         match stored {
-            Some(stored) if stored == *record => Ok(()),
+            Some(stored) if stored == *record || admitted_record(&stored, record)? => Ok(()),
             Some(_) => Err(Error::InvariantViolation(
                 "proposal artifact is already finalized with a different record",
             )),
-            None => {
-                PROPOSAL_ARTIFACT.put(&vault.store, wtxn, &record.artifact_ref.entity_id(), record)
-            }
+            None => PROPOSAL_ARTIFACT.put(vault, wtxn, &record.artifact_ref.entity_id(), record),
         }
     })
+}
+
+/// Whether `held` is `record` as the side-row wall stored it.
+fn admitted_record(held: &FinalizedProposalText, record: &FinalizedProposalText) -> Result<bool> {
+    let tree = |record: &FinalizedProposalText| -> Result<Value> {
+        rmpv::decode::read_value(&mut Cursor::new(encode_finalized_proposal_text(record)?))
+            .map_err(|_| corrupt())
+    };
+    admitted_from(&tree(held)?, &tree(record)?)
 }
 
 /// Reads the finalized proposal artifact stored under `artifact_ref`.

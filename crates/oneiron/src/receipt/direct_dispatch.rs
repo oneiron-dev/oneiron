@@ -14,6 +14,19 @@ use crate::side_table::{self, Named, SideTable};
 const DIRECT: SideTable<[u8; 32], DirectReceipt, Named> =
     SideTable::new(&side_table::OUTBOUND_DIRECT_RECEIPT);
 const VERSION: u8 = 2;
+/// Where the side-row wall says it found a secret in a direct receipt (OF-067).
+const DIRECT_PLACE: &str = "side:OUTBOUND_DIRECT_RECEIPT";
+/// The `fields` [`evidence_fields`] reads: a receipt's key hashes them, so the
+/// side-row wall leaves them as written (OF-067).
+const EVIDENCE_FIELDS: [&str; 7] = [
+    "delivery_may_have_occurred",
+    "retry_state",
+    "intent_state",
+    "gate_outcome",
+    "hold_reason",
+    "suppression_reason",
+    "provider_ref",
+];
 
 #[derive(Serialize, Deserialize)]
 struct DirectReceipt {
@@ -121,7 +134,7 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
     let logical_ref = receipt.receipt_id.clone();
     let key = key(&logical_ref, &receipt);
     receipt.receipt_id = format!("{}:{}", logical_ref, evidence(&receipt));
-    let row = DirectReceipt {
+    let mut row = DirectReceipt {
         version: VERSION,
         logical_ref,
         receipt,
@@ -130,6 +143,12 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
         if !DIRECT.contains(&vault.store, txn, &key)?
             && !thinner_duplicate(vault, txn, &row.logical_ref, &row.receipt)?
         {
+            row.receipt.admit_free_text(
+                vault,
+                txn,
+                (DIRECT_PLACE, key.as_slice()),
+                &EVIDENCE_FIELDS,
+            )?;
             DIRECT.put(&vault.store, txn, &key, &row)?;
         }
         Ok(())

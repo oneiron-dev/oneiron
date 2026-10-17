@@ -1,5 +1,6 @@
 //! Transactional review bundles. Every public claim goes through the write gate.
 use super::*;
+use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::side_table::{self, Named, Raw, SideTable};
 
 /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
@@ -34,7 +35,11 @@ pub(super) fn persist_review(
         if let Some(result) = cached_review(vault, txn, request)? {
             return Ok(result);
         }
-        for artifact in artifacts {
+        // OF-067: each artifact as the side-row wall keeps it, so its row, the cached review
+        // and the result handed back carry the same handles. A held row stands for an artifact
+        // it holds with handles where this one holds the secrets.
+        let mut artifacts = artifacts.to_vec();
+        for artifact in &mut artifacts {
             if artifact.out_of_scope {
                 continue;
             }
@@ -42,11 +47,16 @@ pub(super) fn persist_review(
                 branch_attempt: artifact.branch_attempt,
                 artifact_id: artifact.artifact_id.clone(),
             };
-            if let Some(held) = CRITIQUE_ARTIFACT.get(&vault.store, txn, &key)?
-                && held != *artifact
-            {
-                return Err(invalid_critic_config("review artifact id already used"));
+            if let Some(held) = CRITIQUE_ARTIFACT.get(&vault.store, txn, &key)? {
+                if held != *artifact
+                    && !admitted_from(&named_tree(&held)?, &named_tree(&*artifact)?)?
+                {
+                    return Err(invalid_critic_config("review artifact id already used"));
+                }
+                *artifact = held;
+                continue;
             }
+            CRITIQUE_ARTIFACT.admit(vault, txn, &key, artifact)?;
             CRITIQUE_ARTIFACT.put(&vault.store, txn, &key, artifact)?;
         }
         let id = EntityId::now();
@@ -82,7 +92,7 @@ pub(super) fn persist_review(
         let result = ReviewResult {
             verdict_claim: id,
             triage: triage.clone(),
-            artifacts: artifacts.to_vec(),
+            artifacts: artifacts.clone(),
             receipts: Vec::new(),
         };
         let stored = StoredReview {
@@ -90,10 +100,10 @@ pub(super) fn persist_review(
             dissent: BTreeMap::new(),
             verdict: id.to_hex(),
             triage: triage.clone(),
-            artifacts: artifacts.to_vec(),
+            artifacts,
         };
         let hash = review_identity_hash(request)?;
-        RESULT.put(&vault.store, txn, &hash, &stored)?;
+        RESULT.put(vault, txn, &hash, &stored)?;
         RESULT_ID.put(&vault.store, txn, &id, &RESULT.key_bytes(&hash))?;
         Ok(result)
     })
@@ -311,7 +321,7 @@ pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDiss
         stored
             .dissent
             .insert(state.artifact_id.clone(), state.clone());
-        RESULT.put(&vault.store, txn, &hash, &stored)
+        RESULT.put(vault, txn, &hash, &stored)
     })
 }
 

@@ -71,7 +71,7 @@ side_tables! {
     /// server yet. Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Raw;
     /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
-    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named;
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
@@ -189,7 +189,7 @@ side_tables! {
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
-    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named;
+    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().
@@ -203,9 +203,9 @@ side_tables! {
     BUILD_CACHE_RUNNING_RESERVATION: VaultMeta b"build_cache:running:v2:" Raw;
     /// Calendar connector write-outbox rows and remote object cursors. Key: `row:` or `obj:` +
     /// bytes32.
-    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson;
+    CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored;
     /// Per-feed poll cursor. Key: bytes32.
-    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson;
+    CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored;
     /// UID-to-EVENT lookup cache. Key: bytes32.
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
@@ -215,7 +215,7 @@ side_tables! {
     SYNC_CALENDAR_ORIGIN_PENDING: VaultMeta b"calendar_origin_pending:v1:" Raw;
     /// One wire call's lasting receipt (OF-538): who called on which credential, which verb, how
     /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
-    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named;
+    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
     /// Durable UTF-8 activation notice for one compliance-pack version, one row per version. Key:
@@ -386,24 +386,24 @@ side_tables! {
     CODE_RUN_READER_INDEX: VaultMeta b"code_run:reader_index:v1:" Raw;
     /// One reader child of a code run: its binding, state, generation and latest finding (JSON).
     /// Key: id16(task).
-    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw;
+    CODE_RUN_READER_JOB: VaultMeta b"code_run:reader_job:v1:" Raw Authored;
     /// A code run's reader row: its children's clock, fixed at its first spawn, their spend scope
     /// and its counts (JSON). Key: id16(run).
     CODE_RUN_READER_PARENT: VaultMeta b"code_run:reader_parent:v1:" Raw;
     /// One wait over a code run's reader children, and its first done reduction (JSON). Key:
     /// id16(set).
-    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw;
+    CODE_RUN_READER_WAIT: VaultMeta b"code_run:reader_wait:v1:" Raw Authored;
     /// A code run's replay record, keyed by run id. Key: id16.
-    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw;
+    CODE_RUN_REPLAY: VaultMeta b"code_run:replay:v1:" Raw Authored;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw;
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
-    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw;
+    CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored;
     /// The code runs parked on a wait (`p` + id16(wait) + id16(run), value be64(generation)) and
     /// the reply the wait settled with (`s` + id16(wait), value JSON). Key: u8 tag + id16 [+ id16].
-    CODE_RUN_WAIT_INDEX: VaultMeta b"code_run:wait_index:v1:" Raw;
+    CODE_RUN_WAIT_INDEX: VaultMeta b"code_run:wait_index:v1:" Raw Authored;
     /// Node-local C9 trap a host bound to one parked code-run wait, woken in the commit that
     /// delivers it (fixed layout). Key: id16(run) + id16(wait) + be64(generation).
     CODE_RUN_WAIT_TRAP: VaultMeta b"code_run:wait_trap:v1:" Raw;
@@ -508,10 +508,10 @@ side_tables! {
     /// Immutable recorded contract baseline snapshot (public API names, schemas, command outputs),
     /// keyed by its own content digest; a differing value under the same id is corruption. Key:
     /// hex64.
-    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named;
+    CONTRACT_ORACLE_BASELINE: VaultMeta b"contract_oracle:baseline:v1:" Named Authored;
     /// Immutable recorded verdict comparing a candidate snapshot against a recorded baseline (diffs
     /// plus test-pass state), keyed by its own content digest. Key: hex64.
-    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named;
+    CONTRACT_ORACLE_VERDICT: VaultMeta b"contract_oracle:verdict:v1:" Named Authored;
     /// Actor id (id16) that created a room; an unrooted vault reads it as the room's owner. Key:
     /// id16 (room).
     CONVERSATION_CREATOR: VaultMeta b"conversation:creator:v1:" Raw;

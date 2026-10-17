@@ -86,7 +86,7 @@ impl Vault {
         rubric.validate()?;
         self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            RUBRIC.put(&self.store, txn, &(), rubric)?;
+            RUBRIC.put(self, txn, &(), rubric)?;
             Ok(())
         })
     }

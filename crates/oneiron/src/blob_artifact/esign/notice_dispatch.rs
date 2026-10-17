@@ -284,7 +284,7 @@ impl Vault {
                     )?;
                 }
             }
-            append_dispatch_observation_in_txn(&self.store, txn, key, identity, &result)?;
+            append_dispatch_observation_in_txn(self, txn, key, identity, &result)?;
             Ok(result)
         })
         .map_err(Into::into)
