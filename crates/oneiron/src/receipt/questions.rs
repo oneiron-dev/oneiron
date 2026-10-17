@@ -219,8 +219,9 @@ pub struct QuestionCreateRequest {
     /// criteria?, audience?, posture?, media?, deadline_ms?}`. `criteria` is
     /// `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each at most 16
     /// lines of 512 bytes; `audience` is `asker`; `posture` is `managed`,
-    /// `relay` or `self-host` (absent: the vault's); `media` is `{images}`
-    /// (absent: images on); `deadline_ms` is each call's clock, 1 to 60000.
+    /// `relay` or `self-host` (absent: the vault's); `media` is `{images,
+    /// audio}` (each absent: on); `deadline_ms` is each call's clock, 1 to
+    /// 60000.
     /// `activation` must be `standing`. The engine mints `question.id` and
     /// sets `question.version` to 1 over what the request names. `dial`
     /// (`{first, ceiling, band}`) must sit inside the host's dial: first at
