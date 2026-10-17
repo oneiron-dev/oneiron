@@ -30,6 +30,11 @@ pub enum SkillEditDisposition {
     /// Improving, but this cycle already spent its accepts. The proposal stays
     /// OPEN — a later cycle may score it under a fresh cap.
     DeferredCycleCap,
+    /// An improving edit to the judge's rubric that waits on its cadence
+    /// (ARCH-0042): the judge already revised this campaign, or its anchor has
+    /// fewer than k fresh labels since the last revision. The proposal stays
+    /// OPEN for a later cycle.
+    DeferredJudgeCadence,
     /// Identity- or alignment-tier at accept time, on the TARGET or on the
     /// PROPOSAL itself — protected, ambiguous, or moved since the basis was
     /// taken. One arm carries every tier answer, and as a refusal it closes the
@@ -62,6 +67,7 @@ impl SkillEditDisposition {
             Self::RejectedTradeoff => "rejected_tradeoff",
             Self::NeedsTradeoffDecision => "needs_tradeoff_decision",
             Self::DeferredCycleCap => "deferred_cycle_cap",
+            Self::DeferredJudgeCadence => "deferred_judge_cadence",
             Self::RefusedProtectedTier => "refused_protected_tier",
             Self::RefusedStaleTarget => "refused_stale_target",
             Self::RefusedSourceLoss => "refused_source_loss",
@@ -78,6 +84,7 @@ impl SkillEditDisposition {
             "rejected_tradeoff" => Some(Self::RejectedTradeoff),
             "needs_tradeoff_decision" => Some(Self::NeedsTradeoffDecision),
             "deferred_cycle_cap" => Some(Self::DeferredCycleCap),
+            "deferred_judge_cadence" => Some(Self::DeferredJudgeCadence),
             // "deferred_evidence_changed" is deliberately ABSENT: the evidence
             // race is a retryable abort that commits nothing, so a row
             // spelling it is a row from a build whose contract no longer
@@ -119,7 +126,10 @@ impl SkillEditDisposition {
     /// because the drafting job skips a skill with an open proposed revision.
     #[must_use]
     pub const fn leaves_proposal_open(self) -> bool {
-        matches!(self, Self::DeferredCycleCap | Self::NeedsTradeoffDecision)
+        matches!(
+            self,
+            Self::DeferredCycleCap | Self::DeferredJudgeCadence | Self::NeedsTradeoffDecision
+        )
     }
 
     /// Whether this ruling ANSWERS the proposal, and so must close it.

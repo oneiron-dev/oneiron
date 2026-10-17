@@ -1,6 +1,9 @@
-//! Receipt-only DecoEvo measurements and per-axis world-outcome calibration.
+//! Receipt-only DecoEvo measurements, per-axis world-outcome calibration, and
+//! the judge against the human picks in the skill's anchor.
 use super::*;
 use serde::{Deserialize, Serialize};
+
+use crate::skill_optimize::JudgeLabel;
 
 /// A response-only preference frozen before either rubric or scalar score is
 /// shown to the judging callbacks. The host selects a near-tie rollout pair
@@ -56,6 +59,70 @@ pub struct WorldAxisScore {
     pub labelled_receipts: u64,
 }
 
+/// The judge against the human picks in the skill's anchor (ARCH-0053: the
+/// anchor grows through settled outcomes and human picks). A pick between the
+/// judge's answer and another's scores it; a pick between two answers of one
+/// judge, a retest flip, or of two other judges is counted but scores none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorLabelScore {
+    /// The judge that answers now; `None` before a swap pass named one.
+    pub judge: Option<String>,
+    pub labels: u64,
+    /// Picks between this judge's answer and another judge's.
+    pub scored: u64,
+    /// Of those, the picks that chose this judge's answer.
+    pub agreed: u64,
+    /// Hash of each label's ask id and chosen option, in anchor order.
+    pub digest: String,
+}
+
+/// Score `judge` against `labels`, the skill's anchor.
+pub(super) fn anchor_score(labels: &[JudgeLabel], judge: Option<&str>) -> AnchorLabelScore {
+    let mut hash = Sha256::new();
+    hash.update(b"skill_optimize:anchor_labels:v1\0");
+    hash.update(
+        u64::try_from(labels.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    let (mut scored, mut agreed) = (0_u64, 0_u64);
+    for label in labels {
+        hash.update(label.ask.id);
+        hash.update(
+            u64::try_from(label.chosen.len())
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        );
+        hash.update(label.chosen.as_bytes());
+        let Some(judge) = judge else {
+            continue;
+        };
+        let by =
+            |option: &str| crate::skill_optimize::judge_swap::label_judge(option) == Some(judge);
+        let (own, other) = match (
+            by(label.ask.option_a.as_str()),
+            by(label.ask.option_b.as_str()),
+        ) {
+            (true, false) => (&label.ask.option_a, &label.ask.option_b),
+            (false, true) => (&label.ask.option_b, &label.ask.option_a),
+            _ => continue,
+        };
+        if crate::skill_optimize::judge_swap::label_judge(other).is_none() {
+            continue;
+        }
+        scored += 1;
+        agreed += u64::from(label.chosen == *own);
+    }
+    AnchorLabelScore {
+        judge: judge.map(str::to_owned),
+        labels: u64::try_from(labels.len()).unwrap_or(u64::MAX),
+        scored,
+        agreed,
+        digest: bytes_to_hex_lower(&hash.finalize()),
+    }
+}
+
 /// Measurements made outside the write transaction, sealed with the scored basis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -67,6 +134,8 @@ pub struct JudgeMeasurements {
     pub world_axes: BTreeMap<String, WorldAxisScore>,
     /// Hash of receipt ids AND their observed labels in the scored snapshot.
     pub world_labels_digest: String,
+    /// The judge against the human picks in the skill's anchor, read before scoring.
+    pub anchor: AnchorLabelScore,
 }
 
 /// One held-out replay as the honesty audit reads it: the run's task inputs and
@@ -144,14 +213,16 @@ fn checked(score: f32) -> Result<f32> {
 }
 
 /// Run both independent audits, then compare the judge's predictions to labels
-/// from the durable outcome ledger. No audit result is passed to the scalar
-/// scorer, and no audit result changes admission.
+/// from the durable outcome ledger; `anchor` carries its score against the
+/// skill's human picks. No audit result is passed to the scalar scorer, and no
+/// audit result changes admission.
 pub(super) fn measure(
     scorer: &dyn HeldOutReplayNotes,
     before: &HeldOutReplayCase<'_>,
     after: &HeldOutReplayCase<'_>,
     outcomes: &[(String, bool)],
     blind: &[BlindPreference],
+    anchor: AnchorLabelScore,
 ) -> Result<JudgeMeasurements> {
     validate_blind(blind)?;
     // Coverage sees only the task identity and instructions: no responses,
@@ -212,6 +283,7 @@ pub(super) fn measure(
         blind_preferences: blind.to_vec(),
         world_axes,
         world_labels_digest: world_labels_digest(outcomes),
+        anchor,
     })
 }
 
@@ -248,6 +320,15 @@ pub(super) fn validate_measurements(
         return Err(invalid("judge world label digest is malformed"));
     }
     validate_blind(&measurements.blind_preferences)?;
+    let anchor = &measurements.anchor;
+    if anchor.agreed > anchor.scored
+        || anchor.scored > anchor.labels
+        || (anchor.judge.is_none() && anchor.scored != 0)
+        || anchor.digest.len() != 64
+        || !anchor.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(invalid("judge anchor score is malformed"));
+    }
     for pair in [&measurements.structural, &measurements.contrastive] {
         checked(pair.before)?;
         checked(pair.after)?;

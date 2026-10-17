@@ -317,6 +317,42 @@ pub fn judge_label_anchor(
     Ok(labels)
 }
 
+/// Every label in one skill's anchor, whatever campaign asked it: the human
+/// picks the skill-edit gate measures the judge against. Order is stable by
+/// ask identity.
+pub(crate) fn skill_label_anchor(vault: &Vault, skill: EntityId) -> Result<Vec<JudgeLabel>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut labels = Vec::new();
+    for row in LABELS.iter_from(&vault.store, &txn, &[])? {
+        let (key, label) = row?;
+        if key != label.ask.id {
+            return Err(Error::CorruptedIndex("judge label identity"));
+        }
+        if label.ask.skill == skill {
+            labels.push(label);
+        }
+    }
+    Ok(labels)
+}
+
+/// How many labels the whole anchor gained after `since`, by pick time: the
+/// fresh human picks a judge rubric revision counts.
+pub(crate) fn anchor_labels_since_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    since: u64,
+) -> Result<u64> {
+    let mut fresh = 0_u64;
+    for row in LABELS.iter_from(&vault.store, txn, &[])? {
+        let (key, label) = row?;
+        if key != label.ask.id {
+            return Err(Error::CorruptedIndex("judge label identity"));
+        }
+        fresh += u64::from(label.picked_at > since);
+    }
+    Ok(fresh)
+}
+
 /// Ingest an authenticated human's A/B pick, at most once for an ask. A
 /// conflicting second pick fails rather than changing an existing label.
 pub fn record_judge_pick(
