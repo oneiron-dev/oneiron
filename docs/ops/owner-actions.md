@@ -1162,7 +1162,8 @@ at once. Refusals carry these codes:
 - 409 `code_run_busy`: the run is mid-step or mid-action. Retry.
 - 409 `live_run_attached`: another credential is attached to this lease.
 
-A running server holds the frame of each card `vault.lenses.default` returns, for your credential:
+A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
+`POST /v1/owner/weave/lens` return, for your credential:
 - `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
 - `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
 
