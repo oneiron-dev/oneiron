@@ -2,7 +2,12 @@
 //! ordinary member changes an Admin's named power makes at once. Each rewrites
 //! or deletes FEDERATION_GRANT records in the caller's writer and, given the
 //! host's slip issuer, revokes the capability slips of whoever lost a role.
-//! Removal is access revocation, never a group rekey.
+//! Removal is access revocation, never a group rekey. A new member joins only
+//! by accepting an invitation (`invitation`).
+mod invitation;
+
+pub use invitation::{SHARED_INVITATION_TTL_SECS, SharedInvitation, SharedInvitationState};
+
 use super::{
     Effect, RemoveOwnerPlan, SharedActExecutionReceipt, SharedActKind, SharedVaultChange, decode,
     invalid, live_owners, non_root,
@@ -284,14 +289,16 @@ impl Vault {
         let effect = apply(&mut txn, actor_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, None, now,
+            &mut txn, id, vault_id, None, actor_id, owners, effect, None, None, now,
         )?;
         txn.commit()?;
         Ok(receipt)
     }
 
-    /// Add `member`, a live person with no membership here, at a non-root
-    /// role, or the creation preset's default member role when `None`.
+    /// Invite `member`, a live person with no membership here, at a non-root
+    /// role, or the creation preset's default member role when `None`. No
+    /// grant is written until they accept ([`Vault::accept_shared_invitation`]);
+    /// the receipt's `MemberInvited` names the invitation.
     pub fn add_shared_member(
         &self,
         admin: &AuthenticatedOwner,
@@ -303,7 +310,7 @@ impl Vault {
             admin,
             vault_id,
             Some(OrgAdminPower::AddMember),
-            |txn, _, now| {
+            |txn, inviter, now| {
                 let preset = self
                     .shared_vault_creation_in_txn(txn)?
                     .and_then(|row| row.preset);
@@ -318,16 +325,7 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                let grants = self.set_member_role_in_txn(txn, vault_id, member, role, now)?;
-                Ok(Effect {
-                    change: SharedVaultChange::MemberAdded {
-                        member: member.to_hex(),
-                        role,
-                    },
-                    grants,
-                    revoked_slips: Vec::new(),
-                    notify: BTreeSet::from([member]),
-                })
+                self.issue_invitation_in_txn(txn, vault_id, inviter, member, role, now)
             },
         )
     }
@@ -416,6 +414,20 @@ impl Vault {
         from: EntityId,
         claimant: EntityId,
     ) -> Result<SharedActExecutionReceipt> {
+        self.recover_shared_owner_with_proof(issuer, vault_id, from, claimant, None)
+    }
+    /// [`Vault::recover_shared_owner`], keeping with the signed handover the
+    /// BLAKE3 of the proof of organization control the host judged (`proof`,
+    /// never the proof itself), so the authority log records what the
+    /// recovery rested on.
+    pub fn recover_shared_owner_with_proof(
+        &self,
+        issuer: &HostSlipIssuer,
+        vault_id: u64,
+        from: EntityId,
+        claimant: EntityId,
+        proof: Option<[u8; 32]>,
+    ) -> Result<SharedActExecutionReceipt> {
         let mut txn = self.store.env.write_txn()?;
         super::check_vault(self, &txn, vault_id)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
@@ -440,7 +452,7 @@ impl Vault {
         )?;
         grants.extend(moved);
         let id = self.store.clock.entity_id()?.to_hex();
-        self.append_owner_handover_in_txn(
+        let authority_entry = self.append_owner_handover_in_txn(
             &mut txn,
             issuer,
             OwnerHandover {
@@ -450,6 +462,7 @@ impl Vault {
                 to: Some(claimant),
                 from_keeps: None,
                 act: None,
+                proof: proof.map(|digest| crate::entity_id::bytes_to_hex_lower(&digest)),
                 receipt: id.clone(),
             },
         )?;
@@ -470,6 +483,7 @@ impl Vault {
                 notify: BTreeSet::from([from]),
             },
             None,
+            Some(authority_entry),
             now,
         )?;
         txn.commit()?;
