@@ -62815,7 +62815,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 12
      }
     },
     {
@@ -67934,7 +67934,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 3
      }
     },
@@ -68014,6 +68014,16 @@
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/run_host_door.rs",
+     "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -69025,7 +69035,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -69090,7 +69100,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 527,
+   "source_files": 528,
    "test_files": 182
   },
   "oneiron-spawn": {
