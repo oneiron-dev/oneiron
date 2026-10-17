@@ -308,6 +308,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     if let Some(native_mail) = &config.native_mail {
         native_mail.validate()?;
     }
+    if let Some(device_sync) = &config.device_sync {
+        device_sync.validate()?;
+    }
     for (name, connector) in &config.connectors {
         connector.validate(name)?;
     }
@@ -528,6 +531,7 @@ struct FileServeConfig {
     desktop: Option<super::DesktopConfig>,
     gpu: Option<crate::runtime::GpuPoolConfig>,
     native_mail: Option<super::NativeMailConfig>,
+    device_sync: Option<super::DeviceSyncConfig>,
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
@@ -591,6 +595,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             desktop: value.desktop,
             gpu: value.gpu,
             native_mail: value.native_mail,
+            device_sync: value.device_sync,
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
@@ -660,6 +665,8 @@ struct PartialServeConfig {
     gpu: Option<crate::runtime::GpuPoolConfig>,
     /// `[native_mail]` is file-only, as `[browser]` is.
     native_mail: Option<super::NativeMailConfig>,
+    /// `[device_sync]` is file-only, as `[native_mail]` is.
+    device_sync: Option<super::DeviceSyncConfig>,
     /// `[connectors.<name>]` is file-only, as `[native_mail]` is.
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     /// `[embedding]` is file-only, as `[models]` is.
@@ -739,6 +746,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("desktop", &self.desktop)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
+            .field("device_sync", &self.device_sync)
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
@@ -923,6 +931,9 @@ impl PartialServeConfig {
         if let Some(value) = self.native_mail {
             resolved.native_mail = Some(value);
         }
+        if let Some(value) = self.device_sync {
+            resolved.device_sync = Some(value);
+        }
         if let Some(value) = self.connectors {
             resolved.connectors = value;
         }
@@ -1010,6 +1021,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             desktop: None,
             gpu: None,
             native_mail: None,
+            device_sync: None,
             connectors: None,
             embedding: None,
             line: None,

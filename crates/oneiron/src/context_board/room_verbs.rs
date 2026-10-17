@@ -219,6 +219,11 @@ impl Memory<'_> {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let now =
             thread_ceiling_in(vault, &txn, room, thread, self.actor())?.ok_or_else(unknown_room)?;
+        // A held room turn discloses to its whole roster: it moves into a
+        // private thread (FIX 2951) only when that roster is its audience.
+        if !self.reads_thread_audience_in(&txn, room, thread)? {
+            return Err(unknown_room());
+        }
         drop(txn);
         Ok(match self.room_turn() {
             Some(turn) => {
@@ -666,7 +671,9 @@ pub(crate) fn room_ceiling_in(
 /// (OF-529): a reader of the room ([`room_reader_in`]), or an AGENT_DEF
 /// standing on an OF-531 Ready join for that thread itself. A thread's join
 /// opens that thread's reads alone, never the room's or another thread's,
-/// and takes no seat.
+/// and takes no seat. A private thread (FIX 2951) is read by its audience
+/// alone, before any of these, and one hidden from `caller` reads as a
+/// missing one.
 pub(crate) fn thread_reader_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -675,6 +682,11 @@ pub(crate) fn thread_reader_in(
     members: &[EntityId],
     caller: EntityId,
 ) -> crate::Result<bool> {
+    match crate::workspace_roster::thread_audience_allows_in(vault, txn, room, thread, caller) {
+        Ok(true) => {}
+        Ok(false) | Err(crate::Error::EntityNotFound) => return Ok(false),
+        Err(error) => return Err(error),
+    }
     if room_reader_in(vault, txn, room, members, caller)? {
         return Ok(true);
     }
@@ -700,7 +712,8 @@ pub(crate) fn thread_reader_in(
 
 /// [`room_ceiling_in`] for a reader of thread `thread` of `room`
 /// ([`thread_reader_in`]): the same terms, audience and peer reads over the
-/// room's roster in this snapshot, which a thread's reader never joins.
+/// room's roster in this snapshot, which a thread's reader never joins. A
+/// private thread's (FIX 2951) are over the members in its audience alone.
 /// `None` when `caller` does not read the thread here.
 pub(crate) fn thread_ceiling_in(
     vault: &Vault,
@@ -715,6 +728,7 @@ pub(crate) fn thread_ceiling_in(
     if !thread_reader_in(vault, txn, room, thread, &members, caller)? {
         return Ok(None);
     }
+    let members = crate::workspace_roster::thread_members_in(vault, txn, room, thread, &members)?;
     let worlds = reading_defaults_in(vault, txn, &members)?;
     let clearances = clearances_in(vault, txn, &members)?;
     let roster: Vec<_> = members

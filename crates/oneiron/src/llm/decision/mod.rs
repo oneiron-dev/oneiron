@@ -26,6 +26,8 @@ mod read;
 pub use read::{DecisionReadGate, DecisionReadProvider, GatedRead};
 mod routine;
 pub use routine::*;
+mod rules;
+pub use rules::{HostRule, HostRuleProvider, HostRuleRef, MAX_RULE_REASON_BYTES};
 mod seat;
 mod slides_policy;
 mod types;
