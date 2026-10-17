@@ -37,6 +37,10 @@ side_tables! {
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw;
+    /// The latest owner-signed custody transition this vault signed of one portable credential
+    /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
+    /// hex32(entity id).
+    SECRET_CUSTODY_TRANSITION: VaultMeta b"secret_custody:transition:v1:" Raw;
     /// Forward sidecar of secret taint-refs attached to one piece of build exhaust. Key: hex32(entity
     /// id).
     SECRET_EXHAUST_TAINT: VaultMeta b"secret_exhaust_taint:v1:" Raw;
@@ -432,6 +436,10 @@ side_tables! {
     TASK_CONSULT_PARTY_BACKFILLED: VaultMeta b"tasks.consult_party.backfilled.v1" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
+    /// The creator attempt a create's agent TASK lands under (OF-532): parent attempt, its project
+    /// and run tag, witnessed beside a gated create's proposal or a wave planning attempt. Key: id16
+    /// (the proposal claim, or the id a wave planning attempt derives).
+    TASK_CREATE_ORIGIN: VaultMeta b"tasks.create_origin.v1/" Named;
     /// Presence marker: an authority fact of this task was refused at admission because its id
     /// was deleted here first, so the task's facts read as a refusal. Key: id16 (task).
     TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;

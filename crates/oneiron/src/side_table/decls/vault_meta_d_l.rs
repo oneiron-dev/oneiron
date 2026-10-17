@@ -313,6 +313,11 @@ side_tables! {
     /// One media vector per declared space and entity: its input-kind byte, then the v1 vector
     /// row (OF-370). Key: space key16 + id16.
     EMBEDDING_MEDIA_VECTOR: VaultMeta b"embedding/media_vector/" Raw;
+    /// A kind slot version move, open or concluded, with its last paired probe check (OF-370).
+    /// Key: candidate space id string.
+    EMBEDDING_MOVE: VaultMeta b"embedding/move/" Named;
+    /// A retrieval probe a space version move runs on both spaces (OF-370). Key: probe id16.
+    EMBEDDING_PROBE: VaultMeta b"embedding/probe/" Named;
     /// Media kind slot to declared space id (OF-370). Key: one input-kind byte.
     EMBEDDING_SLOT: VaultMeta b"embedding/slot/" Named;
     /// Declared embedding space: id, width, accepted inputs, query towers (OF-370). Key: string.
@@ -376,6 +381,9 @@ side_tables! {
     FAILURE_SIGNALS_CODE_FIX: VaultMeta b"failure_signals:code_fix:v1:" Named;
     /// The actor bound to the active content write transaction, deleted before commit. Key: ().
     FEDERATION_ACTOR_CONTENT_INFLIGHT: VaultMeta b"federation:actor-content:inflight:v1" Raw;
+    /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
+    /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
+    FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named;
     /// The owner's confidence scale for claims one federation peer sends, this device's local
     /// truth (OF-149). Key: id16(peer principal).
     FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;

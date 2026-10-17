@@ -1,7 +1,8 @@
 //! `POST /v1/llm/decision_read`: the owner's probe of the house model's
-//! decision read. It returns the raw pack read (the question's label
-//! probabilities, P(more thinking) and, when the recipe asks it, P(ask a
-//! person), each its own question in one request) and writes nothing, decides nothing and acts on nothing: every
+//! decision read. It returns the pack read (the question's label
+//! probabilities and P(more thinking), the marginals of one joint read, and,
+//! when the recipe asks it, P(ask a person), read separately in the same
+//! request) and writes nothing, decides nothing and acts on nothing: every
 //! typed decision still goes through decide() in process. The model, its
 //! endpoint, the recipe and the paired and person questions are the host's
 //! configuration; the caller brings only its question, options and state.
@@ -17,6 +18,7 @@ use oneiron::BudgetLease;
 use oneiron::llm::run_admission::{CallOutcome, RunAdmission};
 use oneiron::llm::{
     FatalLlmError, LabelReadFailure, LabelReadRequest, LabelReadout, LabelSet, LlmError, LlmUsage,
+    joint_marginals,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -74,26 +76,22 @@ impl ReadRequest {
             && state_bytes <= MAX_STATE_BYTES
     }
 
-    /// The pack this request asks: its question, then the host's paired
-    /// question and, when set, its person question.
+    /// The pack this request asks: its question jointly with the host's
+    /// paired question, then, when set, its person question alone.
     fn questions<'a>(&'a self, probe: &'a ProbeQuestions) -> Vec<LabelReadout<'a>> {
-        let mut questions = vec![
-            LabelReadout {
-                text: &self.question,
-                labels: match &self.options {
-                    Some(options) => LabelSet::Choice(options),
-                    None => LabelSet::Noul,
-                },
+        let mut questions = vec![LabelReadout {
+            text: &self.question,
+            labels: match &self.options {
+                Some(options) => LabelSet::Choice(options),
+                None => LabelSet::Noul,
             },
-            LabelReadout {
-                text: &probe.paired,
-                labels: LabelSet::Noul,
-            },
-        ];
+            paired: Some(&probe.paired),
+        }];
         if let Some(person) = &probe.person {
             questions.push(LabelReadout {
                 text: person,
                 labels: LabelSet::Noul,
+                paired: None,
             });
         }
         questions
@@ -181,24 +179,29 @@ fn read(
     if let Err(denied) = permit.settle(outcome) {
         tracing::error!(%denied, "a decision read's settlement was refused");
     }
-    let mut answer = answer?;
-    // A readout reports yes first; the pack is the question, paired, person.
-    let yes = |index: usize| {
-        answer
-            .readouts
-            .get(index)
-            .and_then(|readout| readout.first())
-    };
+    let answer = answer?;
+    // The pack is the joint question, then the person question; a readout
+    // reports yes first.
     let malformed = || LlmError::from(FatalLlmError::LabelRead(LabelReadFailure::Malformed));
-    if answer.readouts.len() != read.questions.len() {
+    if answer.readouts.len() != read.questions.len()
+        || answer
+            .readouts
+            .iter()
+            .zip(read.questions)
+            .any(|(readout, question)| readout.len() != question.width())
+    {
         return Err(malformed());
     }
-    let paired_yes = *yes(1).ok_or_else(malformed)?;
-    let person_yes = yes(2).copied();
+    let (primary, paired_yes) = joint_marginals(&answer.readouts[0]);
+    let person_yes = answer
+        .readouts
+        .get(1)
+        .and_then(|readout| readout.first())
+        .copied();
     Ok(ReadAnswer {
         model: reader.model().to_owned(),
         revision: reader.revision().to_owned(),
-        primary: answer.readouts.swap_remove(0),
+        primary,
         paired_yes,
         person_yes,
         usage: answer.usage,
