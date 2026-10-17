@@ -46705,6 +46705,7 @@
       "AiVideoJob",
       "AiVideoJobRequest",
       "AiVideoTicket",
+      "AiVoice",
       "HookReplayOutcome",
       "HookReplayRow",
       "HooksReplayRequest",
@@ -46723,7 +46724,7 @@
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put` and…",
      "surface": {
       "const": 4,
-      "enum": 5,
+      "enum": 6,
       "fn": 16,
       "struct": 20
      }
@@ -63741,7 +63742,7 @@
      "path": "src/api/ai/media.rs",
      "purpose": "The `ai.*` verbs past text: `GET /v1/ai/options`, `POST /v1/ai/image`, `/video`, `/speech`, `/transcribe`…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 14
      }
     },
     {
@@ -63751,7 +63752,7 @@
      "path": "src/api/ai/mod.rs",
      "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns, the session hints the Dreamer's triggers…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -72168,6 +72169,7 @@
       "AiVideoJob",
       "AiVideoJobRequest",
       "AiVideoTicket",
+      "AiVoice",
       "AnswerContract",
       "AnswerRecord",
       "AnsweringAuthority",
@@ -72988,7 +72990,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 242,
+      "enum": 243,
       "struct": 604
      }
     },
