@@ -12,6 +12,7 @@ pub enum AgentVerb {
     SelfIdentitySettle,
     SelfInboxConcern,
     SelfInboxConcernOutcome,
+    SelfInboxConcernMove,
     VaultPeopleList,
     VaultPeopleGet,
     SelfMessage,
@@ -219,6 +220,7 @@ impl AgentVerb {
         Self::SelfIdentitySettle,
         Self::SelfInboxConcern,
         Self::SelfInboxConcernOutcome,
+        Self::SelfInboxConcernMove,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
         Self::SelfMessage,
@@ -429,6 +431,7 @@ impl AgentVerb {
             Self::SelfIdentitySettle => "self.identity.settle",
             Self::SelfInboxConcern => "self.inbox.concern",
             Self::SelfInboxConcernOutcome => "self.inbox.concern.outcome",
+            Self::SelfInboxConcernMove => "self.inbox.concern.move",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
             Self::SelfMessage => "self.message",
@@ -637,6 +640,7 @@ impl AgentVerb {
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -851,6 +855,7 @@ impl AgentVerb {
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -1087,6 +1092,7 @@ impl AgentVerb {
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::SelfMessage
@@ -1281,6 +1287,7 @@ impl AgentVerb {
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcernOutcome
+                | Self::SelfInboxConcernMove
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::Cancel
@@ -1413,6 +1420,7 @@ impl AgentVerb {
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
+            Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1621,6 +1629,7 @@ impl AgentVerb {
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
+            Self::SelfInboxConcernMove => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::SelfMessage => &["spec"],
@@ -1846,6 +1855,7 @@ impl AgentVerb {
             }
             Self::SelfInboxConcern => "",
             Self::SelfInboxConcernOutcome => "",
+            Self::SelfInboxConcernMove => "",
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
             Self::SelfMessage => {

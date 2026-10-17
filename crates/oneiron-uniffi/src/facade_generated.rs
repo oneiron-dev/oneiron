@@ -40,6 +40,11 @@ export_facade! {
     let output = client.self_inbox_concern_outcome(&input)?;
     crate::codec::encode("self.inbox.concern.outcome", &output)
 };
+"self.inbox.concern.move" => fn self_inbox_concern_move(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveRequest = crate::codec::decode("self.inbox.concern.move", &input)?;
+    let output = client.self_inbox_concern_move(&input)?;
+    crate::codec::encode("self.inbox.concern.move", &output)
+};
 "vault.people.list" => fn vault_people_list(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::memory::PeopleListRequest = crate::codec::decode("vault.people.list", &input)?;
     let output = client.vault_people_list(&input)?;

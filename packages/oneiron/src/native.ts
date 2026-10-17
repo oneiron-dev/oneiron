@@ -35,6 +35,7 @@ selfIdentityAnswer(input: unknown): unknown
 selfIdentitySettle(input: unknown): unknown
 selfInboxConcern(input: unknown): unknown
 selfInboxConcernOutcome(input: unknown): unknown
+selfInboxConcernMove(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
 selfMessage(input: unknown): unknown
