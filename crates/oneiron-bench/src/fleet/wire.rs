@@ -3,9 +3,7 @@ use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use oneiron::federation::ScopeAxis;
-use oneiron::sync::transport::{
-    MAX_CODEC_INNER_BYTES, TAG_RPC, WireSocket, encode_protocol_hello,
-};
+use oneiron::sync::transport::{MAX_CODEC_INNER_BYTES, TAG_RPC, WireSocket, encode_protocol_hello};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

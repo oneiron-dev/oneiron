@@ -16,7 +16,8 @@ mod codec;
 pub use codec::{
     CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, LinkBytes, MAX_CODEC_INNER_BYTES,
     MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket, codec_ids,
-    decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, process_link_bytes,
+    decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, encode_http_body,
+    process_link_bytes,
 };
 mod documents;
 pub use documents::{
