@@ -17,6 +17,9 @@
 //! on the host's decision ladder once the host installed one, so its pack
 //! receipt closes attributed (OF-540).
 //!
+//! A wave cut's fan-out under the vault's `auto` mode is ruled on through the
+//! host's decision ladder once the host installed it (FIX 939).
+//!
 //! On the same signal it asks each queued project question (OF-501): a
 //! person's turn queued it by reference, and it runs here, off that turn, on
 //! the host's typed ladder once the host installed one.
@@ -36,6 +39,7 @@ use tokio::sync::{broadcast, watch};
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
 use super::step::{StepRunner, deliver_hold_notice};
 use super::step_failure::{FailedStep, held_leases, settle};
+use crate::decision_host::DecisionHost;
 
 const LEASE_OWNER: &str = "oneiron-server-workflows";
 /// Project questions lease apart from workflow steps, so a failed step's
@@ -54,10 +58,14 @@ pub(super) struct WorkflowPump {
 }
 
 impl WorkflowPump {
+    /// `decisions` is the host's decision host, shared with the Dreamer: the
+    /// host installs it once it staffs its ladder, and from the next wave cut
+    /// on its fan-out is ruled on through it.
     pub(super) fn spawn(
         vault: Arc<Vault>,
         runner: StepRunner,
         status: Arc<StatusCell>,
+        decisions: Arc<OnceLock<DecisionHost>>,
     ) -> std::io::Result<Self> {
         let (stop, stopped) = watch::channel(false);
         let detection = Arc::new(OnceLock::new());
@@ -84,7 +92,7 @@ impl WorkflowPump {
                     }
                 };
                 pump(
-                    &runtime, &vault, &runner, &status, &questions, &judges, stopped,
+                    &runtime, &vault, &runner, &status, &questions, &judges, &decisions, stopped,
                 );
             })?;
         Ok(Self {
@@ -125,6 +133,10 @@ impl WorkflowPump {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the pump's one thread holds each hook the host installs"
+)]
 fn pump(
     runtime: &tokio::runtime::Runtime,
     vault: &Vault,
@@ -132,6 +144,7 @@ fn pump(
     status: &StatusCell,
     detection: &OnceLock<ProjectDetection>,
     attribution: &OnceLock<HeldLadder>,
+    decisions: &OnceLock<DecisionHost>,
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
@@ -140,7 +153,15 @@ fn pump(
             return;
         }
         ask_project_questions(vault, detection, &stopped);
-        let open = match pump_once(runtime, vault, runner, status, attribution, &stopped) {
+        let open = match pump_once(
+            runtime,
+            vault,
+            runner,
+            status,
+            attribution,
+            decisions.get(),
+            &stopped,
+        ) {
             Ok(open) => open,
             Err(error) => {
                 tracing::error!(%error, "workflow pump pass failed");
@@ -173,6 +194,7 @@ fn pump_once(
     runner: &StepRunner,
     status: &StatusCell,
     attribution: &OnceLock<HeldLadder>,
+    decisions: Option<&DecisionHost>,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
     let held = match vault.release_annotation_holds() {
@@ -183,7 +205,7 @@ fn pump_once(
         }
     };
     if !*stopped.borrow() {
-        super::waves::run_once(runtime, vault, runner, status)?;
+        super::waves::run_once(runtime, vault, runner, status, decisions)?;
     }
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
