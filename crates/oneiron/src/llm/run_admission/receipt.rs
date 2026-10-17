@@ -115,7 +115,7 @@ pub struct PermitFacts {
     pub teacher_target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
-    /// The seat the call was admitted on (its per-seat tier), so the meter
+    /// The seat the call was admitted on (its metered seat), so the meter
     /// can attribute the call to one seat. `None` for a paid connector.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seat: Option<String>,

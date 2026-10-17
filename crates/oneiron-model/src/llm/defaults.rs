@@ -200,6 +200,7 @@ impl PurposeDefaultTable {
             vault_policy: None,
             purpose_default: self.purpose(purpose).map(|row| row.tier.clone()),
             global_default,
+            seat: None,
         }
     }
 

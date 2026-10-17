@@ -211,8 +211,7 @@ impl RunInner {
                 seat: request
                     .envelope
                     .tier
-                    .per_seat
-                    .as_ref()
+                    .metered_seat()
                     .map(|tier| tier.0.clone()),
                 rules_enforced,
             },
