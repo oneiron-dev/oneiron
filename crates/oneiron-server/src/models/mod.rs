@@ -22,7 +22,7 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
     BudgetLine, HostAccount, LeaseUnit, RunAdmission, RunDeclaration, RunReceiptSink,
 };
-use oneiron::{BudgetGuard, ModelId, ModelLocality};
+use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
 use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
 
@@ -305,6 +305,12 @@ impl ModelRuntime {
                                 ladder.model().clone(),
                                 model_family(&model, provider).map(str::to_owned),
                             );
+                            if let Ok(entry) = catalog_entry(&model, provider) {
+                                router.chat_entry(LlmCatalogEntry {
+                                    model: ladder.model().clone(),
+                                    ..entry
+                                });
+                            }
                         }
                         router.insert(ladder.model().clone(), provider.locality, ladder);
                     }
