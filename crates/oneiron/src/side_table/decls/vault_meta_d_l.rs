@@ -659,6 +659,10 @@ side_tables! {
     LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named;
     /// Subject index over `learning.*` cells (value: the member). Key: subject id16 + cell digest.
     LEARNING_CELL_SUBJECT: VaultMeta b"learning:cell_subject:v1:" Named;
+    /// Owner seed or pin over one spawn choice (model, width, pattern or budget) at a goal, a
+    /// project, a task type or the vault (value, weight in runs, setter, why). Key: string (choice
+    /// "\0" mode, then the scope).
+    LEARNING_CHOICE: VaultMeta b"learning:choice:v1:" Raw;
     /// A team's derived coordination cost (wait by reason, reuse delay, duplicate work): a
     /// diagnostic, never a score. Key: string (team reference).
     LEARNING_COORDINATION: VaultMeta b"learning:coordination:v1:" Named;

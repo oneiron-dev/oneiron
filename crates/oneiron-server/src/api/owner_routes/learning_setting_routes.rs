@@ -1,7 +1,8 @@
 //! `/v1/owner/settings/learning`: the owner reads the learned-setting
-//! catalog and its own rows, and lays or clears a seed or a pin at the vault,
-//! a project or a task type (`oneiron::learning_setting_doors`). The engine
-//! keeps the catalog bounds and the seed and pin rules.
+//! catalog and its own rows, and lays or clears a seed or a pin over a knob
+//! or a spawn choice at the vault, a project's goal, a project or a task
+//! type (`oneiron::learning_setting_doors`). The engine keeps the catalog
+//! bounds and the seed and pin rules.
 
 use std::sync::Arc;
 

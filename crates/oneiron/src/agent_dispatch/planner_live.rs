@@ -167,6 +167,7 @@ impl AgentDispatcher<'_> {
     ) -> Result<Vec<ShapeQuote>> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
+        let request = &request.with_owner_choices(self.vault, attempt_project(&live))?;
         let evidence = self.planner_evidence(&live, &request.need, request.seats, at)?;
         let mut quotes = ranked_quotes(&request.need, &evidence)?;
         quotes.truncate(n.max(1));
@@ -184,6 +185,7 @@ impl AgentDispatcher<'_> {
     ) -> Result<(SpawnPlanReceipt, Vec<ShapeQuote>)> {
         request.need.validate()?;
         let live = self.live_planner_lease(leased)?;
+        let request = &request.with_owner_choices(self.vault, attempt_project(&live))?;
         let evidence = self.planner_evidence(&live, &request.need, request.seats, at)?;
         let thresholds = PlannerThresholds::from_vault(self.vault)?;
         let quotes = ranked_quotes(&request.need, &evidence)?;
