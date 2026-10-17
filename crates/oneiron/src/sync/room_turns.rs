@@ -92,44 +92,47 @@ pub(crate) fn admit_room_turn_map(key: Option<&WindowKey>, map: &LoroMap) -> Res
 }
 
 /// Writes into `doc` the turn row this vault holds for TURN `id`, unless the
-/// window holds it already. A row the window holds with messages or tasks
-/// this vault's row lacks is written over with the merge of the two, so
-/// neither machine's binding is lost. Returns whether it wrote; the caller
-/// commits.
+/// window's row already carries every message and bound task of it and its
+/// conversion. A row the window holds is extended, never replaced, so another
+/// machine's binding is not lost and two machines settle on one row. Returns
+/// whether it wrote; the caller commits.
 pub(crate) fn mirror_room_turn(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Result<bool> {
     let held = {
         let rtxn = vault.store.env.read_txn()?;
         replicated_turn_in(vault, &rtxn, *id)?
     };
-    let Some(mut turn) = held else {
+    let Some(turn) = held else {
         return Ok(false);
     };
     let map = doc.get_map(ROOM_TURNS_MAP);
     let hex = id.to_hex();
-    if let Some(held) = map_get_bytes(&map, &hex).and_then(|held| decode(&held).ok()) {
-        if held == turn {
-            return Ok(false);
-        }
-        // The window's row may carry what this machine has not merged yet.
-        for message in held.message_ids {
-            if !turn.message_ids.contains(&message) {
-                turn.message_ids.push(message);
+    let row = match map_get_bytes(&map, &hex).and_then(|carried| decode(&carried).ok()) {
+        Some(mut carried) => {
+            let mut grew = false;
+            for message in turn.message_ids {
+                if !carried.message_ids.contains(&message) {
+                    carried.message_ids.push(message);
+                    grew = true;
+                }
             }
-        }
-        for task in held.task_ids {
-            if !turn.task_ids.contains(&task) {
-                turn.task_ids.push(task);
+            for task in turn.task_ids {
+                if !carried.task_ids.contains(&task) {
+                    carried.task_ids.push(task);
+                    grew = true;
+                }
             }
+            if carried.converted_project.is_none() && turn.converted_project.is_some() {
+                carried.converted_project = turn.converted_project;
+                grew = true;
+            }
+            if !grew {
+                return Ok(false);
+            }
+            carried
         }
-        if turn.converted_project.is_none() {
-            turn.converted_project = held.converted_project;
-        }
-    }
-    let bytes = encode(&turn)?;
-    if map_get_bytes(&map, &hex).as_deref() == Some(bytes.as_slice()) {
-        return Ok(false);
-    }
-    map_insert_bytes(&map, &hex, &bytes)?;
+        None => turn,
+    };
+    map_insert_bytes(&map, &hex, &encode(&row)?)?;
     Ok(true)
 }
 
