@@ -36,6 +36,8 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
     let launch_ref = launch.launch_ref.to_hex();
     let digest = bytes_to_hex_lower(&launch.plan_digest);
     let tasks = launch.statement.task_count;
+    // The statement's expected spend in dollars, never native units.
+    let spend = launch.statement.expected.dollar_line();
     if let Some(pause) = &launch.paused {
         let (rank, state) = if pause.denied {
             (2, "denied_parked")
@@ -51,9 +53,9 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
         return Some((
             rank,
             format!(
-                "{} {state} tasks={tasks} resume=vault.fanout.resume launch_ref={launch_ref} \
-                 plan_digest={digest} ruling=approve_once|approve_and_remember|deny \
-                 by=owner{holder}",
+                "{} {state} tasks={tasks} {spend} resume=vault.fanout.resume \
+                 launch_ref={launch_ref} plan_digest={digest} \
+                 ruling=approve_once|approve_and_remember|deny by=owner{holder}",
                 pause.surface_ref
             ),
         ));
@@ -65,8 +67,8 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
     Some((
         1,
         format!(
-            "{check} dispatched tasks={tasks} ack=vault.fanout.ack launch_ref={launch_ref} \
-             plan_digest={digest} answer=ack|ack_and_remember by=owner"
+            "{check} dispatched tasks={tasks} {spend} ack=vault.fanout.ack \
+             launch_ref={launch_ref} plan_digest={digest} answer=ack|ack_and_remember by=owner"
         ),
     ))
 }

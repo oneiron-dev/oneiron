@@ -8,14 +8,14 @@ use crate::entity_id::EntityId;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum LeaderFallback {
     #[default]
-    TaskHolderThenSourceLeader,
+    TaskHolderThenRoomHost,
     SourceLeaderOnly,
 }
 
 impl LeaderFallback {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::TaskHolderThenSourceLeader => "task_holder_then_source_leader",
+            Self::TaskHolderThenRoomHost => "task_holder_then_room_host",
             Self::SourceLeaderOnly => "source_leader_only",
         }
     }
@@ -73,7 +73,7 @@ pub(crate) struct ProjectConversionPolicy {
 impl Default for ProjectConversionPolicy {
     fn default() -> Self {
         Self {
-            leader_fallback: LeaderFallback::TaskHolderThenSourceLeader,
+            leader_fallback: LeaderFallback::TaskHolderThenRoomHost,
             task_holder_fallback: TaskHolderFallback::AssigneeThenOwner,
             roster_selection: RosterSelection::InheritSource,
             max_tasks: 4096,
@@ -92,7 +92,7 @@ impl ProjectConversionPolicy {
             {
                 LeaderFallback::SourceLeaderOnly
             } else {
-                LeaderFallback::TaskHolderThenSourceLeader
+                LeaderFallback::TaskHolderThenRoomHost
             },
             task_holder_fallback: if self.task_holder_fallback == TaskHolderFallback::AssigneeOnly
                 || other.task_holder_fallback == TaskHolderFallback::AssigneeOnly
@@ -135,7 +135,7 @@ pub(super) fn shipped_row() -> Value {
         ),
         (
             Value::from("leader_fallback"),
-            Value::from("task_holder_then_source_leader"),
+            Value::from("task_holder_then_room_host"),
         ),
         (
             Value::from("roster_selection"),
@@ -169,8 +169,8 @@ pub(super) fn parse_project_conversion(value: &Value) -> Option<ProjectConversio
         match key.as_str()? {
             "leader_fallback" => {
                 leader_fallback = Some(match value.as_str()? {
-                    "task_holder_then_source_leader" if leader_fallback.is_none() => {
-                        LeaderFallback::TaskHolderThenSourceLeader
+                    "task_holder_then_room_host" if leader_fallback.is_none() => {
+                        LeaderFallback::TaskHolderThenRoomHost
                     }
                     "source_leader_only" if leader_fallback.is_none() => {
                         LeaderFallback::SourceLeaderOnly
