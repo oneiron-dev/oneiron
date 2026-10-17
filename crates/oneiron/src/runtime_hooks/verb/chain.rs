@@ -270,7 +270,11 @@ impl<'c> Chain<'c> {
                 }),
                 Some(HookOutcome::Ask { question }) => {
                     let label = if question.trim().is_empty() {
-                        format!("Hook {} asks before {}.", hook_name(binding), self.call.verb)
+                        format!(
+                            "Hook {} asks before {}.",
+                            hook_name(binding),
+                            self.call.verb
+                        )
                     } else {
                         format!(
                             "Hook {} asks before {}: {question}",

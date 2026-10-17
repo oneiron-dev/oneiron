@@ -258,6 +258,7 @@ impl Vault {
                     content_ref: Some(TRUSTED_CONTACT_NOTICE_CONTENT_REF.to_owned()),
                     idempotency_key: Some(intent_ref.clone()),
                     dedupe_key: Some(intent_ref.clone()),
+                    mention: None,
                 },
                 OutboundIntentTrigger::record_transition(notice.fire.clone()),
             ),

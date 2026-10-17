@@ -110,7 +110,13 @@ pub(crate) fn run_graph_question_with_proposals(
             } else {
                 Vec::new()
             };
-            match answerer.decide(question, &context, &images)? {
+            let audio = if answerer.reads_audio() {
+                let lane = vault.scoped_read(super::graph_ask::asker_reader(vault, principal)?);
+                super::graph_ask::unit_audio(&lane, &context)?
+            } else {
+                Vec::new()
+            };
+            match answerer.decide(question, &context, &images, &audio)? {
                 None => Ok(None),
                 Some(GraphDecision::Prediction(prediction)) => {
                     if prediction.answer == DecisionAnswer::Abstain {
@@ -129,7 +135,7 @@ pub(crate) fn run_graph_question_with_proposals(
                         return Ok(None);
                     }
                     super::standing::backfill_graph_decision(
-                        vault, principal, reference, actor, context, frontier, &images,
+                        vault, principal, reference, actor, context, frontier, &images, &audio,
                         *decision, proposals, now,
                     )
                     .map(Some)

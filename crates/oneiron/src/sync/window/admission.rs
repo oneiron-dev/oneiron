@@ -174,6 +174,12 @@ fn validate_window_update(
         if let Some(error) = refused {
             return Err(error);
         }
+        // OF-422: every custody transition the snapshot holds is the owner's.
+        crate::sync::custody::admit_custody_map(
+            vault,
+            key,
+            &candidate.get_map(crate::sync::custody::CUSTODY_MAP),
+        )?;
         // A snapshot can also carry the state at a root, where a carrier
         // deleted after the root survives outside the retained ops, and
         // later exports reuse that root as encoded. Two Loro readers decode
@@ -209,6 +215,11 @@ fn validate_window_update(
             if let Some(error) = at_root {
                 return Err(error);
             }
+            crate::sync::custody::admit_custody_map(
+                vault,
+                key,
+                &root.get_map(crate::sync::custody::CUSTODY_MAP),
+            )?;
         }
         if misplaced {
             return Err(Error::InvalidConfig(
@@ -283,6 +294,7 @@ fn validate_window_update(
     }
     let witnesses = ContainerID::new_root("retained_claim_worlds", ContainerType::Map);
     let births = ContainerID::new_root(crate::sync::row_birth::ROW_BIRTHS_MAP, ContainerType::Map);
+    let custody = ContainerID::new_root(crate::sync::custody::CUSTODY_MAP, ContainerType::Map);
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
             key: map_key,
@@ -293,6 +305,9 @@ fn validate_window_update(
         };
         if op.container == births {
             crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
+        } else if op.container == custody {
+            // OF-422: put-then-delete still carries the bytes on the wire.
+            crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;
         } else if op.container == witnesses {
             if key.is_none_or(|key| key.world().is_none())
                 || !matches!(value, LoroValue::Binary(ref bytes)

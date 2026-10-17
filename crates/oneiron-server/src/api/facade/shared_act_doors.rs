@@ -41,7 +41,11 @@ use crate::server::SyncServer;
 /// their verified human slip, and the engine's roster, power and role checks
 /// decide. A managed vault is owned through its supervisor and refuses, as
 /// `/v1/owner` does there.
-pub(super) fn person(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<AuthenticatedOwner> {
+pub(super) fn person(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<AuthenticatedOwner> {
     if let Ok(owner) = crate::api::owner_routes::owner(auth, server) {
         return Ok(owner);
     }

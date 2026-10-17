@@ -4,7 +4,9 @@
 //! under its own run on the rung's meter, worded by the host's
 //! configuration and answered in its reply format. The answer and its
 //! probability are parsed out of the generated text. A reply that names
-//! nothing the question takes, or no probability, abstains.
+//! nothing the question takes, or no probability, abstains. The rung hears
+//! a call's audio clips when the model its seat routes to is bound as
+//! hearing them.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -15,10 +17,10 @@ use oneiron::llm::decision::{
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
-    EntityId, Error, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
-    TierPrecedence, Vault,
+    EntityId, Error, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef,
+    ResponseFormat, TierPrecedence, Vault,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::config::models::{BigReply, BigSettings};
 use crate::models::ModelRuntime;
@@ -87,6 +89,33 @@ impl BigModel {
         self.pin.clone()
     }
 
+    /// Whether the model the seat routes to hears audio: the vault
+    /// manifest's binding of the role says so (with no manifest the seat is
+    /// the binding, and its provider's explicit `audio_input` capability is
+    /// the declaration), and every rung serving that model admits
+    /// [`LlmCapability::AudioInput`].
+    fn hears_audio(&self) -> bool {
+        let Some(seat) = self.models.seat(self.role) else {
+            return false;
+        };
+        let declared = match self.vault.model_manifest() {
+            Ok(Some(manifest)) => manifest
+                .binding(self.role)
+                .is_ok_and(|binding| binding.reads_audio),
+            Ok(None) => true,
+            Err(_) => false,
+        };
+        declared
+            && self
+                .models
+                .route_role(&self.vault, self.role, seat)
+                .is_ok_and(|route| {
+                    route
+                        .ladder
+                        .supports(&route.model, &LlmCapability::AudioInput)
+                })
+    }
+
     fn request(&self, call: &DecisionCall<'_>) -> oneiron::Result<LlmRequest> {
         let seat = self
             .models
@@ -95,13 +124,28 @@ impl BigModel {
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
         };
-        let state = serde_json::to_string(call.state).map_err(failed)?;
-        let user = format!(
-            "Question: {}\n{}\nState (JSON): {state}\n{}",
-            call.question.text,
-            contract_line(&call.question.contract),
-            self.reply.instructions(),
-        );
+        // Each clip goes in as audio after the line naming it; its state
+        // field holds that name, as Local vision's image fields do.
+        let mut state = call.state.clone();
+        let mut content = Vec::with_capacity(call.audio.len() * 2 + 1);
+        for clip in call.audio {
+            let reference = format!("audio:{}", clip.name);
+            state[clip.name.as_str()] = json!(reference);
+            content.push(ContentPart::Text { text: reference });
+            content.push(ContentPart::Audio {
+                media_type: clip.media_type.clone(),
+                data: clip.base64(),
+            });
+        }
+        let state = serde_json::to_string(&state).map_err(failed)?;
+        content.push(ContentPart::Text {
+            text: format!(
+                "Question: {}\n{}\nState (JSON): {state}\n{}",
+                call.question.text,
+                contract_line(&call.question.contract),
+                self.reply.instructions(),
+            ),
+        });
         Ok(LlmRequest {
             model: seat.model.clone(),
             envelope: CallEnvelope {
@@ -115,7 +159,10 @@ impl BigModel {
             },
             messages: vec![
                 message(LlmMessageRole::System, self.wording.clone()),
-                message(LlmMessageRole::User, user),
+                LlmMessage {
+                    role: LlmMessageRole::User,
+                    content,
+                },
             ],
             tools: Vec::new(),
             params: BTreeMap::new(),
@@ -239,6 +286,10 @@ fn abstained() -> ProviderDecision {
 impl DecisionModel for BigModel {
     fn capability(&self) -> ProviderCapability {
         ProviderCapability::default()
+    }
+
+    fn reads_audio(&self) -> bool {
+        self.hears_audio()
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {

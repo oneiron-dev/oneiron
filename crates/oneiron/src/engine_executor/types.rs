@@ -2,7 +2,7 @@
 
 use crate::code_run::{
     CodeRunDeterminism, CodeRunReplayRecord, ResultFacet, SelfCall, SelfDispatchOutcome,
-    SelfDurableWait,
+    SelfDurableWait, WaitKey,
 };
 use crate::code_sandbox::SandboxBoundaryContract;
 use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_legibility};
@@ -448,4 +448,30 @@ pub struct EngineExecutorOutcome {
     pub seat_receipt: Option<crate::llm::seat::SeatChoiceReceipt>,
     /// The run's compaction after this call, when the host keeps a seat.
     pub compaction: Option<super::compaction::CompactionReport>,
+}
+
+impl EngineExecutorOutcome {
+    /// The wait a Waiting run parked on, keyed as its reply is delivered;
+    /// `None` for any other status.
+    #[must_use]
+    pub fn parked_wait(&self) -> Option<ParkedWait> {
+        let EngineExecutorStatus::Waiting(wait) = &self.status else {
+            return None;
+        };
+        let parked = self.replay_record.step_checkpoints.last()?;
+        Some(ParkedWait {
+            key: super::record::wait_key(&self.replay_record, wait),
+            step_hash: parked.state_hash,
+            wait: wait.clone(),
+        })
+    }
+}
+
+/// A parked run's wait: the key its reply is delivered under, the parked
+/// step's state hash a host binds a trap to, and the wait itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParkedWait {
+    pub key: WaitKey,
+    pub step_hash: [u8; 32],
+    pub wait: SelfDurableWait,
 }
