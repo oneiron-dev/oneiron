@@ -4735,7 +4735,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "enum": 1,
       "re-export": 1
      }
@@ -4840,7 +4840,7 @@
      "path": "src/batch/secret_scan/lift_history/retained.rs",
      "purpose": "Retained carriers with a door of their own (OF-067, Engine ruling D = a)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -4860,7 +4860,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -4871,6 +4871,16 @@
      "purpose": "Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/carrier.rs",
+     "purpose": "The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine…",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -10553,8 +10563,18 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/storage/lift.rs",
+     "purpose": "Code documents the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -21655,6 +21675,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/entity_doc/lift.rs",
+     "purpose": "Entity documents the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/entity_doc/message_stream.rs",
      "purpose": "MESSAGE terminal commits join the common EntityDoc storage transaction",
      "surface": {
@@ -21682,7 +21712,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 9
      }
@@ -29639,6 +29669,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/lifted_view.rs",
+     "purpose": "A lifted carrier's view as the bound actor reads it (OF-067, Engine ruling G2 = b)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ProducerRows"
      ],
@@ -31651,7 +31691,7 @@
      "path": "src/office_body/verbs.rs",
      "purpose": "`vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, \"An agent authors through…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 14,
       "struct": 21
@@ -48042,7 +48082,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TypedBodyCommit",
@@ -48054,10 +48094,20 @@
      "path": "src/typed_body.rs",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 11,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/typed_body/lift.rs",
+     "purpose": "Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -51776,7 +51826,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 119,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51916,7 +51966,7 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -52266,7 +52316,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52532,7 +52582,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53120,10 +53170,10 @@
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 1,
+     "files": 2,
      "impl_vault": true,
-     "largest_src_bucket": "m",
-     "layout": "file",
+     "largest_src_bucket": "L",
+     "layout": "file+dir",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
@@ -53204,9 +53254,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 167,
+   "over_bar": 168,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3225,
+   "source_files": 3230,
    "test_files": 902
   },
   "oneiron-android": {
