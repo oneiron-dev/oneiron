@@ -264,8 +264,11 @@ export class Oneiron {
    * deadline), answering with the best results ready, marked `partial`.
    * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server
    * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.
+   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,
+   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and
+   * remote alike; out of range it returns `BAD_REQUEST`.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */

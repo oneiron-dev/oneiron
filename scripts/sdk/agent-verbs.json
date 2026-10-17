@@ -512,7 +512,6 @@
       "section": false,
       "binding": {
         "assemble": true,
-        "defaults": true,
         "options": "RecallOptions",
         "args": [
           {
@@ -548,12 +547,16 @@
           {
             "name": "media",
             "kind": "media"
+          },
+          {
+            "name": "query_affect",
+            "kind": "query_affect"
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        "
         }
       },
       "uniffi": {
@@ -565,7 +568,8 @@
           "format": "Option<String>",
           "as_of": "Option<u64>",
           "deadline_ms": "Option<u64>",
-          "media": "Option<RecallMedia>"
+          "media": "Option<RecallMedia>",
+          "query_affect": "Option<QueryAffect>"
         },
         "output": "MemoryPack"
       }

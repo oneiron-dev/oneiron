@@ -157,6 +157,10 @@ ARGUMENTS = {
     # (napi object, UniFFI record, Python JSON) onto the engine's wire type.
     'media': {'rust': 'Option<oneiron::code_run::vault_read::ContextPackMediaQuery>', 'napi': 'Option<NapiRecallMedia>', 'native_ts': 'RecallMedia | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallMedia | None', 'native_py': 'Option<&str>', 'json': True,
         'napi_convert': 'let {name} = {name}.map(recall_media_to_engine).transpose().map_err(facade_error)?;', 'py_convert': 'let {name}: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = {name}.map(|value| decode(value, "recall media")).transpose()?;', 'field': '{name}'},
+    # OF-423: a recall's query affect, lowered the same way onto the engine's
+    # `QueryAffect`; the engine's recall door refuses it out of range.
+    'query_affect': {'rust': 'Option<oneiron::task_verb::sdk::QueryAffect>', 'napi': 'Option<NapiQueryAffect>', 'native_ts': 'QueryAffect | undefined', 'py': 'dict[str, Any] | None', 'stub': 'QueryAffect | None', 'native_py': 'Option<&str>', 'json': True,
+        'napi_convert': 'let {name} = {name}.map(query_affect_to_engine);', 'py_convert': 'let {name}: Option<oneiron::task_verb::sdk::QueryAffect> = {name}.map(|value| decode(value, "recall query affect")).transpose()?;', 'field': '{name}'},
     'ref': {'rust': 'Option<&str>', 'napi': 'Option<String>', 'native_ts': 'string | undefined', 'py': 'str | None', 'stub': 'str | None', 'native_py': 'Option<String>', 'borrow': '', 'suffix': '.as_deref()', 'field': '{name}.map(str::to_owned)'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
