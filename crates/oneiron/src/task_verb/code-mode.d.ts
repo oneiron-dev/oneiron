@@ -25,8 +25,9 @@ declare function peek(input: { group_ref: string }): Promise<unknown>;
 declare function report(input: { category: "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear"; evidence_refs?: string[]; kind?: "problem" | "proposal"; note?: string | null; proposal?: object | null; subject_ref: string; why?: string | null }): Promise<unknown>;
 declare namespace self {
   const browser: {
-    batch(input: { steps: (object | object | object | object | object | object | object)[]; subgoal?: string | null }): Promise<unknown>;
+    batch(input: { steps: (object | object | object | object | object | object | object | object)[]; subgoal?: string | null; until_ms?: number | null }): Promise<unknown>;
     click(input: { ref: string }): Promise<unknown>;
+    click_at(input: { image: string; x: number; y: number }): Promise<unknown>;
     crop(input: { height: number; image: string; width: number; x: number; y: number }): Promise<unknown>;
     expect(input: { absent?: boolean; name?: string | null; ref?: string | null; role?: string | null; value?: string | null }): Promise<unknown>;
     find(input: { name?: string | null; role?: string | null }): Promise<unknown>;
@@ -257,6 +258,9 @@ declare const vault: {
   };
   weave: {
     digest(input: { scheduled_for?: number | null }): Promise<unknown>;
+    link: {
+      wrong(input: { source_ref: string; kind: string; target_ref: string }): Promise<unknown>;
+    };
     report(input: { sections: Array<{ kind: string; predicates?: string[]; edge_kinds?: string[] }> }): Promise<unknown>;
   };
   witness(input: { conversation_ref: string; messages: object[]; occurred_at: number; turn_ref?: string | null }): Promise<unknown>;
