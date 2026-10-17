@@ -44,6 +44,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 mod ask;
+mod run_loop;
 pub use ask::{
     AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute,
     AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
@@ -401,6 +402,13 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
     }
 
     let mut findings = loop_findings(&calls, &dispatched, &attempts, dials.loop_repeats);
+    findings.extend(run_loop::run_loop_findings(
+        vault,
+        &dispatched,
+        &attempts,
+        dials.loop_repeats,
+        since,
+    )?);
     findings.extend(silent_findings(vault, &calls, &dispatched, &attempts, &traps, &dials, now)?);
     findings.extend(long_wait_findings(&dispatched, &attempts, &traps, &dials, since, now));
     findings.extend(duplicate_findings(vault, &dispatched, &attempts, since, now)?);
@@ -564,7 +572,8 @@ fn live_attempt(
 
 /// `loop`: one actor's identical `(verb, request_digest)` calls in a row, with
 /// no other call by that actor between them. A call receipt names no attempt,
-/// so the card's task is none.
+/// so the card's task is none. An agent run's own calls leave no receipt and
+/// are judged per attempt (`run_loop`).
 fn loop_findings(
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
     dispatched: &Dispatches,
