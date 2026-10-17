@@ -936,11 +936,19 @@ own text index. A bound slot reads a declared embedding space, whose id is an `a
 - The media backfill skips any document a space's model refuses by its content (a format it
   cannot read, a content filter) until the document changes, so one bad file never stalls a
   space or a move. A model that refuses everything it is sent before it has embedded anything
-  is treated as down, and the backfill retries it.
-- `POST .../move/check` with `{"candidate"}` runs the probes now. `.../move/approve` swaps a
-  full candidate in on your yes. `.../move/undo` binds the incumbent again after a swap, and
-  `.../move/abandon` ends an open move without one. An undo works for 30 days after the swap.
-  Then the incumbent retires (its rows and declaration go) unless a slot binds it again.
+  is treated as down, and the backfill retries it. `GET .../embedding-spaces` counts each
+  space's refused documents under `refused`; `GET .../refused?space=<id>` lists them with the
+  reason and time, and `POST .../refused/clear` with `{"space", "id"}` forgets one, so the
+  backfill sends the same bytes again (after a provider's policy or model changed).
+- A move that goes 14 days from its start without one check (its model never filled the
+  candidate, or the probes never ran) closes as kept, with a note: the incumbent keeps serving
+  and the candidate's rows go. Begin the move again once that model answers.
+- `POST .../move/check` with `{"candidate"}` runs the probes now. It answers within 20 seconds:
+  past that it answers `running`, and the check finishes on its own and records its reading on
+  the move. `.../move/approve` swaps a full candidate in on your yes. `.../move/undo` binds the
+  incumbent again after a swap, and `.../move/abandon` ends an open move without one. An undo
+  works for 30 days after the swap. Then the incumbent retires (its rows and declaration go)
+  unless a slot binds it again.
 - `GET .../probes` lists the probes. `POST .../probes` with `{"kind", "query", "family",
   "targets", "author"}` stores one you wrote. `POST .../probes/delete` with `{"id"}` removes
   one.
