@@ -46,7 +46,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
     };
     async move {
         let (reader, check) = admitted?;
-        crate::api::facade::row_hooks_pre_resumable(
+        crate::api::facade::row_hooks_pre_with(
             server,
             reader,
             check,

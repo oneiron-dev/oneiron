@@ -545,30 +545,9 @@ pub(crate) async fn row_hooks_pre(
     verb: &str,
     args: serde_json::Value,
 ) -> Result<VerbHookPre, MemoryError> {
-    row_hooks_pre_with(server, None, None, actor, class, invocation, verb, args).await
-}
-
-/// [`row_hooks_pre`] for a door that holds its caller's read key and its own
-/// admission of rewritten args. The hooks read under `reader`, capped by
-/// their grant, and as `actor` when it is `None`. A rewrite must pass the
-/// row's input check, then `check`, as if the caller sent it.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "row_hooks_pre's inputs plus the caller's key and rewrite admission"
-)]
-pub(crate) async fn row_hooks_pre_with(
-    server: &Arc<SyncServer>,
-    reader: Option<ScopedReadActorKey>,
-    check: Option<RewriteAdmit>,
-    actor: EntityId,
-    class: EdgeActorClass,
-    invocation: Option<InvocationId>,
-    verb: &str,
-    args: serde_json::Value,
-) -> Result<VerbHookPre, MemoryError> {
     let resume = RowHookResume::default();
-    row_hooks_pre_resumable(
-        server, reader, check, actor, class, invocation, verb, args, resume,
+    row_hooks_pre_with(
+        server, None, None, actor, class, invocation, verb, args, resume,
     )
     .await
 }
@@ -583,14 +562,17 @@ pub(crate) struct RowHookResume {
     pub(crate) drain: Option<VerbAskDrainPermit>,
 }
 
-/// [`row_hooks_pre_with`] for a call settlement can run again: an ask saves
+/// [`row_hooks_pre`] for a door that holds its caller's read key and its own
+/// admission of rewritten args. The hooks read under `reader`, capped by
+/// their grant, and as `actor` when it is `None`. A rewrite must pass the
+/// row's input check, then `check`, as if the caller sent it. An ask saves
 /// `resume`'s credential, and its drain permit marks the chain's thread as
 /// the drain's run of the call.
 #[expect(
     clippy::too_many_arguments,
-    reason = "row_hooks_pre_with's inputs plus what settlement needs"
+    reason = "row_hooks_pre's inputs plus the caller's key, rewrite admission and resume"
 )]
-pub(crate) async fn row_hooks_pre_resumable(
+pub(crate) async fn row_hooks_pre_with(
     server: &Arc<SyncServer>,
     reader: Option<ScopedReadActorKey>,
     check: Option<RewriteAdmit>,
@@ -720,7 +702,7 @@ async fn facade_hooks_pre(
     } else {
         (None, None)
     };
-    Ok(row_hooks_pre_resumable(
+    Ok(row_hooks_pre_with(
         server, reader, check, actor, class, invocation, verb, value, resume,
     )
     .await?)
