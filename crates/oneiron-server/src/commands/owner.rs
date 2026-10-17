@@ -954,20 +954,44 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
 
 /// The saved fork alarms a held root handoff left, and the owner's
 /// acknowledgement of one; `serve` answers the same at
-/// `/v1/owner/authority/handoff-alarms`.
+/// `/v1/owner/authority/handoff-alarms`. Each operation runs its
+/// `vault.authority.handoff_alarms` row's verb hooks once around the engine
+/// door, as the route does (OF-580).
 pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
-    let serve = match &command {
-        HandoffAlarmsCommand::List(args) => &args.serve,
-        HandoffAlarmsCommand::Acknowledge(args) => &args.serve,
+    use oneiron::task_verb::sdk;
+
+    let (serve, route) = match &command {
+        HandoffAlarmsCommand::List(args) => (&args.serve, "GET /v1/owner/authority/handoff-alarms"),
+        HandoffAlarmsCommand::Acknowledge(args) => (
+            &args.serve,
+            "POST /v1/owner/authority/handoff-alarms/acknowledge --data -",
+        ),
     };
     let config = resolve_serve_config(serve)?;
-    let vault = open_vault(&config, "GET /v1/owner/authority/handoff-alarms")?;
-    match command {
-        HandoffAlarmsCommand::List(_) => emit(&vault.authority_handoff_alarms()?),
-        HandoffAlarmsCommand::Acknowledge(args) => {
-            emit(&vault.acknowledge_authority_handoff_alarm(&local_owner(&vault)?, &args.signer)?)
-        }
-    }
+    let vault = open_vault(&config, route)?;
+    let owner = local_owner(&vault)?;
+    let actor = owner_actor(&vault)?;
+    let answer = match command {
+        HandoffAlarmsCommand::List(_) => hooked_row(
+            &vault,
+            actor,
+            "vault.authority.handoff_alarms",
+            sdk::EmptyRequest {},
+            |_| Ok(vault.authority_handoff_alarms()?),
+        )?,
+        HandoffAlarmsCommand::Acknowledge(args) => hooked_row(
+            &vault,
+            actor,
+            "vault.authority.handoff_alarms.acknowledge",
+            sdk::HandoffAlarmRequest {
+                signer: args.signer,
+            },
+            |request: sdk::HandoffAlarmRequest| {
+                Ok(vault.acknowledge_authority_handoff_alarm(&owner, &request.signer)?)
+            },
+        )?,
+    };
+    emit(&answer)
 }
 
 /// The owner's learned-setting rows on a stopped vault; `serve` answers the

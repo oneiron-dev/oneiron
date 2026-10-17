@@ -1246,7 +1246,9 @@ Routes: `GET /v1/owner/authority/handoff-alarms` and
 `POST /v1/owner/authority/handoff-alarms/acknowledge` with `{"signer": "suite:hex"}`. An unknown
 signer is 404, and acknowledging an acknowledged alarm changes nothing. The list, the CLI and the
 SDK's `vault.authority.handoff_alarms` answer one shape in one order: `raised_at` and an
-acknowledgement's `at` in unix seconds, oldest raised first, then by signer.
+acknowledgement's `at` in unix seconds, oldest raised first, then by signer. The routes and the
+CLI run the `vault.authority.handoff_alarms` and `.acknowledge` rows' verb hooks once per
+operation, as you, after the owner check; a hook's stop or ask comes back as the owner refusal.
 
 ## Learned settings
 
@@ -1499,7 +1501,9 @@ locality. A space whose `@where` names no provider serving its rung embeds nothi
   native MCP context pack, and `vault.recall` on every SDK take it. Recall refuses it at light
   effort and in call mode, and refuses `kinds`. A client with no server (an embedded handle)
   answers `MODEL_UNAVAILABLE` (`EMBEDDER_UNAVAILABLE` on the native context pack) and never
-  searches without the media.
+  searches without the media. The Node binding's low-level `NapiVault.contextPack` and
+  `contextPackScoped` take the same `media` object as their last argument and answer it the
+  same way: `MODEL_UNAVAILABLE`, with no pack read.
   `POST .../retire` with `{"space"}` drops a space that no slot binds and no open move names.
 - **From the config file.** `[[embedding.spaces]]` rows (the same fields as the `PUT` body) and
   `[embedding.slots]` (`text`, `image`, `audio` = a space id), or `[embedding] one_space = "<id>"`
