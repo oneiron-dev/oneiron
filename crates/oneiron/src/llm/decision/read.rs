@@ -1,7 +1,9 @@
-//! The escalation rung's decision read: the house model reads the paired "does this need more
-//! thinking?" question and the pack's questions as one pack: each its own question over the
-//! same state, in one request, normalized apart (idle-fold test 6b). The person question ("ask
-//! a person?") is the ladder's own typed question, the pack's last, so it is the last readout.
+//! The escalation rung's decision read: the house model reads the pack's questions over the
+//! same state in one request. Each question is read jointly with the paired "does this need
+//! more thinking?" question (ARCH-0076 `#ask-a-person`: Q1 and Q2 stay joint): one readout over
+//! single-token (option, paired answer) labels, normalized once, whose marginals are the answer
+//! and that answer's own paired reading. The person question ("ask a person?") is the ladder's
+//! own typed question, the pack's last; the host binds it here, and it is read separately.
 
 use super::ladder::{
     DecisionCall, DecisionPack, DecisionProvider, PairedAnswer, ProviderCapability,
@@ -10,7 +12,10 @@ use super::ladder::{
 use super::types::invalid;
 use super::{AnswerContract, DecisionAnswer, DecisionQuestion, DecisionRung, ProviderPin};
 use crate::Result;
-use crate::llm::{BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage};
+use crate::llm::{
+    BudgetGuard, LabelReadModel, LabelReadRequest, LabelReadout, LabelSet, LlmUsage,
+    joint_marginals,
+};
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
@@ -22,30 +27,40 @@ pub struct DecisionReadProvider<'a> {
     reader: &'a dyn LabelReadModel,
     guard: &'a BudgetGuard,
     paired: &'a DecisionQuestion,
+    person: Option<&'a DecisionQuestion>,
 }
 
 impl<'a> DecisionReadProvider<'a> {
     /// `pin` names the model the route bound, and the reader must serve exactly that model
-    /// and revision. `paired` is the host's versioned yes/no question.
+    /// and revision. `paired` is the host's versioned yes/no question, and `person` the
+    /// ladder's person question when the host binds one.
     pub fn new(
         pin: ProviderPin,
         reader: &'a dyn LabelReadModel,
         guard: &'a BudgetGuard,
         paired: &'a DecisionQuestion,
+        person: Option<&'a DecisionQuestion>,
     ) -> Result<Self> {
         validate_pin(&pin, DecisionRung::Escalation)?;
         if pin.model != reader.model() || pin.version != reader.revision() {
             return Err(invalid("decision reader serves another model"));
         }
         paired.validate()?;
-        if paired.contract != AnswerContract::Noul {
-            return Err(invalid("invalid paired question"));
+        if paired.contract != AnswerContract::Noul
+            || person.is_some_and(|person| {
+                person.validate().is_err()
+                    || person.contract != AnswerContract::Noul
+                    || person.id == paired.id
+            })
+        {
+            return Err(invalid("invalid paired or person question"));
         }
         Ok(Self {
             pin,
             reader,
             guard,
             paired,
+            person,
         })
     }
 }
@@ -55,9 +70,10 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         self.pin.clone()
     }
 
+    /// A question's options are read two joint labels each.
     fn capability(&self) -> ProviderCapability {
         ProviderCapability {
-            max_options: self.reader.max_labels(),
+            max_options: self.reader.max_labels() / 2,
             score: false,
         }
     }
@@ -76,8 +92,8 @@ impl DecisionProvider for DecisionReadProvider<'_> {
             .ok_or_else(|| invalid("malformed decision read"))
     }
 
-    /// One read: the paired question, then the pack's questions in order. The paired P(yes)
-    /// joins every answer.
+    /// One read of the pack's questions in order: each jointly with the paired question, the
+    /// person question alone. Each answer carries its own paired P(yes).
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
         let DecisionPack {
             questions: asked,
@@ -88,11 +104,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         if asked.is_empty() {
             return Err(invalid("invalid decision pack"));
         }
-        let mut questions = Vec::with_capacity(asked.len() + 1);
-        questions.push(LabelReadout {
-            text: &self.paired.text,
-            labels: LabelSet::Noul,
-        });
+        let mut questions = Vec::with_capacity(asked.len());
         for question in asked {
             if question.id == self.paired.id {
                 return Err(invalid("invalid paired question"));
@@ -104,9 +116,11 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                     return Err(invalid("a decision read takes noul and choice questions"));
                 }
             };
+            let person = self.person.is_some_and(|person| person.id == question.id);
             questions.push(LabelReadout {
                 text: &question.text,
                 labels,
+                paired: (!person).then_some(self.paired.text.as_str()),
             });
         }
         let lease = self
@@ -143,7 +157,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         };
         let unit = |p: &f64| p.is_finite() && (0.0..=1.0).contains(p);
         let distribution = |(readout, question): (&Vec<f64>, &LabelReadout<'_>)| {
-            readout.len() == question.labels.len()
+            readout.len() == question.width()
                 && readout.iter().all(unit)
                 && (readout.iter().sum::<f64>() - 1.0).abs() <= DISTRIBUTION_TOLERANCE
         };
@@ -152,34 +166,44 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         {
             return Err(invalid("malformed decision read"));
         }
-        // Each readout reports yes first.
-        let paired = PairedAnswer {
-            question: self.paired.id,
-            question_version: self.paired.version,
-            probability: read.readouts[0][0],
-        };
-        Ok(questions[1..]
+        Ok(questions
             .iter()
-            .zip(&read.readouts[1..])
+            .zip(&read.readouts)
             .map(|(question, readout)| {
+                // A joint readout's marginals: the labels', then this answer's paired P(yes).
+                let (labels, paired) = match question.paired {
+                    Some(_) => {
+                        let (labels, paired) = joint_marginals(readout);
+                        let paired = PairedAnswer {
+                            question: self.paired.id,
+                            question_version: self.paired.version,
+                            probability: paired.clamp(0.0, 1.0),
+                        };
+                        (labels, Some(paired))
+                    }
+                    None => (readout.clone(), None),
+                };
                 // The first label wins a tie, so a tied noul reads yes.
                 let mut top = 0;
-                for (i, p) in readout.iter().enumerate() {
-                    if *p > readout[top] {
+                for (i, p) in labels.iter().enumerate() {
+                    if *p > labels[top] {
                         top = i;
                     }
                 }
+                // Each readout reports yes first.
+                let probability = |p: f64| p.clamp(0.0, 1.0);
                 let (answer, probability) = match question.labels {
                     // A noul's probability is P(yes), whichever way it reads.
-                    LabelSet::Noul => (DecisionAnswer::Noul(top == 0), readout[0]),
-                    LabelSet::Choice(options) => {
-                        (DecisionAnswer::Choice(options[top].clone()), readout[top])
-                    }
+                    LabelSet::Noul => (DecisionAnswer::Noul(top == 0), probability(labels[0])),
+                    LabelSet::Choice(options) => (
+                        DecisionAnswer::Choice(options[top].clone()),
+                        probability(labels[top]),
+                    ),
                 };
                 ProviderDecision {
                     answer,
                     probability: Some(probability),
-                    paired: Some(paired),
+                    paired,
                     person: None,
                 }
             })
