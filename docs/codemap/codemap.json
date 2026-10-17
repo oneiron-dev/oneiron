@@ -23161,7 +23161,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 61,
+      "crate-vis": 62,
       "re-export": 8
      }
     },
@@ -48273,7 +48273,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ShapeApplier",
@@ -48286,7 +48286,7 @@
      "purpose": "Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has",
      "surface": {
       "enum": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -48329,7 +48329,17 @@
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/manifest.rs",
+     "purpose": "A policy manifest as a seed writes it (DEC-0005): its entity id and its exact MessagePack body, as hex",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -52821,9 +52831,9 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
@@ -52884,9 +52894,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 160,
+   "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3201,
+   "source_files": 3202,
    "test_files": 903
   },
   "oneiron-android": {
