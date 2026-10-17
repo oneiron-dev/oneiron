@@ -1,14 +1,15 @@
 //! Hook regen (ARCH-0080 §8, slice 3): the shape of lens regen (OF-321),
 //! with records typed for hooks. A hook keeps the intent its body came from.
 //! When the verb table or the sandbox contract changes under it, the intent
-//! runs again through an injected [`HookRegenerator`], and the hook's pinned
-//! receipts replay as its golden set under the last good body and under the
-//! candidate. An identical fingerprint adopts; a diff waits for the owner's
-//! stamp; a failure rolls back, never to a blank body. Only a vault's own
-//! packs regen: a hub pack's hooks change through their hub, under the
-//! update rule.
+//! runs again through an injected [`HookRegenerator`], and the hook's newest
+//! saved runs, loaded once, replay as its golden set under the last good body
+//! and under the candidate. Only a complete, identical fingerprint adopts; a
+//! diff, or a run either body could not replay on its record, waits for the
+//! owner's stamp; a failure rolls back, never to a blank body. Only a
+//! vault's own packs regen: a hub pack's hooks change through their hub,
+//! under the update rule.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,11 +20,11 @@ use crate::skill_hub::pack_catalog::{HookSelector, PackInstallDisposition};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::body::HookBodyRuntime;
-use super::replay::{HookReplayEntry, HookReplayResult};
+use super::replay::{self, HookReplayCompare, HookReplayEntry, HookReplayResult};
 
 /// One record per binding: the contract its last good body passed under.
 const REGEN: SideTable<EntityId, HookRegenRecord, Named> = SideTable::new(&side_table::HOOKS_REGEN);
-/// Golden entries one regen replays at most.
+/// The newest saved runs one regen replays as its golden set.
 const GOLDEN_ENTRIES: usize = 256;
 /// The `hub_ref` a vault's own pack records (`vault.packs.put`).
 const OWN_PACK_REF: &str = "vault.packs.put";
@@ -108,65 +109,71 @@ pub trait HookRegenerator {
     ) -> std::result::Result<String, HookRegenFailure>;
 }
 
-/// What each golden entry's body returned, by entry position: the outcome
-/// token and its JSON, or why its history is gone.
+/// What one body returned on each golden run, by run key: the outcome token
+/// and its JSON. A run whose replay did not give back what it recorded (its
+/// history gone, a failed body, another outcome) is incomplete instead.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookGoldenFingerprint {
     pub cases: BTreeMap<String, String>,
+    pub incomplete: BTreeSet<String>,
 }
 
 impl HookGoldenFingerprint {
-    /// The entries a run pinned: replay reuses their inputs, so the two
-    /// bodies read the same thing.
-    fn pinned(entries: &[HookReplayEntry]) -> Self {
-        let cases = entries
-            .iter()
-            .filter_map(|entry| match &entry.result {
+    /// One body's pass over the golden runs.
+    fn of(entries: &[(String, HookReplayEntry)]) -> Self {
+        let mut fingerprint = Self::default();
+        for (run, entry) in entries {
+            match &entry.result {
                 HookReplayResult::Ran {
-                    from_memo: true, ..
+                    compare: HookReplayCompare::Same,
+                    outcome,
+                    outcome_json,
+                    ..
+                } => {
+                    fingerprint.cases.insert(
+                        run.clone(),
+                        format!("{outcome}:{}", outcome_json.as_deref().unwrap_or("")),
+                    );
                 }
-                | HookReplayResult::MissingHistory { .. } => {
-                    Some((entry.position.0.clone(), case(&entry.result)))
+                _ => {
+                    fingerprint.incomplete.insert(run.clone());
                 }
-                HookReplayResult::Ran { .. } => None,
-            })
-            .collect();
-        Self { cases }
-    }
-}
-
-fn case(result: &HookReplayResult) -> String {
-    match result {
-        HookReplayResult::Ran {
-            outcome,
-            outcome_json,
-            ..
-        } => format!("{outcome}:{}", outcome_json.as_deref().unwrap_or("")),
-        HookReplayResult::MissingHistory { reason } => format!("missing:{reason}"),
+            }
+        }
+        fingerprint
     }
 }
 
 /// Where a candidate's golden replay parts from the last good body's.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookGoldenDiff {
-    /// The golden entries compared.
+    /// The golden runs compared.
     pub cases: usize,
-    /// The positions whose outcome changed.
+    /// The run keys whose outcome changed, or that either body could not
+    /// replay on its record.
     pub changed: Vec<String>,
 }
 
 impl HookGoldenDiff {
     fn between(last_good: &HookGoldenFingerprint, candidate: &HookGoldenFingerprint) -> Self {
-        let changed = last_good
+        let runs: BTreeSet<&String> = last_good
             .cases
-            .iter()
-            .filter(|(position, outcome)| candidate.cases.get(*position) != Some(*outcome))
-            .map(|(position, _)| position.clone())
+            .keys()
+            .chain(&last_good.incomplete)
+            .chain(candidate.cases.keys())
+            .chain(&candidate.incomplete)
             .collect();
-        Self {
-            cases: last_good.cases.len(),
-            changed,
-        }
+        let cases = runs.len();
+        let changed = runs
+            .into_iter()
+            .filter(|run| {
+                last_good.incomplete.contains(*run)
+                    || candidate.incomplete.contains(*run)
+                    || last_good.cases.get(*run) != candidate.cases.get(*run)
+            })
+            .cloned()
+            .collect();
+        Self { cases, changed }
     }
 
     /// An empty golden set proves nothing, so it never adopts by itself.
@@ -186,7 +193,8 @@ pub enum HookRegenOutcome {
         target: HookContractStamp,
         diff: HookGoldenDiff,
     },
-    /// The golden replay differs, or there is none: the owner stamps it.
+    /// The golden replay differs, is incomplete, or there is none: the owner
+    /// stamps it.
     NeedsHumanStamp {
         candidate: String,
         target: HookContractStamp,
@@ -369,21 +377,17 @@ impl Vault {
             Ok(candidate) => candidate,
             Err(failure) => return Ok(HookRegenOutcome::RolledBack { failure }),
         };
-        // A verb hook keeps no replayable golden set: it waits for a stamp.
-        let golden = |body: Option<String>| match self.hooks_replay_body(
-            runtime,
-            binding,
-            body,
-            None,
-            GOLDEN_ENTRIES,
-        ) {
-            Ok(entries) => Ok(HookGoldenFingerprint::pinned(&entries)),
-            Err(Error::InvalidConfig(_)) => Ok(HookGoldenFingerprint::default()),
-            Err(error) => Err(error),
-        };
-        let (old, new) = match (golden(None), golden(Some(candidate.clone()))) {
-            (Ok(old), Ok(new)) => (old, new),
-            (Err(error), _) | (_, Err(error)) => {
+        // One case vector, the hook's newest saved runs, for both bodies.
+        let golden = replay::saved_runs(self, binding, GOLDEN_ENTRIES).and_then(|runs| {
+            let pass = |body: &str| {
+                self.hooks_replay_runs(runtime, binding, row, body, &runs)
+                    .map(|entries| HookGoldenFingerprint::of(&entries))
+            };
+            Ok((pass(request.last_good.as_str())?, pass(candidate.as_str())?))
+        });
+        let (old, new) = match golden {
+            Ok(golden) => golden,
+            Err(error) => {
                 return Ok(rolled_back(
                     HookRegenFailurePhase::GoldenReplay,
                     &error.to_string(),

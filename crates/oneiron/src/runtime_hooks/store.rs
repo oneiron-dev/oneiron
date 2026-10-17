@@ -1,5 +1,6 @@
-//! The runner's durable rows: cursors, the run memo, saved intents and the
-//! Hook receipts (ARCH-0080 §4 Delivery, Crash-safe outcomes; §6 receipt).
+//! The runner's durable rows: cursors, the run memo, saved intents, the
+//! Hook receipts and the run index (ARCH-0080 §4 Delivery, Crash-safe
+//! outcomes; §6 receipt; §8 golden set).
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +31,10 @@ pub(super) const INTENTS: SideTable<RunKey, HookIntent, Named> =
 /// One Hook receipt per run, by run key.
 pub(super) const RECEIPTS: SideTable<RunKey, ReceiptRecord, Named> =
     SideTable::new(&side_table::HOOKS_RECEIPT);
+/// Each binding's runs in commit order: binding, commit time in Unix ms, run
+/// key. The last rows under a binding are its newest runs.
+pub(super) const RUN_INDEX: SideTable<(EntityId, u64, RunKey), HookRunRef, Named> =
+    SideTable::new(&side_table::HOOKS_RUN_INDEX);
 
 /// The derivation envelope's model id for a body that calls no model.
 const HOOK_MODEL_ID: &str = "hook-js";
@@ -194,6 +199,14 @@ pub(super) struct HookReadRow {
     pub(super) content_hash: u8,
 }
 
+/// One `ai.verdict` a run asked, and what it heard: the verdict's JSON, or
+/// the refusal's text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct HookVerdictPin {
+    pub(super) request_json: String,
+    pub(super) reply: std::result::Result<String, String>,
+}
+
 /// The memo row: a run's saved result. A repeat run finds it and computes
 /// nothing. It does not prove an effect landed; the intent row says that.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,6 +225,11 @@ pub(super) struct HookRunRecord {
     pub(super) input_json: Option<String>,
     pub(super) input_hash: String,
     pub(super) reads: Vec<HookReadPin>,
+    /// Each `ai.verdict` the run asked, in order, while they fit the pin
+    /// bound.
+    pub(super) verdicts: Vec<HookVerdictPin>,
+    /// False once a verdict did not fit: replay has no verdict history then.
+    pub(super) verdicts_complete: bool,
     pub(super) outcome_json: Option<String>,
     /// The outcome kind, or `refused` / `failed`.
     pub(super) outcome: String,
@@ -221,6 +239,44 @@ pub(super) struct HookRunRecord {
     pub(super) duration_ms: u64,
     /// Unix milliseconds, as the body saw it.
     pub(super) now: u64,
+    /// Unix milliseconds of the write: its place in the run index.
+    pub(super) committed_at: u64,
+}
+
+/// The saved row a run index entry names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum HookRunRef {
+    /// A fact run's memo row.
+    Fact(RunKey),
+    /// A verb run's saved record.
+    Verb(RunKey),
+}
+
+impl HookRunRef {
+    const fn key(self) -> RunKey {
+        match self {
+            Self::Fact(key) | Self::Verb(key) => key,
+        }
+    }
+}
+
+/// Indexes `run` under `binding` at `at`, its commit time in Unix ms. A
+/// rewrite of the same run drops the row its earlier write left at
+/// `previous`, so each run stands once.
+pub(super) fn index_run_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: EntityId,
+    previous: Option<u64>,
+    at: u64,
+    run: HookRunRef,
+) -> Result<()> {
+    let key = run.key();
+    if let Some(previous) = previous {
+        RUN_INDEX.delete(&vault.store, txn, &(binding, previous, key))?;
+    }
+    RUN_INDEX.put(&vault.store, txn, &(binding, at, key), &run)
 }
 
 /// Where a saved intent stands.

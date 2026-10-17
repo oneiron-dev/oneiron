@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 231 facade rows, 663 generated types.
+// UniFFI census: 231 facade rows, 667 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 191.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
@@ -5306,6 +5306,15 @@ pub struct HooksReplayRequest {
     pub limit: Option<u64>,
 }
 
+/// `oneiron::runtime_hooks::source::FactSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FactSource {
+    #[serde(rename = "claim_changelog")]
+    ClaimChangelog,
+    #[serde(rename = "settlement")]
+    Settlement,
+}
+
 /// `oneiron::runtime_hooks::source::FactKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum FactKind {
@@ -5315,6 +5324,56 @@ pub enum FactKind {
     ClaimSuperseded,
     #[serde(rename = "proposal.settled")]
     ProposalSettled,
+}
+
+/// `oneiron::skill_hub::pack_catalog::hooks::HookPhase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HookPhase {
+    #[serde(rename = "pre")]
+    Pre,
+    #[serde(rename = "post")]
+    Post,
+    #[serde(rename = "fact")]
+    Fact,
+}
+
+/// `oneiron::runtime_hooks::replay::HookReplayCase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "on")]
+pub enum HookReplayCase {
+    #[serde(rename = "fact")]
+    Fact {
+        #[serde(rename = "source")]
+        source: FactSource,
+        #[serde(rename = "position")]
+        position: String,
+        #[serde(rename = "kind")]
+        kind: FactKind,
+        #[serde(rename = "entity")]
+        entity: String,
+    },
+    #[serde(rename = "verb")]
+    Verb {
+        #[serde(rename = "run_key")]
+        run_key: String,
+        #[serde(rename = "invocation")]
+        invocation: String,
+        #[serde(rename = "verb")]
+        verb: String,
+        #[serde(rename = "phase")]
+        phase: HookPhase,
+    },
+}
+
+/// `oneiron::runtime_hooks::replay::HookReplayCompare`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HookReplayCompare {
+    #[serde(rename = "same")]
+    Same,
+    #[serde(rename = "differs")]
+    Differs,
+    #[serde(rename = "incomplete")]
+    Incomplete,
 }
 
 /// `oneiron::task_verb::sdk_host::HookReplayOutcome`.
@@ -5335,6 +5394,14 @@ pub enum HookReplayOutcome {
         reason: Option<String>,
         #[serde(rename = "recorded", default, skip_serializing_if = "Option::is_none")]
         recorded: Option<String>,
+        #[serde(
+            rename = "recorded_outcome_json",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        recorded_outcome_json: Option<String>,
+        #[serde(rename = "compare")]
+        compare: HookReplayCompare,
         #[serde(rename = "from_memo")]
         from_memo: bool,
         #[serde(rename = "reads_live")]
@@ -5350,12 +5417,8 @@ pub enum HookReplayOutcome {
 /// `oneiron::task_verb::sdk_host::HookReplayRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HookReplayRow {
-    #[serde(rename = "position")]
-    pub position: String,
-    #[serde(rename = "kind")]
-    pub kind: FactKind,
-    #[serde(rename = "entity")]
-    pub entity: String,
+    #[serde(rename = "case")]
+    pub case: HookReplayCase,
     #[serde(rename = "result")]
     pub result: HookReplayOutcome,
 }

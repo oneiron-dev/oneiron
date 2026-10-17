@@ -1,7 +1,7 @@
 //! The verb-hook chain (ARCH-0080 §3): matching, run order, each run's input
 //! and verdict, the failure policy by domain, and the one write that commits
-//! a chain's receipts, blocks and intents once it resolves, even when a Skip
-//! or an Ask stops the verb.
+//! a chain's receipts, saved runs, blocks and intents once it resolves, even
+//! when a Skip or an Ask stops the verb.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -15,12 +15,17 @@ use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
 use crate::runtime_hooks::block::{self, HookBlock};
 use crate::runtime_hooks::lineage::{self, LineageLink};
 use crate::runtime_hooks::outcome::{BlockRequest, HookOutcome};
-use crate::runtime_hooks::runner::{Verdict, block_id, bounded, judge};
-use crate::runtime_hooks::store::{self, HookIntent, HookIntentState, HookRunState, RunKey};
+use crate::runtime_hooks::runner::{
+    MAX_OUTCOME_BYTES, MAX_PINNED_INPUT, Verdict, block_id, bounded, judge,
+};
+use crate::runtime_hooks::store::{
+    self, HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey,
+};
 use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
+use super::record::{self, HookVerbRunRecord};
 use super::state::{Carry, Entered, HookDepth, depth};
 use super::{
     InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume, ask,
@@ -224,7 +229,7 @@ struct Chain<'c> {
     used: Cell<bool>,
 }
 
-/// One run, as its receipt tells it.
+/// One run, as its receipt tells it, and what its saved copy keeps.
 struct RunRecord<'c> {
     id: EntityId,
     binding: &'c PackHookBinding,
@@ -240,6 +245,11 @@ struct RunRecord<'c> {
     rows_read: usize,
     fuel_used: u64,
     host_calls: u32,
+    /// The exact input the body saw.
+    input: String,
+    reads: Vec<HookReadPin>,
+    /// The outcome the body returned, before the engine's own checks.
+    outcome_json: Option<String>,
 }
 
 /// A verb hook's `input`.
@@ -517,6 +527,7 @@ impl<'c> Chain<'c> {
                 .reason
                 .as_deref()
                 .is_some_and(|reason| reason.contains("deadline exceeded"));
+        let rows_read = pins.iter().map(|pin| pin.rows.len()).sum::<usize>();
         let mut run = RunRecord {
             id,
             binding,
@@ -530,9 +541,15 @@ impl<'c> Chain<'c> {
             note: None,
             fail_safe: None,
             duration_ms,
-            rows_read: pins.iter().map(|pin| pin.rows.len()).sum(),
+            rows_read,
             fuel_used: verdict.fuel_used,
             host_calls: verdict.host_calls,
+            input,
+            reads: pins,
+            outcome_json: verdict
+                .outcome_json
+                .clone()
+                .filter(|json| json.len() <= MAX_OUTCOME_BYTES),
         };
         match &verdict.outcome {
             Some(HookOutcome::AddBlock { block }) => self.block(id, binding, &key, block)?,
@@ -730,9 +747,10 @@ impl<'c> Chain<'c> {
             .with_write_txn_grouped(|txn| self.write_in_txn(txn))
     }
 
-    /// The chain's receipts, blocks and intents. A retried call writes each
-    /// block and intent once. A resumed chain uses its answer up first; one
-    /// another try used fails the write, so none of it commits.
+    /// The chain's receipts, saved runs, blocks and intents. A retried call
+    /// writes each block and intent once, and each saved run over its last.
+    /// A resumed chain uses its answer up first; one another try used fails
+    /// the write, so none of it commits.
     fn write_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         let vault = self.vault;
         if let Some(token) = &self.token
@@ -741,8 +759,10 @@ impl<'c> Chain<'c> {
             self.used.set(true);
             return Err(ask::used_error());
         }
+        let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
         for run in &self.runs {
             store::RECEIPTS.put(vault, txn, &run.key, &self.receipt(run))?;
+            record::put_in_txn(vault, txn, &run.key, &self.saved(run, at))?;
         }
         for (id, row, chain) in &self.blocks {
             if block::put_new_block_in_txn(vault, txn, *id, row)? {
@@ -828,6 +848,29 @@ impl<'c> Chain<'c> {
             trigger_ref: Some(self.call.invocation.to_hex()),
             policy_trace: Vec::new(),
             fields,
+        }
+    }
+
+    /// The run's saved copy, written at `at` (Unix ms): what replay runs the
+    /// body on again.
+    fn saved(&self, run: &RunRecord<'_>, at: u64) -> HookVerbRunRecord {
+        HookVerbRunRecord {
+            binding: run.id,
+            code: run.binding.code,
+            body_hash: run.binding.body_hash.clone(),
+            invocation: self.call.invocation,
+            phase: self.phase,
+            verb: self.call.verb.clone(),
+            input_json: (run.input.len() <= MAX_PINNED_INPUT).then(|| run.input.clone()),
+            input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
+            reads: run.reads.clone(),
+            outcome_json: run.outcome_json.clone(),
+            outcome: run.token.clone(),
+            reason: run.reason.clone(),
+            receipt_id: store::receipt_id(&run.key),
+            duration_ms: run.duration_ms,
+            now: self.now,
+            committed_at: at,
         }
     }
 }

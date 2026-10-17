@@ -272,7 +272,7 @@ impl Vault {
                 hook,
                 true,
             )?;
-            let entries = self.hooks_replay_binding(runtime, id, &row, None, None, usize::MAX)?;
+            let entries = self.hooks_replay_binding(runtime, None, id, &row, None, usize::MAX)?;
             passed &= entries.iter().all(|entry| {
                 !matches!(
                     &entry.result,
