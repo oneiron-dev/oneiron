@@ -15,6 +15,7 @@ use oneiron_browser::{LibraryCard, WorkflowProgram, WorkflowProof};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::TypeRef;
@@ -127,9 +128,17 @@ pub fn file_workflow(
     decisions: Option<&PlacementDecisions<'_>>,
 ) -> Result<EntityId> {
     let same = serde_json::to_value(program).ok();
-    let filed = site_workflows(vault, site, None)?
-        .into_iter()
-        .find(|record| serde_json::to_value(&record.program).ok() == same);
+    // A filed program holds handles where this one may hold the secrets the
+    // side-row wall lifted (OF-067); it is still the same program.
+    let mut filed = None;
+    for record in site_workflows(vault, site, None)? {
+        if serde_json::to_value(&record.program).ok() == same
+            || admitted_from(&named_tree(&record.program)?, &named_tree(program)?)?
+        {
+            filed = Some(record);
+            break;
+        }
+    }
     let type_ref = place_type_ref(
         vault,
         None,
@@ -158,7 +167,7 @@ pub fn file_workflow(
         },
     };
     vault.with_write_txn_grouped(|wtxn| {
-        WORKFLOWS.put(&vault.store, wtxn, &(site_key(site), record.id), &record)
+        WORKFLOWS.put(vault, wtxn, &(site_key(site), record.id), &record)
     })?;
     Ok(record.id)
 }
@@ -183,6 +192,6 @@ pub fn record_workflow_run(vault: &Vault, id: EntityId, met: bool, at: u64) -> R
             record.failures = record.failures.saturating_add(1);
         }
         record.last_run_at = Some(at);
-        WORKFLOWS.put(&vault.store, wtxn, &key, &record)
+        WORKFLOWS.put(vault, wtxn, &key, &record)
     })
 }

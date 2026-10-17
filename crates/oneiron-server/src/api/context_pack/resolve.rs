@@ -14,8 +14,9 @@ use super::response::{
     run_context_pack_builder,
 };
 use super::{
-    RoomAudience, narrow_to_reader, reader_optional_memory, resolve_core_disclosure_with_once,
-    resolve_core_interlocutor_set, spend_core_once_disclosures,
+    narrow_to_core_audience, narrow_to_reader, reader_optional_memory,
+    resolve_core_disclosure_with_once, resolve_core_interlocutor_set, resolve_core_room,
+    spend_core_once_disclosures,
 };
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
@@ -85,26 +86,12 @@ pub(crate) async fn run_context_pack(
     // members read its roster by membership, as their room turns do.
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
     let optional_memory = reader_optional_memory(&scoped_read, req.reader.as_ref())?;
-    let principal = auth
-        .principal_ref()
-        .and_then(|id| oneiron::EntityId::from_hex(id).ok());
     let room_id = req
         .conversation_id
         .as_deref()
         .map(|room| super::super::parse_entity_id_param(room, "conversation_id"))
         .transpose()?;
-    let room_members = room_id
-        .map(|room| {
-            server
-                .vault
-                .room_audience_members_under(&scoped_read, room, principal)
-                .map_err(|error| core_engine_error("room audience failed", error))
-        })
-        .transpose()?;
-    let room = room_members
-        .as_deref()
-        .map(|members| RoomAudience::resolve(&server.vault, auth, members))
-        .transpose()?;
+    let (room_members, room) = resolve_core_room(&server.vault, auth, &scoped_read, room_id)?;
     let interlocutors = resolve_core_interlocutor_set(
         &server.vault,
         auth,
@@ -152,57 +139,14 @@ pub(crate) async fn run_context_pack(
     let skip_optional_recall =
         optional_memory.is_some_and(|choice| narrow_to_reader(&mut req.budget, &mut view, choice));
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
-    let scoped_read = if let (Some(members), Some(room)) = (room_members.as_deref(), &room) {
-        // Every row a room reads lies in its members' met world set, as a
-        // room turn's ceiling holds it (ARCH-0067 §8).
-        let scoped_read = match server
-            .vault
-            .room_world_set(members)
-            .map_err(|e| core_engine_error("room world set failed", e))?
-        {
-            Some(worlds) => scoped_read.within_worlds(worlds),
-            None => scoped_read,
-        };
-        scoped_read
-            .for_audience(members)
-            .with_peer_reads(room.agent_reads())
-    } else if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
-        // Contact records are not PERSON identities. Only a unique explicit
-        // person link may resolve one; unresolved participants fail closed.
-        let mut audience = Vec::new();
-        let mut unresolved = false;
-        if let Some(actor) = auth.principal_ref() {
-            audience.push(super::super::parse_entity_id_param(actor, "principal_ref")?);
-        }
-        for party in set.non_owner() {
-            let Some(contact) = party
-                .contact_ref()
-                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
-            else {
-                unresolved = true;
-                break;
-            };
-            let people = server
-                .vault
-                .targets(
-                    &contact,
-                    oneiron::EdgeKind::About,
-                    Some(oneiron::registry::ENTITY_TYPE_PERSON),
-                )
-                .map_err(|e| core_engine_error("audience person resolution failed", e))?;
-            if people.len() != 1 {
-                unresolved = true;
-                break;
-            }
-            audience.push(people[0]);
-        }
-        if unresolved {
-            audience.clear();
-        }
-        scoped_read.for_audience(&audience)
-    } else {
-        scoped_read
-    };
+    let scoped_read = narrow_to_core_audience(
+        &server.vault,
+        auth,
+        scoped_read,
+        room_members.as_deref(),
+        room.as_ref(),
+        interlocutors.as_ref(),
+    )?;
     let candidate_limit = scoped_read
         .search_candidate_limit(req.limit)
         .map_err(|error| {
