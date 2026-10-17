@@ -16120,13 +16120,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -16183,7 +16183,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "QuoteAnchor",
@@ -16192,7 +16192,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 30,
       "enum": 1,
       "struct": 1
      }
@@ -50563,7 +50563,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2,
       "struct": 1
      }
@@ -51128,16 +51128,17 @@
       "OfferCard",
       "OfferDraft",
       "OfferState",
+      "OfferVoteTally",
       "OffersPage",
       "OffersRequest"
      ],
      "path": "src/workspace_roster/rooms/offers.rs",
      "purpose": "Offer cards (OF-530): an agent asks to join a room or one of its threads by a card, never by a turn…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 3,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -54019,7 +54020,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 180,
+   "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3280,
    "test_files": 902
@@ -74132,6 +74133,7 @@
       "OfferSettlement",
       "OfferState",
       "OfferVoteRequest",
+      "OfferVoteTally",
       "OffersPage",
       "OffersRequest",
       "OfficeBodyArtifactRequest",
@@ -74682,7 +74684,7 @@
      "purpose": "—",
      "surface": {
       "enum": 300,
-      "struct": 781
+      "struct": 782
      }
     },
     {
