@@ -29334,7 +29334,7 @@
      "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
       "crate-vis": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -30114,7 +30114,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 25,
+      "crate-vis": 26,
       "enum": 3,
       "fn": 4,
       "re-export": 9,
@@ -30378,6 +30378,7 @@
      "path": "src/note/kinds.rs",
      "purpose": "Vault-resident PACK descriptor records; the shipped kinds are data, not variants",
      "surface": {
+      "const": 1,
       "crate-vis": 5,
       "enum": 3,
       "fn": 4,
