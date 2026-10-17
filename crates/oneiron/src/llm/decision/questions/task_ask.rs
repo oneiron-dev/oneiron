@@ -78,6 +78,11 @@ pub(crate) fn bind_task_answer_in_txn(
             delivery: "tasks.wait".into(),
             learning: true,
             binding: Some(input.binding.clone()),
+            criteria: QuestionCriteria::default(),
+            audience: QuestionAudience::Asker,
+            posture: None,
+            media: QuestionMedia::default(),
+            deadline_ms: None,
         },
         created_at: input.now,
     };
@@ -166,6 +171,7 @@ pub(crate) fn bind_task_answer_in_txn(
         version: input.revision,
         paused: false,
         last_refresh: Some(input.now),
+        retry_at: None,
     };
     secret_scan_before_put(&head)?;
     QUESTION_HEAD.put(&vault.store, txn, &HeadKey(input.task), &head)?;

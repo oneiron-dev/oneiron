@@ -100,6 +100,11 @@ pub fn preserve_review_dissent(
                 delivery: "none".to_owned(),
                 learning: true,
                 binding: Some(prediction.how_checked.clone()),
+                criteria: questions::QuestionCriteria::default(),
+                audience: questions::QuestionAudience::Asker,
+                posture: None,
+                media: questions::QuestionMedia::default(),
+                deadline_ms: None,
             },
             artifact.created_at,
         )?;

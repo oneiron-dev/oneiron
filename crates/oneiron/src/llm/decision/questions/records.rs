@@ -83,6 +83,23 @@ pub struct QuestionDefinition {
     pub learning: bool,
     #[serde(default)]
     pub binding: Option<OutcomeBinding>,
+    /// The lines each unit is judged by. They ride every call's state; the
+    /// question's version versions them.
+    #[serde(default)]
+    pub criteria: QuestionCriteria,
+    /// Who sees the answers.
+    #[serde(default)]
+    pub audience: QuestionAudience,
+    /// Where the unit text may go. `None` holds the vault's own posture.
+    #[serde(default)]
+    pub posture: Option<crate::config::HostingPrivacyPosture>,
+    /// The media each unit's answerer is handed beside its text.
+    #[serde(default)]
+    pub media: QuestionMedia,
+    /// Each decision call's clock, in milliseconds, shared by every rung,
+    /// offer and retry in it. `None` gives a graph ask's default.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
 }
 impl QuestionDefinition {
     pub fn validate(&self) -> Result<()> {
@@ -94,13 +111,98 @@ impl QuestionDefinition {
                 .iter()
                 .any(|s| s.is_empty() || s.len() > 256)
             || self.refresh.every_seconds == Some(0)
+            || self
+                .deadline_ms
+                .is_some_and(|ms| ms == 0 || ms > crate::memory::caps::MAX_RECALL_DEADLINE_MS)
         {
             return Err(invalid("invalid standing question definition"));
         }
+        self.criteria.validate()?;
         if let Some(binding) = &self.binding {
             binding.validate()?;
         }
         Ok(())
+    }
+
+    /// One decision call's clock: the definition's own, or a graph ask's
+    /// default.
+    #[must_use]
+    pub fn deadline(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(
+            self.deadline_ms
+                .unwrap_or(crate::receipt::GRAPH_ASK_UNIT_DEADLINE_MS),
+        )
+    }
+}
+
+/// The most lines one criteria list holds.
+pub const MAX_CRITERIA_LINES: usize = 16;
+/// The most bytes one criteria line holds.
+pub const MAX_CRITERION_BYTES: usize = 512;
+
+/// A question's criteria (ARCH-0076 §3): every line a yes needs, any line
+/// that makes a no, and the lines that are never a reason to say no. A
+/// changed line is a new definition, so the question's version versions the
+/// triple. Each provider maps it for its rung; it reads as `criteria` in the
+/// call's state.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionCriteria {
+    pub yes_if_all: Vec<String>,
+    pub no_if_any: Vec<String>,
+    pub not_a_reason_to_say_no: Vec<String>,
+}
+impl QuestionCriteria {
+    /// No line in any of the three lists.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.yes_if_all.is_empty()
+            && self.no_if_any.is_empty()
+            && self.not_a_reason_to_say_no.is_empty()
+    }
+
+    /// At most [`MAX_CRITERIA_LINES`] lines a list, each a nonempty line of
+    /// at most [`MAX_CRITERION_BYTES`].
+    pub fn validate(&self) -> Result<()> {
+        for lines in [
+            &self.yes_if_all,
+            &self.no_if_any,
+            &self.not_a_reason_to_say_no,
+        ] {
+            if lines.len() > MAX_CRITERIA_LINES
+                || lines.iter().any(|line| {
+                    line.trim().is_empty()
+                        || line.len() > MAX_CRITERION_BYTES
+                        || line.contains('\0')
+                })
+            {
+                return Err(invalid("invalid question criteria"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Who sees a question's answers. Only the asker is built: every answer
+/// lands private to the question's principal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionAudience {
+    #[default]
+    Asker,
+}
+
+/// The media a unit's answerer is handed beside its text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionMedia {
+    /// The images the unit's ASSET sources hold, read under the principal,
+    /// for an answerer that reads images.
+    pub images: bool,
+}
+impl Default for QuestionMedia {
+    fn default() -> Self {
+        Self { images: true }
     }
 }
 
@@ -191,4 +293,6 @@ pub(super) struct QuestionHead {
     pub version: u32,
     pub paused: bool,
     pub last_refresh: Option<u64>,
+    /// A failed refresh holds the question's work until then.
+    pub retry_at: Option<u64>,
 }
