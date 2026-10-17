@@ -28977,7 +28977,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DescriptionPolicy",
@@ -28987,16 +28987,17 @@
       "OwnerModelLine",
       "ReaskTrigger",
       "RoutedSeat",
+      "RoutedVerdict",
+      "RoutedVerdictOutcome",
       "SeatBirth",
       "SeatSettings",
-      "VerdictExecution",
-      "VerdictPayload"
+      "VerdictExecution"
      ],
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 2,
       "fn": 13,
       "re-export": 1,
       "struct": 10
@@ -54247,7 +54248,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 184,
+   "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3294,
    "test_files": 902
