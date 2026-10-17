@@ -239,6 +239,119 @@ pub struct SharedActOutcome {
     pub completed_at: u64,
 }
 
+/// Domain of a home-signed outcome notice (FIX 2053).
+pub const SHARED_ACT_OUTCOME_NOTICE_DOMAIN: &[u8] = b"oneiron/shared-act/outcome-notice/v1";
+
+/// One outcome notice its home signed with its host root key (FIX 2053), so
+/// a removed device can act on a deletion it learns from no other source. A
+/// receiver verifies `signature` over [`shared_act_outcome_transcript`]
+/// against the home root it already trusts, never the key the notice
+/// carries, and checks the authority vault id, local vault id and recipient
+/// before it discards anything. Its JSON form is hex for every byte field.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(into = "SignedOutcomeWire", try_from = "SignedOutcomeWire")]
+pub struct SignedSharedActOutcome {
+    /// The home's Genesis-rooted authority vault id.
+    pub authority_vault_id: crate::authority::AuthorityVaultId,
+    pub outcome: SharedActOutcome,
+    pub signature: crate::authority::AuthoritySignature,
+}
+
+/// The bytes a home signs for `outcome`: the notice domain, then the
+/// canonical JSON of the authority vault id (hex) and every outcome field
+/// (receipt, act, local vault id, recipient, change with its deadlines,
+/// completion time), in declaration order.
+pub fn shared_act_outcome_transcript(
+    authority_vault_id: &crate::authority::AuthorityVaultId,
+    outcome: &SharedActOutcome,
+) -> Result<Vec<u8>> {
+    #[derive(serde::Serialize)]
+    struct Transcript<'a> {
+        authority_vault_id: String,
+        outcome: &'a SharedActOutcome,
+    }
+    let body = crate::authority::canonical(&Transcript {
+        authority_vault_id: crate::entity_id::bytes_to_hex_lower(authority_vault_id),
+        outcome,
+    })?;
+    Ok([SHARED_ACT_OUTCOME_NOTICE_DOMAIN, &body].concat())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignedOutcomeWire {
+    authority_vault_id: String,
+    outcome: SharedActOutcome,
+    signature: OutcomeSignatureWire,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OutcomeSignatureWire {
+    suite: String,
+    public_key: String,
+    signature: String,
+}
+
+impl From<SignedSharedActOutcome> for SignedOutcomeWire {
+    fn from(signed: SignedSharedActOutcome) -> Self {
+        let hex = crate::entity_id::bytes_to_hex_lower;
+        let (suite, public_key) = match &signed.signature.public_key {
+            crate::authority::AuthorityKey::Ed25519(key) => ("ed25519", hex(key)),
+            crate::authority::AuthorityKey::P256(key) => ("p256", hex(key)),
+        };
+        Self {
+            authority_vault_id: hex(&signed.authority_vault_id),
+            outcome: signed.outcome,
+            signature: OutcomeSignatureWire {
+                suite: suite.to_owned(),
+                public_key,
+                signature: hex(&signed.signature.signature),
+            },
+        }
+    }
+}
+
+impl TryFrom<SignedOutcomeWire> for SignedSharedActOutcome {
+    type Error = &'static str;
+
+    fn try_from(wire: SignedOutcomeWire) -> std::result::Result<Self, Self::Error> {
+        const MALFORMED: &str = "malformed signed outcome notice";
+        let unhex = |value: &str| -> Option<Vec<u8>> {
+            if !value.len().is_multiple_of(2) || !value.is_ascii() {
+                return None;
+            }
+            value
+                .as_bytes()
+                .chunks(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+                .collect()
+        };
+        let authority_vault_id = unhex(&wire.authority_vault_id)
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .ok_or(MALFORMED)?;
+        let key = unhex(&wire.signature.public_key).ok_or(MALFORMED)?;
+        let public_key = match wire.signature.suite.as_str() {
+            "ed25519" => crate::authority::AuthorityKey::Ed25519(
+                <[u8; 32]>::try_from(key).map_err(|_| MALFORMED)?,
+            ),
+            "p256" => crate::authority::AuthorityKey::P256(key),
+            _ => return Err(MALFORMED),
+        };
+        let signature = crate::authority::AuthoritySignature {
+            suite: public_key.suite(),
+            public_key,
+            signature: unhex(&wire.signature.signature).ok_or(MALFORMED)?,
+        };
+        signature.validate().map_err(|_| MALFORMED)?;
+        Ok(Self {
+            authority_vault_id,
+            outcome: wire.outcome,
+            signature,
+        })
+    }
+}
+
 /// The engine's record that the vault was deleted. Hosts stop serving it and
 /// keep its backups until `backup_retain_until`, then let them go.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -857,9 +970,11 @@ impl Vault {
     }
 
     /// `person`'s own notices of losing the vault: their leave, their
-    /// removal, and an ownership change that left them no role. Read for a
-    /// removed person whose slips no longer authenticate
-    /// (`Vault::removed_member_notices`).
+    /// removal, an ownership change that left them no role, and the vault's
+    /// deletion, made for `person` from the stored deletion marker whether or
+    /// not a notice row names them (FIX 2053). Read for the holder a
+    /// home-minted slip proves, whose slips may no longer authenticate
+    /// (`Vault::removed_member_notices_signed`).
     pub(crate) fn removal_outcomes_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -890,6 +1005,18 @@ impl Vault {
             if lost {
                 outcomes.push(outcome);
             }
+        }
+        if let Some(deletion) = self.shared_vault_deletion_in_txn(txn)? {
+            outcomes.push(SharedActOutcome {
+                receipt_id: deletion.receipt_id,
+                act_id: Some(deletion.act_id),
+                vault_id: deletion.vault_id,
+                recipient: person,
+                change: SharedVaultChange::VaultDeleted {
+                    backup_retain_until: deletion.backup_retain_until,
+                },
+                completed_at: deletion.deleted_at,
+            });
         }
         Ok(outcomes)
     }

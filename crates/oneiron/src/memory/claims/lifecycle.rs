@@ -1,6 +1,48 @@
 use super::commit::claim_envelope_actor;
 use super::*;
 
+/// Whether `proof` lets `actor` propose a claim born at `position`, judged
+/// in the committing snapshot (FIX 1400). The record bounds may narrow the
+/// world and facet the claim is born at and nothing else; a record or
+/// channel caveat fails closed, as the server's carried-scope door does.
+fn carried_proposal_admitted(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    proof: &crate::authority::VerifiedSlip,
+    actor: EntityId,
+    position: crate::federation::record_scope::BirthPosition,
+) -> Result<(), Error> {
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let axis = |id: Option<EntityId>| {
+        id.map_or(ScopeAxis::All, |id| {
+            ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(id)]))
+        })
+    };
+    let claims = proof.claims();
+    let mut required = Scope::top();
+    required.verbs = proof.scope().verbs.clone();
+    required.worlds = axis(position.world);
+    required.facets = axis(position.facet);
+    let granted = claims.invitation_ref.is_none()
+        && ["core:propose", "write", "core:write"]
+            .iter()
+            .any(|verb| proof.allows_verb(verb));
+    if claims.holder_ref != actor.to_hex()
+        || !claims.records.is_empty()
+        || !claims.channels.is_empty()
+        || !granted
+        || !required.is_narrowing_of(proof.scope())
+        || !vault.capability_slip_is_live_in_txn(txn, proof)?
+    {
+        return Err(Error::Claim(
+            crate::error::ClaimError::ActorLacksClaimAuthority {
+                reason: "the bound credential does not carry this proposal's placement",
+            },
+        ));
+    }
+    Ok(())
+}
+
 impl Memory<'_> {
     pub(in crate::memory) fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
@@ -34,6 +76,68 @@ impl Memory<'_> {
     /// A conflict review can cite this proposal; the proposal grants no authority.
     pub fn claim_propose(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
         self.commit_one(input, false, Some(ClaimApprovalStatus::Proposed))
+    }
+
+    /// Proposes one claim under the bounds of the credential a host bound to
+    /// this handle (FIX 1400): a connector narrowed to a world and facet
+    /// writes its Proposed claim there. The claim is born at the handle's
+    /// birth position (`with_birth_position`), never where the caller says:
+    /// an input that names a world or a facet is refused. In the writer that
+    /// commits it, the credential must be live, held by this handle's actor,
+    /// grant Propose or Write, carry no record or channel caveat, and narrow
+    /// no axis but the world and facet the claim is born at. A handle bound
+    /// to no credential is refused.
+    pub fn claim_propose_carried(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
+        let Some(proof) = self.read_proof.as_ref() else {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a carried proposal needs the credential its host bound",
+                &["Bind the caller's verified credential to this handle before proposing."],
+            ));
+        };
+        let position = self.birth_position;
+        let names_facet = input
+            .scope
+            .as_ref()
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|scope| {
+                ["facet", "facet_ref", "facetRef"]
+                    .iter()
+                    .any(|key| scope.contains_key(*key))
+            });
+        if input.world_ref.is_some() || names_facet {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a carried proposal is placed where its credential bound it",
+                &[
+                    "Leave world_ref and the scope's facet unset; the bound credential places the claim.",
+                ],
+            ));
+        }
+        let mut placed = input.clone();
+        placed.world_ref = position.claim_world().map(|world| world.to_hex());
+        if let Some(facet) = position.facet {
+            let mut scope = match placed.scope.take() {
+                Some(serde_json::Value::Object(scope)) => scope,
+                None => serde_json::Map::new(),
+                Some(_) => return Err(MemoryError::bad_request("claim scope must be an object")),
+            };
+            scope.insert(
+                "facet".to_owned(),
+                serde_json::Value::String(facet.to_hex()),
+            );
+            placed.scope = Some(serde_json::Value::Object(scope));
+        }
+        let actor = self.actor;
+        self.commit_one_guarded(
+            &placed,
+            false,
+            Some(ClaimApprovalStatus::Proposed),
+            || {},
+            &|txn: &heed::RoTxn<'_>| {
+                carried_proposal_admitted(self.vault, txn, proof, actor, position)
+            },
+        )
     }
 
     /// Retracts an active claim (deliberate withdrawal; record preserved).

@@ -206,9 +206,12 @@ impl SyncConnection {
     {
         use crate::sync::TransportError;
 
+        // The home signs every notice (FIX 2053). The signature is not
+        // checked here yet, so a notice weighs what an unsigned one did, and
+        // a VaultDeleted notice reaches no leave kind.
         #[derive(serde::Deserialize)]
         struct LeftNotices {
-            notices: Vec<crate::federation::SharedActOutcome>,
+            notices: Vec<crate::federation::SignedSharedActOutcome>,
         }
 
         let Some(credential) = self.config.client_config.transport_credential.as_ref() else {
@@ -247,9 +250,14 @@ impl SyncConnection {
         let answer: LeftNotices = response.json().await.map_err(|_| {
             TransportError::InvalidPayload("the leave notice answer does not decode")
         })?;
-        let Some(notice) = answer.notices.iter().find(|notice| {
-            crate::sync::shared_leave::left_change(notice, vault_id, member).is_some()
-        }) else {
+        let Some(notice) = answer
+            .notices
+            .iter()
+            .map(|signed| &signed.outcome)
+            .find(|notice| {
+                crate::sync::shared_leave::left_change(notice, vault_id, member).is_some()
+            })
+        else {
             return Ok(None);
         };
         self.confirm_shared_leave(vault_id, member, notice)
