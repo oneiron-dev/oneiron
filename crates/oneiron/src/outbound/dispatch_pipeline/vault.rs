@@ -49,6 +49,36 @@ impl Vault {
         Ok(result)
     }
 
+    /// A Linear mirror mutation, recorded like
+    /// [`Self::dispatch_outbound_intent_recorded`], admitted for both actors
+    /// it speaks for (OF-427): the request's actor (the host scheduler) and
+    /// the verified writer of the mirrored TASK revision. The writer's
+    /// binding is checked under the admission writer; both governances must
+    /// allow; each distinct connector key is charged once, so one remote
+    /// mutation spends the scheduler's allowance once.
+    ///
+    /// # Errors
+    /// As [`Self::dispatch_outbound_intent_recorded`]. A mutation that is no
+    /// longer the TASK's current mirror operation is refused before any
+    /// decision is recorded.
+    pub fn dispatch_linear_outbound_intent_recorded<S: OutboundExecutionSink>(
+        &self,
+        request: OutboundDispatchRequest,
+        effect: &crate::linear_sync::LinearEffectRequest,
+        sink: &mut S,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        let effect = effect.clone();
+        let co_actor = crate::outbound_chokepoint::CoActorAdmission {
+            bind: Box::new(move |vault: &Vault, txn: &mut heed::RwTxn<'_>| {
+                crate::linear_sync::linear_effect_writer_in_txn(vault, txn, &effect)
+            }),
+        };
+        let result =
+            OutboundDispatchPipeline.dispatch_with_co_actor(self, request, sink, co_actor)?;
+        crate::receipt::record_direct_dispatch_receipt(self, result.receipt.clone())?;
+        Ok(result)
+    }
+
     /// The same normalized replay proof as ordinary dispatch, with the
     /// originating per-try observation as return evidence only.
     pub(crate) fn dispatch_outbound_intent_with_recorded_observation<S: OutboundExecutionSink>(

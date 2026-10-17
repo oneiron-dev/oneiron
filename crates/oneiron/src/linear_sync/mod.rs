@@ -76,6 +76,7 @@ mod storage_codec;
 
 pub(crate) use self::codec::LINEAR_LINKS;
 pub use self::codec::{linear_event_digest, linear_operation_id};
+pub(crate) use self::effect::linear_effect_writer_in_txn;
 pub use self::effect::{LinearEffectKind, LinearEffectRequest};
 pub use self::engine::LinearSyncAdapter;
 pub use self::model::{

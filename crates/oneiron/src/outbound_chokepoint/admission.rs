@@ -212,7 +212,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         OutboundEffectCommand::Resume(_) => None,
     };
-    let prepared = match command {
+    let mut prepared = match command {
         OutboundEffectCommand::New(prepared) => prepared,
         OutboundEffectCommand::Park(prepared) => {
             let effect =
@@ -267,6 +267,31 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
+    // OF-427: the co-actor's own governance under this same writer. A
+    // refusal records only its decision: the primary's Allow admitted
+    // nothing, so it spends no approve-once marker.
+    let mut co_governance = match prepared.co_actor.take() {
+        Some(co_actor) => {
+            let effect = (co_actor.bind)(vault, &mut wtxn)?;
+            let co = gate::evaluate_external_effect_policy(
+                &vault.store,
+                &mut wtxn,
+                &effect,
+                &policy,
+                None,
+                None,
+                gate::ApprovalContext::FirstAdmission,
+            )?;
+            if co.outcome() != GateOutcome::Allow {
+                let (decision_id, decision) =
+                    gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
+                wtxn.commit().map_err(Error::from)?;
+                return Ok(gate_rejection(intent_id, decision_id, decision));
+            }
+            Some(co)
+        }
+        None => None,
+    };
 
     let dedupe_key = dedupe::dedupe_key(&prepared)?;
     // `now_ms` is supplied by the dispatch caller; semantic suppression must
@@ -341,6 +366,26 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
     }
 
+    // OF-427: a co-actor key that is not the primary's is preflighted
+    // before either is charged, so its exhaustion never spends the
+    // primary's allowance; the same key is charged once.
+    let primary_key = governance.budget_target_mut().map(|target| target.key_id);
+    let co_key_distinct = co_governance.as_mut().is_some_and(|co| {
+        co.budget_target_mut()
+            .is_some_and(|target| Some(target.key_id) != primary_key)
+    });
+    let co_exhausted = match co_governance.as_mut() {
+        Some(co) if co_key_distinct => {
+            co_actor_exhausted(vault, &mut wtxn, co, prepared.budget_class, now_ms)?
+        }
+        _ => false,
+    };
+    if co_exhausted && let Some(co) = co_governance.take() {
+        let (decision_id, decision) =
+            gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
+        wtxn.commit().map_err(Error::from)?;
+        return Ok(gate_rejection(intent_id, decision_id, decision));
+    }
     let (budget_accounting, budget_charge, exhausted) = charge_once(
         vault,
         &mut wtxn,
@@ -356,6 +401,17 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         let mut result = gate_rejection(intent_id, decision_id, decision);
         result.budget_charge = budget_charge;
         return Ok(result);
+    }
+    if co_key_distinct && let Some(co) = co_governance.as_mut() {
+        let (_, _, exhausted) = charge_once(vault, &mut wtxn, co, prepared.budget_class, now_ms)?;
+        if exhausted {
+            // Preflighted above under this writer: fail the transaction
+            // rather than persist the primary's debit alone.
+            return Err(Error::InvariantViolation(
+                "co-actor budget changed inside admission transaction",
+            )
+            .into());
+        }
     }
 
     // The gate's VERIFIED per-grant capability identity. It is the only
@@ -443,6 +499,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let (decision_id, decision) =
         gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+    if let Some(co) = co_governance {
+        gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
+    }
     insert_pending_in_txn(vault, &mut wtxn, &pending)?;
     if let Some(admission) = invite_admission {
         admission
@@ -508,6 +567,42 @@ pub(super) fn enforce_step_failure_policy(
         return Err(IntentLedgerError::FailureResultIneligible);
     }
     Ok(())
+}
+
+/// OF-427: whether a co-actor's own (distinct) connector key is exhausted.
+/// An exhausted key goes through the regular charger, which applies its
+/// suspend-on-exhaust without debiting it, and the co-actor's decision turns
+/// into a budget-exhausted denial. Nothing else has been charged yet.
+fn co_actor_exhausted(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    co: &mut gate::ExternalEffectGovernance,
+    budget_class: BudgetClass,
+    now_ms: u64,
+) -> Result<bool, IntentLedgerError> {
+    let Some(target) = co.budget_target_mut() else {
+        return Ok(false);
+    };
+    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    if connector_key::preflight_effector_budgets(
+        &vault.store,
+        wtxn,
+        &target.key_id,
+        &target.key,
+        &target.governing_connector,
+        budget_class.is_send(),
+        now,
+    )?
+    .is_none()
+    {
+        return Ok(false);
+    }
+    let (_, _, exhausted) = charge_once(vault, wtxn, co, budget_class, now_ms)?;
+    if !exhausted {
+        return Err(Error::InvariantViolation("co-actor budget preflight diverged").into());
+    }
+    co.deny_budget_exhausted();
+    Ok(true)
 }
 
 fn charge_once(
