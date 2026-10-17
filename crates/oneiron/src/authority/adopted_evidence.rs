@@ -105,7 +105,11 @@ impl AdoptedEvidence {
             missing = ?missing,
             "a door needs authority history the adopted image does not carry"
         );
-        Error::CorruptedIndex("authority history incomplete")
+        super::readonly_fold::history_required(&AuthorityHistoryRequest {
+            vault_id: Some(self.checkpoint.image().vault_id),
+            checkpoint: Some(self.checkpoint.id()),
+            missing: BTreeSet::from([*missing]),
+        })
     }
 }
 
