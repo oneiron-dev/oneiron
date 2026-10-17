@@ -57,6 +57,72 @@ impl AttemptQueue<'_> {
         Ok(record)
     }
 
+    /// Stamps what executes this attempt (OF-541): the model its run was
+    /// born on and, beside it, the template seat its host configured, in one
+    /// write. Each half is write-once, as `set_executor_model` is: repeating
+    /// the pair is safe, swapping either half is not.
+    pub fn set_executor_stamp(
+        &self,
+        id: AttemptId,
+        lease_owner: &str,
+        attempt_count: u32,
+        model: &str,
+        seat: &str,
+    ) -> Result<AttemptRecord> {
+        if !valid_executor_id(model) || !valid_executor_id(seat) {
+            return Err(Error::InvalidConfig(
+                "invalid attempt executor stamp".to_owned(),
+            ));
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let raw = self
+            .store
+            .attempt_records
+            .get(&txn, id.as_bytes())?
+            .ok_or(Error::InvalidConfig("unknown attempt".to_owned()))?;
+        let mut record = decode_record(&raw, id)?;
+        if record
+            .executor_model
+            .as_deref()
+            .is_some_and(|stamped| stamped != model)
+            || record
+                .executor_seat
+                .as_deref()
+                .is_some_and(|stamped| stamped != seat)
+        {
+            return Err(Error::InvalidConfig(
+                "executor model cannot be rebound".to_owned(),
+            ));
+        }
+        if record.executor_model.is_some() && record.executor_seat.is_some() {
+            if matches!(record.state, AttemptState::Leased | AttemptState::Landing) {
+                validate_lease_owner(lease_owner)?;
+                validate_transition_lease(
+                    &record,
+                    lease_owner,
+                    attempt_count,
+                    "set_executor_stamp",
+                )?;
+            }
+            return Ok(record);
+        }
+        if record.state != AttemptState::Leased {
+            return Err(Error::InvalidConfig(
+                "executor model requires a live lease".to_owned(),
+            ));
+        }
+        validate_lease_owner(lease_owner)?;
+        validate_transition_lease(&record, lease_owner, attempt_count, "set_executor_stamp")?;
+        record.executor_model = Some(model.to_owned());
+        record.executor_seat = Some(seat.to_owned());
+        let encoded = self.encode_in_txn(&mut txn, &mut record)?;
+        self.store
+            .attempt_records
+            .put(&mut txn, id.as_bytes(), &encoded)?;
+        txn.commit()?;
+        Ok(record)
+    }
+
     /// The load door may only append bytes while this lease is live, even if
     /// the same model has already been stamped on the attempt.
     pub(crate) fn require_skill_load_lease_in_txn(
@@ -136,4 +202,14 @@ impl AttemptQueue<'_> {
             .put(txn, id.as_bytes(), &encoded)?;
         Ok(record)
     }
+}
+
+/// An executor stamp's shape: `id@revision`, at most 256 bytes, with no
+/// control characters.
+fn valid_executor_id(value: &str) -> bool {
+    value.len() <= 256
+        && !value.chars().any(char::is_control)
+        && value
+            .rsplit_once('@')
+            .is_some_and(|(id, revision)| !id.is_empty() && !revision.is_empty())
 }

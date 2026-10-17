@@ -20,6 +20,9 @@ use crate::prompt::PromptRecompileStamp;
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
 
+/// OF-541: the template seat the attempt's executor was configured with;
+/// `model` is what that seat ran.
+pub const FIELD_EXECUTOR_SEAT: &str = "executor_seat";
 /// OF-540: the exact `TeamReceipt.team_ref` of the attempt's team run.
 pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 /// OF-540: the run's pattern token (`ceo_decides|committee|vote|market|rotation`).

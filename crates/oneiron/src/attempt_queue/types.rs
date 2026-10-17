@@ -377,6 +377,11 @@ pub struct AttemptRecord {
     /// Immutable model id and revision of the executor that acted; absent on legacy attempts.
     #[serde(default)]
     pub executor_model: Option<String>,
+    /// OF-541: the template seat its host configured the executor with,
+    /// stamped in one write with `executor_model`, the model that seat ran.
+    /// Absent when no run stamped the pair.
+    #[serde(default)]
+    pub executor_seat: Option<String>,
     /// ONE-1896 two-rung graceful-cancel lifecycle: landing, resume point,
     /// terminal cancellation receipt, cancel pressure, and reserve accounting.
     /// Rows without the key decode as the default, so no migration is needed.

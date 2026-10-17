@@ -519,16 +519,23 @@ fn run_engine_native_code_mode(
         .enable_all()
         .build()
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;
+    let seat = engine_run_seat(
+        vault,
+        provider,
+        config,
+        format!("mcp-execute-code:{}", config.run_id.to_hex()),
+        None,
+    )
+    .map_err(McpCodeExecutionError::RunBinding)?;
     enter_engine_native_run(
         vault,
         provider,
         &gated_write,
         config,
-        format!("mcp-execute-code:{}", config.run_id.to_hex()),
         compaction,
         &reactor,
         None,
-        None,
+        seat.as_ref(),
     )
     .map_err(|error| match error {
         EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
@@ -574,27 +581,24 @@ impl From<String> for EngineRunError {
 
 /// One entry of an engine-native run through `bound`, the write door its
 /// host bound: `execute_code`'s credential-gated door, or a leased attempt's
-/// own dispatcher. A manifest-backed run is born on its model seat first,
-/// warm under `warm_scope`.
+/// own dispatcher. A manifest-backed run runs on `seat`, the model seat its
+/// host bore it on (`engine_run_seat`); a run with none takes its configured
+/// model.
 ///
 /// A run that spends under a scope (`spend`: a pumped agent run's, OF-533)
 /// makes its model calls on a meter that scope bounds, and what they used is
 /// booked on the scope once the entry ends, whatever it answered. With none,
 /// the calls run on the provider's own meter.
-///
-/// A planned child (`plan`: the receipt its spawn froze, OF-541) is born on
-/// the seat its plan picked (`planned_seat`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     bound: &GatedActorWrite<'_>,
     config: &EngineExecutorConfig,
-    warm_scope: String,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
     spend: Option<&SpendScopeId>,
-    plan: Option<&SpawnPlanReceipt>,
+    seat: Option<&ModelSeat>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
     let Some(scope) = spend else {
@@ -604,10 +608,9 @@ pub(crate) fn enter_engine_native_run(
             provider.backend(),
             bound,
             config,
-            warm_scope,
             compaction,
             reactor,
-            plan,
+            seat,
         );
     };
     let dispatcher = AgentDispatcher::new(vault);
@@ -622,10 +625,9 @@ pub(crate) fn enter_engine_native_run(
         backend.as_ref(),
         bound,
         config,
-        warm_scope,
         compaction,
         reactor,
-        plan,
+        seat,
     );
     dispatcher
         .record_guard_spend(scope, guard.read().used_units)
@@ -677,21 +679,19 @@ pub(crate) fn run_seat(
         .map_err(|error| error.to_string())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn enter_on(
+/// The seat an engine-native run is born on (`run_seat`), warm under
+/// `warm_scope`, from `config`'s task as it stands now. A host that adds to
+/// the task later lends this one seat to each entry, so the seat's task
+/// stays the run's own. A planned child (`plan`: the receipt its spawn
+/// froze, OF-541) is born on the seat its plan picked (`planned_seat`).
+pub(crate) fn engine_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
-    backend: &dyn LlmBackend,
-    bound: &GatedActorWrite<'_>,
     config: &EngineExecutorConfig,
     warm_scope: String,
-    compaction: Option<&mut RunCompaction>,
-    reactor: &tokio::runtime::Runtime,
     plan: Option<&SpawnPlanReceipt>,
-) -> Result<EngineExecutorOutcome, EngineRunError> {
-    let mut runtime = provider.runtime();
-    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
-    let seat = run_seat(vault, provider, config.run_id, |facet| SeatTask {
+) -> Result<Option<ModelSeat>, String> {
+    run_seat(vault, provider, config.run_id, |facet| SeatTask {
         kind: SeatKind::Attempt,
         warm_scope,
         task: config.task.clone(),
@@ -705,10 +705,24 @@ fn enter_on(
         override_model: planned_seat(plan),
         override_effort: None,
     })
-    .map_err(EngineRunError::Binding)?;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enter_on(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    backend: &dyn LlmBackend,
+    bound: &GatedActorWrite<'_>,
+    config: &EngineExecutorConfig,
+    compaction: Option<&mut RunCompaction>,
+    reactor: &tokio::runtime::Runtime,
+    seat: Option<&ModelSeat>,
+) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let mut runtime = provider.runtime();
+    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let mut routed_config = config.clone();
     let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound);
-    if let Some(seat) = &seat {
+    if let Some(seat) = seat {
         routed_config.model = seat.model().clone();
         routed_config.model_locality = seat.locality();
         routed_config.seat_effort = Some(seat.effort());
