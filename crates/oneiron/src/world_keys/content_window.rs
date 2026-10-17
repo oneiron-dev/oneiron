@@ -153,6 +153,53 @@ impl WindowManager {
         window: &WindowKey,
         packet: &SealedResidenceContent,
     ) -> Result<SealedContentBinding> {
+        self.merge_sealed_mirror(world, window, packet, true)
+    }
+
+    /// [`Self::import_sealed_residence_content`] into the window's mirror
+    /// only, materializing no rows: an opened-item machine takes a window it
+    /// does not hold promoted this way, and a promotion materializes the
+    /// mirror ([`Self::materialize_sealed_mirror`]).
+    pub fn merge_sealed_residence_mirror(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        packet: &SealedResidenceContent,
+    ) -> Result<SealedContentBinding> {
+        self.merge_sealed_mirror(world, window, packet, false)
+    }
+
+    /// Materializes the rows of `window`'s mirror here, on a machine that may
+    /// read `world` now: the packets an opened-item machine took in while the
+    /// window stood unpromoted. Returns whether it read a mirror.
+    pub fn materialize_sealed_mirror(&self, world: EntityId, window: &WindowKey) -> Result<bool> {
+        if window.world() != Some(world) {
+            return Err(refused("the window is not one of the world's"));
+        }
+        let vault = self.vault();
+        if vault.world_key(world).is_err() {
+            return Ok(false);
+        }
+        let _sealing = vault
+            .world_keys
+            .sealing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (mirror, fresh) = load_mirror(vault, world, window)?;
+        if fresh {
+            return Ok(false);
+        }
+        forward_rematerialize(vault, &mirror, self.materializer(), window)?;
+        Ok(true)
+    }
+
+    fn merge_sealed_mirror(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        packet: &SealedResidenceContent,
+        materialize: bool,
+    ) -> Result<SealedContentBinding> {
         if window.world() != Some(world) {
             return Err(refused("the window is not one of the world's"));
         }
@@ -185,7 +232,9 @@ impl WindowManager {
                 doc
             }
         };
-        forward_rematerialize(vault, &mirror, self.materializer(), window)?;
+        if materialize {
+            forward_rematerialize(vault, &mirror, self.materializer(), window)?;
+        }
         store_mirror(vault, world, window, &mirror)?;
         Ok(opened.binding)
     }
@@ -249,12 +298,34 @@ impl WindowManager {
         window: &WindowKey,
         packet: &SealedResidenceContent,
     ) -> Result<SealedTake> {
+        self.take_sealed(world, window, packet, true)
+    }
+
+    /// [`Self::take_sealed_residence_content`] on an opened-item machine for a
+    /// window it does not hold promoted: a packet it may read merges into the
+    /// window's mirror only ([`Self::merge_sealed_residence_mirror`]).
+    pub fn take_sealed_residence_mirror(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        packet: &SealedResidenceContent,
+    ) -> Result<SealedTake> {
+        self.take_sealed(world, window, packet, false)
+    }
+
+    fn take_sealed(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        packet: &SealedResidenceContent,
+        materialize: bool,
+    ) -> Result<SealedTake> {
         if window.world() != Some(world) {
             return Err(refused("the window is not one of the world's"));
         }
         let vault = self.vault();
         if vault.world_key(world).is_ok()
-            && let Ok(binding) = self.import_sealed_residence_content(world, window, packet)
+            && let Ok(binding) = self.merge_sealed_mirror(world, window, packet, materialize)
         {
             return Ok(SealedTake::Imported(binding));
         }
