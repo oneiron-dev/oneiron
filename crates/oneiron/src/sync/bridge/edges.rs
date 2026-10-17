@@ -131,14 +131,25 @@ pub(super) fn materialize_edges_from_delta(
                         continue;
                     };
 
-                    let window = crate::sync::WindowKey::try_new(window_key)
-                        .ok_or(Error::InvalidKey)?;
+                    let window =
+                        crate::sync::WindowKey::try_new(window_key).ok_or(Error::InvalidKey)?;
                     if !crate::sync::types::edge_belongs_to_window_in(
-                        vault, wtxn, doc, &tombstones, &src, &tgt, &window,
+                        vault,
+                        wtxn,
+                        doc,
+                        &tombstones,
+                        &src,
+                        &tgt,
+                        &window,
                     )? {
                         quarantine_rejected_op_in_txn(
-                            vault, wtxn, window_key, QuarantineContainer::Edges,
-                            key, &Error::InvalidConfig("edge outside window residence".into()), buf,
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Edges,
+                            key,
+                            &Error::InvalidConfig("edge outside window residence".into()),
+                            buf,
                         )?;
                         continue;
                     }
@@ -150,7 +161,9 @@ pub(super) fn materialize_edges_from_delta(
                         Ok(v) => v,
                         Err(_) if kind == EdgeKind::Parent => {
                             let tombstoned = tombstones.contains(&src) || tombstones.contains(&tgt);
-                            super::parent_retry::submit(vault, wtxn, window_key, src, tgt, buf, tombstoned)?;
+                            super::parent_retry::submit(
+                                vault, wtxn, window_key, src, tgt, buf, tombstoned,
+                            )?;
                             continue;
                         }
                         Err(e) => {
@@ -223,7 +236,13 @@ pub(super) fn materialize_edges_from_delta(
                     // quarantine-and-continue rejection; no reserved edge
                     // lands merely because hydration ran first.
                     if let Some(reserved) = &reserved_rejection
-                        && !matches!(kind, EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo | EdgeKind::AddressedTo)
+                        && !matches!(
+                            kind,
+                            EdgeKind::Parent
+                                | EdgeKind::SpawnedBy
+                                | EdgeKind::RepliesTo
+                                | EdgeKind::AddressedTo
+                        )
                     {
                         let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
                             &*wtxn, &src, kind, &tgt,
@@ -340,12 +359,21 @@ pub(super) fn materialize_edges_from_delta(
                     // than permanently quarantining a legitimate mention.
                     if kind == EdgeKind::AddressedTo
                         && !crate::conversation_dag::addressed_to_echo_in_txn(
-                            &vault.store, &*wtxn, &src, &tgt, decoded,
+                            &vault.store,
+                            &*wtxn,
+                            &src,
+                            &tgt,
+                            decoded,
                         )?
                     {
                         quarantine_rejected_op_in_txn(
-                            vault, wtxn, window_key, QuarantineContainer::Edges,
-                            key, reserved_rejection.as_ref().expect("addressing is reserved"), buf,
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Edges,
+                            key,
+                            reserved_rejection.as_ref().expect("addressing is reserved"),
+                            buf,
                         )?;
                         continue;
                     }
@@ -354,13 +382,23 @@ pub(super) fn materialize_edges_from_delta(
                     // their body-backed admission check here.
                     if matches!(kind, EdgeKind::SpawnedBy | EdgeKind::RepliesTo) {
                         match crate::conversation_dag::validate_received_edge(
-                            &vault.store, &*wtxn, src, kind, tgt, decoded,
+                            &vault.store,
+                            &*wtxn,
+                            src,
+                            kind,
+                            tgt,
+                            decoded,
                         ) {
                             Ok(()) => {}
                             Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
                                 quarantine_rejected_op_in_txn(
-                                    vault, wtxn, window_key, QuarantineContainer::Edges,
-                                    key, &rejected, buf,
+                                    vault,
+                                    wtxn,
+                                    window_key,
+                                    QuarantineContainer::Edges,
+                                    key,
+                                    &rejected,
+                                    buf,
                                 )?;
                                 continue;
                             }
@@ -399,9 +437,7 @@ pub(super) fn materialize_edges_from_delta(
                         tgt,
                     ) {
                         Ok(()) => {}
-                        Err(off_table)
-                            if remote_rejection_reason(&off_table).is_some() =>
-                        {
+                        Err(off_table) if remote_rejection_reason(&off_table).is_some() => {
                             quarantine_rejected_op_in_txn(
                                 vault,
                                 wtxn,
@@ -476,13 +512,24 @@ pub(super) fn materialize_edges_from_delta(
                         crate::vault::live_entity_row_in_txn(&vault.store, &*wtxn, &src)?,
                         crate::vault::LiveEntityRow::Live { .. }
                     ) || crate::ports::EdgeStoreRead::port_edge_get(
-                        &vault.store, &*wtxn, &src, kind, &tgt,
-                    )?.is_some()) {
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        kind,
+                        &tgt,
+                    )?
+                    .is_some())
+                    {
                         let reserved = crate::edge::validate_public_edge_kind(kind)
                             .expect_err("DAG structural edge is reserved");
                         quarantine_rejected_op_in_txn(
-                            vault, wtxn, window_key, QuarantineContainer::Edges,
-                            key, &reserved, &[],
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Edges,
+                            key,
+                            &reserved,
+                            &[],
                         )?;
                         continue;
                     }
@@ -542,7 +589,10 @@ pub(super) fn materialize_edges_from_delta(
                         && (kind == EdgeKind::Blocks
                             || (kind == EdgeKind::AddressedTo
                                 && !hard_deleted
-                                && vault.store.port_edge_get(&*wtxn, &src, kind, &tgt)?.is_some())
+                                && vault
+                                    .store
+                                    .port_edge_get(&*wtxn, &src, kind, &tgt)?
+                                    .is_some())
                             || vault
                                 .identity_topology_mandated_shell_edge_in_txn(
                                     &*wtxn, &src, kind, &tgt,
@@ -578,28 +628,49 @@ pub(super) fn materialize_edges_from_delta(
                 }
             }
         }
-        let considered_child_of: Vec<_> = ops.iter().filter_map(|op| match op {
-            BatchOp::EdgeWithCreatedAt { src, kind: EdgeKind::ChildOf, tgt, .. } => Some((*src, *tgt)),
-            _ => None,
-        }).collect();
+        let considered_child_of: Vec<_> = ops
+            .iter()
+            .filter_map(|op| match op {
+                BatchOp::EdgeWithCreatedAt {
+                    src,
+                    kind: EdgeKind::ChildOf,
+                    tgt,
+                    ..
+                } => Some((*src, *tgt)),
+                _ => None,
+            })
+            .collect();
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones)?;
         for (src, tgt) in considered_child_of {
             // The candidate has reached the winner arbiter or its terminal
             // rejection, so no earlier missing-endpoint obligation remains.
             super::childof::settle_child_of(vault, wtxn, window_key, &src, &tgt)?;
         }
-        let facts: Vec<_> = delta.updated.iter().filter_map(|(key, value)| {
-            if !matches!(value, Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))) {
-                return None;
-            }
-            let (src, kind, _) = parse_edge_key(key.as_ref())?;
-            match kind {
-                EdgeKind::ChildOf => Some(crate::conversation_dag::topology::Dependency::ConversationMembership(src)),
-                EdgeKind::SpawnedBy => Some(crate::conversation_dag::topology::Dependency::SessionAnchor(src)),
-                EdgeKind::Parent => Some(crate::conversation_dag::topology::Dependency::ParentOf(src)),
-                _ => None,
-            }
-        }).collect();
+        let facts: Vec<_> = delta
+            .updated
+            .iter()
+            .filter_map(|(key, value)| {
+                if !matches!(
+                    value,
+                    Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))
+                ) {
+                    return None;
+                }
+                let (src, kind, _) = parse_edge_key(key.as_ref())?;
+                match kind {
+                    EdgeKind::ChildOf => Some(
+                        crate::conversation_dag::topology::Dependency::ConversationMembership(src),
+                    ),
+                    EdgeKind::SpawnedBy => {
+                        Some(crate::conversation_dag::topology::Dependency::SessionAnchor(src))
+                    }
+                    EdgeKind::Parent => {
+                        Some(crate::conversation_dag::topology::Dependency::ParentOf(src))
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
         super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
         let mut affected = replayed_entities;
         for (child, old_parents) in before {

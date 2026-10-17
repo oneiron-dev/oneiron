@@ -451,7 +451,9 @@ impl Memory<'_> {
                     TaskVia::Host(binding) => Some(binding),
                     TaskVia::Wire => None,
                 };
-                self.park_post(&post, &spec, &key, digest, now, decisions, lifecycle, creator)
+                self.park_post(
+                    &post, &spec, &key, digest, now, decisions, lifecycle, creator,
+                )
             }
         }
     }
