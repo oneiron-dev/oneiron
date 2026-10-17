@@ -274,8 +274,11 @@ export class Oneiron {
    * deadline), answering with the best results ready, marked `partial`.
    * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server
    * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.
+   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,
+   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and
+   * remote alike; out of range it returns `BAD_REQUEST`.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
     /** Governance receipts, newest first. */
@@ -458,6 +461,10 @@ export class Oneiron {
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
       }),
     },
+    secrets: {
+      /** The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start. */
+      lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
+    },
     /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
     widen_proposals: Object.assign((input: Facade.WidenProposalsRequest): Facade.WidenProposalsView => this.#call(() => this.#client.vaultWidenProposals(input) as Facade.WidenProposalsView), {
       /** The owner, as the board above, approves one context-widen proposal: the parent's context widens and the child is enqueued. */
@@ -474,8 +481,8 @@ export class Oneiron {
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
       /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
-      /** Composes the default vault lens from the named sources, read under the caller's own scope. */
-      default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.GeneratedLens> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.GeneratedLens>),
+      /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
+      default: (input: Facade.LensDefaultRequest): Facade.ScopedReadResult<Facade.LensFrameCard> => this.#call(() => this.#client.vaultLensesDefault(input) as Facade.ScopedReadResult<Facade.LensFrameCard>),
     },
     disclosure: {
       /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */

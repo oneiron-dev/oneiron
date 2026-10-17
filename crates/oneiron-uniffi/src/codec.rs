@@ -26,10 +26,10 @@ use crate::dto::{
     DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
     FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem,
     MemoryPack, MemoryProvenance, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
-    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QuoteSpan, ReadReceipt, ReadScope,
-    RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
-    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson,
-    WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
+    ReadScope, RecallMedia, RecallScope, RerankReport, RerankSkip, RetrievalDegradation,
+    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput,
+    TemporalHint, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -906,6 +906,18 @@ impl Lower<oneiron::code_run::vault_read::ContextPackMediaQuery> for RecallMedia
                     crate::InputKind::Audio => MediaQueryKind::Audio,
                 })
                 .collect(),
+        })
+    }
+}
+
+/// A recall's query affect crosses as the engine's; the recall door refuses
+/// it out of range.
+impl Lower<sdk::QueryAffect> for QueryAffect {
+    fn lower(self) -> Result<sdk::QueryAffect, OneironError> {
+        Ok(sdk::QueryAffect {
+            valence: self.valence,
+            arousal: self.arousal,
+            dominance: self.dominance,
         })
     }
 }

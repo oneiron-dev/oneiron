@@ -16,19 +16,26 @@
 //! own; it says what should be true, never a new way of making it true.
 
 mod apply;
+mod channel;
 mod grant;
 mod live;
 mod member;
 mod plan;
 mod seed;
+mod skill;
 
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
+};
+pub use channel::{
+    ShapeChannelBinding, ShapeChannelCustody, ShapeChannelFulfillment, ShapeChannelProvision,
+    ShapeMailScope, ShapeSelfHeld,
 };
 pub use grant::ShapeGrantBound;
 pub use member::{ShapeMemberRole, ShapePreset, ShapePresetMember, ShapePresetPick};
 pub use plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem, ShapePlanSummary};
 pub use seed::StoredShapeSeed;
+pub use skill::ShapeSkillSource;
 
 use crate::EntityId;
 use crate::error::{Error, Result};
@@ -111,13 +118,23 @@ pub enum ShapeRow {
         enabled: bool,
     },
     /// A registered skill, by skill id, optionally pinned to a version.
+    /// Only a row naming its hub source can import a missing one.
     Skill {
         skill_id: String,
         #[serde(default)]
         version: Option<String>,
+        #[serde(default)]
+        source: Option<ShapeSkillSource>,
     },
     /// A channel identity (ARCH-0063), by channel and address or handle.
-    Channel { channel: String, address: String },
+    /// Only a row stating its custody, binding and fulfillment can
+    /// provision a missing one.
+    Channel {
+        channel: String,
+        address: String,
+        #[serde(default)]
+        provision: Option<ShapeChannelProvision>,
+    },
     /// A standing grant (DEC-0006), declared as its bound. Its registry
     /// reference is the bound's digest; a row may name the grant by that
     /// reference alone, but only a row carrying the bound can mint it. Every
@@ -200,7 +217,9 @@ impl ShapeRow {
             Self::Skill { skill_id, .. } => ShapeTarget::Skill {
                 skill_id: skill_id.clone(),
             },
-            Self::Channel { channel, address } => ShapeTarget::Channel {
+            Self::Channel {
+                channel, address, ..
+            } => ShapeTarget::Channel {
                 channel: channel.clone(),
                 address: address.clone(),
             },
@@ -240,8 +259,11 @@ impl ShapeRow {
                 },
                 Self::Skill { version: have, .. },
             ) => have.as_ref() == Some(want),
+            // A source or provision says how to make a missing one; the
+            // live row is what it made.
             (Self::Pack { version: None, .. }, Self::Pack { .. })
-            | (Self::Skill { version: None, .. }, Self::Skill { .. }) => true,
+            | (Self::Skill { version: None, .. }, Self::Skill { .. })
+            | (Self::Channel { .. }, Self::Channel { .. }) => true,
             // One reference is one bound: a grant read by it is the grant.
             (Self::Grant { .. }, Self::Grant { .. }) => self.target() == live.target(),
             _ => self == live,

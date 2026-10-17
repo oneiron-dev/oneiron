@@ -123,10 +123,14 @@ module is stub-only: annotate with it under `typing.TYPE_CHECKING`.
 `vault.recall` keyword arguments are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{"world_ref": ..., "facet": ...}`), `limit`
 (default `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `as_of`
-(Unix seconds; the recall's reference time, default now), `deadline_ms` and
+(Unix seconds; the recall's reference time, default now), `deadline_ms`,
 `media` (`{"space", "mime", "bytes_b64"}`: bytes the server embeds into that
 declared space and searches beside the query, at medium effort or above; an
-embedded client raises `MODEL_UNAVAILABLE`).
+embedded client raises `MODEL_UNAVAILABLE`) and `query_affect`
+(`{"valence", "arousal", "dominance"}`: the affect the query is asked in,
+valence -1 to 1, arousal and dominance 0 to 1; emotion congruence ranks each
+item by how near its own affect sits, embedded and remote alike; out of range
+raises `BAD_REQUEST`).
 `high`, `xhigh` and `max` need a lease this package never mints: an embedded client raises
 `LEASE_REQUIRED`; a remote one gets what the server serves (reranked on its `[models]`
 reranker, or unreranked and saying so). `"call"` is call mode for live calls: light
