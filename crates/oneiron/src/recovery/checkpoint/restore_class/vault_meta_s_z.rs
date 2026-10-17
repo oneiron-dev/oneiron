@@ -253,6 +253,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_CLEANUP_TEST_BLOCKERS_CLOSED, CONTENT),
     (&t::VAULT_IDENTITY_LOCAL, LIVE),
     // A restore never resets how the vault key unlocks.
+    (&t::VAULT_KEY_ESCROW_RETIRED, LIVE),
     (&t::VAULT_KEY_ESCROW_SPOOLED, LIVE),
     (&t::VAULT_KEY_STATE, LIVE),
     (&t::VAULT_KEY_WRAP, LIVE),
