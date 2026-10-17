@@ -19968,6 +19968,7 @@
       "ShapeReviewAnchor",
       "SlideAbstention",
       "SlideJudgment",
+      "SlideLocation",
       "SlideReviewAnchor",
       "SlideReviewBase",
       "SlideReviewError",
@@ -19985,8 +19986,8 @@
       "const": 1,
       "crate-vis": 6,
       "enum": 3,
-      "fn": 3,
-      "struct": 10
+      "fn": 5,
+      "struct": 11
      }
     },
     {
@@ -26554,7 +26555,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 36,
+      "const": 37,
       "fn": 1,
       "struct": 1
      }
@@ -26650,6 +26651,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LocatedDecision"
+     ],
+     "path": "src/llm/decision/locate.rs",
+     "purpose": "Presence before coordinates (owner point 4)",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DecisionAudio",
       "DecisionImage"
      ],
@@ -26657,7 +26672,7 @@
      "purpose": "Images and audio clips a typed decision reads",
      "surface": {
       "const": 7,
-      "fn": 10,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -26677,6 +26692,7 @@
      "purpose": "Media a typed decision reads by reference (owner point 3)",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 7,
       "struct": 4
@@ -26691,7 +26707,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -26999,6 +27015,8 @@
       "EvidenceVersion",
       "HumanAskReason",
       "ImageBox",
+      "ImagePin",
+      "ImagePoint",
       "PairedReading",
       "PersonChangedAnswer",
       "ProviderPin",
@@ -27012,8 +27030,8 @@
      "surface": {
       "crate-vis": 4,
       "enum": 8,
-      "fn": 8,
-      "struct": 11
+      "fn": 12,
+      "struct": 13
      }
     },
     {
@@ -49839,7 +49857,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50520,7 +50538,7 @@
    },
    "over_bar": 132,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3050,
+   "source_files": 3051,
    "test_files": 903
   },
   "oneiron-android": {
@@ -57466,6 +57484,7 @@
      "path": "src/lib.rs",
      "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
      "surface": {
+      "const": 1,
       "fn": 1,
       "struct": 1
      }
@@ -64602,7 +64621,7 @@
      "path": "src/decision_graph.rs",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
