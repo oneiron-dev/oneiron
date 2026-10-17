@@ -141,7 +141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/graph_ask_doors.rs` | src | s | 6 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | m | 33 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | m | 34 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 6 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: an agent's tradeoff picks (ROLES-EVERYWHERE) |
@@ -152,6 +152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
 | `src/api/facade/weave_doors.rs` | src | s | 2 crate-vis | — | The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report… |
+| `src/api/facade/widen_proposal_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's context-widen proposals: `vault.widen_proposals`, `.approve` and `.decline` |
 | `src/api/feedback_inbox.rs` | src | m | 2 crate-vis | — | The open feedback inbox (ARCH-0056 #open-inbox): anyone may leave this vault a note, with no key and no… |
 | `src/api/feedback_inbox/flood.rs` | src | s | 4 crate-vis | — | The open inbox's flood cap: the one refusal its keyless intake makes |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
@@ -232,6 +233,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/space_posting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/space-posting`: the per-space ghost-mode dial (ARCH-0063 R10, INB-08) |
 | `src/api/owner_routes/vault_key_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/vault-key`: the vault data key's wraps on a running server (OF-570 E1), the host half of the… |
 | `src/api/owner_routes/weave_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/weave`: the owner's doors to the weave lens (OF-499) |
+| `src/api/owner_routes/widen_proposal_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/widen-proposals`: the owner lists the context-widen proposals agents raised, and approves or… |
 | `src/api/owner_routes/wire_health_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
 | `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
 | `src/api/packs/mod.rs` | src | s | 1 crate-vis | — | Served pack operations, including explicit default skill imports |
@@ -333,14 +335,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/builtin_host/slack_app.rs` | src | m | 12 crate-vis | — | The served Slack app and the provider URLs of the built-in channels (OF-519): the manifest the owner creates… |
 | `src/builtin_host/webhooks.rs` | src | m | 4 crate-vis | — | The provider webhooks of the served built-in channels (OF-519) |
 | `src/byte_line.rs` | src | m | 11 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
-| `src/cli.rs` | src | L | 21 struct · 9 enum · 3 fn · 9 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +22 | — |
+| `src/cli.rs` | src | L | 21 struct · 9 enum · 3 fn · 10 re-export | AgentTier, ApiArgs, ApiCommand, Cli, Command, DreamerCommand, DreamerGrantArgs, EmbedderCommand +22 | — |
 | `src/cli/deployment_args.rs` | src | s | 1 struct | HostRelayArgs | Host-only deployment commands; neither opens a local vault |
 | `src/cli/hook_args.rs` | src | s | 5 struct · 3 enum · 1 fn | HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs | `oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and… |
 | `src/cli/learning_setting_args.rs` | src | s | 3 struct · 2 enum | LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg, LearningSettingPutArgs, LearningSettingsCommand | `oneiron learning-settings`: the owner's learned-setting rows on a stopped vault… |
 | `src/cli/owner_args.rs` | src | L | 41 struct · 14 enum | BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs, EmbeddingSpaceMoveArgs +47 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/recovery_kit_args.rs` | src | s | 5 struct · 1 enum | KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitRestoreArgs, RecoveryKitStatusArgs | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173) |
 | `src/cli/wake_args.rs` | src | s | 1 struct · 1 enum | WakeArgs, WakeCommand | Host-side wake inbox commands |
-| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 18 re-export · 4 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `src/cli/widen_proposal_args.rs` | src | s | 2 struct · 2 enum | WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand | `oneiron widen-proposals`: the context-widen proposals agents raised, on a stopped vault… |
+| `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 19 re-export · 4 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/api.rs` | src | L | 1 fn · 22 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |
 | `src/commands/credential_file.rs` | src | s | 7 crate-vis | — | A file holding a credential, readable by its owner alone |
 | `src/commands/dreamer.rs` | src | s | 1 fn | — | `oneiron dreamer grant`: the owner's weave grant, made offline, for a vault created before the Dreamer's… |
@@ -365,7 +368,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/mcp_bridge.rs` | src | m | 1 fn · 2 crate-vis | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
 | `src/commands/msgpack_json.rs` | src | s | 2 crate-vis | — | JSON renderings of MessagePack claim values for command output |
 | `src/commands/oneironer.rs` | src | s | 3 struct · 1 enum · 1 fn | DistillArgs, ExportArgs, OneironerCommand, PublishArgs | `oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 "one base, two… |
-| `src/commands/owner.rs` | src | L | 17 fn · 2 re-export · 4 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
+| `src/commands/owner.rs` | src | L | 18 fn · 2 re-export · 4 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
 | `src/commands/owner/recovery_kit.rs` | src | m | 1 fn · 1 crate-vis | — | `oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron… |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
 | `src/commands/owner/vault_key.rs` | src | m | 1 fn · 7 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |

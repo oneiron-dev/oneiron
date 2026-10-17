@@ -849,6 +849,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
       "crate-vis": 6,
+      "mod": 1,
       "re-export": 21
      }
     },
@@ -1120,6 +1121,24 @@
      "surface": {
       "crate-vis": 4,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WidenProposalAnswer",
+      "WidenProposalState",
+      "WidenProposalView",
+      "WidenProposalsRequest",
+      "WidenProposalsView"
+     ],
+     "path": "src/agent_dispatch/widen_doors.rs",
+     "purpose": "The owner's doors over context-widen proposals (OF-568): list them, and approve or decline one as the board…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -45135,7 +45154,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 250
+      "fn": 253
      }
     },
     {
@@ -49665,7 +49684,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51144,7 +51163,7 @@
    },
    "over_bar": 139,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3089,
+   "source_files": 3090,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59012,7 +59031,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 205
+      "fn": 208
      }
     },
     {
@@ -60026,7 +60045,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 206
+      "fn": 209
      }
     },
     {
@@ -62653,7 +62672,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -62752,6 +62771,16 @@
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link in their own report…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/widen_proposal_doors.rs",
+     "purpose": "The host doors of the owner's context-widen proposals: `vault.widen_proposals`, `.approve` and `.decline`",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -63542,6 +63571,16 @@
      "notable": [],
      "path": "src/api/owner_routes/weave_routes.rs",
      "purpose": "`/v1/owner/weave`: the owner's doors to the weave lens (OF-499)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/widen_proposal_routes.rs",
+     "purpose": "`/v1/owner/widen-proposals`: the owner lists the context-widen proposals agents raised, and approves or…",
      "surface": {
       "crate-vis": 1
      }
@@ -64494,7 +64533,7 @@
      "surface": {
       "enum": 9,
       "fn": 3,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 21
      }
     },
@@ -64648,6 +64687,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WidenProposalAnswerArgs",
+      "WidenProposalListArgs",
+      "WidenProposalStateArg",
+      "WidenProposalsCommand"
+     ],
+     "path": "src/cli/widen_proposal_args.rs",
+     "purpose": "`oneiron widen-proposals`: the context-widen proposals agents raised, on a stopped vault…",
+     "surface": {
+      "enum": 2,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -64659,7 +64714,7 @@
       "const": 1,
       "crate-vis": 4,
       "fn": 12,
-      "re-export": 18,
+      "re-export": 19,
       "struct": 1
      }
     },
@@ -64917,7 +64972,7 @@
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
       "crate-vis": 4,
-      "fn": 17,
+      "fn": 18,
       "re-export": 2
      }
     },
@@ -69055,7 +69110,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 272,
+     "files": 274,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69097,7 +69152,7 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "cli": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -69379,7 +69434,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 536,
+   "source_files": 539,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70109,6 +70164,11 @@
       "WeaveSectionKind",
       "WeaveSectionView",
       "WeaveWrongLinkRequest",
+      "WidenProposalAnswer",
+      "WidenProposalState",
+      "WidenProposalView",
+      "WidenProposalsRequest",
+      "WidenProposalsView",
       "WidthCheckClass",
       "WireClaimView",
       "WireCommitReceipt",
@@ -70123,8 +70183,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 169,
-      "struct": 403
+      "enum": 170,
+      "struct": 407
      }
     },
     {
