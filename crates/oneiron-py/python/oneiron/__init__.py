@@ -603,7 +603,7 @@ class Oneiron:
         def decisions(self) -> "Oneiron._VaultDecisionsVerbs":
             return Oneiron._VaultDecisionsVerbs(self._client)
         def commit(self, input: dict[str, Any]) -> Any:
-            """Commits claims through the gate, each element decided on its own; rejected elements come back rejected and do not persist."""
+            """Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted."""
             return json.loads(_translate(lambda: self._client.vault_commit(json.dumps(input, allow_nan=False))))
         def remember(self, input: dict[str, Any]) -> Any:
             """Commits one claim through the gate, the same as vault.claims.upsert."""
@@ -702,7 +702,7 @@ class Oneiron:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
             return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
         def seed(self, input: dict[str, Any]) -> Any:
-            """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
+            """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
