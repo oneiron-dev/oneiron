@@ -268,8 +268,8 @@ vault:
 
 ```toml
 [keystore]
-backend = "platform"            # or "off"; ONEIRON_KEYSTORE_BACKEND
-dir = "/var/lib/oneiron/keys"   # other Unix only; ONEIRON_KEYSTORE_DIR
+backend = "platform"            # or "hardware", or "off"; ONEIRON_KEYSTORE_BACKEND
+dir = "/var/lib/oneiron/keys"   # Windows and other Unix; ONEIRON_KEYSTORE_DIR
 service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVICE
 ```
 
@@ -280,7 +280,14 @@ service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVI
   `$XDG_STATE_HOME/oneiron/keys` (else `~/.local/state/oneiron/keys`). The
   directory must lie outside the vault, and it carries a `CACHEDIR.TAG` so that
   backup tools which honour the tag skip it.
-- Windows has no adapter yet.
+- On Windows each slot is a file sealed by DPAPI to this user on this machine,
+  by default under `%LOCALAPPDATA%\Oneiron\keys`, outside the vault.
+- `backend = "hardware"` seals each slot to a P-256 key the Secure Enclave holds
+  and never releases, on Apple systems (signed builds, as above). Elsewhere it is
+  refused at start: a hardware tier is never served by a weaker one. Its slots
+  are its own, so switching tiers makes this install a new machine.
+- `oneiron vault-key status` and `GET /v1/owner/vault-key` name the tier in
+  `keystore`: `hardware`, `platform` or `software` (the Unix key directory).
 
 Without a keystore, serve still runs, and only the world-key doors refuse.
 
