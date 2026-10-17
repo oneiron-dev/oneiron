@@ -59,6 +59,7 @@ pub(super) fn finish_projection(
     disclosure: Option<DisclosureAssembly>,
 ) -> MemoriesSection {
     rows.sort_by(memory_row_order);
+    clamp_held_pairs(&mut rows);
 
     let mut used = MemoriesBudget::default();
     let mut filtered = Vec::with_capacity(rows.len());
@@ -80,6 +81,7 @@ pub(super) fn finish_projection(
             .then_with(|| a.world.cmp(&b.world))
             .then_with(|| memory_row_order(a, b))
     });
+    clamp_held_pairs(&mut filtered);
     for (index, row) in filtered.iter_mut().enumerate() {
         row.row_index = index;
     }
@@ -89,6 +91,23 @@ pub(super) fn finish_projection(
         rows: filtered,
         companion,
         disclosure,
+    }
+}
+
+/// OF-023 hold-both: an observed claim row never sits above a stated row of
+/// its question (ARCH-0003), whichever section found it, so the slot budget
+/// never keeps the observed mate over the stated one. A pinned row keeps
+/// its pin, and every other row its place.
+fn clamp_held_pairs(rows: &mut Vec<MemoryRow>) {
+    let clamped =
+        crate::context_pack::source_ranking::clamp_order_by(rows, &Default::default(), |row| {
+            if row.tier == MemoryTier::Pinned {
+                return None;
+            }
+            Some((row.claim_source?, row.question?))
+        });
+    if let Err(error) = clamped {
+        tracing::warn!(%error, "the MEMORIES hold-both clamp did not run");
     }
 }
 
@@ -135,6 +154,7 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
         snippet: None,
         hook: None,
         source_revision: entity.source_revision_ref.map(crate::vault::RevisionRef),
+        question: None,
     }
 }
 
@@ -185,12 +205,23 @@ impl crate::Vault {
         pinned: &std::collections::BTreeSet<crate::EntityId>,
     ) -> crate::error::Result<MemoriesSection> {
         let mut rows = Vec::new();
+        // A claim's question only orders its row; its bytes and labels stay
+        // the snapshot's.
+        let rtxn = self.store.env.read_txn()?;
         for (entities, source) in [
             (&pack.results, MemorySource::Result),
             (&pack.neighbors, MemorySource::Neighbor),
         ] {
             for entity in entities {
                 let mut row = memory_row(entity, source);
+                if entity.entity_type == ENTITY_TYPE_CLAIM {
+                    row.question = self
+                        .get_claim_in_txn(&rtxn, &entity.id)
+                        .ok()
+                        .flatten()
+                        .as_ref()
+                        .and_then(crate::context_pack::source_ranking::question_key);
+                }
                 // These bytes and labels belong to the already-authorized
                 // snapshot and its engine-issued ref. A new vault read could
                 // substitute a changed private claim after the read gate.

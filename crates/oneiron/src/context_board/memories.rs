@@ -174,6 +174,10 @@ pub struct MemoryRow {
     /// the wire: board refs stay as they were.
     #[serde(skip)]
     pub source_revision: Option<crate::vault::RevisionRef>,
+    /// A claim row's question key, so the projection keeps an observed row
+    /// below a stated row of its question (OF-023). Not on the wire.
+    #[serde(skip)]
+    pub question: Option<[u8; 32]>,
 }
 
 /// Deterministic MEMORIES section envelope.
