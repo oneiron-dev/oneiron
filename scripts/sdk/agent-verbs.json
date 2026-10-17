@@ -423,6 +423,7 @@
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?",
+      "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -433,6 +434,7 @@
       "input": "crate::task_verb::sdk::FanoutAckRequest",
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?",
+      "host_door": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false

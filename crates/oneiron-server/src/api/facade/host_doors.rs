@@ -57,6 +57,8 @@ pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
+// The owner's fan-out ruling doors (OF-393), likewise.
+pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's root wave door (OF-427), likewise.
