@@ -1395,7 +1395,7 @@ class Oneiron:
         def resolve(self, spec: Facade.ResolveRecordRefRequest) -> Facade.ScopedReadResult[Facade.RecordRefPreview]:
             """The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same."""
         def links(self, spec: Facade.RecordLinksRequest) -> Facade.RecordLinks:
-            """A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
+            """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
     class _VaultSearchVerbs:
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""

@@ -3841,7 +3841,7 @@ impl AgentVerb {
                 "The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same."
             }
             Self::VaultRefsLinks => {
-                "A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."
+                "A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."
             }
             Self::VaultSearchBm25 => {
                 "BM25 text search over the engine index; surfaceable claims only."

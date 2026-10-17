@@ -1598,7 +1598,7 @@ class Oneiron:
             """The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same."""
             return json.loads(_translate(lambda: self._client.vault_refs_resolve(json.dumps(spec))))
         def links(self, spec):
-            """A text, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
+            """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
             return json.loads(_translate(lambda: self._client.vault_refs_links(json.dumps(spec))))
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:

@@ -498,7 +498,7 @@ impl Vault {
             policy::require_append_references_in_txn(self, &lane, txn, input, &refs)?;
             Ok(append_in_txn(self, txn, input, None, false)?)
         });
-        policy::settle_append(writer, policy::APPEND_ROW, appended)
+        policy::settle_append(writer, policy::APPEND_ROW, input, appended)
     }
 
     /// Explicit fork selection. Rewrites canonical marks on both old and new paths.

@@ -360,8 +360,12 @@ fn commit_terminal(
     let memory = vault.memory(seed.actor, seed.class()?);
     // OF-063 prose links (Engine ruling 10-17): a continuation's appended
     // text is read for the links its AI writer cannot resolve, receipt-only,
-    // before the writer opens; a new message's final witness reads its own
-    // through the witness program. A recovered stream is read the same way.
+    // before the writer opens, and receipted only once the finalize has
+    // landed (Engine ruling 10-18); a new message's final witness reads its
+    // own through the witness program. A recovered stream is read the same
+    // way. This close is the stream's one link receipt: its checkpoints and
+    // presence frames leave none (Engine ruling 10-18).
+    let mut unlinked_prose = Vec::new();
     if seed.continuation
         && seed.author == crate::memory::WitnessAuthor::Companion
         && !state.pending.is_empty()
@@ -370,7 +374,7 @@ fn commit_terminal(
     {
         drop(txn);
         let text = format!("{base}{}", state.pending);
-        crate::gate::record_references::admit_prose_text(
+        unlinked_prose = crate::gate::record_references::prose_text_unlinked(
             &memory,
             crate::gate::record_references::WITNESS_PROSE_ROW,
             "/messages/0/content",
@@ -467,13 +471,17 @@ fn commit_terminal(
             .map_err(MessageStreamError::from)
     };
     if let Err(error) = written {
-        let txn = vault.store.env.read_txn()?;
-        if let Some(done) = storage::receipt(vault, &txn, seed.message_id)?
-            && done.generation == seed.generation
-        {
+        let landed = {
+            let txn = vault.store.env.read_txn()?;
+            storage::receipt(vault, &txn, seed.message_id)?
+                .filter(|done| done.generation == seed.generation)
+        };
+        if let Some(done) = landed {
+            crate::gate::record_references::receipt_landed_prose(&memory, &unlinked_prose);
             return Ok(done);
         }
         return Err(error);
     }
+    crate::gate::record_references::receipt_landed_prose(&memory, &unlinked_prose);
     Ok(receipt)
 }
