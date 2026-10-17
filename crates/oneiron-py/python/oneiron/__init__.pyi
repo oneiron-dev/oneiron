@@ -141,6 +141,7 @@ class MemoryPack(TypedDict):
 
 class FacadeReceipt(TypedDict):
     receipt_ref: str
+    kind: str
     outcome: str
     created_at: int
     reason_codes: list[str]
@@ -148,6 +149,7 @@ class FacadeReceipt(TypedDict):
     actor_ref: str | None
     content_kind: str
     claim_ref: str | None
+    fields: NotRequired[dict[str, str]]
 
 
 class KeyValueAddress(TypedDict):
@@ -493,7 +495,7 @@ class Oneiron:
         def seed(self, input: Facade.CommitRequest) -> list[Facade.CommitReceipt]:
             """Seeds claims through their individual gates, forced proposed, returning one receipt per claim."""
     class _VaultReceiptsVerbs:
-        def __call__(self, limit: int = 100) -> list[FacadeReceipt]: ...
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
     class _VaultImagesVerbs:
@@ -527,15 +529,25 @@ class Oneiron:
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
         @property
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
     class _VaultWeaveLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
     class _VaultWeaveOwnerVerbs:
         @property
         def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs": ...
+        @property
+        def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs": ...
     class _VaultWeaveOwnerLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
+    class _VaultWeaveOwnerItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+    class _VaultWeaveItemVerbs:
+        def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
+            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
     class _VaultPacksVerbs:
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
@@ -969,7 +981,7 @@ class Oneiron:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""
         def poll(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoJob:
-            """Where a video job stands; a finished one answers with its clip, once."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
             """Stops a video job at its provider."""
     class _ConnectorVerbs:

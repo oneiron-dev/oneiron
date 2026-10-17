@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 326 code-mode rows (307 host rows, 19 run rows), 1111 declarations.
-// Replies: 265 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 328 code-mode rows (309 host rows, 19 run rows), 1114 declarations.
+// Replies: 267 fully typed, 46 typed down to an opaque serde_json::Value leaf, 14 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 73; unread shapes: BoardVerbOutput, EmbeddingSpace.evidence, GeneratedUiStateSnapshot.
 declare namespace Sdk {
@@ -365,6 +365,8 @@ declare namespace Sdk {
   type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: LensFrameCard | null; lens_refused?: WeaveLensRefusal | null };
   type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string };
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
+  type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
+  type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
   type PackFileInput = { path: string; text: string };
   type PackPutRequest = { files: PackFileInput[] };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
@@ -780,7 +782,8 @@ declare namespace Sdk {
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
-  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown> };
+  type AiVoice = { kind: "stock"; name: string } | { kind: "bank"; voice_id: string; include_generated?: boolean };
+  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
@@ -901,7 +904,7 @@ declare namespace Sdk {
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
   type WorkflowCheck = "solved" | "replay";
   type ProposeOutput = { admitted: boolean; workflow?: string | null; refused_by?: WorkflowCheck | null; unmet?: number[]; replay?: BatchOutput | null };
-  type LibraryRetireInput = { workflow: string };
+  type LibraryRetireInput = { workflow: string; reason?: string | null };
   type LibraryRetireOutput = { retired: LibraryCard };
   type LibraryRunInput = { workflow: string; args?: Record<string, string> };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
@@ -1145,7 +1148,7 @@ declare const ai: {
   video: ((input: Sdk.AiCallRequest) => Promise<Sdk.AiVideoTicket | StoredResult>) & {
     /** Stops a video job at its provider. */
     cancel(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoCancelled | StoredResult>;
-    /** Where a video job stands; a finished one answers with its clip, once. */
+    /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
     poll(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoJob | StoredResult>;
   };
 };
@@ -1880,6 +1883,10 @@ declare const vault: Sdk.VaultHost & {
   weave: {
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
     digest(input: Sdk.WeaveDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
+    item: {
+      /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
+      wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
+    };
     /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
     lens(input: Sdk.WeaveReportRequest): Promise<Sdk.LensFrameCard | StoredResult>;
     link: {
@@ -1887,6 +1894,10 @@ declare const vault: Sdk.VaultHost & {
       wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;
     };
     owner: {
+      item: {
+        /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
+        wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
+      };
       link: {
         /** The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays. */
         wrong(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView | StoredResult>;

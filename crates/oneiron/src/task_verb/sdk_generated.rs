@@ -258,6 +258,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.weave.item.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
+                ),
+            ),
+            (
+                "vault.weave.owner.item.wrong",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
+                ),
+            ),
+            (
                 "vault.packs.put",
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
@@ -2008,6 +2018,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.weave.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.packs.put" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3706,6 +3730,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.owner.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
         }
+        "vault.weave.item.wrong" => {
+            let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+        }
+        "vault.weave.owner.item.wrong" => {
+            let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+        }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
@@ -4592,6 +4622,10 @@ pub fn invoke(
         "vault.weave.link.wrong" => encode(vault_weave_link_wrong(memory, decode(value)?)?),
         "vault.weave.owner.link.wrong" => {
             encode(vault_weave_owner_link_wrong(memory, decode(value)?)?)
+        }
+        "vault.weave.item.wrong" => encode(vault_weave_item_wrong(memory, decode(value)?)?),
+        "vault.weave.owner.item.wrong" => {
+            encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.setup.prepare" => encode(vault_packs_setup_prepare(memory, decode(value)?)?),
@@ -5527,6 +5561,25 @@ pub fn vault_weave_owner_link_wrong(
 ) -> MemoryResult<crate::claim::WeaveLinkCorrectionView> {
     memory.weave_owner_wrong_link(
         &memory.embedded_owner("vault.weave.owner.link.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongItemRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    memory.weave_wrong_item(
+        None,
+        &memory.embedded_owner("vault.weave.item.wrong")?,
+        &input,
+    )
+}
+pub fn vault_weave_owner_item_wrong(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongItemRequest,
+) -> MemoryResult<crate::claim::WeaveItemCorrectionView> {
+    memory.weave_owner_wrong_item(
+        &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
     )
 }

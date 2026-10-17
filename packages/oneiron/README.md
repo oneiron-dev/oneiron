@@ -248,7 +248,7 @@ you want to act as instead.
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
 | `handle.vault.recall(query, opts?)` | `MemoryPack` |
-| `handle.vault.receipts(limit?)` | `FacadeReceipt[]` |
+| `handle.vault.receipts(limit?, kinds?)` | `FacadeReceipt[]`: the gate decision ledger, or the receipts of the named kinds (`gate`, `hook`, `outbound`, ...) |
 
 Every other verb in the SDK verb table sits at its SDK path on the handle
 (`handle.vault.people.list(input)`, `handle.self.memory.diary(input)`, ...).

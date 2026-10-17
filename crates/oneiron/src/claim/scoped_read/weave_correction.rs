@@ -1,15 +1,38 @@
-//! Authenticated wrong-link labels emitted by the live weave report.
+//! Authenticated wrong labels emitted by the live weave report: one on a
+//! link, and one on a claim, project or budget item.
 use super::{ScopedRead, WeaveItem, WeaveReader, WeaveSectionKind, WeaveSectionSpec};
 use crate::EntityId;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::decode_claim_body;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::provenance::{EDGE_REF_LEN, EdgeRef};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use serde::{Deserialize, Serialize};
 
 /// Wrong-link labels, keyed by the link's edge ref, then the label's receipt id.
 const LABELS: SideTable<([u8; EDGE_REF_LEN], EntityId), StoredCorrection, Named> =
     SideTable::new(&side_table::WEAVE_WRONG_LINK_LABEL);
+
+/// Wrong-item labels, keyed by the item's id (a claim, project or budget id,
+/// unique across the three), then the label's receipt id.
+const ITEM_LABELS: SideTable<(EntityId, EntityId), StoredItemCorrection, Named> =
+    SideTable::new(&side_table::WEAVE_WRONG_ITEM_LABEL);
+
+/// The report sections that read claims by predicate: every one but the
+/// project and budget sections. A claim's item check reads it under the
+/// first its reader's policy allows; the plain ones lead.
+const CLAIM_SECTIONS: [WeaveSectionKind; 8] = [
+    WeaveSectionKind::Changes,
+    WeaveSectionKind::OpenAsks,
+    WeaveSectionKind::Conflicts,
+    WeaveSectionKind::Exceptions,
+    WeaveSectionKind::Admissions,
+    WeaveSectionKind::SieveScore,
+    WeaveSectionKind::Links,
+    WeaveSectionKind::Digest,
+];
 
 /// An immutable negative training label for one weave link. The edge reference
 /// is the link's stable id; the receipt id distinguishes independent taps.
@@ -29,21 +52,172 @@ struct StoredCorrection {
     recorded_at: u64,
 }
 
+/// A claim, project or budget row of a reader's weave report: the item a
+/// wrong-item label names. A budget stands under the project the report
+/// shows it with; its label keys on the budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeaveItemTarget {
+    Claim(EntityId),
+    Project(EntityId),
+    Budget { project: EntityId, budget: EntityId },
+}
+
+impl WeaveItemTarget {
+    /// The target a report row is, when it takes a wrong-item label. A link
+    /// takes a wrong-link label; a health card settles through the concern
+    /// door; a resident's dream progress takes none.
+    #[must_use]
+    pub fn of(item: &WeaveItem) -> Option<Self> {
+        match item {
+            WeaveItem::Claim { id, .. } => Some(Self::Claim(*id)),
+            WeaveItem::Project { id, .. } => Some(Self::Project(*id)),
+            WeaveItem::Budget {
+                project,
+                budget_ref,
+            } => Some(Self::Budget {
+                project: *project,
+                budget: *budget_ref,
+            }),
+            WeaveItem::Link { .. }
+            | WeaveItem::DreamProgress { .. }
+            | WeaveItem::AgentHealth { .. } => None,
+        }
+    }
+
+    /// The id its labels key on.
+    #[must_use]
+    pub fn id(self) -> EntityId {
+        match self {
+            Self::Claim(id) | Self::Project(id) | Self::Budget { budget: id, .. } => id,
+        }
+    }
+}
+
+/// An immutable negative training label for one claim, project or budget
+/// item. The receipt id distinguishes independent taps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeaveItemCorrection {
+    pub id: EntityId,
+    pub item: WeaveItemTarget,
+    pub actor: EntityId,
+    pub recorded_at: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredItemCorrection {
+    id: EntityId,
+    item: WeaveItemTarget,
+    actor: EntityId,
+    recorded_at: u64,
+}
+
 impl ScopedRead<'_> {
     /// File a wrong-link tap only for an authenticated human viewing that live
     /// link in their own report. A caller-chosen edge reference alone grants no
     /// write authority. The persisted label is not an edge retraction.
-    ///
-    /// Each reader's labels on a link are bounded by the policy, except the
-    /// vault owner's: an owner past the bound files anyway, and the first such
-    /// report on a link leaves the typed own-rate check.
     pub fn report_wrong_link(
         &self,
         auth: &AuthenticatedOwner,
         reader: WeaveReader<'_>,
         link: EdgeRef,
     ) -> Result<WeaveLinkCorrection> {
-        // A person reports a link they see as themselves; the owner reader
+        self.file_weave_label(
+            auth,
+            reader,
+            |txn| self.require_visible_weave_link_in(txn, reader, link),
+            |txn, actor| {
+                Ok(self
+                    .vault
+                    .weave_link_correction_labels_in_txn(txn, link)?
+                    .iter()
+                    .filter(|label| label.actor == actor)
+                    .count())
+            },
+            |txn, actor, now| {
+                let correction = WeaveLinkCorrection {
+                    id: EntityId::now(),
+                    link,
+                    actor,
+                    recorded_at: now,
+                };
+                LABELS.put(
+                    &self.vault.store,
+                    txn,
+                    &(link.encode(), correction.id),
+                    &StoredCorrection {
+                        id: correction.id,
+                        link: link.encode().to_vec(),
+                        actor: correction.actor,
+                        recorded_at: correction.recorded_at,
+                    },
+                )?;
+                Ok(correction)
+            },
+        )
+    }
+
+    /// File a wrong-item tap only for an authenticated human viewing that
+    /// claim, project or budget row in their own report, under the same
+    /// bound as a link label. A caller-chosen id alone grants no write
+    /// authority. The persisted label changes no record.
+    pub fn report_wrong_item(
+        &self,
+        auth: &AuthenticatedOwner,
+        reader: WeaveReader<'_>,
+        item: WeaveItemTarget,
+    ) -> Result<WeaveItemCorrection> {
+        self.file_weave_label(
+            auth,
+            reader,
+            |txn| self.require_visible_weave_item_in(txn, reader, item),
+            |txn, actor| {
+                Ok(self
+                    .vault
+                    .weave_item_correction_labels_in_txn(txn, item.id())?
+                    .iter()
+                    .filter(|label| label.actor == actor)
+                    .count())
+            },
+            |txn, actor, now| {
+                let correction = WeaveItemCorrection {
+                    id: EntityId::now(),
+                    item,
+                    actor,
+                    recorded_at: now,
+                };
+                ITEM_LABELS.put(
+                    &self.vault.store,
+                    txn,
+                    &(item.id(), correction.id),
+                    &StoredItemCorrection {
+                        id: correction.id,
+                        item,
+                        actor: correction.actor,
+                        recorded_at: correction.recorded_at,
+                    },
+                )?;
+                Ok(correction)
+            },
+        )
+    }
+
+    /// One wrong tap: `reader` bound to `auth`, then in one writer its
+    /// clock, the visibility check `admit`, the reader's own bound on the
+    /// labels `own` counts, and the label `put` writes.
+    ///
+    /// No reader is refused for how many labels it files (rule 5): past the
+    /// policy's bound on one link or item, a reader's label files anyway, and
+    /// the first such report on it leaves the typed own-rate check.
+    fn file_weave_label<T>(
+        &self,
+        auth: &AuthenticatedOwner,
+        reader: WeaveReader<'_>,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+        own: impl FnOnce(&heed::RoTxn<'_>, EntityId) -> Result<usize>,
+        put: impl FnOnce(&mut heed::RwTxn<'_>, EntityId, u64) -> Result<T>,
+    ) -> Result<T> {
+        // A person reports a row they see as themselves; the owner reader
         // reads with the owner role, so it takes the owner tier.
         let as_owner = matches!(reader, WeaveReader::Owner(_));
         let auth_actor = if as_owner {
@@ -74,27 +248,19 @@ impl ScopedRead<'_> {
         } else {
             auth.revalidate_person_in_txn(self.vault, &txn)?
         };
-        self.require_visible_weave_link_in(&txn, reader, link)?;
+        admit(&txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
         let limit = policy
             .weave_correction_limit(&actor.to_hex())
             .ok_or(Error::InvalidConfig(
                 "weave correction policy unavailable".into(),
             ))?;
-        // Writers enforce the reader's bound in this SAME serialized txn. The
-        // bound is the reader's own: another reader's labels never spend it.
-        let own = self
-            .vault
-            .weave_link_correction_labels_in_txn(&txn, link)?
-            .iter()
-            .filter(|label| label.actor == actor)
-            .count();
+        // Writers count the reader's own labels in this SAME serialized txn;
+        // another reader's labels never count toward its bound.
+        let own = own(&txn, actor)?;
         if own >= limit {
-            // Capabilities first: the owner's own reports are never refused
-            // on count. Every other reader stays bounded.
-            if !crate::policy_model::is_live_vault_owner_in_txn(self.vault, &txn, &actor)? {
-                return Err(Error::IndexOverflow("weave correction labels"));
-            }
+            // Capabilities first: a count never refuses a label. Past the
+            // bound it leaves the advisory check instead.
             crate::own_rate::observe_in_txn(
                 &self.vault.store,
                 &mut txn,
@@ -108,25 +274,9 @@ impl ScopedRead<'_> {
                 },
             )?;
         }
-        let correction = WeaveLinkCorrection {
-            id: EntityId::now(),
-            link,
-            actor,
-            recorded_at: now,
-        };
-        LABELS.put(
-            &self.vault.store,
-            &mut txn,
-            &(link.encode(), correction.id),
-            &StoredCorrection {
-                id: correction.id,
-                link: link.encode().to_vec(),
-                actor: correction.actor,
-                recorded_at: correction.recorded_at,
-            },
-        )?;
+        let label = put(&mut txn, actor, now)?;
         txn.commit()?;
-        Ok(correction)
+        Ok(label)
     }
 
     /// Read labels for a link this actor can currently see in the live report.
@@ -164,6 +314,61 @@ impl ScopedRead<'_> {
             Err(Error::EntityNotFound)
         }
     }
+
+    /// The same check for an item: its own section, read under the reader's
+    /// binding and current policy, must show it. A claim reads under its own
+    /// predicate, in the first claim section the reader's policy allows; a
+    /// budget must show under the project named with it. An id that is no
+    /// claim fails as an unseen one does.
+    fn require_visible_weave_item_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader: WeaveReader<'_>,
+        item: WeaveItemTarget,
+    ) -> Result<()> {
+        let (kind, predicates) = match item {
+            WeaveItemTarget::Claim(id) => {
+                let Some(record) = self.entity_record_in(txn, &id)? else {
+                    return Err(Error::EntityNotFound);
+                };
+                let raw = record.encode();
+                match EntityMetadataHeader::parse(&raw) {
+                    Some(header) if header.entity_type == ENTITY_TYPE_CLAIM => {}
+                    _ => return Err(Error::EntityNotFound),
+                }
+                let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+                let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
+                let row = crate::gate::weave_policy::effective_resolved(
+                    &policy,
+                    reader.role(),
+                    reader.id(self.vault, txn)?,
+                )
+                .ok_or_else(|| Error::InvalidConfig("missing weave report policy".into()))?;
+                let kind = CLAIM_SECTIONS
+                    .into_iter()
+                    .find(|kind| row.sections.contains(kind.policy_name()))
+                    .ok_or(Error::EntityNotFound)?;
+                (kind, vec![body.predicate])
+            }
+            WeaveItemTarget::Project(_) => (WeaveSectionKind::Projects, Vec::new()),
+            WeaveItemTarget::Budget { .. } => (WeaveSectionKind::Budgets, Vec::new()),
+        };
+        let recipe = [WeaveSectionSpec {
+            kind,
+            predicates,
+            edge_kinds: Vec::new(),
+        }];
+        let report = self.weave_report_in_txn(txn, reader, &recipe)?;
+        if report.value.sections[0]
+            .items
+            .iter()
+            .any(|shown| WeaveItemTarget::of(shown) == Some(item))
+        {
+            Ok(())
+        } else {
+            Err(Error::EntityNotFound)
+        }
+    }
 }
 
 impl crate::Vault {
@@ -183,6 +388,28 @@ impl crate::Vault {
             labels.push(WeaveLinkCorrection {
                 id: stored.id,
                 link,
+                actor: stored.actor,
+                recorded_at: stored.recorded_at,
+            });
+        }
+        Ok(labels)
+    }
+
+    /// An item's labels, read as a link's are, in the loop's own snapshot.
+    pub(crate) fn weave_item_correction_labels_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        item: EntityId,
+    ) -> Result<Vec<WeaveItemCorrection>> {
+        let mut labels = Vec::new();
+        for row in ITEM_LABELS.iter_from(&self.store, txn, item.as_bytes())? {
+            let ((id, receipt_id), stored) = row?;
+            if id != item || stored.item.id() != item || receipt_id != stored.id {
+                return Err(Error::CorruptedIndex("weave correction item"));
+            }
+            labels.push(WeaveItemCorrection {
+                id: stored.id,
+                item: stored.item,
                 actor: stored.actor,
                 recorded_at: stored.recorded_at,
             });

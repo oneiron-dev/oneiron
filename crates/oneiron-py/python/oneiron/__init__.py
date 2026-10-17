@@ -640,9 +640,9 @@ class Oneiron:
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def __call__(self, limit: int = 100) -> list[dict[str, Any]]:
-            """Governance receipts, newest first."""
-            return json.loads(_translate(lambda: self._client.vault_receipts(limit)))
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[dict[str, Any]]:
+            """Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds."""
+            return json.loads(_translate(lambda: self._client.vault_receipts(limit, kinds)))
         def get(self, spec):
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
@@ -709,6 +709,9 @@ class Oneiron:
         @property
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs":
             return Oneiron._VaultWeaveOwnerVerbs(self._client)
+        @property
+        def item(self) -> "Oneiron._VaultWeaveItemVerbs":
+            return Oneiron._VaultWeaveItemVerbs(self._client)
     class _VaultWeaveLinkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -721,12 +724,27 @@ class Oneiron:
         @property
         def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs":
             return Oneiron._VaultWeaveOwnerLinkVerbs(self._client)
+        @property
+        def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs":
+            return Oneiron._VaultWeaveOwnerItemVerbs(self._client)
     class _VaultWeaveOwnerLinkVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def wrong(self, spec):
             """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
             return json.loads(_translate(lambda: self._client.vault_weave_owner_link_wrong(json.dumps(spec))))
+    class _VaultWeaveOwnerItemVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_owner_item_wrong(json.dumps(spec))))
+    class _VaultWeaveItemVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def wrong(self, spec):
+            """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
+            return json.loads(_translate(lambda: self._client.vault_weave_item_wrong(json.dumps(spec))))
     class _VaultPacksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1526,7 +1544,7 @@ class Oneiron:
             """Starts a video render as a provider job and answers with its ticket."""
             return json.loads(_translate(lambda: self._client.ai_video(json.dumps(spec))))
         def poll(self, spec):
-            """Where a video job stands; a finished one answers with its clip, once."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
             return json.loads(_translate(lambda: self._client.ai_video_poll(json.dumps(spec))))
         def cancel(self, spec):
             """Stops a video job at its provider."""
