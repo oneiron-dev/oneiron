@@ -109,7 +109,11 @@ impl BigModel {
             && self
                 .models
                 .route_role(&self.vault, self.role, seat)
-                .is_ok_and(|route| route.ladder.supports(&route.model, &LlmCapability::AudioInput))
+                .is_ok_and(|route| {
+                    route
+                        .ladder
+                        .supports(&route.model, &LlmCapability::AudioInput)
+                })
     }
 
     fn request(&self, call: &DecisionCall<'_>) -> oneiron::Result<LlmRequest> {

@@ -146,9 +146,9 @@ impl Vault {
         }
         items.extend(self.inbound_inbox_items(None)?);
         // Concern rows carry no thread, so folding leaves each its own row.
-        items.extend(crate::dreamer_runner::maintenance::agent_health::agent_health_inbox_items(
-            self,
-        )?);
+        items.extend(
+            crate::dreamer_runner::maintenance::agent_health::agent_health_inbox_items(self)?,
+        );
         // Filter after folding, so a filtered conversation still names every
         // identity on its thread.
         let mut items = fold_threads(items);

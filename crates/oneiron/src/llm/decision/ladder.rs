@@ -6,9 +6,8 @@ use super::policy::{
 use super::types::{invalid, paired_valid};
 use super::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
-    DecisionReceipt,
-    DecisionRung, DecisionTime, HumanAskReason, PairedReading, PersonChangedAnswer, ProviderPin,
-    Reasoning, ReasoningCause, StopCause, TypedDecision,
+    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, PairedReading,
+    PersonChangedAnswer, ProviderPin, Reasoning, ReasoningCause, StopCause, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};

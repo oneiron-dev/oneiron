@@ -94,9 +94,8 @@ use self::diagnostic_codec::{
 };
 pub use self::event::{
     AgentHealthSignal, DIAGNOSTIC_BODY_KEYS, DIAGNOSTIC_SCHEMA_VERSION, DeterministicDetector,
-    DiagnosticCriticality,
-    DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate,
-    DiagnosticSourceKind, DiagnosticWorkingSet,
+    DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation,
+    DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
 };
 
 // Private re-exports so the pre-existing children keep their `super::{...}`

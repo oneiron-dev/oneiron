@@ -326,8 +326,7 @@ pub fn finalize_claim_tournament(
     // A stamped run attempt worked in this tournament's team, or its terminal
     // receipt would join another run's.
     if let Some(record) = crate::attempt_queue::AttemptQueue::new(vault).get(attempt)?
-        && crate::agent_dispatch::attempt_team_stamp(&record)?
-            .is_some_and(|frozen| frozen != stamp)
+        && crate::agent_dispatch::attempt_team_stamp(&record)?.is_some_and(|frozen| frozen != stamp)
     {
         return Err(invalid(
             "the run attempt was dispatched into another team run",

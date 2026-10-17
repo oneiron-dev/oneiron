@@ -88,10 +88,19 @@ impl VoiceMediaBindings {
     /// banked voice whose render consent does not reach the TTS route,
     /// refuses.
     pub(super) fn build(self) -> oneiron::Result<(MediaTts, MediaBridge, MediaWorker)> {
-        let asr_route = self.door.voice_route(&self.vault, VoiceLane::AsrLive, None)?;
-        let tts_route = self.door.voice_route(&self.vault, VoiceLane::TtsLive, None)?;
+        let asr_route = self
+            .door
+            .voice_route(&self.vault, VoiceLane::AsrLive, None)?;
+        let tts_route = self
+            .door
+            .voice_route(&self.vault, VoiceLane::TtsLive, None)?;
         let (queue, worker) = voice_media_channel(self.queue_capacity);
-        let tts = MediaTts::new(Arc::clone(&self.vault), tts_route, self.render, queue.clone())?;
+        let tts = MediaTts::new(
+            Arc::clone(&self.vault),
+            tts_route,
+            self.render,
+            queue.clone(),
+        )?;
         let asr = MediaAsrAdapter::new(asr_route, self.sample_rate, self.channels, queue)?;
         let (deliver, outputs) = mpsc::unbounded_channel();
         Ok((
@@ -328,13 +337,13 @@ impl VoiceHost {
         let handled = match input {
             VoiceMediaIn::Pcm(pcm) => bridge.hear(&pcm).map_err(HostError::from),
             VoiceMediaIn::Cut => bridge.asr.cut().map(drop).map_err(HostError::from),
-            VoiceMediaIn::Speaking(speaking) => self
-                .observe_speech(bridge.now(), speaking)
-                .map(|stop| {
+            VoiceMediaIn::Speaking(speaking) => {
+                self.observe_speech(bridge.now(), speaking).map(|stop| {
                     if let Some(stop) = stop {
                         dispatch(&stop, outputs);
                     }
-                }),
+                })
+            }
             VoiceMediaIn::RosterChanged => self.refresh_interlocutors().map(|stop| {
                 if let Some(stop) = stop {
                     dispatch(&stop, outputs);
@@ -393,7 +402,11 @@ impl VoiceHost {
         }
     }
 
-    fn observe_speech(&self, now: Duration, speaking: bool) -> Result<Option<OutputStop>, HostError> {
+    fn observe_speech(
+        &self,
+        now: Duration,
+        speaking: bool,
+    ) -> Result<Option<OutputStop>, HostError> {
         Ok(self.lock()?.core.observe_speech(now, speaking)?)
     }
 
@@ -411,6 +424,9 @@ fn dispatch<B: Brain, T: TtsSeamClient, C: CascadeControl>(
 ) {
     let errors = stop.dispatch(&mut outputs.brain, &mut outputs.tts, &mut outputs.control);
     if !errors.is_empty() {
-        tracing::warn!(count = errors.len(), "voice media: a stop arm was not delivered");
+        tracing::warn!(
+            count = errors.len(),
+            "voice media: a stop arm was not delivered"
+        );
     }
 }

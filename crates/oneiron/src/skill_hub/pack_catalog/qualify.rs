@@ -103,20 +103,25 @@ impl PackQualifier for SetupCheckQualifier<'_> {
     fn qualify(&self, source: &PackSource) -> Result<PackQualification> {
         let manifest = source.manifest();
         let Some(PackAdapter::Builtin(channel)) = manifest.adapter.as_ref() else {
-            return Err(invalid("only a built-in connector qualifies on its setup check"));
+            return Err(invalid(
+                "only a built-in connector qualifies on its setup check",
+            ));
         };
         if manifest.kind != PackKind::Connector
             || super::builtin::embedded_builtin_source(channel)?.content_hash()
                 != source.content_hash()
         {
-            return Err(invalid("a setup check qualifies only the embedded built-in source"));
+            return Err(invalid(
+                "a setup check qualifies only the embedded built-in source",
+            ));
         }
         let setup = manifest
             .setup
             .as_ref()
             .ok_or_else(|| invalid("the built-in declares no setup connection to check"))?;
         let source_hash = source.content_hash().to_hex();
-        let mut report = blake3::Hasher::new_derive_key("oneiron.pack.setup-check-qualification.v1");
+        let mut report =
+            blake3::Hasher::new_derive_key("oneiron.pack.setup-check-qualification.v1");
         let mut frame = |part: &[u8]| {
             report.update(&(part.len() as u64).to_le_bytes());
             report.update(part);
@@ -138,7 +143,9 @@ impl PackQualifier for SetupCheckQualifier<'_> {
             checked.push(format!("{} ({})", connection.id, connection.verify));
         }
         if checked.is_empty() {
-            return Err(invalid("the built-in declares no setup connection to check"));
+            return Err(invalid(
+                "the built-in declares no setup connection to check",
+            ));
         }
         let report_hash = report.finalize().to_hex().to_string();
         let receipt = PackConnectorReceipt {
@@ -268,7 +275,9 @@ fn validate_connector_evidence(
 ) -> Result<()> {
     if receipt.qualification.suite == SETUP_CHECK_QUALIFICATION_SUITE {
         if !matches!(source.manifest().adapter, Some(PackAdapter::Builtin(_))) {
-            return Err(invalid("only a built-in connector qualifies on its setup check"));
+            return Err(invalid(
+                "only a built-in connector qualifies on its setup check",
+            ));
         }
         receipt.qualification.validate_setup_check()?;
     } else {

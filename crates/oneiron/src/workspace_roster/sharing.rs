@@ -104,8 +104,8 @@ fn sharing_view_in(
     else {
         return Err(Error::EntityNotFound);
     };
-    let active = crate::counterparty_contact::decode_counterparty_contact_body(&body)
-        .is_ok_and(|record| {
+    let active =
+        crate::counterparty_contact::decode_counterparty_contact_body(&body).is_ok_and(|record| {
             record.status == crate::counterparty_contact::CounterpartyContactStatus::Active
         });
     let stored = crate::disclosure::contact_clearance_in_txn(&vault.store, txn, &target.contact)?;

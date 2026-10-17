@@ -243,9 +243,10 @@ impl MediaStreamLease {
     /// `served_model` is the model the provider said it served, for the
     /// dispatch receipt.
     pub fn end(mut self, served_model: Option<String>) -> Result<BudgetSettlement, RunDenied> {
-        self.settle(served_model, true).unwrap_or(Err(RunDenied::Dispatch {
-            refused: DispatchRefused::Closed,
-        }))
+        self.settle(served_model, true)
+            .unwrap_or(Err(RunDenied::Dispatch {
+                refused: DispatchRefused::Closed,
+            }))
     }
 
     /// Cancels the stream: it pays for the audio it already sent.

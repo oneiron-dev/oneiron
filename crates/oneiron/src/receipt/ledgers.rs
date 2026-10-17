@@ -130,8 +130,7 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         }
         append_pack_manifest_fields(&mut receipt, record.manifest())?;
         if attributed {
-            let attribution =
-                super::take_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
+            let attribution = super::take_attempt_pack_attribution_in_txn(store, wtxn, record.id)?;
             if record.executor_model.as_deref() != Some(attribution.executor.as_str()) {
                 return Err(Error::InvalidClaimBody(
                     "attempt executor disagrees with attribution stamp",

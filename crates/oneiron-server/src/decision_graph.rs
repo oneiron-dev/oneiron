@@ -77,11 +77,16 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         question: &DecisionQuestion,
         context: &GraphUnitContext,
     ) -> Result<Option<GraphPrediction>> {
-        let Some(GraphDecision::Decision(decision)) = self.decide(question, context, &[], &[])? else {
+        let Some(GraphDecision::Decision(decision)) = self.decide(question, context, &[], &[])?
+        else {
             return Ok(None);
         };
         let decision = *decision;
-        let answered = decision.receipt.time.as_ref().and_then(|time| time.answered);
+        let answered = decision
+            .receipt
+            .time
+            .as_ref()
+            .and_then(|time| time.answered);
         let provider = decision
             .receipt
             .providers

@@ -181,8 +181,11 @@ impl Memory<'_> {
         } else {
             let actor = WriteActor::new(self.actor, self.actor_class);
             for (share_id, _) in preview.shared_with() {
-                self.vault
-                    .revoke_share(share_id, &actor, self.vault.store.clock.now_recorded_at())?;
+                self.vault.revoke_share(
+                    share_id,
+                    &actor,
+                    self.vault.store.clock.now_recorded_at(),
+                )?;
             }
             let reason = options.reason.safe_delete_reason();
             self.safe_delete_preview_checked(&preview.entity().to_hex(), reason, |txn| {

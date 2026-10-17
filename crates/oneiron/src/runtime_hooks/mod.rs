@@ -53,6 +53,4 @@ pub use source::{
     SettledOutcome, SettlementKind, SettlementPosition,
 };
 pub(crate) use store::hook_receipts;
-pub use verb::{
-    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class,
-};
+pub use verb::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, hook_class};

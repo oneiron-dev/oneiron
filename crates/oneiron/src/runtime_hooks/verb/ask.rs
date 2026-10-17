@@ -169,7 +169,11 @@ pub(super) fn open(
         what.options.insert(option, text);
     }
     let mut spec = TaskAskSpec::shorthand(None, what, None, TaskAskDefault::Hold);
-    spec.intent_key = format!("hook.verb/{}/{}", call.invocation.to_hex(), binding_id.to_hex());
+    spec.intent_key = format!(
+        "hook.verb/{}/{}",
+        call.invocation.to_hex(),
+        binding_id.to_hex()
+    );
     let row = |ask: EntityId| -> Result<VerbAsk> {
         Ok(VerbAsk {
             verb: call.verb.clone(),

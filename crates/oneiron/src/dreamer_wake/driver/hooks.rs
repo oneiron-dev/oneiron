@@ -54,7 +54,10 @@ impl DreamerWakeDriver<'_> {
             },
         });
         let pass = |verb: &str| {
-            InvocationId::of_run_step(&[self.budget_id.as_bytes(), verb.as_bytes()].concat(), input.now)
+            InvocationId::of_run_step(
+                &[self.budget_id.as_bytes(), verb.as_bytes()].concat(),
+                input.now,
+            )
         };
         let hit = pass(HOST_BUDGET_HIT);
         let call = VerbCall {
@@ -74,25 +77,27 @@ impl DreamerWakeDriver<'_> {
                 Err("a host verb's args are the host's".to_owned())
             }
         };
-        Ok(match self.vault.pre_verb_hooks(call, args.clone(), &check)? {
-            Ok(pre) => Ok(WakeHooks {
-                pre: Some(pre),
-                hit,
-            }),
-            Err(stop) => {
-                tracing::info!(%stop, "host.wake pre-hooks skipped a wake pass");
-                Err(WakePassReport {
-                    admitted: 0,
-                    completed: 0,
-                    failed: 0,
-                    deferred: 0,
-                    parked: 0,
-                    landed: 0,
-                    sources_truncated: 0,
-                    stop: WakePassStop::HookSkipped,
-                })
-            }
-        })
+        Ok(
+            match self.vault.pre_verb_hooks(call, args.clone(), &check)? {
+                Ok(pre) => Ok(WakeHooks {
+                    pre: Some(pre),
+                    hit,
+                }),
+                Err(stop) => {
+                    tracing::info!(%stop, "host.wake pre-hooks skipped a wake pass");
+                    Err(WakePassReport {
+                        admitted: 0,
+                        completed: 0,
+                        failed: 0,
+                        deferred: 0,
+                        parked: 0,
+                        landed: 0,
+                        sources_truncated: 0,
+                        stop: WakePassStop::HookSkipped,
+                    })
+                }
+            },
+        )
     }
 
     /// Runs `host.wake`'s post chain over what the pass did, after the

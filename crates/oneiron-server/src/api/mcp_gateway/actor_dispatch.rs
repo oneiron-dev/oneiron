@@ -106,13 +106,12 @@ pub(crate) async fn resolve_mcp_gateway_actor(
             .credential_facets_owner_exempt(proof)
             .unwrap_or(false)
     };
-    let proof_facets = if actor.scope.facets.is_narrowing_of(&proof.scope().facets)
-        || !facets_owner_exempt()
-    {
-        proof.scope().facets.clone()
-    } else {
-        ScopeAxis::All
-    };
+    let proof_facets =
+        if actor.scope.facets.is_narrowing_of(&proof.scope().facets) || !facets_owner_exempt() {
+            proof.scope().facets.clone()
+        } else {
+            ScopeAxis::All
+        };
     let projection = |worlds, facets| oneiron::federation::Scope {
         worlds,
         facets,

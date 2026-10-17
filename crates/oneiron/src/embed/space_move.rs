@@ -207,19 +207,24 @@ pub(crate) fn open_move_names_in_txn(
     txn: &RoTxn<'_>,
     space_id: &str,
 ) -> Result<bool> {
-    Ok(EMBEDDING_MOVE.scan(store, txn)?.into_iter().any(|(_, row)| {
-        row.state == SpaceMoveState::Open
-            && (row.candidate == space_id || row.incumbent.declared() == Some(space_id))
-    }))
+    Ok(EMBEDDING_MOVE
+        .scan(store, txn)?
+        .into_iter()
+        .any(|(_, row)| {
+            row.state == SpaceMoveState::Open
+                && (row.candidate == space_id || row.incumbent.declared() == Some(space_id))
+        }))
 }
 
-fn open_move_in_txn(store: &impl SideTableDbs, txn: &RoTxn<'_>, candidate: &str) -> Result<SpaceMove> {
+fn open_move_in_txn(
+    store: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    candidate: &str,
+) -> Result<SpaceMove> {
     EMBEDDING_MOVE
         .get(store, txn, &candidate.to_owned())?
         .filter(|row| row.state == SpaceMoveState::Open)
-        .ok_or_else(|| {
-            Error::InvalidConfig(format!("no open embedding space move to {candidate}"))
-        })
+        .ok_or_else(|| Error::InvalidConfig(format!("no open embedding space move to {candidate}")))
 }
 
 /// Refuses a move whose kinds no longer read where it began: a slot rebound by hand since.
@@ -331,7 +336,9 @@ fn space_move_summary(moving: &SpaceMove) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let head = match moving.state {
-        SpaceMoveState::SwappedIn { by_owner: false, .. } => format!(
+        SpaceMoveState::SwappedIn {
+            by_owner: false, ..
+        } => format!(
             "{kinds} search now uses embedding space {}; it scored not worse than {} on the \
              vault's own probes",
             moving.candidate, moving.incumbent
@@ -365,7 +372,11 @@ fn space_move_summary(moving: &SpaceMove) -> String {
             match (kind.difference, kind.tolerance) {
                 (Some(difference), Some(tolerance)) => format!(
                     "{name} {:?} over {} probes: {:+.3} [{:+.3}, {:+.3}], margin {:.3}",
-                    kind.verdict, kind.probes, difference.mean, difference.low, difference.high,
+                    kind.verdict,
+                    kind.probes,
+                    difference.mean,
+                    difference.low,
+                    difference.high,
                     tolerance
                 ),
                 _ => format!(
@@ -621,7 +632,10 @@ impl Vault {
                 runs.push(ProbeRun {
                     kind: probe.kind,
                     family: probe.family,
-                    incumbent: reciprocal_rank(probe, &search(&moving.incumbent, probe.kind, first)?),
+                    incumbent: reciprocal_rank(
+                        probe,
+                        &search(&moving.incumbent, probe.kind, first)?,
+                    ),
                     retest: reciprocal_rank(probe, &search(&moving.incumbent, probe.kind, retest)?),
                     candidate: reciprocal_rank(probe, &search(&candidate_ref, probe.kind, next)?),
                 });
@@ -742,7 +756,9 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let mut moving = open_move_in_txn(&self.store, &wtxn, candidate)?;
         check_bindings(&moving, &kind_slot_bindings_in_txn(&self.store, &wtxn)?)?;
-        let verdict = check.as_ref().map_or(NotWorse::Unknown, |check| check.verdict);
+        let verdict = check
+            .as_ref()
+            .map_or(NotWorse::Unknown, |check| check.verdict);
         let at = self.store.clock.now_recorded_at();
         let concluded = if by_owner || verdict == NotWorse::NotWorse {
             for kind in &moving.kinds {

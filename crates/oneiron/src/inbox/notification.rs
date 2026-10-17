@@ -174,7 +174,9 @@ impl Vault {
     ) -> Result<Option<bool>> {
         let id = notification_id(source)?;
         match live_entity_row_in_txn(&self.store, txn, &id)? {
-            LiveEntityRow::Live { entity_type, body } if entity_type == ENTITY_TYPE_NOTIFICATION => {
+            LiveEntityRow::Live { entity_type, body }
+                if entity_type == ENTITY_TYPE_NOTIFICATION =>
+            {
                 let body = decode_notification_body(&body)?;
                 let reader = reader.to_hex();
                 Ok(Some(

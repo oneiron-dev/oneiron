@@ -782,8 +782,7 @@ impl Vault {
                 else {
                     return Ok(None);
                 };
-                let mut wire: WireDigest =
-                    serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+                let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
                 let rendered_at = wire.rendered_at;
                 let lens = wire.lens.take();
                 let report = wire.into_report()?;
@@ -831,7 +830,9 @@ impl Vault {
             self.store.vault_meta.put(txn, &key, &bytes)?;
             Ok(true)
         })?;
-        if landed && let Some((at, report, previous)) = self.previous_weave_lens(reader, scheduled_for)? {
+        if landed
+            && let Some((at, report, previous)) = self.previous_weave_lens(reader, scheduled_for)?
+        {
             // The axes are evidence about the skill, never a gate on the
             // render: a refusal here leaves the render landed.
             if let Err(error) =
@@ -874,7 +875,11 @@ impl Vault {
 }
 
 fn digest_key(reader: WeaveDigestReader, scheduled_for: u64) -> Vec<u8> {
-    [reader.key(DIGEST_PREFIX), scheduled_for.to_be_bytes().to_vec()].concat()
+    [
+        reader.key(DIGEST_PREFIX),
+        scheduled_for.to_be_bytes().to_vec(),
+    ]
+    .concat()
 }
 
 impl ScopedRead<'_> {
@@ -1182,12 +1187,8 @@ impl ScopedRead<'_> {
             // The lens's generate step renders the period on the Dreamer's
             // lent model, queued in this same write.
             if any {
-                crate::dreamer_runner::DreamerRunnerStore::new(self.vault).enqueue_weave_lens_in_txn(
-                    txn,
-                    id,
-                    row.next_due_at,
-                    now,
-                )?;
+                crate::dreamer_runner::DreamerRunnerStore::new(self.vault)
+                    .enqueue_weave_lens_in_txn(txn, id, row.next_due_at, now)?;
             }
             Ok(Some(StoredWeaveDigest {
                 reader: id,

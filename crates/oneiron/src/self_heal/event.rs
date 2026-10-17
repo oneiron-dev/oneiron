@@ -231,7 +231,9 @@ impl AgentHealthSignal {
     /// Parses a wire spelling, rejecting anything outside the closed set.
     #[must_use]
     pub fn from_wire(raw: &str) -> Option<Self> {
-        Self::all().into_iter().find(|signal| signal.as_str() == raw)
+        Self::all()
+            .into_iter()
+            .find(|signal| signal.as_str() == raw)
     }
 
     /// Every signal, in declaration order.

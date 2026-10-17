@@ -202,10 +202,9 @@ pub(crate) fn admit_calendar_invite_in_txn(
     // OF-123 act-now guard: a recipient taken from a saved mention waits
     // until that mention is settled.
     if let Some(mention) = payload.mention.as_ref()
-        && let Some(name) =
-            crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
-                vault, txn, mention,
-            )?
+        && let Some(name) = crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
+            vault, txn, mention,
+        )?
     {
         return Err(CalendarError::IdentityUnsettled { name });
     }

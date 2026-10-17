@@ -23,18 +23,18 @@ pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
     KindSlotBindings,
 };
+pub(crate) use space::{
+    delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
+    search_media_space_in_txn,
+};
 pub use space_move::{
     KindProbeCheck, NotWorse, PairedInterval, SPACE_MOVE_NOTE_PRODUCER, SPACE_PROBE_DEPTH,
-    SPACE_PROBE_MIN_FAMILIES,
-    SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState, SpaceProbeEncoder, SpaceRef,
+    SPACE_PROBE_MIN_FAMILIES, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState,
+    SpaceProbeEncoder, SpaceRef,
 };
 pub use space_probe::{
     SPACE_PROBE_MAX_TARGETS, SPACE_PROBE_QUERY_MAX_LEN, SPACE_PROBES_PER_KIND, SpaceProbe,
     SpaceProbeAuthor, SpaceProbeReport,
-};
-pub(crate) use space::{
-    delete_media_vectors_in_txn, delete_text_media_vectors_in_txn, embedding_space_in_txn,
-    search_media_space_in_txn,
 };
 pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,

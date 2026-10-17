@@ -24,13 +24,13 @@ use oneiron::llm::decision::{
 use oneiron::posterior::Posterior;
 use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::skill::SkillRecord;
 use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
     SkillOptimizeDecisions, SkillReplayPair, register_held_out_replay_scorer, skill_edit_goal,
 };
-use oneiron::skill::SkillRecord;
 use oneiron::skill_reliability::SkillReliabilityPosterior;
 use oneiron::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};

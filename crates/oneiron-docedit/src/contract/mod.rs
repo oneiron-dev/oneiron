@@ -701,7 +701,9 @@ pub fn execute_json(
     match value.get("schema").and_then(Value::as_u64) {
         Some(schema) if schema == u64::from(CONTRACT_SCHEMA) => {}
         Some(schema) => {
-            return Err(unsupported_schema(u32::try_from(schema).unwrap_or(u32::MAX)));
+            return Err(unsupported_schema(
+                u32::try_from(schema).unwrap_or(u32::MAX),
+            ));
         }
         None => {
             return Err(ContractError::new(

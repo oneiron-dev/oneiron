@@ -205,7 +205,12 @@ impl FoldRecord {
     /// summary is withdrawn; then it keeps only the references.
     #[must_use]
     pub fn stub(&self) -> String {
-        let mut stub = format!("⟨{} · t{}–t{}⟩ ", fold_handle(self.fold), self.from, self.through);
+        let mut stub = format!(
+            "⟨{} · t{}–t{}⟩ ",
+            fold_handle(self.fold),
+            self.from,
+            self.through
+        );
         let summary = self.summary.as_deref().unwrap_or_default();
         match &self.summary {
             Some(summary) => stub.push_str(&escape_compacted_text(summary)),

@@ -214,7 +214,8 @@ impl SyncServer {
                     .map(|(id, agent)| (id, RunOf::Agent(agent))),
             ),
             Err(error) => {
-                pass.faults.insert("agent runs".to_owned(), error.to_string());
+                pass.faults
+                    .insert("agent runs".to_owned(), error.to_string());
             }
         }
         pass
@@ -295,12 +296,17 @@ fn claim(vault: &Vault, id: AttemptId, of: RunOf) -> oneiron::Result<Option<Clai
             })),
         RunOf::Agent(agent) => Ok(dispatcher
             .claim_agent_run(id, LEASE_OWNER, unix_now())?
-            .map(|AgentRun { status, qa_thread_ref }| Claimed {
-                task: agent_task(&dispatcher, &status),
-                agent,
-                qa_thread_ref,
-                status,
-            })),
+            .map(
+                |AgentRun {
+                     status,
+                     qa_thread_ref,
+                 }| Claimed {
+                    task: agent_task(&dispatcher, &status),
+                    agent,
+                    qa_thread_ref,
+                    status,
+                },
+            )),
     }
 }
 

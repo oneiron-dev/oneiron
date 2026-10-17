@@ -22,8 +22,7 @@ use super::body::HookBodyRuntime;
 use super::replay::{HookReplayEntry, HookReplayResult};
 
 /// One record per binding: the contract its last good body passed under.
-const REGEN: SideTable<EntityId, HookRegenRecord, Named> =
-    SideTable::new(&side_table::HOOKS_REGEN);
+const REGEN: SideTable<EntityId, HookRegenRecord, Named> = SideTable::new(&side_table::HOOKS_REGEN);
 /// Golden entries one regen replays at most.
 const GOLDEN_ENTRIES: usize = 256;
 /// The `hub_ref` a vault's own pack records (`vault.packs.put`).
@@ -123,7 +122,9 @@ impl HookGoldenFingerprint {
         let cases = entries
             .iter()
             .filter_map(|entry| match &entry.result {
-                HookReplayResult::Ran { from_memo: true, .. }
+                HookReplayResult::Ran {
+                    from_memo: true, ..
+                }
                 | HookReplayResult::MissingHistory { .. } => {
                     Some((entry.position.0.clone(), case(&entry.result)))
                 }
@@ -314,7 +315,8 @@ impl Vault {
             None => None,
         }
         .or_else(|| record.intent.clone());
-        let outcome = self.decide_hook_regen(runtime, regenerator, binding, &row, intent.clone())?;
+        let outcome =
+            self.decide_hook_regen(runtime, regenerator, binding, &row, intent.clone())?;
         record.intent = intent;
         record.pending = Some(outcome.clone());
         self.with_write_txn_grouped(|txn| REGEN.put(&self.store, txn, &binding, &record))?;
@@ -368,12 +370,16 @@ impl Vault {
             Err(failure) => return Ok(HookRegenOutcome::RolledBack { failure }),
         };
         // A verb hook keeps no replayable golden set: it waits for a stamp.
-        let golden = |body: Option<String>| {
-            match self.hooks_replay_body(runtime, binding, body, None, GOLDEN_ENTRIES) {
-                Ok(entries) => Ok(HookGoldenFingerprint::pinned(&entries)),
-                Err(Error::InvalidConfig(_)) => Ok(HookGoldenFingerprint::default()),
-                Err(error) => Err(error),
-            }
+        let golden = |body: Option<String>| match self.hooks_replay_body(
+            runtime,
+            binding,
+            body,
+            None,
+            GOLDEN_ENTRIES,
+        ) {
+            Ok(entries) => Ok(HookGoldenFingerprint::pinned(&entries)),
+            Err(Error::InvalidConfig(_)) => Ok(HookGoldenFingerprint::default()),
+            Err(error) => Err(error),
         };
         let (old, new) = match (golden(None), golden(Some(candidate.clone()))) {
             (Ok(old), Ok(new)) => (old, new),

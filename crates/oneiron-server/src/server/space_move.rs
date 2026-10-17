@@ -163,7 +163,9 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
             .server
             .ai
             .admit_role(vault, self.role, request)
-            .map_err(|refusal| Error::InvalidConfig(format!("space probe call refused: {refusal}")))?;
+            .map_err(|refusal| {
+                Error::InvalidConfig(format!("space probe call refused: {refusal}"))
+            })?;
         let run_id = format!("space-probe:{}", document.entity_id.to_hex());
         let units = self.server.ai.chat_settings().turn_budget_units;
         let guard = vault.policy_budget_guard(
@@ -228,7 +230,11 @@ impl SyncServer {
 
     /// Tops up the probes of every kind an open move carries, a few per pass,
     /// while its candidate fills. Blocking.
-    pub(super) fn author_space_probes(&self, runtime: &tokio::runtime::Handle, moves: &[SpaceMove]) {
+    pub(super) fn author_space_probes(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        moves: &[SpaceMove],
+    ) {
         let kinds: std::collections::BTreeSet<InputKind> = moves
             .iter()
             .filter(|moving| moving.state == SpaceMoveState::Open)
