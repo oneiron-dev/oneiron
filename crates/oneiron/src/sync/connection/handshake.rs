@@ -108,8 +108,15 @@ impl SyncConnection {
 
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
+        let mut left_rx = self.left.subscribe();
+        self.running.send_replace(true);
 
         loop {
+            // A member who left the shared vault this env holds never
+            // reconnects (OF-158).
+            if *left_rx.borrow_and_update() {
+                break;
+            }
             // A residence-mode switch takes effect at this connect's hello.
             client.config.residence_mode = *self.mode.borrow();
             // Attempt connection
@@ -170,10 +177,14 @@ impl SyncConnection {
                 _ = &mut shutdown_rx => {
                     break;
                 }
+                _ = left_rx.wait_for(|left| *left) => {
+                    break;
+                }
             }
         }
 
         self.manager.outbound().detach();
+        self.running.send_replace(false);
         Ok(event_rx)
     }
 

@@ -195,6 +195,46 @@ impl SyncTransportCredential {
         })
     }
 }
+impl SyncTransportCredential {
+    /// The headers of a removed member's leave-notice request
+    /// (`POST /v1/shared/left-notices`, OF-158): the slip, revoked or not, in
+    /// `x-oneiron-left-slip`, and a fresh holder proof over the standard
+    /// request challenge in `x-oneiron-binding`.
+    pub(in crate::sync) fn left_notice_headers(
+        &self,
+        timestamp: u64,
+    ) -> Result<[(&'static str, String); 2], &'static str> {
+        use ed25519_dalek::Signer;
+
+        let slip = crate::authority::CapabilitySlip::from_token(&self.token)
+            .map_err(|_| "Sync transport slip is invalid")?;
+        if slip.claims.binding_key != self.key.verifying_key().to_bytes() {
+            return Err("Sync transport holder key does not match slip");
+        }
+        let nonce = crate::EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+        let signature: String = self
+            .key
+            .sign(
+                &slip
+                    .binding_transcript(challenge.as_bytes())
+                    .map_err(|_| "Sync transport binding transcript is invalid")?,
+            )
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        Ok([
+            ("x-oneiron-left-slip", self.token.clone()),
+            (
+                "x-oneiron-binding",
+                serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature})
+                    .to_string(),
+            ),
+        ])
+    }
+}
+
 impl std::fmt::Debug for SyncTransportCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("SyncTransportCredential([redacted])")

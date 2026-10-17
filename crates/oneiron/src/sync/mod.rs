@@ -59,6 +59,7 @@ pub(crate) mod row_birth;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
+pub mod shared_leave;
 mod sweep_fence;
 #[cfg(test)]
 mod tests;

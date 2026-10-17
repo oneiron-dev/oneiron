@@ -94,6 +94,30 @@ pub(crate) fn queued_window_update_count_in_txn(
     Ok(count)
 }
 
+/// Discards every queued window update, delete-bearing rows and their `d:` sidecars included,
+/// for a device that left the shared vault this env holds (OF-158). Returns how many `q:` rows
+/// went; `e:`, `h:` and `m:` rows stay.
+pub(crate) fn discard_updates_for_leave_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<u64> {
+    let mut keys = Vec::new();
+    let mut updates = 0_u64;
+    for row in vault.store.sync_queue.iter(wtxn)? {
+        let (key, _) = row?;
+        if key.starts_with(UPDATE_PREFIX) {
+            updates += 1;
+            keys.push(key.to_vec());
+        } else if key.starts_with(super::DELETE_BEARING_PREFIX) {
+            keys.push(key.to_vec());
+        }
+    }
+    for key in &keys {
+        vault.store.sync_queue.delete(wtxn, key)?;
+    }
+    Ok(updates)
+}
+
 /// Retires the queued sends `seqs`, delete-bearing rows and their `d:` sidecars included, in the
 /// transaction that installs a window's replacement. Their operations depend on history the
 /// replacement does not hold, and the replacement carries their effects as its own operations,

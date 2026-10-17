@@ -55,6 +55,7 @@ impl SyncConnection {
         if *mode_rx.borrow_and_update() != client.config.residence_mode {
             return LoopExit::Disconnected("residence mode changed".into());
         }
+        let mut left_rx = self.left.subscribe();
 
         loop {
             // Compute sleep future for debounce timer
@@ -338,6 +339,14 @@ impl SyncConnection {
                         let _ = write.send(Message::Close(None)).await;
                         return LoopExit::Disconnected("residence mode changed".into());
                     }
+                }
+
+                // A confirmed leave ends the lane for good (OF-158): what it
+                // buffered is queued, to be counted and discarded.
+                _ = left_rx.wait_for(|left| *left) => {
+                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    let _ = write.send(Message::Close(None)).await;
+                    return LoopExit::Shutdown;
                 }
 
                 // Shutdown signal
