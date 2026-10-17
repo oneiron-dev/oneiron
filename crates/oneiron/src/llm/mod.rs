@@ -58,7 +58,7 @@ pub(crate) use step::{
     StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim,
     index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
     signal_step_wait_in_txn, verified_step_consolidation_eligible_in_txn,
-    verified_step_effector_eligible_in_txn,
+    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
 
 pub use oneiron_model::llm::{

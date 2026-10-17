@@ -32,7 +32,7 @@ pub use self::types::{
     EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
     EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
     JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
+    JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse,
     guest_response_with_budget,
 };
 
