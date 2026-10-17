@@ -79,7 +79,7 @@ axum = { version = "0.8", features = ["ws"] }
 hyper = { version = "1", features = ["http1", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "service"] }
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.26"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 zstd = "0.13"
 serde = { workspace = true }
