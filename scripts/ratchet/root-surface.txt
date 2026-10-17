@@ -21,8 +21,9 @@ AttemptInterventionKind
 AttemptQueue
 AutoCheckCandidate
 AutoCheckCandidateOwned
+AutoCheckDecisions
+AutoCheckNotes
 AutoCheckOutcome
-AutoChecker
 BUILD_CACHE_ACTION_DOMAIN_V1
 BUILD_CACHE_ACTION_KEY_LEN
 BUILD_CACHE_ACTION_SCHEMA_VERSION_V1
@@ -50,6 +51,7 @@ BuildInputRoot
 BuildPlatform
 CALENDAR_INVITE_CHANNEL
 CALENDAR_INVITE_VERB
+CAMPAIGN_TASTE_DIAL
 CODEBASE_CONTENT_HASH_LEN
 CODEBASE_FORK_HASH_LEN
 CODEBASE_SCOPE_KEY_LEN
@@ -92,7 +94,9 @@ CampaignMetricPin
 CampaignResult
 CampaignSmokeOutcome
 CampaignSplitReport
-CampaignTasteJudgment
+CampaignTaste
+CampaignTasteDecisions
+CampaignTasteWording
 CampaignTournamentConfig
 CampaignVerdict
 CampaignVerdictReason
@@ -164,13 +168,16 @@ CompactionWatermark
 CompactionWindowMessage
 CompanionAssembly
 CompanionBirthIntent
+CompanionChoice
 CompanionExpression
 CompanionScope
 CompanionSubject
+CompanionSubjectKind
 CompanionTaskKind
 ComposedChatAnswer
 ConsentDeniedDetector
 ConsolidationAttemptInput
+ConsolidationDecisions
 ConsolidationExecutor
 ConsolidationSink
 ContentPart
@@ -227,6 +234,7 @@ DreamerBudgetReserveOutcome
 DreamerClaimAuthoringStrategy
 DreamerConsolidationScope
 DreamerHomeNodeCandidate
+DreamerParkCause
 DreamerRunnerStore
 DreamerWakeDriver
 EPOCH_SUMMARY_BODY_KEYS
@@ -240,6 +248,7 @@ EdgeInfo
 EdgeKind
 Effort
 EmailProviderInbound
+EmailThreadHeaders
 EmptyContext
 EmptyReason
 EndedSession
@@ -426,6 +435,7 @@ ModelId
 ModelLocality
 ModelTierRef
 NamedMemoryVerb
+NamedMemoryVerbRefusal
 NativeHeadlessRenderer
 NativeReadabilityRenderer
 NeighborOpts
@@ -436,6 +446,7 @@ OUTBOUND_VERB_FIELD_CONTRACT
 OutboundCapabilityManifest
 OutboundDraftInput
 OutboundVerbContract
+PAGE_SEAL_WARNING
 PREDICATE_COMMITMENT_FULFILLMENT_PROPOSAL
 PREDICATE_COMM_SEND_OVERRIDE
 PREDICATE_PROVIDER_ENRICHMENT
@@ -459,6 +470,7 @@ PsychProfileSnapshotStatus
 PsychProfileStaleReason
 PsychProfileState
 REPO_PROVENANCE_NOTES_REF
+ReaderTableShortfall
 RecallScope
 RelationshipContext
 RenderedPage
@@ -569,6 +581,7 @@ VaultDoctorDbManifestReport
 VaultDoctorHnswRecordState
 VaultDoctorHnswReport
 VaultDoctorReport
+VaultPageSeal
 VaultPrivacyConfig
 VaultResidency
 VaultWriterLease
@@ -595,6 +608,7 @@ WebFetcher
 WitnessAuthor
 WitnessMessage
 WitnessTurn
+WorkCompanionPolicy
 WorkspaceRosterEntry
 WorkspaceRosterPreset
 WorkspaceRosterRole
