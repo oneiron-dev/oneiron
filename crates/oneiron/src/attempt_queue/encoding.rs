@@ -209,11 +209,18 @@ pub(super) fn encode_admitted_record(
     };
     let authored = members
         .iter()
-        .filter(|(name, _)| name.as_str().is_some_and(|name| AUTHORED_MEMBERS.contains(&name)))
+        .filter(|(name, _)| {
+            name.as_str()
+                .is_some_and(|name| AUTHORED_MEMBERS.contains(&name))
+        })
         .cloned()
         .collect();
     let rebuilt = |parts: &[SidePart]| -> Option<AttemptRecord> {
-        let [SidePart::Body(payload), SidePart::Value(Value::Map(authored))] = parts else {
+        let [
+            SidePart::Body(payload),
+            SidePart::Value(Value::Map(authored)),
+        ] = parts
+        else {
             return None;
         };
         let mut members = members.clone();

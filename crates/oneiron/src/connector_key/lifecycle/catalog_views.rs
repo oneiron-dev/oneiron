@@ -35,6 +35,8 @@ pub struct ConnectorDescription {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorCallRoute {
     pub key_ref: EntityId,
+    /// The catalog name the call was routed by, as stored (normalized).
+    pub name: String,
     pub connector: String,
     pub call_class: ConnectorCallClass,
     /// ENTRY-WIDE (ARCH-0054): there is no verb parameter, so a mixed-verb
@@ -157,6 +159,7 @@ impl Vault {
         entry.verbs = callable_verbs_in_txn(&self.store, &rtxn, &record, entry.verbs)?;
         Ok(Some(ConnectorCallRoute {
             key_ref,
+            name: entry.name,
             connector: record.connector,
             call_class: entry.call_class,
             budgeted_as_sends: entry.call_class.debits_sends(),
