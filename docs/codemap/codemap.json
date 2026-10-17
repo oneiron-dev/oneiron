@@ -53329,7 +53329,7 @@
      "path": "src/lib.rs",
      "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
-      "const": 9,
+      "const": 11,
       "enum": 7,
       "fn": 9,
       "re-export": 4,
@@ -53394,7 +53394,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 10,
       "struct": 2
      }
@@ -62955,7 +62955,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {

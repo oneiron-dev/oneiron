@@ -176,7 +176,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm/decision_read/tests.rs` | test | s | 1 crate-vis | — | The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check… |
 | `src/api/llm/tests.rs` | test | L | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 10 crate-vis | — | Tool execution dispatch across actors |
-| `src/api/mcp_gateway/admission.rs` | src | m | 10 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/admission.rs` | src | m | 11 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 4 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | L | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 12 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
