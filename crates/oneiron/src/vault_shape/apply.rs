@@ -13,13 +13,20 @@ use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
 use crate::authority::{HostSlipIssuer, VerifiedSlip};
+use crate::channel_identity::{decode_channel_identity_body, resolve_quarantine_floor_in_txn};
+use crate::channel_identity_lifecycle::{
+    ChannelIdentityLifecycleActor, ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent,
+    ChannelIdentityLifecycleRequest, ReleaseIntent,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::federation::InitialSharedMember;
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::side_table::{self, Named, SideTable};
+use crate::skill::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, TimeRange, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -59,7 +66,10 @@ pub enum ShapeItemState {
     /// A new grant an actor's apply filed to the owner's widen inbox, where
     /// accepting `proposal_ref` mints it. Until the owner answers, it waits
     /// as [`Self::Proposed`] does, and an owner's apply may land it.
-    Filed { proposal_ref: String, expires_at: u64 },
+    Filed {
+        proposal_ref: String,
+        expires_at: u64,
+    },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
@@ -295,7 +305,8 @@ impl Vault {
                 // Sharing the vault invites, in its own writer, each new
                 // member this apply approves: the founding members.
                 ShapeItemState::Proposed if item.target == ShapeTarget::Shared => {
-                    let founding = founding_members(&journal.items, &item, &request.approve, author);
+                    let founding =
+                        founding_members(&journal.items, &item, &request.approve, author);
                     match self.share_vault(owner, &item, &founding, now) {
                         Ok(receipt) => {
                             for (at, _) in &founding {
@@ -394,7 +405,9 @@ impl Vault {
         let (ShapeChange::Create, Some(ShapeRow::Shared { vault_id, preset })) =
             (item.change, &item.after)
         else {
-            return Err(invalid("a shared vault is shared once; no seed reshares it"));
+            return Err(invalid(
+                "a shared vault is shared once; no seed reshares it",
+            ));
         };
         let members: Vec<InitialSharedMember> =
             founding.iter().map(|(_, member)| member.clone()).collect();
@@ -417,7 +430,11 @@ impl Vault {
         now: u64,
     ) -> Result<String> {
         let current = live.get(&item.target);
-        let already = |row: &ShapeRow| item.after.as_ref().is_some_and(|after| after.satisfied_by(row));
+        let already = |row: &ShapeRow| {
+            item.after
+                .as_ref()
+                .is_some_and(|after| after.satisfied_by(row))
+        };
         let stale = || invalid("the structure changed since the plan read it");
         let entity = match (item.change, current) {
             (ShapeChange::Create, None) => None,
@@ -539,11 +556,71 @@ impl Vault {
                     .ok_or_else(|| invalid("no staged source of that pack and version"))?;
                 match self.put_pack(owner, source.files().to_vec())? {
                     PackInstallDisposition::Installed(receipt) => Ok(receipt.content_hash),
-                    PackInstallDisposition::Candidate(_) => Err(invalid(
-                        "the pack is held a candidate until it qualifies",
-                    )),
+                    PackInstallDisposition::Candidate(_) => {
+                        Err(invalid("the pack is held a candidate until it qualifies"))
+                    }
                     PackInstallDisposition::Blocked { reason } => Err(invalid(reason)),
                 }
+            }
+            (ShapeChange::Retire, ShapeTarget::Skill { .. }, _) => {
+                // Retiring a skill quarantines it: out of every pack, its
+                // evidence kept, revivable. The owner's word is the consent
+                // that state asks for.
+                let id = entity.ok_or_else(stale)?;
+                let mut record = self.get_skill_record(&id)?.ok_or_else(stale)?;
+                record.lifecycle_status = SkillLifecycle::Quarantined;
+                record.approval_status = ClaimApprovalStatus::Approved;
+                owner.revalidate(self)?;
+                self.update_skill_record(&id, &record, occurred, now)?;
+                Ok(id.to_hex())
+            }
+            (ShapeChange::Retire, ShapeTarget::Channel { .. }, _) => {
+                // Retiring a channel identity releases it through its
+                // lifecycle gate: outbound closes, and a self-held address
+                // goes into its never-recycle quarantine for the policy's
+                // shortest hold.
+                let id = entity.ok_or_else(stale)?;
+                let actor = owner.revalidate(self)?;
+                let quarantine_until = {
+                    let txn = self.store.env.read_txn()?;
+                    let LiveEntityRow::Live { body, .. } =
+                        live_entity_row_in_txn(&self.store, &txn, &id)?
+                    else {
+                        return Err(stale());
+                    };
+                    let identity = decode_channel_identity_body(&body)?;
+                    if identity.is_delegated() {
+                        now
+                    } else {
+                        now.saturating_add(resolve_quarantine_floor_in_txn(
+                            &self.store,
+                            &txn,
+                            &identity,
+                        )?)
+                    }
+                };
+                let released = self.apply_channel_identity_lifecycle_intent(
+                    ChannelIdentityLifecycleRequest {
+                        actor: ChannelIdentityLifecycleActor {
+                            actor_class: "human".to_owned(),
+                            actor_ref: Some(actor.to_hex()),
+                            actor_entity_ref: Some(actor),
+                        },
+                        gate: ChannelIdentityLifecycleGate::allow_when_policy_grants(),
+                        requested_at: now,
+                        intent: ChannelIdentityLifecycleIntent::Release(ReleaseIntent {
+                            identity_id: id,
+                            quarantine_until,
+                        }),
+                    },
+                )?;
+                if !released.identity_retiring {
+                    return Err(invalid(format!(
+                        "the release did not take: {}",
+                        released.owner_visible_state
+                    )));
+                }
+                Ok(released.receipt_id)
             }
             (ShapeChange::Retire, ShapeTarget::Pack { name }, _) => {
                 Ok(self.remove_pack(owner, name)?.content_hash)
@@ -573,7 +650,12 @@ impl Vault {
     ///
     /// A blank or taken name, an owner proof that no longer holds, or a
     /// store failure.
-    pub fn create_world(&self, owner: &AuthenticatedOwner, name: &str, now: u64) -> Result<EntityId> {
+    pub fn create_world(
+        &self,
+        owner: &AuthenticatedOwner,
+        name: &str,
+        now: u64,
+    ) -> Result<EntityId> {
         #[derive(Serialize)]
         struct WorldBody<'a> {
             name: &'a str,

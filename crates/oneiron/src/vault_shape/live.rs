@@ -3,7 +3,7 @@
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
 use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, invalid};
 use crate::agent_def::decode_agent_definition;
-use crate::channel_identity::decode_channel_identity_body;
+use crate::channel_identity::{ChannelIdentityState, decode_channel_identity_body};
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::registry::{
@@ -53,7 +53,8 @@ impl Vault {
             if self.store.off_record_sessions.contains_entity(&id)? {
                 continue;
             }
-            if let LiveEntityRow::Live { body, .. } = live_entity_row_in_txn(&self.store, txn, &id)? {
+            if let LiveEntityRow::Live { body, .. } = live_entity_row_in_txn(&self.store, txn, &id)?
+            {
                 rows.push((id, body));
             }
         }
@@ -62,8 +63,9 @@ impl Vault {
 
     /// The live setup plane, keeping an entity-backed row only when
     /// `visible` admits its entity. Base reality and received worlds are not
-    /// this vault's arrangement, so they are not rows. A world with no name
-    /// is named by its id.
+    /// this vault's arrangement, so they are not rows, and neither is a
+    /// retired skill or channel identity. A world with no name is named by
+    /// its id.
     pub(super) fn read_live_shape(
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -114,7 +116,10 @@ impl Vault {
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_SKILL)? {
                 let record = decode_skill_record(&body)?;
-                if record.lifecycle_status == SkillLifecycle::Superseded {
+                if matches!(
+                    record.lifecycle_status,
+                    SkillLifecycle::Superseded | SkillLifecycle::Quarantined
+                ) {
                     continue;
                 }
                 rows.push((
@@ -127,6 +132,14 @@ impl Vault {
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_CHANNEL_IDENTITY)? {
                 let identity = decode_channel_identity_body(&body)?;
+                if matches!(
+                    identity.state(),
+                    ChannelIdentityState::Released
+                        | ChannelIdentityState::Quarantine
+                        | ChannelIdentityState::Tombstone
+                ) {
+                    continue;
+                }
                 rows.push((
                     ShapeRow::Channel {
                         channel: identity.channel().to_owned(),

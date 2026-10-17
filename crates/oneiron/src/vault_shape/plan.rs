@@ -87,7 +87,11 @@ pub struct ShapePlan {
 }
 
 /// How a change to `target` lands. One policy, so a ruling moves one line.
-fn classify(change: ShapeChange, before: Option<&ShapeRow>, after: Option<&ShapeRow>) -> ShapeItemClass {
+fn classify(
+    change: ShapeChange,
+    before: Option<&ShapeRow>,
+    after: Option<&ShapeRow>,
+) -> ShapeItemClass {
     use ShapeItemClass::{Authority, Receipted, Widening};
     if change == ShapeChange::Retire {
         return Widening;
@@ -133,7 +137,11 @@ fn classify(change: ShapeChange, before: Option<&ShapeRow>, after: Option<&Shape
 
 /// The named door an item lands through, where the vault has one. A grant
 /// row mints only from the bound it carries.
-fn door(change: ShapeChange, target: &ShapeTarget, after: Option<&ShapeRow>) -> Option<&'static str> {
+fn door(
+    change: ShapeChange,
+    target: &ShapeTarget,
+    after: Option<&ShapeRow>,
+) -> Option<&'static str> {
     match (change, target) {
         (ShapeChange::Create, ShapeTarget::Shared) => Some("initialize_shared_vault"),
         (ShapeChange::Create, ShapeTarget::Member { .. }) => Some("add_shared_member"),
@@ -146,6 +154,10 @@ fn door(change: ShapeChange, target: &ShapeTarget, after: Option<&ShapeRow>) -> 
         }
         (ShapeChange::Create | ShapeChange::Update, ShapeTarget::Pack { .. }) => Some("put_pack"),
         (ShapeChange::Retire, ShapeTarget::Pack { .. }) => Some("remove_pack"),
+        (ShapeChange::Retire, ShapeTarget::Skill { .. }) => Some("update_skill_record"),
+        (ShapeChange::Retire, ShapeTarget::Channel { .. }) => {
+            Some("apply_channel_identity_lifecycle_intent")
+        }
         (ShapeChange::Create, ShapeTarget::Grant { .. })
             if matches!(after, Some(ShapeRow::Grant { bound: Some(_), .. })) =>
         {
@@ -224,7 +236,9 @@ impl Vault {
         let stored = self.shape_seed()?;
         let (seed, seed_id) = match (seed, stored) {
             (Some(seed), stored) => {
-                let id = stored.filter(|stored| stored.seed == *seed).map(|stored| stored.id);
+                let id = stored
+                    .filter(|stored| stored.seed == *seed)
+                    .map(|stored| stored.id);
                 (seed.clone(), id)
             }
             (None, Some(stored)) => (stored.seed, Some(stored.id)),
@@ -233,8 +247,11 @@ impl Vault {
         seed.validate()?;
         let live = self.read_live_shape(visible)?;
         let frontier = frontier(&seed, &live)?;
-        let by_target: BTreeMap<ShapeTarget, &ShapeRow> =
-            live.rows.iter().map(|(row, _)| (row.target(), row)).collect();
+        let by_target: BTreeMap<ShapeTarget, &ShapeRow> = live
+            .rows
+            .iter()
+            .map(|(row, _)| (row.target(), row))
+            .collect();
 
         let mut pending = Vec::new();
         for (index, row) in seed.rows.iter().enumerate() {
