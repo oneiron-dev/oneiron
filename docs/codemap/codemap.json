@@ -31031,7 +31031,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 17,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 7
      }
     },
@@ -31059,6 +31059,36 @@
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DocxBlockView",
+      "DocxBodyView",
+      "DocxCellView",
+      "OfficeBodyArtifactRequest",
+      "OfficeBodyEditRequest",
+      "OfficeBodyExportVerbRequest",
+      "OfficeBodyExportView",
+      "OfficeBodyForkEditRequest",
+      "OfficeBodyForkMergeRequest",
+      "OfficeBodyForkOpenRequest",
+      "OfficeBodyForkRequest",
+      "OfficeBodyImportRequest",
+      "OfficeBodyOps",
+      "OfficeBodyReadRequest",
+      "OfficeBodyView",
+      "XlsxBodyView",
+      "XlsxSheetView"
+     ],
+     "path": "src/office_body/verbs.rs",
+     "purpose": "`vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, \"An agent authors through…",
+     "surface": {
+      "enum": 2,
+      "fn": 12,
+      "struct": 15
      }
     },
     {
@@ -45869,7 +45899,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 280
+      "fn": 292
      }
     },
     {
@@ -51498,7 +51528,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52137,7 +52167,7 @@
    },
    "over_bar": 149,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3154,
+   "source_files": 3155,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60028,7 +60058,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 235
+      "fn": 247
      }
     },
     {
@@ -61044,7 +61074,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 236
+      "fn": 248
      }
     },
     {
@@ -70939,6 +70969,11 @@
       "AuthorityAuditRow",
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
+      "BlockChange",
+      "BodyBlockKind",
+      "BodyCell",
+      "BodyConflict",
+      "BodyName",
       "BornFromArtifact",
       "BornFromRequest",
       "BornFromSource",
@@ -70953,6 +70988,7 @@
       "CallTransport",
       "CallableCardView",
       "CancelRejectionPathology",
+      "ChangeKind",
       "ClaimApprovalStatus",
       "CodeBlameView",
       "CodeChangeView",
@@ -70984,6 +71020,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConflictKind",
       "ConnectorCallReply",
       "ConnectorCallRequest",
       "ConnectorEntry",
@@ -71046,6 +71083,10 @@
       "DiscardedProposal",
       "DisclosureOfferRequest",
       "DisclosureOffered",
+      "DocxBlockView",
+      "DocxBodyOp",
+      "DocxBodyView",
+      "DocxCellView",
       "EditNoteRequest",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
@@ -71075,6 +71116,7 @@
       "FederationGrantRole",
       "FeedbackProposal",
       "FolderItemInput",
+      "ForkState",
       "GateDecisionId",
       "GeneratedLens",
       "GoalPreference",
@@ -71223,6 +71265,24 @@
       "OfferVoteRequest",
       "OffersPage",
       "OffersRequest",
+      "OfficeBodyArtifactRequest",
+      "OfficeBodyDiff",
+      "OfficeBodyEdit",
+      "OfficeBodyEditRequest",
+      "OfficeBodyExportRecord",
+      "OfficeBodyExportVerbRequest",
+      "OfficeBodyExportView",
+      "OfficeBodyFork",
+      "OfficeBodyForkEditRequest",
+      "OfficeBodyForkMergeRequest",
+      "OfficeBodyForkOpenRequest",
+      "OfficeBodyForkRequest",
+      "OfficeBodyHead",
+      "OfficeBodyImportRequest",
+      "OfficeBodyKind",
+      "OfficeBodyOps",
+      "OfficeBodyReadRequest",
+      "OfficeBodyView",
       "OrganWaitView",
       "OutcomeBinding",
       "OutcomeLabel",
@@ -71526,6 +71586,7 @@
       "TaskWaveRequest",
       "TasksOverflow",
       "TasksSection",
+      "TextCommitReceipt",
       "TravelChoice",
       "TurnAction",
       "TurnActionReceipt",
@@ -71559,13 +71620,25 @@
       "WireWitnessReceipt",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
-      "WorkspaceRefRequest"
+      "WorkspaceRefRequest",
+      "XlsxArea",
+      "XlsxBodyOp",
+      "XlsxBodyView",
+      "XlsxBook",
+      "XlsxCell",
+      "XlsxLock",
+      "XlsxName",
+      "XlsxPreview",
+      "XlsxSheet",
+      "XlsxSheetView",
+      "XlsxStyle",
+      "XlsxValue"
      ],
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 192,
-      "struct": 486
+      "enum": 203,
+      "struct": 518
      }
     },
     {
