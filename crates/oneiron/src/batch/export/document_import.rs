@@ -348,6 +348,17 @@ impl Vault {
             put_run_results_in_txn(self, &mut wtxn, &document.run_results, &staged_results)?;
         let (restored_secrets, unchanged_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &secrets, &document)?;
+        // OF-013: each session's floor rises to the archive's and never falls,
+        // so numbering here never goes back under an epoch a purge removed.
+        for floor in &document.epoch_floors {
+            crate::compaction::raise_session_epoch_floor_in_txn(
+                &self.store,
+                &mut wtxn,
+                &parse_id(&floor.session)?,
+                floor.epoch,
+                floor.turn_end,
+            )?;
+        }
         // OF-370: the embedding setup declares and binds only what is absent
         // here; its vectors are recomputed after the commit, never before.
         let embedding_setup =

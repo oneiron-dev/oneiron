@@ -7,11 +7,14 @@
 //! media gate to the hosted rung and settled on the characters it spoke, as
 //! every other media call is. The rung owns the provider's wire; the host
 //! hands each sentence's audio back and rechecks the epoch at playback.
+//! A sentence past the policy's text bound is not refused (Rule 5): it goes
+//! as several renders, in order, each within the bound, and their audio
+//! plays back in that order.
 
 use std::collections::VecDeque;
 
 use super::media::{BankBound, BankVoiceBinding, MediaVoiceRoute, VoiceMediaQueue, VoiceMediaWork};
-use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession};
+use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -219,21 +222,16 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         &self.binding
     }
 
-    fn request(&self, generation: GenerationEpoch, submission: u64) -> HostedRender {
-        HostedRender {
-            generation,
-            submission,
-            provider: self.binding.provider,
-            text: self.buffer.clone(),
-            voice: BankVoiceBinding {
-                voice_id: self.binding.voice_id.clone(),
-                target: self.binding.provider.target().to_owned(),
-                include_generated: self.include_generated,
-                bound: BankBound::Clone {
-                    vendor_voice_id: self.binding.vendor_voice_id.clone(),
-                    revision: self.binding.revision,
-                    grant: self.binding.grant,
-                },
+    /// The banked clone a render goes out as.
+    fn bank_voice(binding: &HostedBinding, include_generated: bool) -> BankVoiceBinding {
+        BankVoiceBinding {
+            voice_id: binding.voice_id.clone(),
+            target: binding.provider.target().to_owned(),
+            include_generated,
+            bound: BankBound::Clone {
+                vendor_voice_id: binding.vendor_voice_id.clone(),
+                revision: binding.revision,
+                grant: binding.grant,
             },
         }
     }
@@ -282,15 +280,22 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         }
     }
 
+    /// Sends the buffer as renders within the policy's text bound, in
+    /// order. A refused render keeps itself and the rest buffered for retry.
     fn flush(&mut self, generation: GenerationEpoch) -> Result<()> {
-        if self.buffer.is_empty() {
-            return Ok(());
+        while !self.buffer.is_empty() {
+            self.flush_piece(generation)?;
         }
-        let next = self
-            .next_submission
+        Ok(())
+    }
+
+    /// Sends the buffer's first piece within the policy's text bound as one
+    /// render; a piece of only whitespace is dropped unsent.
+    fn flush_piece(&mut self, generation: GenerationEpoch) -> Result<()> {
+        let submission = self.next_submission;
+        let next = submission
             .checked_add(1)
             .ok_or_else(|| invalid("submission exhausted"))?;
-        let request = self.request(generation, self.next_submission);
         // Serialize against the vault withdrawal writer through FIFO queue
         // admission; an LMDB read snapshot alone cannot do this.
         let admitted = self.vault.with_live_voice_target(
@@ -306,10 +311,19 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
                     self.binding.provider.target(),
                     self.binding.owner,
                 )?;
-                if self.buffer.len() > limits.max_text_bytes {
-                    return Err(invalid("policy text limit exceeded"));
+                let cut = speakable::first_piece(&self.buffer, limits.max_text_bytes);
+                let text = &self.buffer[..cut];
+                if text.trim().is_empty() {
+                    return Ok((cut, false));
                 }
-                self.transport.try_submit(HostedWork::Render(request))
+                self.transport.try_submit(HostedWork::Render(HostedRender {
+                    generation,
+                    submission,
+                    provider: self.binding.provider,
+                    text: text.to_owned(),
+                    voice: Self::bank_voice(&self.binding, self.include_generated),
+                }))?;
+                Ok((cut, true))
             },
         );
         let admitted = match admitted {
@@ -328,16 +342,18 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
                 return Err(error);
             }
         };
-        if admitted.is_none() {
+        let Some((cut, sent)) = admitted else {
             self.revoke(generation);
             return Err(invalid("voice target withdrawn, evicted or stale"));
+        };
+        if sent {
+            self.pending.push_back(PendingResponse {
+                submission,
+                next_chunk: 0,
+            });
+            self.next_submission = next;
         }
-        self.pending.push_back(PendingResponse {
-            submission: self.next_submission,
-            next_chunk: 0,
-        });
-        self.next_submission = next;
-        self.buffer.clear();
+        self.buffer.drain(..cut);
         Ok(())
     }
 
@@ -481,11 +497,9 @@ impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<'_, T> {
         }
         match command {
             TtsCommand::Text { text, .. } => {
-                let limits = self.ensure_live(generation)?;
-                if text.is_empty()
-                    || text.len() > limits.max_text_bytes.saturating_sub(self.buffer.len())
-                {
-                    return Err(invalid("policy text limit exceeded"));
+                // A long sentence is split into renders at flush, never refused.
+                if text.is_empty() {
+                    return Err(invalid("empty text"));
                 }
                 self.buffer.push_str(&text);
             }

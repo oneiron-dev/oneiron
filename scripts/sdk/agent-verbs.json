@@ -1048,6 +1048,58 @@
       "section": false
     },
     {
+      "name": "vault.packs.remove",
+      "description": "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.",
+      "input": "PackRemoveRequest",
+      "output": "crate::skill_hub::pack_catalog::PackInstallReceipt",
+      "call": "crate::task_verb::sdk::remove_pack_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.put",
+      "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
+      "input": "ChannelSubscriptionRequest",
+      "output": "crate::connector_key::ChannelMessageSubscription",
+      "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.list",
+      "description": "An agent's connector event subscriptions, standing and revoked, for the owner.",
+      "input": "ChannelSubscriptionsRequest",
+      "output": "crate::task_verb::sdk::ChannelSubscriptions",
+      "call": "crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.subscriptions.revoke",
+      "description": "The owner stops one connector event subscription; the agent's key for the channel stays.",
+      "input": "ChannelSubscriptionRevokeRequest",
+      "output": "crate::task_verb::sdk::ChannelSubscriptionRevoked",
+      "call": "crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.packs.setup.prepare",
       "description": "The owner opens, or resumes, a pack's guided setup; opening grants nothing.",
       "input": "PackSetupRequest",

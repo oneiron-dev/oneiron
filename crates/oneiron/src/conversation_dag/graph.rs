@@ -215,7 +215,7 @@ pub(crate) fn parent(
 
 /// Walks backwards from a leaf, proving live membership, cardinality and
 /// acyclicity at every step. No partial result is ever returned.
-pub(super) fn chain(
+pub(crate) fn chain(
     store: &Store,
     txn: &RoTxn<'_>,
     conversation: &EntityId,

@@ -113,7 +113,7 @@ pub use self::sharing::{
     CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp,
     RoomSharingView,
 };
-pub use self::work_companion::{WORK_COMPANION_REQUIRED, WorkCompanionPolicy};
+pub use self::work_companion::WorkCompanionPolicy;
 
 #[cfg(test)]
 mod tests;
@@ -193,6 +193,7 @@ pub use rooms::{
 };
 pub(crate) use rooms::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
+pub(crate) use rooms::{room_upkeep_host, upkeep_rooms};
 
 pub(crate) use rooms::erase_room_side_rows;
 pub(crate) use rooms::room_project_in;
@@ -205,10 +206,7 @@ pub(crate) use rooms::{
 };
 pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
 
-pub(crate) use rooms::{
-    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
-    record_participation_in_txn, require_join_covering_in_txn,
-};
+pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
 
 pub use crate::gate::RoomThreadFill;
@@ -221,8 +219,8 @@ pub(crate) use join_consent::person_of_actor_in_txn;
 pub use join_consent::{
     AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentNeed, ConsentPart, ConsentSet,
     ConsentState, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, MembershipConsent,
-    RequiredParty, RoomWork, SpendConsent, decide_join_in_txn, require_actor_join_in_txn,
-    require_join_for_branch_in_txn, require_join_in_txn,
+    RequiredParty, RoomJoinHold, RoomWork, SpendConsent, decide_join_in_txn,
+    require_actor_join_in_txn, require_join_for_branch_in_txn, require_join_in_txn,
 };
 pub use join_door::{
     ConsentAnswer, JoinDecisionView, JoinOutcome, rooms_consent_in_txn, rooms_join_in_txn,
