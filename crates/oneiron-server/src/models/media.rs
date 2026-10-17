@@ -764,3 +764,30 @@ fn job_ticket(provider_job: &str) -> String {
     digest.update(&nanos.to_le_bytes());
     format!("job_{}", &digest.finalize().to_hex()[..24])
 }
+
+impl MediaRuntime {
+    /// Opens one bounded `ai.transcribe` stream (live partials) on a run of
+    /// its own on the media meter: one permit for the whole stream,
+    /// reserving `bound_ms` of audio, started at its rung's media gate
+    /// before any audio leaves. As a [`HeldJob`] holds a job's permit to its
+    /// end, the lease holds the stream's: it meters the audio its wire sends
+    /// and settles when the stream ends or is cancelled.
+    pub fn open_stream(
+        &self,
+        request: MediaRequest,
+        bound_ms: u64,
+    ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
+        if request.operation != AiOperation::Transcribe || bound_ms == 0 {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let ladder = self.ladder(&request)?;
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        let run = undeclared_run(
+            MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        );
+        ladder.open_media_stream(&run, request, bound_ms)
+    }
+}
