@@ -49,7 +49,8 @@ pub use pptx::{
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
 pub use verbs::{
-    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyEditRequest,
+    DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
+    OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,
     OfficeBodyExportVerbRequest, OfficeBodyExportView, OfficeBodyForkEditRequest,
     OfficeBodyForkMergeRequest, OfficeBodyForkOpenRequest, OfficeBodyForkRequest,
     OfficeBodyImportRequest, OfficeBodyOps, OfficeBodyPreviewRequest, OfficeBodyProposalRequest,
@@ -356,13 +357,25 @@ impl Vault {
         xlsx::read(&self.loro_body(&txn, artifact, OfficeBodyKind::Xlsx, at)?.1)
     }
 
-    /// Every commit receipt of the body, in commit order, a landed fork's
-    /// included.
-    pub fn office_body_commits(&self, artifact: &EntityId) -> Result<Vec<TextCommitReceipt>> {
+    /// Every commit of the body in commit order, a landed fork's included,
+    /// each with its receipt. A commit with no honoured receipt is listed
+    /// with no actor, never dropped. With `actor`, that actor's commits alone.
+    pub fn office_body_commits(
+        &self,
+        artifact: &EntityId,
+        actor: Option<&EntityId>,
+    ) -> Result<Vec<OfficeBodyCommitView>> {
         Ok(self
             .typed_body_receipts(artifact)?
             .into_iter()
-            .flatten()
+            .filter(|receipt| {
+                actor.is_none_or(|actor| {
+                    receipt
+                        .as_ref()
+                        .is_some_and(|receipt| receipt.made_by.process.actor == *actor)
+                })
+            })
+            .map(OfficeBodyCommitView::of)
             .collect())
     }
 

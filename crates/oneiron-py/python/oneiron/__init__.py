@@ -1115,7 +1115,7 @@ class Oneiron:
             """Reads a live body, at its head or an earlier frontier."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_read(json.dumps(request, allow_nan=False))))
         def commits(self, request: dict[str, Any]) -> list[dict[str, Any]]:
-            """Every commit receipt of a live body, in commit order."""
+            """Every commit receipt of a live body, in commit order, or one actor's."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_commits(json.dumps(request, allow_nan=False))))
         def edit(self, request: dict[str, Any]) -> dict[str, Any]:
             """A person's typed operations on the live body."""

@@ -25,11 +25,57 @@ use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
 
-/// `vault.artifacts.body.head` and `.commits`: the artifact.
+/// `vault.artifacts.body.head`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyArtifactRequest {
     pub artifact_ref: String,
+}
+
+/// `vault.artifacts.body.commits`: the artifact, and the one actor whose
+/// commits are wanted, when only theirs are.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfficeBodyCommitsRequest {
+    pub artifact_ref: String,
+    #[serde(default)]
+    pub actor_ref: Option<String>,
+}
+
+/// One commit of a live body, in commit order: who made it and its receipt,
+/// or why it names no one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeBodyCommitView {
+    /// The actor whose receipt it carries; `None` when it carries none.
+    pub actor: Option<String>,
+    pub receipt: Option<TextCommitReceipt>,
+    /// Why `actor` is `None`.
+    pub reason: Option<OfficeBodyCommitGap>,
+}
+
+/// Why a body commit names no actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfficeBodyCommitGap {
+    /// It carries no receipt the engine honours.
+    ReceiptMissing,
+}
+
+impl OfficeBodyCommitView {
+    pub(super) fn of(receipt: Option<TextCommitReceipt>) -> Self {
+        match receipt {
+            Some(receipt) => Self {
+                actor: Some(receipt.made_by.process.actor.to_hex()),
+                receipt: Some(receipt),
+                reason: None,
+            },
+            None => Self {
+                actor: None,
+                receipt: None,
+                reason: Some(OfficeBodyCommitGap::ReceiptMissing),
+            },
+        }
+    }
 }
 
 /// `vault.artifacts.body.import`: one DOCX, XLSX or PPTX version (the head
@@ -385,14 +431,22 @@ impl Memory<'_> {
         })
     }
 
-    /// `vault.artifacts.body.commits`: every commit receipt, in commit order,
-    /// each naming its actor and its MadeBy.
+    /// `vault.artifacts.body.commits`: every commit, in commit order, with
+    /// its actor and receipt, or why it has none; with `actor_ref`, that
+    /// actor's alone.
     pub fn artifacts_body_commits(
         &self,
-        input: &OfficeBodyArtifactRequest,
-    ) -> MemoryResult<Vec<TextCommitReceipt>> {
+        input: &OfficeBodyCommitsRequest,
+    ) -> MemoryResult<Vec<OfficeBodyCommitView>> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        Ok(self.vault().office_body_commits(&artifact)?)
+        let actor = input
+            .actor_ref
+            .as_deref()
+            .map(|actor| self.body_ref(actor))
+            .transpose()?;
+        Ok(self
+            .vault()
+            .office_body_commits(&artifact, actor.as_ref())?)
     }
 
     /// `vault.artifacts.body.edit`: a person's live edit.
