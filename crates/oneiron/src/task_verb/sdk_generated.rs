@@ -140,6 +140,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.fanout.launch",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutLaunchRequest,
+                >(),
+            ),
+            (
+                "vault.fanout.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutResumeRequest,
+                >(),
+            ),
+            (
+                "vault.fanout.ack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutAckRequest,
+                >(),
+            ),
+            (
                 "tasks.update",
                 crate::code_run::vault_read::request_schema::<TaskUpdateRequest>(),
             ),
@@ -527,6 +545,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::learning_setting_doors::LearningSettingClear,
                 >(),
+            ),
+            (
+                "vault.secrets.lift_history",
+                crate::code_run::vault_read::request_schema::<crate::policy_model::SecretLiftRequest>(
+                ),
             ),
             (
                 "vault.widen_proposals",
@@ -1368,6 +1391,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.body.proposal.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.body.proposal.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::office_body::OfficeBodyProposalSettleRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.body.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::office_body::OfficeBodyExportVerbRequest,
@@ -1404,6 +1439,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.artifacts.body.deck.oracle",
                 crate::code_run::vault_read::request_schema::<crate::office_body::DeckOracleRequest>(
+                ),
+            ),
+            (
+                "vault.artifacts.body.deck.preview",
+                crate::code_run::vault_read::request_schema::<crate::office_body::DeckPreviewRequest>(
                 ),
             ),
             (
@@ -1756,12 +1796,37 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.fanout.launch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.ack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "tasks.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             properties.insert(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
-            &["task_ref"]
+            &["spec", "task_ref"]
         }
         "vault.witness" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -2232,6 +2297,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.settings.learning.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.lift_history" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3226,6 +3298,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.body.proposal.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.body.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3269,6 +3355,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.body.deck.oracle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.body.deck.preview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3450,6 +3543,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "tasks.wave" => {
             let _input: crate::task_verb::sdk::TaskWaveRequest = decode(value.clone())?;
+        }
+        "vault.fanout.launch" => {
+            let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
+        }
+        "vault.fanout.resume" => {
+            let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
+        }
+        "vault.fanout.ack" => {
+            let _input: crate::task_verb::sdk::FanoutAckRequest = decode(value.clone())?;
         }
         "tasks.update" => {
             let _input: TaskUpdateRequest = decode(value.clone())?;
@@ -3698,6 +3800,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.settings.learning.clear" => {
             let _input: crate::learning_setting_doors::LearningSettingClear =
                 decode(value.clone())?;
+        }
+        "vault.secrets.lift_history" => {
+            let _input: crate::policy_model::SecretLiftRequest = decode(value.clone())?;
         }
         "vault.widen_proposals" => {
             let _input: crate::agent_dispatch::widen_doors::WidenProposalsRequest =
@@ -4247,6 +4352,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.body.fork.discard" => {
             let _input: crate::office_body::OfficeBodyForkRequest = decode(value.clone())?;
         }
+        "vault.artifacts.body.proposal.read" => {
+            let _input: crate::office_body::OfficeBodyProposalRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.proposal.settle" => {
+            let _input: crate::office_body::OfficeBodyProposalSettleRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.body.export" => {
             let _input: crate::office_body::OfficeBodyExportVerbRequest = decode(value.clone())?;
         }
@@ -4267,6 +4379,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.body.deck.oracle" => {
             let _input: crate::office_body::DeckOracleRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.body.deck.preview" => {
+            let _input: crate::office_body::DeckPreviewRequest = decode(value.clone())?;
         }
         "vault.artifacts.append" => {
             let input: AppendBlobVersionRequest = decode(value.clone())?;
@@ -4356,6 +4471,9 @@ pub fn invoke(
         "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
+        "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
+        "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
+        "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
@@ -4485,6 +4603,7 @@ pub fn invoke(
         "vault.settings.learning.clear" => {
             encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
+        "vault.secrets.lift_history" => encode(vault_secrets_lift_history(memory, decode(value)?)?),
         "vault.widen_proposals" => encode(vault_widen_proposals(memory, decode(value)?)?),
         "vault.widen_proposals.approve" => {
             encode(vault_widen_proposals_approve(memory, decode(value)?)?)
@@ -4683,6 +4802,13 @@ pub fn invoke(
         "vault.artifacts.body.fork.discard" => {
             encode(vault_artifacts_body_fork_discard(memory, decode(value)?)?)
         }
+        "vault.artifacts.body.proposal.read" => {
+            encode(vault_artifacts_body_proposal_read(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.proposal.settle" => encode(vault_artifacts_body_proposal_settle(
+            memory,
+            decode(value)?,
+        )?),
         "vault.artifacts.body.export" => {
             encode(vault_artifacts_body_export(memory, decode(value)?)?)
         }
@@ -4703,6 +4829,9 @@ pub fn invoke(
         }
         "vault.artifacts.body.deck.oracle" => {
             encode(vault_artifacts_body_deck_oracle(memory, decode(value)?)?)
+        }
+        "vault.artifacts.body.deck.preview" => {
+            encode(vault_artifacts_body_deck_preview(memory, decode(value)?)?)
         }
         "vault.artifacts.append" => encode(vault_artifacts_append(memory, decode(value)?)?),
         "vault.artifacts.read" => encode(vault_artifacts_read(memory, decode(value)?)?),
@@ -5108,6 +5237,24 @@ pub fn tasks_wave(
     input: crate::task_verb::sdk::TaskWaveRequest,
 ) -> MemoryResult<crate::task_verb::sdk::TaskWaveReceipt> {
     crate::task_verb::sdk::host_only(memory, "tasks.wave", &input)
+}
+pub fn vault_fanout_launch(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutLaunchRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::FanoutLaunchView>> {
+    crate::task_verb::sdk::read_fanout_launch(memory, input)
+}
+pub fn vault_fanout_resume(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutResumeRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
+}
+pub fn vault_fanout_ack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutAckRequest,
+) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
+    crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
@@ -5765,6 +5912,17 @@ pub fn vault_settings_learning_clear(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_secrets_lift_history(
+    memory: &Memory<'_>,
+    input: crate::policy_model::SecretLiftRequest,
+) -> MemoryResult<crate::policy_model::SecretLiftStatus> {
+    crate::policy_model::secret_lift_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.lift_history")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_widen_proposals(
     memory: &Memory<'_>,
     input: crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -5843,7 +6001,7 @@ pub fn vault_lenses_list(
 pub fn vault_lenses_default(
     memory: &Memory<'_>,
     input: crate::lens::LensDefaultRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::GeneratedLens>> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::lens::LensFrameCard>> {
     memory.lenses_default(input)
 }
 pub fn vault_disclosure_offer(
@@ -7047,7 +7205,7 @@ pub fn vault_artifacts_body_fork_open(
         memory,
         "vault.artifacts.body.fork.open",
         &input,
-        &["/artifact_ref", "/run_root_ref"],
+        &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
     )?;
     memory.artifacts_body_fork_open(&input)
 }
@@ -7105,6 +7263,30 @@ pub fn vault_artifacts_body_fork_discard(
         &["/artifact_ref", "/fork_ref"],
     )?;
     memory.artifacts_body_fork_discard(&input)
+}
+pub fn vault_artifacts_body_proposal_read(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.read",
+        &input,
+        &["/artifact_ref", "/proposal_ref"],
+    )?;
+    memory.artifacts_body_proposal_read(&input)
+}
+pub fn vault_artifacts_body_proposal_settle(
+    memory: &Memory<'_>,
+    input: crate::office_body::OfficeBodyProposalSettleRequest,
+) -> MemoryResult<crate::office_body::OfficeBodyProposal> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.body.proposal.settle",
+        &input,
+        &["/artifact_ref", "/proposal_ref", "/reviewed/*/fork_ref"],
+    )?;
+    memory.artifacts_body_proposal_settle(&input)
 }
 pub fn vault_artifacts_body_export(
     memory: &Memory<'_>,
@@ -7183,6 +7365,12 @@ pub fn vault_artifacts_body_deck_oracle(
     input: crate::office_body::DeckOracleRequest,
 ) -> MemoryResult<crate::office_body::DeckGateView> {
     memory.artifacts_body_deck_oracle(&input)
+}
+pub fn vault_artifacts_body_deck_preview(
+    memory: &Memory<'_>,
+    input: crate::office_body::DeckPreviewRequest,
+) -> MemoryResult<crate::office_body::DeckPreview> {
+    memory.artifacts_body_deck_preview(&input, None)
 }
 pub fn vault_artifacts_append(
     memory: &Memory<'_>,

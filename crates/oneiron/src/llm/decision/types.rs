@@ -299,6 +299,14 @@ pub struct DecisionReceipt {
     /// One row per measurement and image it read: what that provider was sent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ImagePin>,
+    /// The think-more row's version in force when the ladder routed this decision: set
+    /// when the call asked the paired question under a ThinkThreshold row, else none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think_row: Option<u32>,
+    /// The ask-a-person row's version in force when the ladder routed this decision: set
+    /// when the dial reached the person under a PersonThreshold row, else none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_row: Option<u32>,
 }
 
 /// What one measurement read of one image: the pixels as handed in, where they sit in

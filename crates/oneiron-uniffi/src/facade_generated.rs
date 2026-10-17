@@ -123,6 +123,21 @@ export_facade! {
     let output = client.tasks_wave(&input)?;
     crate::codec::lift_record("tasks.wave", &output)
 };
+"vault.fanout.launch" => fn vault_fanout_launch(&self, input: FanoutLaunchRequest) -> Option<FanoutLaunchView> = |client| {
+    let input: oneiron::task_verb::sdk::FanoutLaunchRequest = crate::codec::lower_record("vault.fanout.launch", input)?;
+    let output = client.vault_fanout_launch(&input)?;
+    crate::codec::lift_record("vault.fanout.launch", &output)
+};
+"vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
+    let output = client.vault_fanout_resume(&input)?;
+    crate::codec::lift_record("vault.fanout.resume", &output)
+};
+"vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> FanoutLaunchView = |client| {
+    let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
+    let output = client.vault_fanout_ack(&input)?;
+    crate::codec::lift_record("vault.fanout.ack", &output)
+};
 "tasks.update" => fn tasks_update(&self, input: TaskUpdateRequest) -> TaskUpdateReceipt = |client| {
     let input: oneiron::task_verb::sdk::TaskUpdateRequest = crate::codec::lower_record("tasks.update", input)?;
     let output = client.tasks_update(&input)?;
@@ -138,12 +153,13 @@ export_facade! {
     let output = client.vault_claims_upsert(&claim)?;
     Lift::lift(output)
 };
-"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>) -> MemoryPack = |client| {
+"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>) -> MemoryPack = |client| {
     let effort: oneiron::memory::RecallEffort = effort.lower()?;
     let scope: oneiron::memory::RecallScope = scope.lower()?;
     let limit: usize = limit.lower()?;
     let media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media.lower()?;
-    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media)?;
+    let query_affect: Option<oneiron::task_verb::sdk::QueryAffect> = query_affect.lower()?;
+    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
     Lift::lift(output)
 };
 "vault.export" => fn vault_export(&self, format: Option<String>) -> MemoryExport = |client| {
@@ -495,6 +511,11 @@ export_facade! {
     let output = client.vault_settings_learning_clear(&input)?;
     crate::codec::lift_record("vault.settings.learning.clear", &output)
 };
+"vault.secrets.lift_history" => fn vault_secrets_lift_history(&self, input: SecretLiftRequest) -> SecretLiftStatus = |client| {
+    let input: oneiron::policy_model::SecretLiftRequest = crate::codec::lower_record("vault.secrets.lift_history", input)?;
+    let output = client.vault_secrets_lift_history(&input)?;
+    crate::codec::lift_record("vault.secrets.lift_history", &output)
+};
 "vault.widen_proposals" => fn vault_widen_proposals(&self, input: WidenProposalsRequest) -> WidenProposalsView = |client| {
     let input: oneiron::agent_dispatch::widen_doors::WidenProposalsRequest = crate::codec::lower_record("vault.widen_proposals", input)?;
     let output = client.vault_widen_proposals(&input)?;
@@ -545,10 +566,10 @@ export_facade! {
     let output = client.vault_lenses_list(&input)?;
     crate::codec::lift_record("vault.lenses.list", &output)
 };
-"vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> ScopedReadResultGeneratedLens = |client| {
+"vault.lenses.default" => fn vault_lenses_default(&self, input: LensDefaultRequest) -> WireJson = |client| {
     let input: oneiron::lens::LensDefaultRequest = crate::codec::lower_record("vault.lenses.default", input)?;
     let output = client.vault_lenses_default(&input)?;
-    crate::codec::lift_record("vault.lenses.default", &output)
+    crate::codec::encode("vault.lenses.default", &output)
 };
 "vault.disclosure.offer" => fn vault_disclosure_offer(&self, input: DisclosureOfferRequest) -> DisclosureOffered = |client| {
     let input: oneiron::task_verb::sdk::DisclosureOfferRequest = crate::codec::lower_record("vault.disclosure.offer", input)?;
@@ -1185,6 +1206,16 @@ export_facade! {
     let output = client.vault_artifacts_body_fork_discard(&input)?;
     crate::codec::lift_record("vault.artifacts.body.fork.discard", &output)
 };
+"vault.artifacts.body.proposal.read" => fn vault_artifacts_body_proposal_read(&self, input: OfficeBodyProposalRequest) -> OfficeBodyProposal = |client| {
+    let input: oneiron::office_body::OfficeBodyProposalRequest = crate::codec::lower_record("vault.artifacts.body.proposal.read", input)?;
+    let output = client.vault_artifacts_body_proposal_read(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.proposal.read", &output)
+};
+"vault.artifacts.body.proposal.settle" => fn vault_artifacts_body_proposal_settle(&self, input: OfficeBodyProposalSettleRequest) -> OfficeBodyProposal = |client| {
+    let input: oneiron::office_body::OfficeBodyProposalSettleRequest = crate::codec::lower_record("vault.artifacts.body.proposal.settle", input)?;
+    let output = client.vault_artifacts_body_proposal_settle(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.proposal.settle", &output)
+};
 "vault.artifacts.body.export" => fn vault_artifacts_body_export(&self, input: OfficeBodyExportVerbRequest) -> OfficeBodyExportView = |client| {
     let input: oneiron::office_body::OfficeBodyExportVerbRequest = crate::codec::lower_record("vault.artifacts.body.export", input)?;
     let output = client.vault_artifacts_body_export(&input)?;
@@ -1219,6 +1250,11 @@ export_facade! {
     let input: oneiron::office_body::DeckOracleRequest = crate::codec::lower_record("vault.artifacts.body.deck.oracle", input)?;
     let output = client.vault_artifacts_body_deck_oracle(&input)?;
     crate::codec::lift_record("vault.artifacts.body.deck.oracle", &output)
+};
+"vault.artifacts.body.deck.preview" => fn vault_artifacts_body_deck_preview(&self, input: DeckPreviewRequest) -> DeckPreview = |client| {
+    let input: oneiron::office_body::DeckPreviewRequest = crate::codec::lower_record("vault.artifacts.body.deck.preview", input)?;
+    let output = client.vault_artifacts_body_deck_preview(&input)?;
+    crate::codec::lift_record("vault.artifacts.body.deck.preview", &output)
 };
 "vault.artifacts.append" => fn vault_artifacts_append(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView = |client| {
     let input: oneiron::task_verb::sdk::AppendBlobVersionRequest = (artifact_ref, content, run_ref, occurred_at, learned_at).lower()?;

@@ -407,6 +407,9 @@ class Oneiron:
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs":
             return Oneiron._VaultShapeVerbs(self._client)
+        @property
+        def fanout(self) -> "Oneiron._VaultFanoutVerbs":
+            return Oneiron._VaultFanoutVerbs(self._client)
         def witness(self, turn: dict[str, Any]) -> dict[str, Any]:
             """Witnesses one conversational turn.
 
@@ -417,7 +420,7 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs":
             return Oneiron._VaultClaimsVerbs(self._client)
-        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None) -> dict[str, Any]:
+        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None, query_affect: dict[str, Any] | None = None) -> dict[str, Any]:
             """Recalls a memory pack.
 
             ``effort="high"`` needs a lease this package never mints: an embedded
@@ -430,9 +433,12 @@ class Oneiron:
             ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
             ``media`` (``{"space", "mime", "bytes_b64", "kinds"}``) is embedded
             by the server into its declared space; an embedded client raises
-            ``MODEL_UNAVAILABLE``.
+            ``MODEL_UNAVAILABLE``. ``query_affect`` (``{"valence", "arousal",
+            "dominance"}``: valence in -1..1, arousal and dominance in 0..1)
+            ranks by emotion congruence, embedded and remote alike; out of range
+            it raises ``BAD_REQUEST``.
             """
-            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None)))
+            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
         def export(self, format: str | None = None) -> dict[str, Any]:
             """Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."""
             return json.loads(_translate(lambda: self._client.vault_export(json.dumps({"format": format}))))
@@ -478,6 +484,9 @@ class Oneiron:
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
+        @property
+        def secrets(self) -> "Oneiron._VaultSecretsVerbs":
+            return Oneiron._VaultSecretsVerbs(self._client)
         @property
         def widen_proposals(self) -> "Oneiron._VaultWidenProposalsVerbs":
             return Oneiron._VaultWidenProposalsVerbs(self._client)
@@ -592,6 +601,18 @@ class Oneiron:
         def apply(self, spec):
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
             return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
+    class _VaultFanoutVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def launch(self, spec):
+            """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by its own actor or the vault owner, anything else reads as none."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_launch(json.dumps(spec))))
+        def resume(self, spec):
+            """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_resume(json.dumps(spec))))
+        def ack(self, spec):
+            """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_ack(json.dumps(spec))))
     class _VaultClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -911,6 +932,12 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSecretsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def lift_history(self, spec):
+            """The owner reads the historical secret lift sweep: the run in progress, the last run's receipt and the lift proposals still open. With start, a run is queued first; a run already queued walks again from the start."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
     class _VaultWidenProposalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -939,7 +966,7 @@ class Oneiron:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def default(self, spec):
-            """Composes the default vault lens from the named sources, read under the caller's own scope."""
+            """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
             return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
     class _VaultDisclosureVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1038,6 +1065,9 @@ class Oneiron:
         @property
         def fork(self) -> "Oneiron._VaultArtifactsBodyForkVerbs":
             return Oneiron._VaultArtifactsBodyForkVerbs(self._client)
+        @property
+        def proposal(self) -> "Oneiron._VaultArtifactsBodyProposalVerbs":
+            return Oneiron._VaultArtifactsBodyProposalVerbs(self._client)
         def export(self, request: dict[str, Any]) -> dict[str, Any]:
             """Exports the live body as the artifact's next version."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_export(json.dumps(request, allow_nan=False))))
@@ -1060,11 +1090,20 @@ class Oneiron:
             """A fork's three-way diff against the live head."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_diff(json.dumps(request, allow_nan=False))))
         def merge(self, request: dict[str, Any]) -> dict[str, Any]:
-            """A person lands a reviewed fork."""
+            """Lands one reviewed fork on an answer."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_merge(json.dumps(request, allow_nan=False))))
         def discard(self, request: dict[str, Any]) -> dict[str, Any]:
             """Abandons an open fork's unlanded work."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_fork_discard(json.dumps(request, allow_nan=False))))
+    class _VaultArtifactsBodyProposalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, request: dict[str, Any]) -> dict[str, Any]:
+            """An office proposal: its members, answers and settlement."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_proposal_read(json.dumps(request, allow_nan=False))))
+        def settle(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Accepts or rejects an office proposal's reviewed forks."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_proposal_settle(json.dumps(request, allow_nan=False))))
     class _VaultArtifactsBodyDeckVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1083,6 +1122,9 @@ class Oneiron:
         def oracle(self, request: dict[str, Any]) -> dict[str, Any]:
             """Records the deck oracle's receipt for its export profile."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_oracle(json.dumps(request, allow_nan=False))))
+        def preview(self, request: dict[str, Any]) -> dict[str, Any]:
+            """The asked slides of a deck's head, drawn by the host's review renderer (provisional)."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_body_deck_preview(json.dumps(request, allow_nan=False))))
     class _VaultCodeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1393,7 +1435,7 @@ class Oneiron:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
             return json.loads(_translate(lambda: self._client.tasks_wave(json.dumps(spec))))
         def update(self, spec):
-            """Records the owner's acknowledgement of a failed TASK; any other task stays as it was."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
             return json.loads(_translate(lambda: self._client.tasks_update(json.dumps(spec))))
         def answer(self, handle, word):
             """Admits one person's word on an ask; the word is evidence, never approval."""

@@ -9,6 +9,7 @@
 //! its maker.
 
 use super::LiveError;
+use super::held;
 use crate::deck::{DeckView, ShapeKind, ShapeView, TextView};
 use crate::edit::{AssetRef, ConnectorPreset, IdMarks, Preset};
 use crate::retained_opc::Package;
@@ -93,12 +94,15 @@ pub struct DeckNode {
     pub geometry: GeometryProps,
     /// Placeholder kind/index as read (`p:ph`), for export evidence.
     pub placeholder: Option<(String, u32)>,
-    /// A live-born shape's preset geometry; `None` is a rectangle. An
-    /// imported element keeps its own in the retained markup.
+    /// A shape's preset geometry. A live-born shape's `None` is a
+    /// rectangle; an imported shape's is custom geometry or a preset outside
+    /// the written set, kept as written.
     #[serde(default)]
     pub preset: Option<Preset>,
-    /// What a live-born picture, graphic frame or connector is written from.
-    /// An imported element's retained markup is its payload.
+    /// What a picture, graphic frame or connector is written from. Import
+    /// reads a table's cells, a classic chart's data and a connector's
+    /// geometry and glue; an imported picture's media, and any other frame
+    /// or connector, stay in the retained markup (`None`).
     #[serde(default)]
     pub payload: Option<NodePayload>,
 }
@@ -166,7 +170,84 @@ impl NodePayload {
             Self::Connector { .. } => NodeKind::Connector,
         }
     }
+
+    /// No chart series holds more values than there are categories; a
+    /// shorter one ends in missing points.
+    pub fn check(&self) -> Result<(), LiveError> {
+        if let Self::Chart {
+            categories, series, ..
+        } = self
+            && series
+                .iter()
+                .any(|line| line.values.len() > categories.len())
+        {
+            return Err(LiveError::Invalid(
+                "a chart series holds more values than there are categories",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether this payload fits the element a bound node's `held` payload
+    /// was written as: a written table keeps its rows and columns, and a
+    /// written chart its family and its category and series counts.
+    fn fits(&self, held: Option<&NodePayload>) -> Result<(), LiveError> {
+        match (self, held) {
+            (
+                Self::Table { header, rows },
+                Some(Self::Table {
+                    header: was,
+                    rows: kept,
+                }),
+            ) => {
+                if header.len() != was.len()
+                    || rows.len() != kept.len()
+                    || rows.iter().any(|row| row.len() != header.len())
+                {
+                    return Err(LiveError::Invalid(WRITTEN_TABLE));
+                }
+            }
+            (
+                Self::Chart {
+                    family,
+                    categories,
+                    series,
+                },
+                Some(Self::Chart {
+                    family: was,
+                    categories: kept,
+                    series: lines,
+                }),
+            ) => {
+                if family != was || categories.len() != kept.len() || series.len() != lines.len() {
+                    return Err(LiveError::Invalid(WRITTEN_CHART));
+                }
+            }
+            (Self::Table { .. } | Self::Chart { .. }, _) => {
+                return Err(LiveError::Invalid(
+                    "a written frame keeps the table or chart the live deck reads in it",
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// The asset a picture payload names.
+    pub fn picture(&self) -> Option<&AssetRef> {
+        match self {
+            Self::Picture { image } => Some(image),
+            _ => None,
+        }
+    }
 }
+
+/// The written-table refusal: no deck op adds or removes a row or a column
+/// of a table already in the retained package.
+pub(crate) const WRITTEN_TABLE: &str = "a written table keeps its rows and columns";
+/// The written-chart refusal: chart writes are same-length replacements.
+pub(crate) const WRITTEN_CHART: &str =
+    "a written chart keeps its family and its category and series counts";
 
 /// One run of a paragraph. Formatting rides as run-property marks; scheme
 /// colour and hyperlinks stay atomic values on the run that carries them.
@@ -342,6 +423,21 @@ impl LiveDeck {
                     .expect("parent inserted above")
                     .children
                     .push(id);
+            }
+            // Third, what each element is written as, glue by live node.
+            let tree = held::slide_tree(package, &slide.part)?;
+            let native: BTreeMap<u32, NodeId> = slide
+                .shapes
+                .iter()
+                .zip(&ids)
+                .filter_map(|(shape, id)| Some((shape.id?, *id)))
+                .collect();
+            for (shape, id) in slide.shapes.iter().zip(&ids) {
+                let node = deck.nodes.get_mut(id).expect("shape inserted above");
+                node.preset = held::shape_preset(&tree, shape);
+                node.payload = held::payload(package, &slide.part, &tree, shape, |at| {
+                    native.get(&at).copied()
+                });
             }
         }
         for name in package.names() {
@@ -520,6 +616,19 @@ pub enum DeckOp {
         node: NodeId,
         geometry: GeometryProps,
     },
+    /// A shape's preset geometry; custom geometry takes none at export.
+    SetPreset {
+        node: NodeId,
+        preset: Preset,
+    },
+    /// What a picture, graphic frame or connector is written from: new
+    /// media, a table's cells, a chart's data, or a connector's geometry
+    /// and glue. A written table keeps its rows and columns, and a written
+    /// chart its family and its category and series counts.
+    SetPayload {
+        node: NodeId,
+        payload: NodePayload,
+    },
     /// Whole-part replacement of an opaque part, guarded by its source hash.
     ReplaceOpaque {
         part: String,
@@ -537,8 +646,22 @@ impl DeckOp {
             | DeckOp::MoveNode { node, .. }
             | DeckOp::SetText { node, .. }
             | DeckOp::SetRunMarks { node, .. }
-            | DeckOp::SetGeometry { node, .. } => Some(*node),
+            | DeckOp::SetGeometry { node, .. }
+            | DeckOp::SetPreset { node, .. }
+            | DeckOp::SetPayload { node, .. } => Some(*node),
             DeckOp::AddSlide { .. } | DeckOp::ReplaceOpaque { .. } => None,
+        }
+    }
+
+    /// The asset a picture this operation writes names.
+    pub fn picture(&self) -> Option<&AssetRef> {
+        match self {
+            DeckOp::AddNode {
+                payload: Some(payload),
+                ..
+            }
+            | DeckOp::SetPayload { payload, .. } => payload.picture(),
+            _ => None,
         }
     }
 
@@ -568,7 +691,10 @@ impl DeckOp {
             DeckOp::MoveNode { .. } => ChangeKind::Movement,
             DeckOp::SetText { .. } => ChangeKind::Text,
             DeckOp::SetRunMarks { .. } => ChangeKind::Formatting,
-            DeckOp::SetGeometry { .. } | DeckOp::ReplaceOpaque { .. } => ChangeKind::Property,
+            DeckOp::SetGeometry { .. }
+            | DeckOp::SetPreset { .. }
+            | DeckOp::SetPayload { .. }
+            | DeckOp::ReplaceOpaque { .. } => ChangeKind::Property,
         }
     }
 }
@@ -645,6 +771,9 @@ impl LiveDeck {
                     return Err(LiveError::Invalid(
                         "the payload does not belong to the node kind",
                     ));
+                }
+                if let Some(payload) = payload {
+                    payload.check()?;
                 }
                 let id = self.take(*id)?;
                 self.nodes.insert(
@@ -743,6 +872,28 @@ impl LiveDeck {
                     .get_mut(node)
                     .ok_or(LiveError::UnknownNode)?
                     .geometry = *geometry;
+                vec![*node]
+            }
+            DeckOp::SetPreset { node, preset } => {
+                let found = self.nodes.get_mut(node).ok_or(LiveError::UnknownNode)?;
+                if found.kind != NodeKind::Shape {
+                    return Err(LiveError::Invalid("only a shape takes a preset"));
+                }
+                found.preset = Some(*preset);
+                vec![*node]
+            }
+            DeckOp::SetPayload { node, payload } => {
+                let found = self.nodes.get_mut(node).ok_or(LiveError::UnknownNode)?;
+                if payload.kind() != found.kind {
+                    return Err(LiveError::Invalid(
+                        "the payload does not belong to the node kind",
+                    ));
+                }
+                payload.check()?;
+                if found.binding.is_some() {
+                    payload.fits(found.payload.as_ref())?;
+                }
+                found.payload = Some(payload.clone());
                 vec![*node]
             }
             DeckOp::ReplaceOpaque {
@@ -955,6 +1106,8 @@ pub enum Conflict {
     GeometryVsReparent { node: NodeId },
     /// Both sides replaced one opaque part with different bytes.
     BothReplacedOpaque { part: String },
+    /// Both sides changed one node's preset or payload differently.
+    PayloadVsPayload { node: NodeId },
 }
 
 /// One relationship that differs between the head's export and the merged
@@ -1018,6 +1171,8 @@ pub struct DeckDiff {
     pub text_changed: Vec<NodeId>,
     pub formatting_changed: Vec<NodeId>,
     pub geometry_changed: Vec<NodeId>,
+    /// Nodes whose preset or payload changed.
+    pub payload_changed: Vec<NodeId>,
     pub opaque_changed: Vec<OpaqueChange>,
     /// Slides the proposal affects, including beyond the edited slide. Until
     /// render evidence is attached, any opaque replacement counts every slide;
@@ -1045,6 +1200,11 @@ pub(crate) fn slide_of(deck: &LiveDeck, mut node: NodeId) -> Option<NodeId> {
     }
 }
 
+/// What a node is written as: its preset and payload.
+fn written(node: &DeckNode) -> (Option<Preset>, &Option<NodePayload>) {
+    (node.preset, &node.payload)
+}
+
 fn sibling_index(deck: &LiveDeck, node: NodeId) -> Option<usize> {
     let parent = deck.nodes.get(&node)?.parent?;
     deck.nodes
@@ -1055,7 +1215,8 @@ fn sibling_index(deck: &LiveDeck, node: NodeId) -> Option<usize> {
 }
 
 /// Compare base, current head and proposal. Text and formatting are
-/// reported separately; own geometry separately from moves.
+/// reported separately; own geometry separately from moves, and preset and
+/// payload on their own.
 pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
     let mut out = DeckDiff {
         base_version: base.version,
@@ -1067,6 +1228,7 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
         text_changed: Vec::new(),
         formatting_changed: Vec::new(),
         geometry_changed: Vec::new(),
+        payload_changed: Vec::new(),
         opaque_changed: Vec::new(),
         affected_slides: Vec::new(),
         head_only: Vec::new(),
@@ -1110,12 +1272,20 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
         if was.geometry != node.geometry {
             out.geometry_changed.push(*id);
         }
+        let rewritten = written(was) != written(node);
+        if rewritten {
+            out.payload_changed.push(*id);
+        }
         match (base.texts.get(id), proposal.texts.get(id)) {
             (a, b) if a == b => {}
             (Some(a), Some(b)) if a.plain() == b.plain() => out.formatting_changed.push(*id),
             _ => out.text_changed.push(*id),
         }
-        if moved || was.geometry != node.geometry || base.texts.get(id) != proposal.texts.get(id) {
+        if moved
+            || rewritten
+            || was.geometry != node.geometry
+            || base.texts.get(id) != proposal.texts.get(id)
+        {
             if let Some(slide) = slide_of(proposal, *id).or_else(|| slide_of(base, *id)) {
                 affected.insert(slide);
             }
@@ -1153,6 +1323,12 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
                 && head.texts.get(id) != proposal.texts.get(id)
             {
                 out.conflicts.push(Conflict::TextVsText { node: *id });
+            }
+            if written(was) != written(head_node)
+                && rewritten
+                && written(head_node) != written(node)
+            {
+                out.conflicts.push(Conflict::PayloadVsPayload { node: *id });
             }
         }
     }
@@ -1313,6 +1489,7 @@ pub fn land(
     affected.extend(report.diff.text_changed.iter().copied());
     affected.extend(report.diff.formatting_changed.iter().copied());
     affected.extend(report.diff.geometry_changed.iter().copied());
+    affected.extend(report.diff.payload_changed.iter().copied());
     let switched_away = match landing {
         Landing::Merge => {
             *head = report.candidate.clone();

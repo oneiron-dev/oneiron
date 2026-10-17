@@ -57,8 +57,12 @@ pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
+// The owner's fan-out ruling doors (OF-393), likewise.
+pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
+// The owner's historical secret lift sweep door (OF-067), likewise.
+pub(crate) use super::secret_lift_doors::*;
 // The owner's root wave door (OF-427), likewise.
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
@@ -71,6 +75,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::reaction_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
+// The default lens's door, which holds its card's frame (OF-181), likewise.
+pub(crate) use super::ui_action_routes::vault_lenses_default;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
@@ -129,6 +135,42 @@ fn slide_reviewer(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
             &["Present a slip paired from a link created with --principal-ref."],
         )
     })
+}
+
+/// `vault.artifacts.body.deck.preview`: the asked slides of a deck's head,
+/// drawn by this host's review renderer on a blocking thread, for a
+/// credential that reads the artifact.
+pub(crate) async fn vault_artifacts_body_deck_preview(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::office_body::DeckPreviewRequest,
+) -> MemoryResult<oneiron::office_body::DeckPreview> {
+    let (actor, class) = super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a deck preview reads as the credential's own principal",
+            &["Present a slip paired with a principal ref and an actor class."],
+        )
+    })?;
+    if let Ok(artifact) = EntityId::from_hex(&input.artifact_ref)
+        && !auth.can_read_entity(&server.vault, &artifact)?
+    {
+        return Err(oneiron::Error::EntityNotFound.into());
+    }
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
+            .at(auth.locality())
+            .artifacts_body_deck_preview(
+                &input,
+                crate::slide_render::host_renderer().map(|renderer| {
+                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
+                }),
+            )
+    })
+    .await
+    .map_err(|_| internal("vault.artifacts.body.deck.preview"))?
 }
 
 /// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the

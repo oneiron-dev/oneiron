@@ -1,9 +1,11 @@
 //! Leaving a shared vault, the device side (OF-158). A member device keeps a
 //! shared vault in an env of its own. Once a notice confirms that this member
-//! left or was removed, the device drops what it queued to send there and
-//! records how much unsynced work that discarded. Only a notice confirms it:
-//! a removed member's slips are revoked, so a refused reconnect (a 401) is
-//! never read as a leave.
+//! left or was removed, or lost the Owner role and kept no other, the device
+//! drops what it queued to send there and records how much unsynced work that
+//! discarded. Only a notice confirms it: a removed member's slips are revoked,
+//! so a refused reconnect (a 401) is never read as a leave. The notices are
+//! the ones the home's left-notices door answers
+//! (`Vault::removed_member_notices`).
 //!
 //! What goes is only what is provably that vault's: the queued window
 //! updates (`q:`, with their `d:` sidecars), the unacknowledged text frames
@@ -38,8 +40,12 @@ const LEAVE_PURGE_ROWS_PER_PASS: usize = 4096;
 pub enum SharedLeaveKind {
     /// The member left.
     Left,
-    /// A holder removed the member.
+    /// A holder removed the member, an Owner removed as Owner included.
     Removed,
+    /// The Owner handed ownership on and kept no role.
+    Transferred,
+    /// Another person recovered ownership from this Owner.
+    Recovered,
 }
 
 /// The local record that this device left a shared vault: the notice it
@@ -74,7 +80,10 @@ pub struct SharedLeaveReceipt {
 }
 
 /// How `notice` ends `member`'s membership in shared vault `vault_id`, when
-/// it is that member's own MemberLeft or MemberRemoved notice for it.
+/// it is that member's own MemberLeft or MemberRemoved notice for it, or a
+/// notice that took the Owner role from them and left them no other:
+/// OwnerRemoved and OwnershipTransferred with nothing kept, and
+/// OwnerRecovered.
 #[must_use]
 pub fn left_change(
     notice: &SharedActOutcome,
@@ -90,6 +99,19 @@ pub fn left_change(
         }
         SharedVaultChange::MemberRemoved { member: who } if who == member => {
             Some(SharedLeaveKind::Removed)
+        }
+        SharedVaultChange::OwnerRemoved {
+            target,
+            target_keeps: None,
+            ..
+        } if target == member => Some(SharedLeaveKind::Removed),
+        SharedVaultChange::OwnershipTransferred {
+            from,
+            from_keeps: None,
+            ..
+        } if from == member => Some(SharedLeaveKind::Transferred),
+        SharedVaultChange::OwnerRecovered { from, .. } if from == member => {
+            Some(SharedLeaveKind::Recovered)
         }
         _ => None,
     }

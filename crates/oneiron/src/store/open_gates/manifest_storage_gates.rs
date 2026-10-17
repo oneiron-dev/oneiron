@@ -12,6 +12,7 @@ use heed::{Database, DatabaseFlags, Env, RoTxn, RwTxn};
 use crate::config::VaultConfig;
 use crate::error::{Error, Result, VaultRootProblem};
 use crate::overlay_db::OverlayDb;
+use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::store::{
     RawDatabases, SHORT_ID_GRAMMAR_VERSION, SHORT_ID_GRAMMAR_VERSION_KEY, SHORT_ID_PREFIX_REKEY_V1,
     ShortIdDbs, Store, rekey_short_ids_v1_in_txn,
@@ -23,7 +24,7 @@ use super::hnsw_model_gates::{
 };
 use super::open_version_keys::{
     DB_MANIFEST, ERR_EXISTING_MISSING_HNSW_CONFIG, HnswCompatibilityState, LMDB_DATABASE_OPEN_LOCK,
-    MODEL_ID_KEY, MODEL_ID_NONE, OPEN_STORE_PATHS, PersistedHnswCompatibility, STORAGE_ABI_VERSION,
+    MODEL_ID_NONE, OPEN_STORE_PATHS, PersistedHnswCompatibility, STORAGE_ABI_VERSION,
     STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION, STORAGE_SCHEMA_VERSION_KEY,
     StorageMigrationPlan, VAULT_ROOT_OPEN_LOCK,
 };
@@ -490,7 +491,7 @@ pub(super) fn validate_fast_dims(config: &VaultConfig) -> Result<()> {
 pub(super) fn verify_existing_hnsw_config(store: &Store, config: &VaultConfig) -> Result<()> {
     let requested = PersistedHnswCompatibility::from_config(config);
     let rtxn = store.env.read_txn()?;
-    let stored = read_hnsw_compatibility(&store.hnsw_meta, &rtxn)?;
+    let stored = read_hnsw_compatibility(store, &rtxn)?;
     drop(rtxn);
     match stored {
         HnswCompatibilityState::Current(stored) if stored == requested => Ok(()),
@@ -522,10 +523,7 @@ pub(super) fn verify_existing_embedding_model(
         validate_embedding_model_id(requested)?;
     }
     let rtxn = store.env.read_txn()?;
-    let stored = match store.hnsw_meta.get(&rtxn, MODEL_ID_KEY)? {
-        Some(raw) => Some(parse_utf8_bytes(&raw)?),
-        None => None,
-    };
+    let stored = store.port_index_meta_with_raw(&rtxn, IndexMetaKey::ModelId, parse_utf8_bytes)?;
     drop(rtxn);
     if stored.as_deref() == requested {
         return Ok(());

@@ -57,9 +57,9 @@ pub use supervisor::{
     WakeSupervisorReport, WaveReadyDispatcher,
 };
 pub use tick::{
-    AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher,
-    HintSignal, HybridTick, IdleSample, NowMillis, PushTick, Tick, TickPushError, TickSource,
-    TimerTick, WakePolicyTicks, WakePusher, WakeSignal,
+    ArmedLane, AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource,
+    HintPusher, HintSignal, HybridTick, IdleSample, NowMillis, PushTick, Tick, TickPushError,
+    TickSource, TimerTick, WakePolicyTicks, WakePusher, WakeSignal,
 };
 
 pub use wave::WaveHost;
