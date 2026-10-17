@@ -58,7 +58,7 @@ use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
     HeldAssets, Landing, LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt,
-    PreflightReport, StampedOp, attach_evidence, land, preflight, project,
+    PreflightReport, StampedOp, attach_evidence, check_picture, land, preflight, project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -153,6 +153,7 @@ impl Vault {
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
+        self.check_pictures(ops)?;
         let ops = self.name_creations(ops)?;
         let stamped: Vec<StampedOp> = ops
             .iter()
@@ -197,6 +198,7 @@ impl Vault {
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
+        self.check_pictures(ops)?;
         let ops = self.name_creations(ops)?;
         let stamped: Vec<StampedOp> = ops
             .iter()
@@ -545,6 +547,24 @@ impl Vault {
                 Ok(op)
             })
             .collect()
+    }
+
+    /// Refuse a picture an operation writes whose asset does not resolve, or
+    /// whose bytes do not match its reference, when the operation is made
+    /// rather than at the export that writes it.
+    fn check_pictures(&self, ops: &[DeckOp]) -> Result<()> {
+        if ops.iter().all(|op| op.picture().is_none()) {
+            return Ok(());
+        }
+        let txn = self.store.env.read_txn()?;
+        let assets = VaultAssets {
+            vault: self,
+            txn: &txn,
+        };
+        for image in ops.iter().filter_map(DeckOp::picture) {
+            check_picture(image, &assets).map_err(live)?;
+        }
+        Ok(())
     }
 
     /// Open a deck fork at the live head for `actor`'s machine work in the run

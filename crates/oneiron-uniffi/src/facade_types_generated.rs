@@ -11435,6 +11435,20 @@ pub enum DeckOp {
         #[serde(rename = "geometry")]
         geometry: GeometryProps,
     },
+    #[serde(rename = "set_preset")]
+    SetPreset {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "preset")]
+        preset: Preset,
+    },
+    #[serde(rename = "set_payload")]
+    SetPayload {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "payload")]
+        payload: NodePayload,
+    },
     #[serde(rename = "replace_opaque")]
     ReplaceOpaque {
         #[serde(rename = "part")]
@@ -11827,6 +11841,11 @@ pub enum Conflict {
         #[serde(rename = "part")]
         part: String,
     },
+    #[serde(rename = "payload_vs_payload")]
+    PayloadVsPayload {
+        #[serde(rename = "node")]
+        node: u64,
+    },
 }
 
 /// `oneiron_docedit::live::pptx::RelationshipChange`.
@@ -11900,6 +11919,8 @@ pub struct DeckDiff {
     pub formatting_changed: Vec<u64>,
     #[serde(rename = "geometry_changed")]
     pub geometry_changed: Vec<u64>,
+    #[serde(rename = "payload_changed")]
+    pub payload_changed: Vec<u64>,
     #[serde(rename = "opaque_changed")]
     pub opaque_changed: Vec<OpaqueChange>,
     #[serde(rename = "affected_slides")]

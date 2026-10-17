@@ -1689,7 +1689,7 @@ export type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op:
 /** `oneiron::office_body::xlsx::XlsxBodyOp` */
 export type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null }
 /** `oneiron_docedit::live::pptx::DeckOp` */
-export type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } }
+export type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } }
 /** `oneiron::office_body::verbs::OfficeBodyOps` */
 export type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] }
 /** `oneiron::office_body::verbs::OfficeBodyEditRequest` */
@@ -1739,7 +1739,7 @@ export type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: 
 /** `oneiron_docedit::live::pptx::OpaqueChange` */
 export type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null }
 /** `oneiron_docedit::live::pptx::Conflict` */
-export type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } }
+export type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } } | { payload_vs_payload: { node: NodeId } }
 /** `oneiron_docedit::live::pptx::RelationshipChange` */
 export type RelationshipChange = { source: string; id: string; kind: string; before?: string | null; after?: string | null }
 /** `oneiron_docedit::live::pptx::SlideRender` */
@@ -1749,7 +1749,7 @@ export type RenderSide = { version: number; state_hash: number[]; export_key: nu
 /** `oneiron_docedit::live::pptx::RenderPair` */
 export type RenderPair = { head: RenderSide; candidate: RenderSide; changed: NodeId[] }
 /** `oneiron_docedit::live::pptx::DeckDiff` */
-export type DeckDiff = { base_version: number; head_version: number; proposal_version: number; added: NodeId[]; removed: NodeId[]; moved: NodeMove[]; text_changed: NodeId[]; formatting_changed: NodeId[]; geometry_changed: NodeId[]; opaque_changed: OpaqueChange[]; affected_slides: NodeId[]; head_only: NodeId[]; conflicts: Conflict[]; relationships: RelationshipChange[]; renders?: RenderPair | null }
+export type DeckDiff = { base_version: number; head_version: number; proposal_version: number; added: NodeId[]; removed: NodeId[]; moved: NodeMove[]; text_changed: NodeId[]; formatting_changed: NodeId[]; geometry_changed: NodeId[]; payload_changed: NodeId[]; opaque_changed: OpaqueChange[]; affected_slides: NodeId[]; head_only: NodeId[]; conflicts: Conflict[]; relationships: RelationshipChange[]; renders?: RenderPair | null }
 /** `oneiron::office_body::pptx::verbs::DeckReviewView` */
 export type DeckReviewView = { head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null }
 /** `oneiron_docedit::live::pptx::ApproveScope` */
