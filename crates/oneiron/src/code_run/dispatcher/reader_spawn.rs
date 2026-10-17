@@ -10,7 +10,10 @@ use std::collections::HashSet;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::code_run::storage::{NewReaderJob, ReportOutcome, SpawnAdmission, WaitSetOutcome};
-use crate::code_run::types::{SelfDeniedResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult};
+use crate::code_run::types::{
+    SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfFailedResult,
+};
 use crate::code_run::{
     DelegatedSource, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
     ReaderSpawnReceipt, SelfReaderReportCall, SelfReaderSpawnCall, SpawnHostSeat, TaskWaitPolicy,
@@ -24,6 +27,9 @@ use crate::{EntityId, Error, Result};
 /// `self.context` and `self.think`: no verbs, writes, ambient reads or
 /// children of its own.
 pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
+
+/// What the wait a not-done `tasks.wait` parks on says, before its set's id.
+const TASK_WAIT_SET_PROMPT: &str = "task_wait_set:";
 
 /// What binds a dispatcher to one reader child's job: its task, the
 /// generation its runner claimed it at, and the source it reads.
@@ -236,9 +242,14 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// `tasks.wait({tasks, ...})`: one wait over children of the call's run,
-    /// reduced now. A wait that is not done answers its reduction with
-    /// `done: false`; its first done reduction answers every later call of
-    /// the same step key.
+    /// reduced now. A wait that is done answers its reduction, and its first
+    /// done reduction answers every later call of the same step key. One that
+    /// is not parks the run on the set: the set's id is the wait's, its
+    /// settling delivers the reduction as the wait's reply, and the run
+    /// resumes from it.
+    ///
+    /// The wait keeps the `tasks.wait` marker a parked step records, as a
+    /// verb hook's ask does, its prompt naming the set.
     pub(super) fn dispatch_task_wait_set(
         &self,
         call: TaskWaitSetCall,
@@ -276,8 +287,9 @@ impl HostSelfDispatcher<'_> {
             return Ok(failed("task_wait_invalid"));
         }
         let cutoff = parent.deadline.child_cutoff();
+        let wait = reader_wait_id(parent_run, &call.step_key)?;
         let set = TaskWaitSet {
-            id: reader_wait_id(parent_run, &call.step_key)?,
+            id: wait,
             parent_run,
             tasks,
             policy,
@@ -291,7 +303,15 @@ impl HostSelfDispatcher<'_> {
                 .storage
                 .reduce_reader_wait(set, crate::unix_millis_now())?
             {
-                WaitSetOutcome::Reduced(result) => SelfDispatchOutcome::TaskWaitSet(result),
+                WaitSetOutcome::Reduced(result) if result.done => {
+                    SelfDispatchOutcome::TaskWaitSet(result)
+                }
+                WaitSetOutcome::Reduced(_) => SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                    wait_id: wait,
+                    effect: SelfEffect::TasksWait,
+                    reason: SelfDurableWaitReason::PeerResult,
+                    prompt: Some(format!("{TASK_WAIT_SET_PROMPT}{}", wait.to_hex())),
+                }),
                 WaitSetOutcome::Changed => failed("task_wait_changed"),
             },
         )

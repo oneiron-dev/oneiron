@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use heed::{RoTxn, RwTxn};
 
 use super::records::REPLAY_RECORDS;
+use super::wait_delivery::deliver_wait_in_txn;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
 use crate::attempt_queue::AttemptId;
 use crate::code_run::{
@@ -159,6 +160,13 @@ pub(crate) struct ReaderTxn<'t, 'e> {
     /// Rows written in this transaction by their full key: the encoded
     /// value, or `None` for a deleted row.
     staged: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    /// The canonical vault, whose wait deliveries commit in this
+    /// transaction; `None` on a session's route.
+    vault: Option<&'t Vault>,
+    /// The wait sets this transaction settled on a session's route, each
+    /// delivered along it once the transaction commits: its id, its reply
+    /// and when it settled.
+    settled: Vec<(EntityId, serde_json::Value, u64)>,
 }
 
 impl ReaderTxn<'_, '_> {
@@ -337,7 +345,8 @@ impl ReaderTxn<'_, '_> {
     }
 
     /// Reduces `set` now and keeps its first done reduction, whose due row
-    /// then goes.
+    /// then goes, and delivers it to the parent parked on the set (5B-0's
+    /// resumable wait): one delivery for all its children.
     fn reduce_set(&mut self, mut set: TaskWaitSet, now_ms: u64) -> Result<TaskWaitSetResult> {
         if let Some(settled) = set.settled.clone() {
             return Ok(settled);
@@ -349,8 +358,30 @@ impl ReaderTxn<'_, '_> {
             set.settled = Some(result.clone());
             self.put_wait(&set)?;
             self.delete_index(&due_key(set.until_ms, set.id))?;
+            self.deliver_settled_task_wait(set.id, &result, now_ms)?;
         }
         Ok(result)
+    }
+
+    /// The settled reduction of wait set `wait`, as the reply of the wait a
+    /// parent parked on it: in this transaction on the canonical vault, so a
+    /// resident parent's trap wakes in the commit that settles it; along the
+    /// session's route once this transaction commits otherwise.
+    fn deliver_settled_task_wait(
+        &mut self,
+        wait: EntityId,
+        result: &TaskWaitSetResult,
+        now_ms: u64,
+    ) -> Result<()> {
+        let reply = serde_json::to_value(result)
+            .map_err(|_| Error::InvariantViolation("a wait set reduction is plain data"))?;
+        match self.vault {
+            Some(vault) => {
+                deliver_wait_in_txn(vault, self.txn, wait, &reply, now_ms)?;
+            }
+            None => self.settled.push((wait, reply, now_ms)),
+        }
+        Ok(())
     }
 
     /// Reduces every wait set over `task` that is not settled yet.
@@ -421,39 +452,51 @@ pub(crate) enum WaitSetOutcome {
 impl ExecutorStorage<'_> {
     /// One transaction of the run's reader rows on its route: a canonical
     /// run's in one vault write transaction, a session-bound run's in its
-    /// room's routed one, answered as its participant stands.
+    /// room's routed one, answered as its participant stands. Nothing the
+    /// closure holds outlives the transaction, as the vault's grouped write
+    /// door requires.
     pub(crate) fn reader_txn<T>(
         &self,
         f: impl FnOnce(&mut ReaderTxn<'_, '_>) -> Result<T>,
     ) -> Result<T> {
         match self {
             Self::Canonical(vault) => {
-                let mut txn = vault.store.env.write_txn()?;
-                let answer = f(&mut ReaderTxn {
-                    txn: &mut txn,
-                    read: RoutedDbs::Base(&vault.store),
-                    write: RoutedDbs::Base(&vault.store),
-                    spend: SpendBook::new(vault),
-                    staged: BTreeMap::new(),
-                })?;
-                txn.commit()?;
-                Ok(answer)
+                let vault: &Vault = vault;
+                vault.with_write_txn_grouped(|txn| {
+                    f(&mut ReaderTxn {
+                        txn,
+                        read: RoutedDbs::Base(&vault.store),
+                        write: RoutedDbs::Base(&vault.store),
+                        spend: SpendBook::new(vault),
+                        staged: BTreeMap::new(),
+                        vault: Some(vault),
+                        settled: Vec::new(),
+                    })
+                })
             }
             Self::Session(binding) => {
                 let spend = binding.session.spend_book();
-                binding.answered(|| {
+                let (answer, settled) = binding.answered(|| {
                     binding
                         .session
                         .routed_side_txn(&binding.route, |txn, read, write| {
-                            f(&mut ReaderTxn {
+                            let mut tx = ReaderTxn {
                                 txn,
                                 read,
                                 write,
                                 spend,
                                 staged: BTreeMap::new(),
-                            })
+                                vault: None,
+                                settled: Vec::new(),
+                            };
+                            let answer = f(&mut tx)?;
+                            Ok((answer, tx.settled))
                         })
-                })
+                })?;
+                for (wait, reply, now_ms) in settled {
+                    self.deliver_wait(wait, &reply, now_ms)?;
+                }
+                Ok(answer)
             }
         }
     }
