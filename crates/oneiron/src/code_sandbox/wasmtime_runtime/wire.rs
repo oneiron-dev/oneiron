@@ -704,6 +704,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
             json!({ "output": output })
         }
         SelfDispatchOutcome::Team(answer) => json!({ "output": answer }),
+        SelfDispatchOutcome::TeamSubmitted(answer) => json!({ "output": answer }),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }

@@ -127,6 +127,7 @@ declare namespace self {
   const team: {
     record(input: { axis: "converge" | "diverge"; coverage?: { cellsFilled: number; cellsTotal: number } | null; decidedBy: { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number }; members: string[]; roles?: Record<string, number> | null; teamRef: string }): Promise<unknown>;
     start(input: { intentKey: string; members: { agent: string; briefing?: string | null; intentKey: string }[]; pattern: string; tournament?: string | null }): Promise<unknown>;
+    submit(input: { outputRevision: string; team: string }): Promise<unknown>;
   };
   const unfold: (input: { fold: string }) => Promise<unknown>;
   const use: (input: { arguments?: unknown; handle: string; operation: string }) => Promise<unknown>;

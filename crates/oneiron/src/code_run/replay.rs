@@ -168,6 +168,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::Team(_) if self.effect != SelfEffect::Team => Err(
                 invalid_code_run_replay("team answer belongs to another effect"),
             ),
+            SelfDispatchOutcome::TeamSubmitted(_) if self.effect != SelfEffect::Team => Err(
+                invalid_code_run_replay("team submit answer belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(

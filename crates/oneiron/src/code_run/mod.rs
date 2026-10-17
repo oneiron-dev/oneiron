@@ -25,6 +25,7 @@ pub(crate) mod run_verb_call;
 mod run_verbs;
 mod storage;
 mod support;
+mod team_submit;
 mod types;
 
 #[cfg(test)]
@@ -73,6 +74,8 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
+pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
