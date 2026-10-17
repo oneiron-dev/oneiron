@@ -6,7 +6,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
@@ -40,8 +40,9 @@ pub(crate) struct VerbHookState {
     bodies: Mutex<HashMap<String, Arc<str>>>,
     /// Invocations whose chain is running, with the actor that holds each.
     in_flight: InFlight,
-    #[cfg(feature = "code-sandbox-wasmtime")]
-    runtime: std::sync::OnceLock<std::result::Result<Box<dyn HookBodyRuntime>, String>>,
+    /// The process's one sandbox: the host's, when it installed one before
+    /// the first hooked call, else built on that call.
+    runtime: OnceLock<std::result::Result<Arc<dyn HookBodyRuntime>, String>>,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
@@ -162,23 +163,16 @@ impl VerbHookState {
         Ok(body)
     }
 
-    /// The vault's one sandbox, built on first use. `None` without the
-    /// sandbox feature: verb hooks then pass through. A sandbox that did not
-    /// build fails each run, so blocking hooks still fail safe.
+    /// The vault's one sandbox: the one the host installed, or one built on
+    /// first use. `None` without the sandbox feature and none installed:
+    /// verb hooks then pass through. A sandbox that did not build fails each
+    /// run, so blocking hooks still fail safe.
     pub(super) fn runtime(&self) -> Option<std::result::Result<&dyn HookBodyRuntime, &str>> {
         #[cfg(feature = "code-sandbox-wasmtime")]
-        {
-            Some(
-                self.runtime
-                    .get_or_init(build_sandbox)
-                    .as_deref()
-                    .map_err(String::as_str),
-            )
-        }
+        let runtime = Some(self.runtime.get_or_init(build_sandbox));
         #[cfg(not(feature = "code-sandbox-wasmtime"))]
-        {
-            None
-        }
+        let runtime = self.runtime.get();
+        runtime.map(|runtime| runtime.as_deref().map_err(String::as_str))
     }
 
     /// Marks `invocation` in flight for `actor`.
@@ -199,11 +193,11 @@ impl VerbHookState {
 }
 
 #[cfg(feature = "code-sandbox-wasmtime")]
-fn build_sandbox() -> std::result::Result<Box<dyn HookBodyRuntime>, String> {
+fn build_sandbox() -> std::result::Result<Arc<dyn HookBodyRuntime>, String> {
     use crate::runtime_hooks::sandbox::{HookSandbox, hook_component_bytes};
     let (bytes, pin) = hook_component_bytes();
     match HookSandbox::from_component(bytes, pin) {
-        Ok(sandbox) => Ok(Box::new(sandbox)),
+        Ok(sandbox) => Ok(Arc::new(sandbox)),
         Err(error) => {
             tracing::warn!(%error, "hook sandbox did not load; verb hooks fail");
             Err(format!("hook sandbox did not load: {error}"))
@@ -238,6 +232,13 @@ impl Vault {
     /// Serve calls it for `--no-hooks`; fact hooks keep their own switch.
     pub fn suppress_verb_hooks(&self) {
         self.verb_hook_state.suppressed.store(true, Ordering::Release);
+    }
+
+    /// Hands verb hooks the host's sandbox, so the process runs one. Serve
+    /// installs its fact-hook runner's before any call; once a hooked call
+    /// has built its own, this does nothing.
+    pub fn install_hook_runtime(&self, runtime: Arc<dyn HookBodyRuntime>) {
+        let _ = self.verb_hook_state.runtime.set(Ok(runtime));
     }
 
     /// Tells the verb hooks a binding or the switch changed, so the next
