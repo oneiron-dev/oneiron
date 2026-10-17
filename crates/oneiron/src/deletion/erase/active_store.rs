@@ -86,6 +86,19 @@ impl Vault {
         let had_merge_receipt =
             crate::skill_hub::erase_refinement_custody_in_txn(&self.store, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, true)?;
+        // A ChannelIdentity's or contact's own claim heads close while their
+        // claim_of edges still stand (OF-272).
+        let now = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
+        crate::counterparty_contact::close_family_claims_for_delete_in_txn(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            id,
+            now,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        )?;
         // A MACHINE claim's signed history controls go with it.
         let (existed, had_vector, had_graph_mutation, neighbors) =
             crate::batch::deindex_entity_with_machine_history(&self.store, wtxn, id)?;
@@ -213,6 +226,18 @@ impl Vault {
         if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
             crate::conversation_dag::invalidate_thread_meta_for_turn_put(&self.store, wtxn, *id)?;
         }
+        // A ChannelIdentity's or contact's own claim heads close before the
+        // shell replaces the row (OF-272).
+        crate::counterparty_contact::close_family_claims_for_delete_in_txn(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            wtxn,
+            id,
+            mutation_recorded_at,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+        )?;
         crate::channel_identity::clear_assignment_for_delete(
             &self.store,
             wtxn,

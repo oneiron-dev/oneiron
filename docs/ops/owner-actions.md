@@ -684,7 +684,17 @@ terms; a self-hosted server participates only once you set `failure_signal_expor
 endpoint = "https://…"     # ONEIRON_FAILURE_SIGNALS_ENDPOINT; HTTPS, or HTTP on loopback
 every_secs = 3600          # ONEIRON_FAILURE_SIGNALS_EVERY_SECS
 batch = 64                 # ONEIRON_FAILURE_SIGNALS_BATCH: code-fix records per send
+
+[failure_signals.candidates.tone-fix]    # a publisher candidate; file layers only
+instructions_file = "/etc/oneiron/candidates/tone-fix.txt"
+sha256 = "…"               # the file's SHA-256, lowercase hex
 ```
+
+A candidate is an instruction your publisher ships and you install and pin. The Coach replays
+each failure in the vault with the candidate added to the failing agent's instructions, and only
+the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
+fetches or installs it. A file that no longer matches its pin stops the server at start. At most
+8 candidates, 16 KiB each; a new candidate is tried on failures from then on, not on old ones.
 
 The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
@@ -693,6 +703,11 @@ ordinary outbound effect on `failure_signals/send` with its recorded receipt. Wh
 participates, the vault keeps a standing grant on that channel for the sender, so no send asks
 you; turning participation off revokes it. A record leaves the vault only once the publisher took
 it: a failed send keeps it for the next one.
+
+The counts come from the Coach's detectors. Each diagnostic they raise counts once, ever: a missed
+recall is `memory_miss`, a consolidation error `task_failure`, a consent storm or predicate drift
+`other` with its detector named. Your own refusal of a single consent ask is never counted. A
+diagnostic does not say which agent failed, so these counts carry the agent `unattributed`.
 
 ## Model-graded self-heal detectors
 
@@ -946,6 +961,41 @@ The commands open a stopped vault. A running server answers the same at
 Each answers with the key's catalog entry and rows. The host verbs `vault.settings.learning`,
 `.put` and `.clear` take the same input over the facade and MCP. All of them are the owner's
 alone, and clearing an absent row succeeds.
+
+The app's policy actions have host verbs too. Each runs the same action as
+`POST /v1/core/actions/{verb}`:
+- `vault.settings.wake_policy.set` with `{"policy", "idempotency_key"}` runs
+  `dreamer.wake_policy.set`, which needs the owner's own credential.
+- `vault.settings.inference_defaults` with `{}` runs `inference.defaults.read`.
+- `vault.settings.inference_defaults.replace` with `{"defaults", "idempotency_key"}` runs
+  `inference.defaults.replace`.
+
+The two inference verbs need the caller's Auto ceiling. Each answers with the action's
+`outcome`. A retry with the same idempotency key gets the first call's answer.
+
+## Widen proposals
+
+When an agent asks to spawn a child with more context than its own slice holds, the gate does not
+grant it. The ask is parked as a **widen proposal** for the board above (the attempt that
+dispatched the asking agent). Its id is the digest of the stored request, so the proposal you
+answer is the one you listed. Approving it widens the parent's slice and enqueues the child,
+under a one-time consent. Declining it is final: the decline stays on record, a retry of the same
+ask is refused, and the Coach counts it as a widen denial in its agent health review.
+
+```sh
+oneiron widen-proposals list                      # newest first
+oneiron widen-proposals list --state pending
+oneiron widen-proposals approve HEX64
+oneiron widen-proposals decline HEX64
+```
+
+The commands open a stopped vault. A running server answers the same at
+`GET /v1/owner/widen-proposals[?state=pending|approved|declined]`,
+`POST /v1/owner/widen-proposals/approve` and `POST /v1/owner/widen-proposals/decline`, each with
+`{"proposal_id"}`. The host verbs `vault.widen_proposals`, `.approve` and `.decline` take the same
+input over the facade and MCP. Each answer shows the parent and board attempts, the target, the
+three context descriptors (never their content), when it was raised, and how it settled. Only the
+owner of the board's TASK may answer one.
 
 ## Legal holds
 
