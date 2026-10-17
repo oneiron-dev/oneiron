@@ -18957,6 +18957,7 @@
      "path": "src/edit_distance/compile.rs",
      "purpose": "Compiling approved preferences into acting revisions (OF-379): every manual edit is a critique of the…",
      "surface": {
+      "crate-vis": 2,
       "enum": 4,
       "fn": 4,
       "struct": 2
