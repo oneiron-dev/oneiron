@@ -4,7 +4,7 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
 use crate::dreamer_wake::{DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution};
 use crate::error::Result;
-use crate::{LlmUsage, Vault};
+use crate::{LlmResponse, LlmUsage, Vault};
 
 /// A checkpoint charges only steps without a durable paid receipt. An earlier
 /// unbilled memo (for example, after a trap refunded its reservation) still
@@ -37,6 +37,26 @@ impl StepChargeTally {
             completed_units: self.units,
             step_hashes: self.step_hashes.clone(),
         }
+    }
+
+    /// Parks on a deterministic fallback's `response` to the step
+    /// `step_hash`. A fallback that stood in for a provider outage parks as
+    /// one, and the step's memo goes with it, so the attempt the offer's
+    /// recovery resumes asks the model again rather than replaying the
+    /// fallback (OF-305).
+    pub(super) fn park_on_fallback(
+        &self,
+        vault: &Vault,
+        attempt_id: AttemptId,
+        step_hash: [u8; 32],
+        reason: &str,
+        response: &LlmResponse,
+    ) -> Result<DreamerAttemptExecution> {
+        let cause = DreamerParkCause::of_response(response);
+        if matches!(cause, DreamerParkCause::ProviderUnavailable) {
+            crate::llm::forget_step_memo(vault, attempt_id, &step_hash)?;
+        }
+        Ok(self.park_for(reason, cause))
     }
 
     pub(super) fn record_terminal(

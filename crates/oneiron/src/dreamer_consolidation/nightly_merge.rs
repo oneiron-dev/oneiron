@@ -342,7 +342,13 @@ impl ConsolidationExecutor<'_> {
                         &response.usage,
                     )?;
                     if failure_policy.is_some() {
-                        return Ok(charges.park("nightly narrative requires generation"));
+                        return charges.park_on_fallback(
+                            ctx.vault,
+                            attempt.status.attempt.id,
+                            hash,
+                            "nightly narrative requires generation",
+                            &response,
+                        );
                     }
                     response
                 }

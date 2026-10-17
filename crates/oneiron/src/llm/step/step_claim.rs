@@ -718,6 +718,26 @@ pub(super) fn step_index_lookup(
     step_index_lookup_in_txn(vault, &rtxn, attempt_id, step_hash)
 }
 
+/// Forgets `attempt_id`'s memo of the step `step_hash`, so the attempt's next
+/// call of that step asks its model again. The terminal claim stays; only the
+/// index row that would replay it goes.
+pub(crate) fn forget_step_memo(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<()> {
+    vault.with_write_txn(|wtxn| {
+        let key = StepIndexKey {
+            attempt_id,
+            step_hash: *step_hash,
+        };
+        let Some(claim_id) = STEP_INDEX_FORWARD.get(&vault.store, wtxn, &key)? else {
+            return Ok(());
+        };
+        deindex_dreamer_step_claim(&vault.store, wtxn, &claim_id)
+    })
+}
+
 pub(super) fn step_index_lookup_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

@@ -100,13 +100,27 @@ impl FallbackRegistry {
                 reason: "invalid terminal content".into(),
             });
         }
+        // The marker carries the failure in its serde form, so a reader
+        // gets it back typed through [`Self::source_of`].
+        let source = serde_json::to_string(failure).unwrap_or_default();
         Ok(LlmResponse {
             message,
             usage: LlmUsage::zero(),
             finish_reason: FinishReason::Other {
-                name: format!("fallback:{}:{failure:?}", declared.name),
+                name: format!("fallback:{}:{source}", declared.name),
             },
         })
+    }
+
+    /// The provider failure a deterministic fallback's `response` stood in
+    /// for; `None` for a model's own response.
+    #[must_use]
+    pub fn source_of(response: &LlmResponse) -> Option<FatalLlmError> {
+        let FinishReason::Other { name } = &response.finish_reason else {
+            return None;
+        };
+        let (_, source) = name.strip_prefix("fallback:")?.split_once(':')?;
+        serde_json::from_str(source).ok()
     }
 }
 struct FailClosed;

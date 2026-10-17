@@ -700,6 +700,16 @@ impl DreamerParkCause {
         }
     }
 
+    /// The cause of a park a deterministic fallback's answer made: the
+    /// provider failure it stood in for, else other. A fallback for an
+    /// outage parks as one, so the offer's recovery resumes it.
+    #[must_use]
+    pub fn of_response(response: &crate::llm::LlmResponse) -> Self {
+        crate::llm::FallbackRegistry::source_of(response).map_or(Self::Other, |source| {
+            Self::of_llm(&crate::llm::LlmError::Fatal(source))
+        })
+    }
+
     /// The cause of a park a failed durable step made: its model failure's
     /// cause, a checkpoint at the wake-pass deadline, or other.
     #[must_use]

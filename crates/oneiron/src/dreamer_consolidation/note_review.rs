@@ -222,7 +222,13 @@ impl ConsolidationExecutor<'_> {
                 // A fallback reply is no review: the NOTE stays unseen, so
                 // the next pass asks the model again.
                 if failure_policy.is_some() {
-                    return Ok(Some(charges.park("note review needs the extraction model")));
+                    return Ok(Some(charges.park_on_fallback(
+                        ctx.vault,
+                        run.attempt_id,
+                        hash,
+                        "note review needs the extraction model",
+                        &response,
+                    )?));
                 }
                 response
             }
