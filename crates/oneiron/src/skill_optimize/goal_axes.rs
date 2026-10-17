@@ -13,7 +13,9 @@ use crate::error::{Error, Result};
 use crate::learning::honesty::HONESTY_AXIS;
 use crate::skill::SkillRecord;
 
-use super::gate::{HeldOutReplayCase, held_out_receipts, skill_body_binding_digest};
+use super::gate::{
+    HeldOutReplayCase, HeldOutReplayNotes, held_out_receipts, skill_body_binding_digest,
+};
 
 /// Offline axes are judged on the reserved set; online axes sample live arms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +75,20 @@ pub trait GoalAxisBandits {
     /// # Errors
     /// A proposal that names no skill it revises, or storage errors.
     fn for_proposal(&self, proposal: &EntityId) -> Result<Box<dyn GoalAxisBandit + '_>>;
+
+    /// The bandit for `proposal` whose pulls ask their axis question of
+    /// `notes`: a caller's judge (the Coach's, on its wake pass's clock) rules
+    /// each live pull. A host whose pulls ask no judge keeps `for_proposal`.
+    /// # Errors
+    /// As `for_proposal`.
+    fn for_proposal_judged<'b>(
+        &'b self,
+        proposal: &EntityId,
+        notes: &'b dyn HeldOutReplayNotes,
+    ) -> Result<Box<dyn GoalAxisBandit + 'b>> {
+        let _ = notes;
+        self.for_proposal(proposal)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

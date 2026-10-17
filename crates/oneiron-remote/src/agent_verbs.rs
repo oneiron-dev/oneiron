@@ -638,6 +638,9 @@ impl OneironClient {
                 "vault.questions.pause" => remote_agent_verb_output::<
                     oneiron::receipt::QuestionPaused,
                 >(client, verb, &input),
+                "vault.questions.backfill" => remote_agent_verb_output::<
+                    oneiron::llm::decision::questions::ScheduledBackfill,
+                >(client, verb, &input),
                 "vault.questions.read" => remote_agent_verb_output::<
                     Option<oneiron::llm::decision::questions::QuestionRecord>,
                 >(client, verb, &input),
@@ -3256,6 +3259,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.questions.pause", value)
+    }
+    pub fn vault_questions_backfill(
+        &self,
+        input: &oneiron::receipt::QuestionBackfillRequest,
+    ) -> Result<oneiron::llm::decision::questions::ScheduledBackfill, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.questions.backfill", value)
     }
     pub fn vault_questions_read(
         &self,
