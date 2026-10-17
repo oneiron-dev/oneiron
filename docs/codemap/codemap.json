@@ -2379,7 +2379,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -22009,15 +22009,16 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DeleteVaultPlan",
+      "RemovalExportCopy",
       "RemoveOwnerPlan",
       "SharedActExecution",
       "SharedActExecutionReceipt",
@@ -22031,12 +22032,12 @@
      "path": "src/federation/shared_act/mod.rs",
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "const": 2,
+      "crate-vis": 4,
       "enum": 2,
-      "fn": 9,
+      "fn": 10,
       "re-export": 2,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -28816,7 +28817,7 @@
      "path": "src/memory/entity_erase.rs",
      "purpose": "Owner erase that can also take every record in this vault holding the same bytes",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 2,
       "struct": 2
@@ -45541,7 +45542,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 267
+      "fn": 268
      }
     },
     {
@@ -45718,6 +45719,7 @@
      "path": "src/task_verb/sdk_shared.rs",
      "purpose": "The inputs and answers of the shared-vault rows a host door answers (OF-158): the acts the shared preset…",
      "surface": {
+      "crate-vis": 1,
       "fn": 13,
       "struct": 12
      }
@@ -45728,6 +45730,7 @@
      "notable": [
       "GuestSlipMintRequest",
       "GuestSlipMinted",
+      "InvitationSlipRequest",
       "SharedEraseAskCloseRequest",
       "SharedEraseAskRequest",
       "SharedInvitationRequest",
@@ -45737,8 +45740,8 @@
      "purpose": "The invitation rows of a shared vault (OF-531 / OF-158): `vault.members.add` invites, and the invitee lists…",
      "surface": {
       "crate-vis": 1,
-      "fn": 13,
-      "struct": 6
+      "fn": 15,
+      "struct": 7
      }
     },
     {
@@ -51702,7 +51705,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 144,
+   "over_bar": 145,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3125,
    "test_files": 903
@@ -59576,7 +59579,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 222
+      "fn": 223
      }
     },
     {
@@ -60592,7 +60595,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 223
+      "fn": 224
      }
     },
     {
@@ -63323,13 +63326,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/shared_member_doors.rs",
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -70521,6 +70524,7 @@
       "InspectionResolved",
       "InspectionState",
       "InvitationSlip",
+      "InvitationSlipRequest",
       "IssueCategory",
       "JoinCause",
       "JoinDecision",
@@ -70943,7 +70947,7 @@
      "purpose": "—",
      "surface": {
       "enum": 179,
-      "struct": 455
+      "struct": 456
      }
     },
     {
