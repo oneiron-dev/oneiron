@@ -30,7 +30,22 @@ impl WindowManager {
         id: crate::EntityId,
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
-        self.documents.open(id)?.export_owner(remote_vv)
+        self.documents
+            .open(id)?
+            .export_owner(remote_vv, crate::sync::window::Withhold::Unknown)
+    }
+
+    /// [`Self::export_owner_document`] judged for the machine `peer` the lane
+    /// proved: it reads the NOTEs of the private worlds that machine may read.
+    pub fn export_owner_document_for(
+        self: &Arc<Self>,
+        id: crate::EntityId,
+        remote_vv: &[u8],
+        peer: crate::authority::PeerMachine,
+    ) -> Result<Vec<u8>> {
+        self.documents
+            .open(id)?
+            .export_owner(remote_vv, crate::sync::window::Withhold::Peer(peer))
     }
 
     /// Grant-backed text-plane export for a caller-selected window. The

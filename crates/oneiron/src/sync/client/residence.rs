@@ -611,8 +611,21 @@ impl SyncClient {
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
+        self.materialize_sealed_mirror(window);
         self.manager.notify_promotion(window);
         Ok(())
+    }
+
+    /// The sealed packets this machine took in while `window` stood
+    /// unpromoted wait in its mirror: the promoted window holds their rows
+    /// now. A failure leaves them there for the next packet's import.
+    fn materialize_sealed_mirror(&self, window: &WindowKey) {
+        let Some(world) = window.world() else {
+            return;
+        };
+        if let Err(error) = self.manager.materialize_sealed_mirror(world, window) {
+            tracing::warn!(%error, %window, "sealed mirror not materialized on promotion");
+        }
     }
 
     /// Keep a window this machine already holds in full (it synced all) as
@@ -703,6 +716,7 @@ impl SyncClient {
                     .put(txn, &format!("rp:w:{window}"), &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
+        self.materialize_sealed_mirror(window);
         self.manager.notify_promotion(window);
         Ok(true)
     }

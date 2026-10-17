@@ -280,16 +280,19 @@ impl SyncClient {
             window_sub_tags::PROMOTION_GRANTED | window_sub_tags::PROMOTED_INVALIDATE
                 if self.config.residence_mode == SyncResidenceMode::Opened =>
             {
+                let catch_up = self.setup_catch_up(window_key);
                 if !payload.is_empty()
-                    || self
-                        .vault
-                        .sync_state_get(&format!("rp:w:{window_key}"))
-                        .map_err(|e| TransportError::Storage(e.to_string()))?
-                        .is_none()
+                    || (!catch_up
+                        && self
+                            .vault
+                            .sync_state_get(&format!("rp:w:{window_key}"))
+                            .map_err(|e| TransportError::Storage(e.to_string()))?
+                            .is_none())
                 {
                     return Err(TransportError::InvalidPayload("unpromoted window control"));
                 }
-                if sub_tag == window_sub_tags::PROMOTION_GRANTED {
+                // The setup window's catch-up asks for the window only once the home granted it.
+                if sub_tag == window_sub_tags::PROMOTION_GRANTED && !catch_up {
                     return Ok(Vec::new());
                 }
                 let window = self.ensure_window(window_key)?;
@@ -365,6 +368,18 @@ impl SyncClient {
                     .map_err(|_| TransportError::VersionVectorDecode)?;
                 let window = self.ensure_window(window_key)?;
                 let doc = &window.doc;
+                // The setup window's catch-up sends nothing up: its vector alone
+                // asks the home for what this device lacks.
+                if self.setup_catch_up(window_key) {
+                    return Ok(vec![
+                        transport::encode_window_sync(
+                            window_key,
+                            window_sub_tags::VV_RESPONSE,
+                            &doc_version_vector(doc),
+                        )
+                        .into_result()?,
+                    ]);
+                }
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
                 };
@@ -463,6 +478,9 @@ impl SyncClient {
                 // local diff. Same fail-closed VV decoding as VV_REQUEST.
                 let server_vv = VersionVector::decode(payload)
                     .map_err(|_| TransportError::VersionVectorDecode)?;
+                if self.setup_catch_up(window_key) {
+                    return Ok(Vec::new());
+                }
                 let window = self.ensure_window(window_key)?;
                 let Some(delta) = self.export_to_server(&window, payload, &server_vv)? else {
                     return Ok(vec![replacement_request(window_key)?]);
@@ -492,9 +510,28 @@ impl SyncClient {
                 };
                 let packet = crate::world_keys::SealedResidenceContent::from_bytes(payload)
                     .map_err(|_| TransportError::InvalidPayload("malformed sealed packet"))?;
-                self.manager
-                    .take_sealed_residence_content(world, &key, &packet)
-                    .map_err(|_| TransportError::InvalidPayload("sealed packet refused"))?;
+                // An opened-item machine materializes a packet only for a
+                // window it holds promoted, judged again once the handle is
+                // held: a demotion that ended since the request leaves the
+                // window emptied, and the held handle defers a later one. Any
+                // other window's packet waits in its mirror for a promotion.
+                let opened = self.config.residence_mode == SyncResidenceMode::Opened;
+                let held = if opened && self.full_window_exchange_allowed(window_key)? {
+                    Some(self.ensure_window(window_key)?)
+                } else {
+                    None
+                };
+                let materialize =
+                    !opened || (held.is_some() && self.full_window_exchange_allowed(window_key)?);
+                let taken = if materialize {
+                    self.manager
+                        .take_sealed_residence_content(world, &key, &packet)
+                } else {
+                    self.manager
+                        .take_sealed_residence_mirror(world, &key, &packet)
+                };
+                drop(held);
+                taken.map_err(|_| TransportError::InvalidPayload("sealed packet refused"))?;
                 Ok(Vec::new())
             }
             window_sub_tags::SEALED_REQUEST => {
@@ -1100,12 +1137,23 @@ impl SyncClient {
     /// VV-equal against a fresh local doc — and the queue would be cleared
     /// with the ops lost in flight (for a delete-bearing update, a vanished
     /// GDPR tombstone).
+    ///
+    /// An opened-item machine mirrors queued bytes only into a window it
+    /// still holds promoted, judged again once the handle is held: a copy
+    /// that outlived its queue row does not reopen a window a demotion
+    /// emptied. An ungranted window's rows stay queued, unsent.
     pub fn import_queued_update(
         &mut self,
         window_key: &str,
         update: &[u8],
     ) -> std::result::Result<(), TransportError> {
+        if !self.full_window_exchange_allowed(window_key)? {
+            return Ok(());
+        }
         let window = self.ensure_window(window_key)?;
+        if !self.full_window_exchange_allowed(window_key)? {
+            return Ok(());
+        }
         window
             .doc
             .import(update)

@@ -33,6 +33,8 @@ use oneiron::task_verb::HostBinding;
 use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::OwnedMutexGuard;
 
+use crate::config::models::PlannerSettings;
+
 /// An action on a live-run row named no handle.
 pub(crate) const LIVE_RUN_REQUIRED: &str = "live_run_required";
 /// The handle is not one this host issues.
@@ -129,6 +131,11 @@ pub(crate) struct LiveRunEntry {
     actor: WriteActor,
     leased: AttemptRecord,
     proof: HostBinding,
+    /// The host's `[models.planner]` its runner plans under, and the model
+    /// the run executes on: an action's leader rows are planned as its
+    /// entries' are.
+    planner: Option<PlannerSettings>,
+    executor: String,
     attached: Mutex<Option<CodeRunLiveRunBinding>>,
     serial: Arc<tokio::sync::Mutex<()>>,
 }
@@ -158,9 +165,14 @@ impl LiveRunEntry {
 
 impl LiveRuns {
     /// Registers run `run`, which its runner enters as `actor` under the
-    /// lease of `leased`, proven by `proof`. The same lease keeps its entry,
-    /// attachment and guard; another replaces them, keeping the attachment
-    /// the run's replay row holds only when it names this exact lease.
+    /// lease of `leased`, proven by `proof`, planning under `planner` on the
+    /// model `executor`. The same lease keeps its entry, attachment and
+    /// guard; another replaces them, keeping the attachment the run's replay
+    /// row holds only when it names this exact lease.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one fact of the registered run"
+    )]
     pub(crate) fn register(
         &self,
         vault: &Vault,
@@ -168,6 +180,8 @@ impl LiveRuns {
         actor: WriteActor,
         leased: &AttemptRecord,
         proof: HostBinding,
+        planner: Option<PlannerSettings>,
+        executor: String,
     ) -> oneiron::Result<Arc<LiveRunEntry>> {
         self.prune(vault);
         if let Some(entry) = self.get(run)
@@ -182,6 +196,8 @@ impl LiveRuns {
             actor,
             leased: leased.clone(),
             proof,
+            planner,
+            executor,
             attached: Mutex::new(attached),
             serial: Arc::default(),
         });
@@ -355,6 +371,12 @@ pub(crate) struct ResolvedLiveRun {
 }
 
 impl ResolvedLiveRun {
+    /// The `[models.planner]` the run's runner plans under, and the model it
+    /// executes on, for the planner its action's leader rows run on.
+    pub(crate) fn planner(&self) -> (Option<&PlannerSettings>, &str) {
+        (self.entry.planner.as_ref(), &self.entry.executor)
+    }
+
     /// The idempotency key an action through this handle runs under.
     pub(crate) fn action_key(&self, key: &str) -> oneiron::Result<String> {
         self.binding.action_key(key)

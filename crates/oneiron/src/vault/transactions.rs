@@ -16,9 +16,10 @@ use crate::store::{
 };
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
-/// a pathological prefix scans a very large sync_state database.
+/// a pathological prefix scans a very large sync_state database. Deletion's
+/// window update-key read through the window-row port keeps the same cap.
 #[cfg(feature = "sync")]
-const MAX_SYNC_STATE_KEYS: usize = 10_000;
+pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
 /// Generic sync diagnostics may not edit the inputs to an authority fold.
 /// Authority-owned writers use their own validated doors and advance the
@@ -29,7 +30,8 @@ const MAX_SYNC_STATE_KEYS: usize = 10_000;
 /// it (H161 sidecars). Nor a delete's fence, hard-delete marker or topology
 /// reservation: only the delete doors write them. Nor a federation world's
 /// registration or stale stamp: only the registration and the stale sweep
-/// write them.
+/// write them. Nor a peer-origin digest: only the peer import records what it
+/// brought.
 #[cfg(feature = "sync")]
 fn check_generic_sync_state_key(key: &str) -> Result<()> {
     if key.starts_with("authlog:") || key.starts_with("peerauth:") {
@@ -66,6 +68,14 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
         return Err(Error::InvalidConfig(
             "federation world registrations and stale stamps are written only by the engine"
                 .to_owned(),
+        ));
+    }
+    if key
+        .as_bytes()
+        .starts_with(crate::side_table::SYNC_PEER_ORIGIN.prefix)
+    {
+        return Err(Error::InvalidConfig(
+            "peer-origin digests are written only by the peer import".to_owned(),
         ));
     }
     Ok(())
