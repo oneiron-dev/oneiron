@@ -315,7 +315,7 @@ impl VoiceHost {
                             MediaEvent::In(input) => self.media_in(input, bridge, outputs),
                             MediaEvent::Brain(out) => self.brain_out(out, bridge, outputs).await?,
                             MediaEvent::Verdict(verdict) => self.verdict(verdict, bridge, outputs),
-                            MediaEvent::Tick => self.speech_tick(bridge, outputs),
+                            MediaEvent::Tick => self.speech_tick(bridge, outputs).await?,
                             // Spoken audio plays only for the session's current generation.
                             MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => {
                                 self.spoken(frame, bridge).await?;

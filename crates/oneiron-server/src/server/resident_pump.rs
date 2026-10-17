@@ -20,21 +20,22 @@
 //! `tasks.create`, under the run's own agent, with the run's lease as the
 //! TASK's creator (OF-532). Every other host row answers
 //! `agent_verb_door_unbound`, and its run verbs are its own. Its model calls
-//! spend under its attempt's spend scope (OF-533).
+//! spend under its attempt's spend scope (OF-533), and it may spawn reader
+//! children under that scope.
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use oneiron::agent_dispatch::{
-    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, ResidentAgentSpec,
+    AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, ResidentAgentSpec, SpendScopeId,
     agent_dispatch_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttemptResult};
-use oneiron::claim::ScopedReadActorKey;
+use oneiron::claim::{CallerLocality, ScopedReadActorKey};
 use oneiron::code_run::{
     AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, HostSelfDispatcher,
-    RunCall, SelfAgentVerbCall, bind_wait_trap,
+    RunCall, SelfAgentVerbCall, SpawnHostSeat, bind_wait_trap,
 };
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
@@ -55,7 +56,7 @@ use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use tokio::sync::broadcast;
 
-use super::SyncServer;
+use super::{ReaderSeats, SyncServer};
 use crate::decision_host::DecisionHost;
 use crate::mcp::{McpCodeModeProvider, enter_engine_native_run};
 
@@ -283,7 +284,13 @@ impl SyncServer {
                 return true;
             }
         };
-        let ran = run_bound(vault, host.provider().as_ref(), &claimed, key);
+        let ran = run_bound(
+            vault,
+            host.provider().as_ref(),
+            &claimed,
+            key,
+            &self.reader_runner.seats(),
+        );
         if let Err(error) = settle(vault, self.decision_host(), &claimed, ran) {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
@@ -326,6 +333,7 @@ fn run_bound(
     provider: &dyn McpCodeModeProvider,
     claimed: &Claimed,
     key: &str,
+    seats: &ReaderSeats,
 ) -> Result<EngineExecutorOutcome, String> {
     let status = &claimed.status;
     let actor = agent_dispatch_actor(&status.input).map_err(text)?;
@@ -335,6 +343,18 @@ fn run_bound(
     let config = provider
         .executor_config(vault, run_id, &claimed.task)
         .map_err(text)?;
+    // Its model calls and its reader children spend under the attempt's
+    // scope. An unmetered attempt's calls stay on the provider's meter, and
+    // it names the scope it would spend under, which is not open, so its
+    // spawns answer `reader_spawn_unmetered`. Its door withholds nothing, so
+    // its children's reads withhold nothing, as its own do.
+    let metered = AgentDispatcher::new(vault)
+        .spend_scope_for_attempt(status.attempt.id)
+        .map_err(text)?;
+    let spend = metered
+        .clone()
+        .unwrap_or_else(|| SpendScopeId::for_attempt(&status.attempt.id));
+    let seat = seats.seat(run_id, spend, CallerLocality::OnDevice);
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -348,6 +368,8 @@ fn run_bound(
             status,
             actor,
             &config,
+            &seat,
+            metered.as_ref(),
             compaction.as_mut(),
             &reactor,
         )?;
@@ -366,14 +388,21 @@ fn run_bound(
 
 /// One entry of the run, as `execute_code` enters its runs, but bound to the
 /// leased attempt: its dispatcher carries the attempt, so `tasks.refuse`
-/// reaches the TASK it realizes, a TASK it creates runs under it, and its
-/// model calls spend under its spend scope.
+/// reaches the TASK it realizes, a TASK it creates runs under it, its model
+/// calls spend under `spend`, and `seat`, which its reader children spawn
+/// under.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the run's host binding"
+)]
 fn enter_run(
     vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
     status: &AgentDispatchStatus,
     actor: WriteActor,
     config: &EngineExecutorConfig,
+    seat: &SpawnHostSeat,
+    spend: Option<&SpendScopeId>,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
 ) -> Result<EngineExecutorOutcome, String> {
@@ -382,10 +411,8 @@ fn enter_run(
         .with_agent_verb_door(Arc::new(TaskDoor {
             vault: Arc::clone(vault),
             actor,
-        }));
-    let spend = AgentDispatcher::new(vault)
-        .spend_scope_for_attempt(status.attempt.id)
-        .map_err(text)?;
+        }))
+        .with_reader_spawn(seat.clone());
     enter_engine_native_run(
         vault,
         provider,
@@ -394,7 +421,7 @@ fn enter_run(
         format!("agent-run:{}", config.run_id.to_hex()),
         compaction,
         reactor,
-        spend.as_ref(),
+        spend,
     )
     .map_err(text)
 }
@@ -527,6 +554,16 @@ fn settle(
     let status = &claimed.status;
     let attempt = &status.attempt;
     let now = unix_now();
+    // OF-540: the run's execution context, bound while its lease holds; one
+    // that cannot bind leaves the run to close unattributed.
+    if let Err(error) = oneiron::skill_attribution::bind_agent_run_attribution(
+        vault,
+        attempt.id,
+        LEASE_OWNER,
+        decisions.ladder(),
+    ) {
+        tracing::warn!(%error, attempt = ?attempt.id, "an agent run's pack attribution did not bind");
+    }
     let reason = match ran {
         Ok(outcome) => match outcome.status {
             EngineExecutorStatus::Complete => {

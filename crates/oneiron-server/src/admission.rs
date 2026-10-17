@@ -155,6 +155,19 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         self.wait_blocking(None)
     }
 
+    /// A free permit for the host's own work, or `None` with nothing put in
+    /// line: the work waits for a later look rather than for a turn.
+    pub(crate) fn try_admit_background(&self) -> Option<Permit> {
+        let mut queue = lock(&self.pool.queue);
+        // A free permit means nobody waits, as in `enter`.
+        if queue.held >= self.pool.bound {
+            return None;
+        }
+        queue.held += 1;
+        drop(queue);
+        Some(self.permit())
+    }
+
     fn wait_blocking(&self, key: Option<K>) -> Result<Permit, WaitTimedOut> {
         let mut place = match self.enter(key) {
             Entry::Admitted(permit) => return Ok(permit),

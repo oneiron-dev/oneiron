@@ -16,7 +16,6 @@ mod exec_host;
 mod quickjs_provider;
 mod run_seats;
 #[cfg(feature = "code-sandbox-wasmtime")]
-pub(crate) use self::quickjs_provider::MeteredBackend;
 pub use self::quickjs_provider::{McpQuickJsProvider, checked_in_quickjs_runtime};
 pub mod oauth_client;
 mod paging;
@@ -56,8 +55,8 @@ pub use self::endpoint_schema::{
 pub(crate) use self::exec_host::enter_engine_native_run;
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpEngineNativeCodeHost, RunCompactionSeat, bind_mcp_code_execution_host,
-    mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
+    McpCodeModeProvider, McpEngineNativeCodeHost, ReaderMeter, RunCompactionSeat,
+    bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub use self::paging::{
     MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource,
