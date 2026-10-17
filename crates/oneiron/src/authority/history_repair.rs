@@ -16,7 +16,9 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault, error::Result};
 
-use super::history_transfer::{DecodedRow, PageVerdict, decode_page, history_in_txn, page_root};
+use super::history_transfer::{
+    AdoptedPrefix, DecodedRow, PageVerdict, decode_page, history_in_txn, page_root,
+};
 
 /// Key: the row's entry hash. Value: its original signed bytes. Device-local
 /// repair progress: no image carries it.
@@ -151,7 +153,9 @@ impl Vault {
     /// Stages `decoded`'s rows the log does not hold, after the byte checks
     /// a page passes before any fold: canonical bytes and signatures, one
     /// genesis and vault across the log, the stage and the page, and each
-    /// new row's parents held, staged or earlier beside it.
+    /// new row's parents held, staged or earlier beside it. On a vault that
+    /// adopted a checkpoint image, its pin's genesis is the genesis and its
+    /// covered rows are held for that check ([`AdoptedPrefix`]).
     fn stage_repair_rows(&self, decoded: &[DecodedRow]) -> Result<AuthorityHistoryRequest> {
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
@@ -162,7 +166,10 @@ impl Vault {
                 .entry(*hash)
                 .or_insert_with(|| (bytes.clone(), entry.clone()));
         }
-        page_root(&merged, &resident)?.ok_or_else(invalid_authority)?;
+        let adopted =
+            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
+        page_root(&merged, &resident, adopted.as_ref().map(AdoptedPrefix::of))?
+            .ok_or_else(invalid_authority)?;
         for (hash, bytes, entry) in decoded {
             if resident.contains(hash) {
                 continue;

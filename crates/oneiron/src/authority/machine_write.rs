@@ -489,9 +489,16 @@ pub(crate) fn machine_claim_read_admitted(
     ))
 }
 
-/// Exact signed-log causal descent; an advisory timestamp or a claimed head
-/// cannot backdate an event past re-root/revocation. Both hashes must fold
-/// valid in the same vault snapshot. No process-local watermark is trusted.
+/// Exact signed-log causal descent: whether `old` is a proper ancestor of
+/// `successor` through the rows' signed parent hashes (a row never descends
+/// from itself), so an advisory timestamp or a claimed head cannot backdate
+/// an event past re-root/revocation. Each endpoint is a row this vault
+/// stores, or, on a vault that adopted a checkpoint image, a covered row
+/// that stands ([`covered_endpoint_stands`]). The walk reads a stored row's
+/// parents, else a covered row's summary, and needs no row between the
+/// endpoints valid. It judges no current validity: each caller checks the
+/// standing it needs in its own snapshot. No process-local watermark is
+/// trusted.
 pub(crate) fn machine_history_authority_descends(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -516,23 +523,49 @@ pub(crate) fn machine_history_authority_descends(
         }
         by_hash.insert(hash, entry);
     }
-    if !by_hash.contains_key(old) || !by_hash.contains_key(successor) {
+    let adopted = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?;
+    let image = adopted
+        .as_ref()
+        .map(super::VerifiedAuthorityCheckpoint::image);
+    let stands = |hash: &[u8; 32]| {
+        by_hash.contains_key(hash)
+            || image.is_some_and(|image| covered_endpoint_stands(image, hash))
+    };
+    let parents = |hash: &[u8; 32]| match by_hash.get(hash) {
+        Some(entry) => Some(entry.parent_hashes.as_slice()),
+        None => image
+            .and_then(|image| image.rows.get(hash))
+            .map(|row| row.parents.as_slice()),
+    };
+    if !stands(old) || !stands(successor) {
         return Ok(false);
     }
+    let Some(start) = parents(successor) else {
+        return Ok(false);
+    };
     let mut seen = std::collections::BTreeSet::new();
-    let mut stack = by_hash[successor].parent_hashes.clone();
+    let mut stack = start.to_vec();
     while let Some(hash) = stack.pop() {
         if hash == *old {
             return Ok(true);
         }
         if seen.insert(hash) {
-            let Some(entry) = by_hash.get(&hash) else {
+            let Some(next) = parents(&hash) else {
                 return Ok(false);
             };
-            stack.extend(entry.parent_hashes.iter().copied());
+            stack.extend(next.iter().copied());
         }
     }
     Ok(false)
+}
+
+/// Whether a covered row this vault does not store stands as an endpoint of
+/// a CLAIM authority descent: the adopted image covers it and the image's
+/// fold holds it valid. Coverage alone never proves one; a covered endpoint
+/// the image rejected stands nowhere, and the caller fetches or refuses
+/// (OF-469 slice E, CALLS: OF-469 slice E covered descent proof).
+fn covered_endpoint_stands(image: &super::AuthorityCheckpointV2, hash: &[u8; 32]) -> bool {
+    image.rows.contains_key(hash) && image.fold().valid_entries.contains(hash)
 }
 
 /// One current, fold-verified authority head for scoped history signatures.
@@ -577,6 +610,31 @@ pub(crate) fn machine_history_host_context(
         }
         if fold.append_heads.contains(&hash) && entry.signer_key() == signer {
             authored_heads.push(hash);
+        }
+    }
+    // On a vault that adopted a checkpoint image, the covered rows count as
+    // well (OF-469, slice E): a covered ReRoot to `signer` by the body the
+    // image carries, a covered head `signer` authored by the row's summary,
+    // each only while the current fold holds it valid, and each once, stored
+    // or not. Never the image's frontier or its latest sequence.
+    if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(store, txn)? {
+        for (hash, row) in evidence.rows() {
+            if !fold.valid_entries.contains(hash) {
+                continue;
+            }
+            if !re_roots.contains(hash)
+                && evidence.body(hash).is_some_and(|entry| {
+                    matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *signer)
+                })
+            {
+                re_roots.push(*hash);
+            }
+            if !authored_heads.contains(hash)
+                && fold.append_heads.contains(hash)
+                && row.signer == *signer
+            {
+                authored_heads.push(*hash);
+            }
         }
     }
     let head = match re_roots.as_slice() {

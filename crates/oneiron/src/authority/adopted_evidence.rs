@@ -76,6 +76,20 @@ impl AdoptedEvidence {
         self.ids.contains(id)
     }
 
+    /// Each carried body of a covered row whose hash `stored` does not hold,
+    /// ascending by hash: what a reader of the whole log reads past the rows
+    /// this vault stores (OF-469, slice E). A stored row stands first and
+    /// wins over the image's copy of it, as in
+    /// [`super::import_order::write_stage_order`].
+    pub(super) fn carried_past<'a>(
+        &'a self,
+        stored: &'a BTreeSet<AuthorityEntryHash>,
+    ) -> impl Iterator<Item = (&'a AuthorityEntryHash, &'a AuthorityLogEntry)> {
+        self.bodies
+            .iter()
+            .filter(move |(hash, _)| !stored.contains(*hash))
+    }
+
     /// The row at `hash`, which this vault does not store, as a door's
     /// retired-standing walk reads it: the carried body of a covered row;
     /// none for a covered row the image holds valid, where the walk stops as
@@ -120,4 +134,36 @@ pub(crate) fn adopted_evidence_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<Arc<AdoptedEvidence>>> {
     Ok(super::log_budget::door_view(store, txn)?.evidence.clone())
+}
+
+/// What a reader that wants one authority row whole reads where this vault
+/// does not store it (OF-469, slice E): on a vault that adopted a checkpoint
+/// image, the body the image carries of that covered row. The reader keeps
+/// its own stored lookup, with its own errors, and asks here only when that
+/// lookup finds no row; it then judges the carried body by the same
+/// predicate. The evidence is read once, at the first such miss. With no
+/// adoption nothing is found, so the reader's miss stands as before.
+#[derive(Default)]
+pub(super) struct CarriedRows(Option<Option<Arc<AdoptedEvidence>>>);
+
+impl CarriedRows {
+    /// The carried body of the covered row `hash`, decoded; None with no
+    /// adoption, for a row the image does not cover, and for a covered row
+    /// it carries no body of.
+    pub(super) fn get(
+        &mut self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        hash: &AuthorityEntryHash,
+    ) -> Result<Option<AuthorityLogEntry>> {
+        if self.0.is_none() {
+            self.0 = Some(adopted_evidence_in_txn(store, txn)?);
+        }
+        Ok(self
+            .0
+            .iter()
+            .flatten()
+            .find_map(|evidence| evidence.body(hash))
+            .cloned())
+    }
 }

@@ -195,13 +195,20 @@ impl Vault {
             !matches!(settings.read, ReadLocation::OneMachine(only) if only != machine);
         let mut live = Vec::new();
         let mut authors = BTreeSet::new();
+        // A live edit an adopted vault does not store reads from the body its
+        // checkpoint image carries (OF-469, slice E).
+        let mut carried = super::adopted_evidence::CarriedRows::default();
         for hash in fold
             .worlds
             .get(&world)
             .into_iter()
             .flat_map(|folded| folded.live.keys())
         {
-            let edit = match stored_authority_row(&self.store, txn, hash)?.map(|row| row.op) {
+            let row = match stored_authority_row(&self.store, txn, hash)? {
+                Some(row) => Some(row),
+                None => carried.get(&self.store, txn, hash)?,
+            };
+            let edit = match row.map(|row| row.op) {
                 Some(AuthorityOp::WorldPrivacy(edit)) => Some(edit),
                 _ => None,
             };

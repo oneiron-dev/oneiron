@@ -109,7 +109,10 @@ pub(crate) fn owner_root_records_in_txn(
 
 /// Every valid key record `machine` signed with `machine_key`, counted here
 /// or not: this machine's own past acts, which its doors may open whatever
-/// the pin (contract §4, own records).
+/// the pin (contract §4, own records). The stored records come first, in
+/// store order; on a vault that adopted a checkpoint image, the records the
+/// image carries and the vault does not store follow, ascending by hash
+/// (OF-469, slice E).
 pub(crate) fn own_world_key_records_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -117,23 +120,37 @@ pub(crate) fn own_world_key_records_in_txn(
     machine: EntityId,
     machine_key: [u8; 32],
 ) -> Result<Vec<(AuthorityEntryHash, WorldKeyWrapsRecord)>> {
+    let own = |entry: &AuthorityLogEntry| match &entry.op {
+        AuthorityOp::WorldKeyWraps(record) => {
+            record.machine == machine
+                && entry.signer.public_key == AuthorityKey::Ed25519(machine_key)
+        }
+        _ => false,
+    };
     let mut records = Vec::new();
+    let mut stored = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
         let entry = decode_authority_log_entry_body(&body)?;
-        let AuthorityOp::WorldKeyWraps(record) = &entry.op else {
-            continue;
-        };
-        if record.machine != machine
-            || entry.signer.public_key != AuthorityKey::Ed25519(machine_key)
-        {
+        if !own(&entry) {
             continue;
         }
         let hash = authority_entry_hash(&entry)?;
+        stored.insert(hash);
         if fold.valid_entries.contains(&hash) {
             let AuthorityOp::WorldKeyWraps(record) = entry.op else {
                 continue;
             };
             records.push((hash, record));
+        }
+    }
+    if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(store, txn)? {
+        for (hash, entry) in evidence.carried_past(&stored) {
+            if let AuthorityOp::WorldKeyWraps(record) = &entry.op
+                && own(entry)
+                && fold.valid_entries.contains(hash)
+            {
+                records.push((*hash, record.clone()));
+            }
         }
     }
     Ok(records)
