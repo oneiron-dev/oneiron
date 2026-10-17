@@ -547,9 +547,19 @@ the observed one never outranks what you said. The marker stays open until you a
 
 Each answer writes a `conflict.resolved` claim naming the marker, plus one receipt. The marker
 itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
-may settle that subject's conflicts too, but an agent never closes a claim you stated. The
-Dreamer asks its decision ladder only about conflicts its own delegation covers. Anything it
-can't settle stays here for you.
+may settle that subject's conflicts too, but an agent never closes a claim you stated.
+
+The Dreamer settles nothing until you let it:
+
+- `POST /v1/owner/conflicts/review` with `{"scope": "subject", "subject": "<32 hex>"}` lets it
+  settle that subject's conflicts; `{"scope": "vault"}` lets it settle every subject's. The
+  reply names the standing grant.
+- `POST /v1/owner/conflicts/review/revoke` with the same body ends that grant. Ending the whole
+  vault's leaves a subject's own grant standing.
+
+Once it holds a grant, the home node's Dreamer asks its decision ladder about up to eight of the
+covered conflicts after each scheduled pass. Its answer is signed by the Dreamer and receipted
+under the grant. Anything its ladder can't settle stays here for you.
 
 ## Review cleanup
 
