@@ -15,6 +15,12 @@
 //! - A claim, a response and a participation fact are written once. Each
 //!   rides under its own digest, so two machines' rows both ride, and every
 //!   machine settles on the same one and logs the other.
+//! - A join receipt and an offer card ride as a thread's facts do, room-wide
+//!   ones the window their room rides, each under its own ref. The window
+//!   holds one copy, merged with this machine's on the way in and on the
+//!   way out, so it never silently drops another machine's answer or
+//!   ballot. A copy that does not merge quarantines: logged, and left out.
+//!   The Ready and current-card indexes are rebuilt here, never carried.
 //! - Admission refuses every insert into the map that is not a whole side
 //!   row filed under its own key, in the latest state, at a snapshot's root
 //!   and in every retained operation.
@@ -38,11 +44,12 @@ use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_CONVERSATION;
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
 use crate::workspace_roster::{
     RoomSideRow, SideMerge, clear_replicated_side_cell_in_txn, merge_replicated_responses_in_txn,
-    merge_replicated_side_row_in_txn, replicated_side_carriers_in, replicated_side_rows_in,
+    merge_replicated_shared_row_in_txn, merge_replicated_side_row_in_txn, merged_shared_row,
+    replicated_shared_rows_in, replicated_side_carriers_in, replicated_side_rows_in,
 };
 
 /// The base window root map that carries a room's side rows.
@@ -57,8 +64,13 @@ const PIN: &str = "pin/";
 const HANDLE: &str = "handle/";
 /// The key prefix of a turn's responses.
 const RESPONSE: &str = "response/";
+/// The key prefix of a join receipt.
+const JOIN: &str = "join/";
+/// The key prefix of an offer card.
+const OFFER: &str = "offer/";
 
-/// The cells this machine changed while no open window carried their room.
+/// The cells this machine changed while no open window carried their room,
+/// and the joins and offer cards it changed that their window lacks.
 const DIRTY: SideTable<String, (), Raw> = SideTable::new(&side_table::SYNC_ROOM_FACT_DIRTY);
 
 fn refused(reason: &'static str) -> Error {
@@ -101,7 +113,36 @@ fn carrier_key(row: &RoomSideRow, bytes: &[u8]) -> String {
         RoomSideRow::Participation { room, branch, .. } => {
             format!("fact/{}/{}", branch.unwrap_or(*room).to_hex(), digest())
         }
+        RoomSideRow::Join { .. } => shared_key(JOIN, row),
+        RoomSideRow::Offer { .. } => shared_key(OFFER, row),
     }
+}
+
+/// The key a join or an offer card rides under: its table, the entity whose
+/// window carries it and its own ref.
+fn shared_key(table: &str, row: &RoomSideRow) -> String {
+    row.merged_place()
+        .map_or_else(String::new, |(carrier, reference)| {
+            format!("{table}{}/{reference}", carrier.to_hex())
+        })
+}
+
+/// What `map_key` names when it is a join's or an offer card's key: whether
+/// it is a card, the entity whose window carries it, and its ref.
+fn shared_of(map_key: &str) -> Option<(bool, EntityId, &str)> {
+    for (offer, table) in [(false, JOIN), (true, OFFER)] {
+        if let Some((carrier, reference)) = map_key
+            .strip_prefix(table)
+            .and_then(|rest| rest.split_once('/'))
+        {
+            return Some((offer, named(carrier)?, reference));
+        }
+    }
+    None
+}
+
+fn is_shared(map_key: &str) -> bool {
+    map_key.starts_with(JOIN) || map_key.starts_with(OFFER)
 }
 
 /// The key of room `room`'s host pin cell, or of its handle `handle`'s.
@@ -188,20 +229,23 @@ pub(crate) fn admit_room_fact_map(key: Option<&WindowKey>, map: &LoroMap) -> Res
 /// Writes into `doc` the side rows this vault holds that ride entity `id` of
 /// type `entity_type`. A written-once row the window lacks is written. A
 /// cell is written where the window never held it, or where this machine
-/// changed it since: the `changed` cell a door just wrote, or a marked one.
+/// changed it since: a `changed` cell a door just wrote, or a marked one.
 /// A changed cell this vault no longer holds was cleared here, and leaves
-/// the window. Every other cell stands as the window holds it. Returns
-/// whether it wrote; the caller commits.
+/// the window. Every other cell stands as the window holds it. A join or an
+/// offer card is merged into the window's copy, and the merge written where
+/// the window lacks part of it; one this machine changed, `changed` or
+/// marked, keeps its own ballots. Returns whether it wrote; the caller
+/// commits.
 pub(crate) fn mirror_room_facts(
     vault: &Vault,
     doc: &LoroDoc,
     id: &EntityId,
     entity_type: u8,
-    changed: Option<&str>,
+    changed: &[&str],
 ) -> Result<bool> {
-    let (rows, mut ours) = {
+    let (rows, mut ours, named_here) = {
         let rtxn = vault.store.env.read_txn()?;
-        let rows = replicated_side_rows_in(vault, &rtxn, *id, entity_type)?;
+        let mut rows = replicated_side_rows_in(vault, &rtxn, *id, entity_type)?;
         let mut ours = Vec::new();
         if entity_type == ENTITY_TYPE_CONVERSATION {
             for prefix in [cell_key(*id, None), format!("{HANDLE}{}/", id.to_hex())] {
@@ -209,20 +253,47 @@ pub(crate) fn mirror_room_facts(
             }
             ours.extend(
                 changed
+                    .iter()
                     .filter(|cell| cell_of(cell).is_some_and(|(room, _)| room == *id))
-                    .map(str::to_owned),
+                    .map(|cell| (*cell).to_owned()),
             );
         }
-        (rows, ours)
+        // The joins and cards this machine changed: those a door just
+        // wrote, and the marked ones.
+        let mut named_here = BTreeSet::new();
+        for table in [JOIN, OFFER] {
+            let prefix = format!("{table}{}/", id.to_hex());
+            named_here.extend(DIRTY.scan_keys(&vault.store, &rtxn, prefix.as_bytes())?);
+        }
+        named_here.extend(
+            changed
+                .iter()
+                .filter(|key| shared_of(key).is_some_and(|(_, carrier, _)| carrier == *id))
+                .map(|key| (*key).to_owned()),
+        );
+        for key in &named_here {
+            if let Some((offer, _, reference)) = shared_of(key) {
+                rows.extend(replicated_shared_rows_in(vault, &rtxn, offer, reference)?);
+            }
+        }
+        (rows, ours, named_here)
     };
     if rows.is_empty() && ours.is_empty() {
         return Ok(false);
     }
     let map = doc.get_map(ROOM_FACTS_MAP);
     let mut wrote = false;
+    let mut seen = BTreeSet::new();
     for row in &rows {
         let bytes = encode(row)?;
         let key = carrier_key(row, &bytes);
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        if is_shared(&key) {
+            wrote |= mirror_shared_row(&map, &key, row, &bytes, named_here.contains(&key))?;
+            continue;
+        }
         let changed_here = ours.contains(&key);
         ours.retain(|cell| *cell != key);
         let held = map_get_bytes(&map, &key);
@@ -244,13 +315,50 @@ pub(crate) fn mirror_room_facts(
     Ok(wrote)
 }
 
+/// Writes this vault's join or offer card `row`, encoded as `bytes`, into
+/// `map` under `key`, merged with the copy the window holds; `ours_win`
+/// keeps this vault's ballots where a voter's two differ. A copy that does
+/// not merge with the window's quarantines, logged, and the window's stays.
+/// Returns whether it wrote.
+fn mirror_shared_row(
+    map: &LoroMap,
+    key: &str,
+    row: &RoomSideRow,
+    bytes: &[u8],
+    ours_win: bool,
+) -> Result<bool> {
+    let held = map_get_bytes(map, key);
+    if held.as_deref() == Some(bytes) {
+        return Ok(false);
+    }
+    let merged = match held.as_deref().map(decode) {
+        Some(Ok(theirs)) => match merged_shared_row(&theirs, row, ours_win) {
+            Ok(merged) => encode(&merged)?,
+            Err(reason) => {
+                tracing::warn!(
+                    key,
+                    ?reason,
+                    "room side row does not merge with the window's; left out"
+                );
+                return Ok(false);
+            }
+        },
+        _ => bytes.to_vec(),
+    };
+    if held.as_deref() == Some(merged.as_slice()) {
+        return Ok(false);
+    }
+    map_insert_bytes(map, key, &merged)?;
+    Ok(true)
+}
+
 /// Mirrors the side rows of each of `carriers` that `doc` carries, and
 /// commits what it writes. Returns whether `doc` carries any of them.
 pub(crate) fn mirror_carriers(
     vault: &Vault,
     doc: &LoroDoc,
     carriers: &[(EntityId, u8)],
-    changed: Option<&str>,
+    changed: &[&str],
 ) -> Result<bool> {
     let entities = doc.get_map("entities");
     let mut carried = false;
@@ -357,9 +465,12 @@ fn responses_for(doc: &LoroDoc, parents: &BTreeSet<EntityId>) -> Vec<(EntityId, 
 }
 
 /// Merges each carried row into this vault's in one write: dropped cells and
-/// cells first, then claims and facts, then the responses of every claimed
-/// turn the rows touch, each settled with every response the window
-/// carries for it, since a response stands by the claim.
+/// cells first, then claims, facts, joins and cards, then the responses of
+/// every claimed turn the rows touch, each settled with every response the
+/// window carries for it, since a response stands by the claim. A join or
+/// card whose window copy lacks part of this machine's is marked, so the
+/// next mirror of its carrier writes the merge back; the mark clears once
+/// the window's copy holds all of it.
 fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Option<Vec<u8>>)>) {
     let mut carried = Vec::new();
     let mut cleared = Vec::new();
@@ -397,6 +508,16 @@ fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Opt
             DIRTY.delete(&vault.store, wtxn, map_key)?;
         }
         for (map_key, row) in &carried {
+            if is_shared(map_key) {
+                let (merge, holds) = merge_replicated_shared_row_in_txn(vault, wtxn, row)?;
+                if holds {
+                    DIRTY.delete(&vault.store, wtxn, map_key)?;
+                } else {
+                    DIRTY.put(&vault.store, wtxn, map_key, &())?;
+                }
+                merged += logged(window, map_key, merge);
+                continue;
+            }
             let merge = merge_replicated_side_row_in_txn(vault, wtxn, row)?;
             // The window's cell is this machine's now.
             if is_cell(map_key) && matches!(merge, SideMerge::Written | SideMerge::Held) {
@@ -508,10 +629,9 @@ impl Vault {
     /// room's window next opens.
     pub(crate) fn refresh_room_cell_in_live_window(&self, room: EntityId, handle: Option<&str>) {
         let cell = cell_key(room, handle);
-        if self.mirror_carriers_in_live_windows(
-            &[(room, ENTITY_TYPE_CONVERSATION)],
-            Some(cell.as_str()),
-        ) {
+        if self
+            .mirror_carriers_in_live_windows(&[(room, ENTITY_TYPE_CONVERSATION)], &[cell.as_str()])
+        {
             return;
         }
         if let Err(error) =
@@ -534,12 +654,71 @@ impl Vault {
             .and_then(|rtxn| replicated_side_carriers_in(self, &rtxn, turn));
         match carriers {
             Ok(carriers) if !carriers.is_empty() => {
-                self.mirror_carriers_in_live_windows(&carriers, None);
+                self.mirror_carriers_in_live_windows(&carriers, &[]);
             }
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(turn = %turn.to_hex(), error = %error, "room side rows not mirrored");
             }
+        }
+    }
+
+    /// Mirrors the join receipts `joins` names, and the offer cards `offers`
+    /// names with the join each filed, into the live windows that carry
+    /// their rooms or threads, after a door wrote them (FIX 1794). A row no
+    /// live window takes is marked, and mirrored as its window next opens.
+    pub(crate) fn refresh_room_rows_in_live_windows(&self, joins: &[&str], offers: &[&str]) {
+        let rows = self
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|rtxn| {
+                let mut rows = Vec::new();
+                for (offer, references) in [(false, joins), (true, offers)] {
+                    for reference in references {
+                        rows.extend(replicated_shared_rows_in(self, &rtxn, offer, reference)?);
+                    }
+                }
+                Ok(rows)
+            });
+        let rows = match rows {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(error = %error, "room joins and offers not mirrored");
+                return;
+            }
+        };
+        let mut carriers: BTreeMap<(EntityId, u8), Vec<String>> = BTreeMap::new();
+        for row in &rows {
+            let (Ok(bytes), Some((room, branch))) = (encode(row), row.place()) else {
+                continue;
+            };
+            let carrier = branch.map_or((room, ENTITY_TYPE_CONVERSATION), |branch| {
+                (branch, ENTITY_TYPE_TURN)
+            });
+            carriers
+                .entry(carrier)
+                .or_default()
+                .push(carrier_key(row, &bytes));
+        }
+        let mut unheld = Vec::new();
+        for (carrier, keys) in carriers {
+            let changed: Vec<&str> = keys.iter().map(String::as_str).collect();
+            if !self.mirror_carriers_in_live_windows(&[carrier], &changed) {
+                unheld.extend(keys);
+            }
+        }
+        if unheld.is_empty() {
+            return;
+        }
+        if let Err(error) = self.with_write_txn_grouped(|wtxn| {
+            for key in &unheld {
+                DIRTY.put(&self.store, wtxn, key, &())?;
+            }
+            Ok(())
+        }) {
+            tracing::warn!(error = %error, "room joins and offers not marked");
         }
     }
 
@@ -550,7 +729,7 @@ impl Vault {
     fn mirror_carriers_in_live_windows(
         &self,
         carriers: &[(EntityId, u8)],
-        changed: Option<&str>,
+        changed: &[&str],
     ) -> bool {
         let mut carried = false;
         for window in self.live_windows() {

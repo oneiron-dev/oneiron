@@ -44,7 +44,7 @@ impl Memory<'_> {
     ) -> MemoryResult<ProjectRosterWriteOutcome> {
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
-        self.with_verified_actor_write_txn(|txn| {
+        let written = self.with_verified_actor_write_txn(|txn| {
             let (_, before) = vault
                 .effective_project_in_txn(txn, project)?
                 .ok_or(Error::EntityNotFound)?;
@@ -75,6 +75,18 @@ impl Memory<'_> {
                 installed: matches!(outcome, ProjectWriteOutcome::Installed(_)),
                 invitations,
             })
-        })
+        })?;
+        // FIX 1794: each invitation reaches the live window of its room, so
+        // the person may answer it on another of the owner's machines.
+        #[cfg(feature = "sync")]
+        if !written.invitations.is_empty() {
+            let joins: Vec<&str> = written
+                .invitations
+                .iter()
+                .map(|invitation| invitation.join_ref.as_str())
+                .collect();
+            vault.refresh_room_rows_in_live_windows(&joins, &[]);
+        }
+        Ok(written)
     }
 }

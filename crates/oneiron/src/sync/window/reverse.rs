@@ -466,7 +466,7 @@ fn reverse_rematerialize_scan(
                     doc,
                     id,
                     header.entity_type,
-                    None,
+                    &[],
                 )?
             {
                 wrote_any = true;

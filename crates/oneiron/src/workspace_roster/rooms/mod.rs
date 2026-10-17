@@ -58,8 +58,9 @@ pub(crate) use participation::{
 use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
-    merge_replicated_responses_in_txn, merge_replicated_side_row_in_txn,
-    merge_replicated_turn_in_txn, replicated_side_carriers_in, replicated_side_rows_in,
+    merge_replicated_responses_in_txn, merge_replicated_shared_row_in_txn,
+    merge_replicated_side_row_in_txn, merge_replicated_turn_in_txn, merged_shared_row,
+    replicated_shared_rows_in, replicated_side_carriers_in, replicated_side_rows_in,
     replicated_turn_in,
 };
 use serde::{Deserialize, Serialize};

@@ -163,7 +163,7 @@ impl WindowManager {
                     &self.vault,
                     &window.doc,
                     &carriers,
-                    None,
+                    &[],
                 )
             {
                 tracing::warn!(window = %key, %error, "room side rows not mirrored into the live window");
