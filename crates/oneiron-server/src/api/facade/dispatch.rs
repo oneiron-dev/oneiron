@@ -3782,6 +3782,28 @@ async fn vault_artifacts_export(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_agents_export_pack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.agents.export_pack",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_artifacts_born_from(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7079,6 +7101,7 @@ pub(crate) async fn call_verb(
         "vault.code.proposal_view" => vault_code_proposal_view(server, call, input).await,
         "vault.code.repo_diff" => vault_code_repo_diff(server, call, input).await,
         "vault.artifacts.export" => vault_artifacts_export(server, call, input).await,
+        "vault.agents.export_pack" => vault_agents_export_pack(server, call, input).await,
         "vault.artifacts.born_from" => vault_artifacts_born_from(server, call, input).await,
         "vault.artifacts.proposals" => vault_artifacts_proposals(server, call, input).await,
         "vault.artifacts.waits" => vault_artifacts_waits(server, call, input).await,

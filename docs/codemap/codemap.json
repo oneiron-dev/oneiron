@@ -16120,13 +16120,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -16183,7 +16183,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "QuoteAnchor",
@@ -16192,7 +16192,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 30,
       "enum": 1,
       "struct": 1
      }
@@ -18052,7 +18052,7 @@
      "path": "src/dreamer_consolidation/revert.rs",
      "purpose": "The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "struct": 4
@@ -19507,7 +19507,7 @@
      "purpose": "Tournament wire types, their validating constructors, and the pinned bounds",
      "surface": {
       "const": 4,
-      "crate-vis": 11,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 12,
       "struct": 14
@@ -19981,13 +19981,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "AmendmentAuditFixture"
+      "AmendmentAuditFixture",
+      "AmendmentAuditRecord"
      ],
      "path": "src/edit_distance/attribution/audit.rs",
      "purpose": "Held-out judge audit (Blind Curator guard)",
      "surface": {
-      "fn": 4,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -20045,7 +20046,7 @@
      "path": "src/edit_distance/attribution/taxonomy.rs",
      "purpose": "Amendment taxonomy: classes, causes, evidence and judgment types",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 12,
       "struct": 4,
@@ -36686,8 +36687,8 @@
      "path": "src/receipt/call.rs",
      "purpose": "OF-538: one lasting receipt per wire call, reads included",
      "surface": {
-      "const": 3,
-      "crate-vis": 1,
+      "const": 5,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 11,
       "struct": 4
@@ -40570,7 +40571,9 @@
      "kind": "src",
      "notable": [
       "BornWithField",
+      "ExportTarget",
       "ExportTravel",
+      "OmittedKnowledge",
       "TravelChoice",
       "TravelKind"
      ],
@@ -40578,12 +40581,12 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
-      "enum": 2,
+      "crate-vis": 9,
+      "enum": 3,
       "fn": 7,
       "mod": 1,
-      "re-export": 1,
-      "struct": 2,
+      "re-export": 2,
+      "struct": 3,
       "type": 1
      }
     },
@@ -40618,6 +40621,21 @@
       "enum": 8,
       "fn": 8,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentPackExport",
+      "AgentPackExportFile",
+      "AgentPackExportRequest"
+     ],
+     "path": "src/share_travel/agent_pack_export.rs",
+     "purpose": "`vault.agents.export_pack` (OF-491, FIX 2042): the sharing door for an agent",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -40928,14 +40946,34 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AttributionAuditRecord",
       "AttributionAuditReport",
       "AuditFixture"
      ],
      "path": "src/skill_attribution/audit.rs",
      "purpose": "Held-out defect-injection audit: fixtures, the generic harness, and the pass-rate report",
      "surface": {
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuditAnswerSource",
+      "AuditBatch",
+      "AuditCase",
+      "FloorFit",
+      "RawAnswer"
+     ],
+     "path": "src/skill_attribution/calibration.rs",
+     "purpose": "OF-542: `attribution_unclear_floor` learned from the held-out judge audits (ARCH-0056 §5: refit from judge…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 2,
+      "struct": 3
      }
     },
     {
@@ -40945,7 +40983,7 @@
      "path": "src/skill_attribution/codec.rs",
      "purpose": "Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -40988,7 +41026,7 @@
      "purpose": "Classification: the deterministic rule tier, the host's decisions for the model tier through the shared…",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -41030,8 +41068,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 8,
-      "re-export": 13
+      "crate-vis": 10,
+      "re-export": 14
      }
     },
     {
@@ -41091,7 +41129,7 @@
      "path": "src/skill_attribution/split.rs",
      "purpose": "The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -41671,7 +41709,8 @@
      "path": "src/skill_hub/pack_catalog/agent_admission.rs",
      "purpose": "The receiving half of the AgentPack another party shared (OF-491, FIX 2041 and 3168)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -43247,7 +43286,7 @@
      "path": "src/store/gate_decision/types.rs",
      "purpose": "Gate-decision ledger record shapes, id type, and version and bound consts",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3,
       "struct": 4
      }
@@ -44484,10 +44523,10 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -44500,6 +44539,20 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedBundleRelay"
+     ],
+     "path": "src/sync/client/residence/bundle.rs",
+     "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -45324,7 +45377,7 @@
       "const": 2,
       "crate-vis": 7,
       "fn": 13,
-      "re-export": 6,
+      "re-export": 9,
       "struct": 2
      }
     },
@@ -45353,6 +45406,37 @@
      "surface": {
       "const": 2,
       "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedBundleEntry",
+      "SealedBundleObject",
+      "SealedBundleStage"
+     ],
+     "path": "src/sync/residence/bundle.rs",
+     "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 12,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedBundleTake",
+      "SealedKitRestore"
+     ],
+     "path": "src/sync/residence/bundle_payload.rs",
+     "purpose": "What the vault's sealed cloud bundle carries (FIX 922 PR 2): the base section and each cloud-bound world's…",
+     "surface": {
+      "fn": 3,
       "struct": 2
      }
     },
@@ -45654,18 +45738,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SharedLeaveKind",
-      "SharedLeaveReceipt"
+      "SharedLeaveReceipt",
+      "VerifiedLeaveNotice"
      ],
      "path": "src/sync/shared_leave.rs",
      "purpose": "Leaving a shared vault, the device side (OF-158)",
      "surface": {
       "enum": 1,
-      "fn": 3,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -45999,7 +46084,7 @@
      "path": "src/sync/withdrawn_cutoffs.rs",
      "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -47472,7 +47557,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 349
+      "fn": 350
      }
     },
     {
@@ -47720,7 +47805,7 @@
      "path": "src/task_verb/sdk_self.rs",
      "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 4
      }
     },
@@ -49333,13 +49418,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -50518,7 +50603,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2,
       "struct": 1
      }
@@ -51083,16 +51168,17 @@
       "OfferCard",
       "OfferDraft",
       "OfferState",
+      "OfferVoteTally",
       "OffersPage",
       "OffersRequest"
      ],
      "path": "src/workspace_roster/rooms/offers.rs",
      "purpose": "Offer cards (OF-530): an agent asks to join a room or one of its threads by a card, never by a turn…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 3,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -51273,7 +51359,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "OpenedBundleSection",
@@ -51289,7 +51375,8 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "fn": 33,
+      "crate-vis": 6,
+      "fn": 34,
       "struct": 8
      }
     },
@@ -51322,6 +51409,7 @@
      "path": "src/world_keys/content_window.rs",
      "purpose": "The window side of sealed world content: what a reader seals from a private world's window, and how a reader…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 8
      }
@@ -53678,7 +53766,7 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -53699,7 +53787,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -53783,7 +53871,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 161,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53960,7 +54048,7 @@
     "world_keys": {
      "files": 21,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     },
@@ -53972,9 +54060,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 180,
+   "over_bar": 181,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3277,
+   "source_files": 3282,
    "test_files": 902
   },
   "oneiron-android": {
@@ -62072,7 +62160,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 302
+      "fn": 303
      }
     },
     {
@@ -63090,7 +63178,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 303
+      "fn": 304
      }
     },
     {
@@ -64662,7 +64750,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
       "crate-vis": 25,
-      "fn": 21,
+      "fn": 22,
       "re-export": 1,
       "struct": 2
      }
@@ -65268,13 +65356,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 23
      }
     },
     {
@@ -67069,6 +67157,16 @@
      "notable": [],
      "path": "src/api/owner_routes/space_posting_routes.rs",
      "purpose": "`/v1/owner/space-posting`: the per-space ghost-mode dial (ARCH-0063 R10, INB-08)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/steer_routes.rs",
+     "purpose": "`/v1/owner/steer`: the vault owner's nudge to any live run in the vault, whoever spawned it (FIX 783, Engine…",
      "surface": {
       "crate-vis": 1
      }
@@ -69337,7 +69435,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 23,
       "struct": 1
      }
@@ -69349,7 +69447,7 @@
      "path": "src/decision_verdict.rs",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -70005,7 +70103,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -72619,7 +72717,7 @@
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 2,
       "struct": 1
@@ -72966,7 +73064,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 309,
+     "files": 310,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73360,7 +73458,7 @@
    },
    "over_bar": 50,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 612,
+   "source_files": 613,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -73566,6 +73664,9 @@
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
+      "AgentPackExport",
+      "AgentPackExportFile",
+      "AgentPackExportRequest",
       "AiAnswer",
       "AiCallRequest",
       "AiOperation",
@@ -74085,6 +74186,7 @@
       "OfferSettlement",
       "OfferState",
       "OfferVoteRequest",
+      "OfferVoteTally",
       "OffersPage",
       "OffersRequest",
       "OfficeBodyArtifactRequest",
@@ -74113,6 +74215,7 @@
       "OfficeBodyReadRequest",
       "OfficeBodyReviewedFork",
       "OfficeBodyView",
+      "OmittedKnowledge",
       "OpaqueChange",
       "OracleReceipt",
       "OrganWaitView",
@@ -74635,7 +74738,7 @@
      "purpose": "—",
      "surface": {
       "enum": 300,
-      "struct": 781
+      "struct": 786
      }
     },
     {

@@ -78,6 +78,33 @@ pub struct GateSystemNoticeRecord {
     pub docs_url: Option<String>,
 }
 
+impl GateSystemNoticeRecord {
+    /// A receipt's `key:value` details (its handle, digests, references) as
+    /// audit notices on `channel`, one per detail: receipt reasons hold only
+    /// the gate's own reason grammar. A detail past the body bound is cut at
+    /// a char boundary.
+    pub(crate) fn receipt_details(channel: &str, details: Vec<String>) -> Vec<Self> {
+        details
+            .into_iter()
+            .map(|mut body| {
+                body.truncate(body.floor_char_boundary(GATE_SYSTEM_NOTICE_BODY_MAX_LEN));
+                Self {
+                    notice_type: "receipt_detail".to_owned(),
+                    channel: channel.to_owned(),
+                    voice: "system".to_owned(),
+                    audience: "audit".to_owned(),
+                    body,
+                    row_ref: None,
+                    setting_change_offer: None,
+                    policy_plane: None,
+                    policy_version: None,
+                    docs_url: None,
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateDecisionRecord {
     pub version: u8,

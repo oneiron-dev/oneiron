@@ -424,12 +424,24 @@ impl AiHost {
     /// serve, and hands the server its handle (and the raw `/v1/llm` routes
     /// their router, and MCP `execute_code` its executor).
     pub async fn attach(server: SyncServer, models: Option<&ModelsConfig>) -> (SyncServer, Self) {
-        let mut host = Self::start_receipted(
+        Self::attach_device(server, models, false).await
+    }
+
+    /// [`Self::attach`] on a host that syncs as a device of another home
+    /// (`[device_sync]`, `device`): its Dreamer never claims the MACRO home,
+    /// so device sync's standing reads the home the section names.
+    pub async fn attach_device(
+        server: SyncServer,
+        models: Option<&ModelsConfig>,
+        device: bool,
+    ) -> (SyncServer, Self) {
+        let mut host = Self::start_with(
             Arc::clone(server.vault()),
             models,
             server.host_root_provisioned(),
             server.run_receipts(),
             Some(server.host_account()),
+            device,
         )
         .await;
         if host.handle.hints.is_some() {
@@ -513,6 +525,18 @@ impl AiHost {
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
+        Self::start_with(vault, models, host_root, receipts, account, false).await
+    }
+
+    /// `start_receipted`, on a device host when `device`.
+    async fn start_with(
+        vault: Arc<Vault>,
+        models: Option<&ModelsConfig>,
+        host_root: bool,
+        receipts: Arc<dyn RunReceiptSink>,
+        account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
+        device: bool,
+    ) -> Self {
         recover_dead_leases(&vault);
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
@@ -549,7 +573,7 @@ impl AiHost {
         let admission = Arc::clone(&host.pass_admission);
         let decisions = Arc::clone(&handle.decisions);
         match start_dreamer(
-            &vault, &runtime, models, host_root, &status, idle, decisions, timer, admission,
+            &vault, &runtime, models, host_root, device, &status, idle, decisions, timer, admission,
         )
         .await
         {
@@ -799,6 +823,7 @@ async fn start_dreamer(
     runtime: &Arc<ModelRuntime>,
     models: &ModelsConfig,
     host_root: bool,
+    device: bool,
     status: &Arc<StatusCell>,
     idle: IdleSample,
     decisions: Arc<OnceLock<DecisionHost>>,
@@ -880,6 +905,7 @@ async fn start_dreamer(
         decisions,
         question_timer,
         admission,
+        device,
     })
     .await
     .map_err(|error| {

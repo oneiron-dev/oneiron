@@ -23,12 +23,16 @@
 //! session's id, so a machine that never held the removed summary numbers
 //! past it too. Egress raises a carried floor that is lower, admission
 //! refuses a malformed one, and a carried floor only raises this vault's.
+//! Every export, and the erase sweep, drops the floor of a session this
+//! vault removed (Engine ruling 10-18).
 
 use std::collections::BTreeMap;
 
-use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use super::loro_support::{map_get_bytes, map_insert_bytes};
+use super::bridge::BRIDGE_ORIGIN;
+use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
+use super::types::WindowKey;
 use crate::Vault;
 use crate::deletion::WithdrawnReplacement;
 use crate::entity_id::EntityId;
@@ -179,6 +183,53 @@ pub(crate) fn mirror_epoch_floors(doc: &LoroDoc, floors: &[(EntityId, u64, u64)]
         wrote = true;
     }
     Ok(wrote)
+}
+
+/// Drops from `doc` the epoch floor of each session this vault removed: an
+/// erase takes the session's floor off every window that carried it. A live
+/// doc keeps the old entry in its history, so `pin` names the window pinned
+/// history-free before any floor goes, as
+/// `room_facts::scrub_room_facts` does; the sweep, whose shallow cut drops
+/// that history, passes `None`. Returns whether a floor went, committed.
+pub(crate) fn scrub_removed_epoch_floors(
+    vault: &Vault,
+    doc: &LoroDoc,
+    pin: Option<&WindowKey>,
+) -> Result<bool> {
+    if !holds_withdrawn_cutoff_map(doc) {
+        return Ok(false);
+    }
+    let map = doc.get_map(WITHDRAWN_CUTOFFS_MAP);
+    let mut floors = Vec::new();
+    map.for_each(|map_key, _| {
+        if let Some(session) = map_key
+            .strip_prefix(EPOCH_FLOOR)
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+        {
+            floors.push((map_key.to_owned(), session));
+        }
+    });
+    let gone = {
+        let rtxn = vault.store.env.read_txn()?;
+        let mut gone = Vec::new();
+        for (map_key, session) in floors {
+            if crate::ports::removed_in_txn(&vault.store, &rtxn, &session)? {
+                gone.push(map_key);
+            }
+        }
+        gone
+    };
+    if gone.is_empty() {
+        return Ok(false);
+    }
+    if let Some(key) = pin {
+        super::window::require_history_free_window(vault, key)?;
+    }
+    for map_key in &gone {
+        map_delete(&map, map_key)?;
+    }
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(true)
 }
 
 /// Raises this vault's floor of each session a carried floor is above, in
