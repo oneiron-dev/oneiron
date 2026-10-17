@@ -954,6 +954,30 @@ The app's policy actions have host verbs too. Each runs the same action as
 The two inference verbs need the caller's Auto ceiling. Each answers with the action's
 `outcome`. A retry with the same idempotency key gets the first call's answer.
 
+## Widen proposals
+
+When an agent asks to spawn a child with more context than its own slice holds, the gate does not
+grant it. The ask is parked as a **widen proposal** for the board above (the attempt that
+dispatched the asking agent). Its id is the digest of the stored request, so the proposal you
+answer is the one you listed. Approving it widens the parent's slice and enqueues the child,
+under a one-time consent. Declining it is final: the decline stays on record, a retry of the same
+ask is refused, and the Coach counts it as a widen denial in its agent health review.
+
+```sh
+oneiron widen-proposals list                      # newest first
+oneiron widen-proposals list --state pending
+oneiron widen-proposals approve HEX64
+oneiron widen-proposals decline HEX64
+```
+
+The commands open a stopped vault. A running server answers the same at
+`GET /v1/owner/widen-proposals[?state=pending|approved|declined]`,
+`POST /v1/owner/widen-proposals/approve` and `POST /v1/owner/widen-proposals/decline`, each with
+`{"proposal_id"}`. The host verbs `vault.widen_proposals`, `.approve` and `.decline` take the same
+input over the facade and MCP. Each answer shows the parent and board attempts, the target, the
+three context descriptors (never their content), when it was raised, and how it settled. Only the
+owner of the board's TASK may answer one.
+
 ## Legal holds
 
 A legal hold keeps records from being deleted. While a hold names a record, its delete fails for
@@ -1028,7 +1052,9 @@ where the bytes come from.
 
 Text, image and audio each search through a kind slot. An unbound text slot reads the vault's
 own text index. A bound slot reads a declared embedding space, whose id is an `ai.embed` rung id
-(as `GET /v1/ai/options` lists it), then `@where`.
+(as `GET /v1/ai/options` lists it), then `@where`: the `[models]` provider key that binds that
+rung, so one model at two clouds is two spaces. Where the space's model runs is that provider's
+locality. A space whose `@where` names no provider serving its rung embeds nothing.
 
 - `GET /v1/owner/embedding-spaces` lists the declared spaces, the text index, which space each
   slot reads, every move with its last check, and how many probes each kind holds.
