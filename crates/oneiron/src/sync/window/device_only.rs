@@ -354,18 +354,10 @@ pub fn export_withheld_for(
         || (!remote.is_empty() && delta_carries_device_only_for(vault, doc, remote, withhold)?))
 }
 
-/// Whether the delta of `doc` past `from` inserts a row a flagged world keeps
-/// or an edge naming one, even one a later write removed. Such a delta must
-/// not ship; the window's history-free snapshot carries only what it holds now.
-pub(super) fn delta_carries_device_only(
-    vault: &Vault,
-    doc: &LoroDoc,
-    from: &VersionVector,
-) -> Result<bool> {
-    delta_carries_device_only_for(vault, doc, from, Withhold::Unknown)
-}
-
-/// [`delta_carries_device_only`] against the worlds `withhold` names.
+/// Whether the delta of `doc` past `from` inserts a row a world `withhold`
+/// names keeps, or an edge naming one, even one a later write removed. Such a
+/// delta must not ship; the window's history-free snapshot carries only what
+/// it holds now.
 pub(super) fn delta_carries_device_only_for(
     vault: &Vault,
     doc: &LoroDoc,
