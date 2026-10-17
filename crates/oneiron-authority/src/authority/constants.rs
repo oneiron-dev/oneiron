@@ -123,7 +123,8 @@ pub const SLIP_KEY_RECORDS: &str = "records";
 pub const SLIP_KEY_CHANNELS: &str = "channels";
 pub const SLIP_KEY_ACTOR_CLASS: &str = "actor_class";
 pub const SLIP_KEY_ORG_REF: &str = "org_ref";
-pub const SLIP_MINT_KEYS: [&str; 15] = [
+pub const SLIP_KEY_GRANT_REF: &str = "grant_ref";
+pub const SLIP_MINT_KEYS: [&str; 16] = [
     OP_KEY_KIND,
     SLIP_KEY_SLIP_ID,
     SLIP_KEY_VAULT_ID,
@@ -139,6 +140,7 @@ pub const SLIP_MINT_KEYS: [&str; 15] = [
     SLIP_KEY_CHANNELS,
     SLIP_KEY_ACTOR_CLASS,
     SLIP_KEY_ORG_REF,
+    SLIP_KEY_GRANT_REF,
 ];
 pub const SLIP_SCOPE_KEYS: [&str; 6] = [
     SCOPE_KEY_WORLDS,
