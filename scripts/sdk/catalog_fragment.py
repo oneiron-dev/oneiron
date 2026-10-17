@@ -34,13 +34,15 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   the UTF-8 text. Python's standard library has SHA-256; it has no BLAKE3.
 # - REPLY: what a verb call resolves with in code mode. The guest's verb door
 #   decodes the host's whole reply (components/code-run-quickjs/bootstrap.js,
-#   `verb`), and the host writes it as `{output}`, `{denied, reasonCodes}` or
-#   `{failed}`, with `budget` added inside a wake pass (wire.rs `reply_body`,
+#   `verb`), and the host writes it as `{output}`, `{denied, reasonCodes}`,
+#   `{failed}` or, for a call that parks and every call past a park,
+#   `{waitId}`, with `budget` added inside a wake pass (wire.rs `reply_body`,
 #   `SelfDispatchResponse::guest_json`). `StoredResult` is runtime.d.ts's card,
 #   which stands in for an output past 512 KiB of JSON.
 # - COORDINATION: the rows code mode answers with the run's own coordination
 #   reply, not the row's output (wire.rs `self_call`). Their reply is
-#   `unknown`, and so is a run row's output, which the table does not name.
+#   `unknown`, and so is a run row's output when the table does not name it.
+#   Today every row answers its output, `ask` and `wait` included.
 # - JSDOC: each verb carries its row's one-line description as its JSDoc, as
 #   every generated TypeScript method does.
 # - VAULT_HOST: an empty interface in the namespace that the `vault` root
@@ -52,12 +54,12 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   `connector.call`, so it resolves with that row's reply.
 NAMESPACE = 'Sdk'
 REVISION_ALGORITHM = 'sha256'
-REPLY = ('type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true }) '
-         '& { budget?: {budget} };')
+REPLY = ('type Reply<T> = ({ output: T | StoredResult } | { denied: string; reasonCodes: string[] } | { failed: true } '
+         '| { waitId: string }) & { budget?: {budget} };')
 REPLY_DOC = ('/** What a verb call resolves with: its `output`, a `StoredResult` card in its place past 512 KiB of JSON, '
-             'or the refusal it met; `budget` rides on every reply inside a wake pass. */')
+             'the refusal it met, or the wait the run parked on; `budget` rides on every reply inside a wake pass. */')
 BUDGET = 'crate::dreamer_wake::legibility::BudgetLegibilityEnvelope'
-COORDINATION = ('ask', 'wait')
+COORDINATION = ()
 JSDOC = True
 VAULT_HOST = 'VaultHost'
 VAULT_HOST_DOC = ('/** Members the `vault` root holds beside its verbs; another declaration file adds them '
@@ -172,7 +174,7 @@ class Fragment:
             f'{len(self.inventory.decls)} declarations.',
             f'Replies: {states.get("typed", 0)} fully typed, {states.get("opaque", 0)} typed down to an opaque '
             f'serde_json::Value leaf, {states.get("unknown", 0)} with a shape the generator could not read, '
-            f'{states.get("unnamed", 0)} unknown (the run rows and {", ".join(COORDINATION)}).',
+            f'{states.get("unnamed", 0)} unknown (rows whose output the table does not name, or the run\'s own coordination reply).',
             f'Opaque serde_json::Value leaves: {len(self.inventory.opaques)}; unread shapes: '
             + (', '.join(unread) if unread else 'none') + '.',
         ]

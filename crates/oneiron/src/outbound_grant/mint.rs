@@ -98,10 +98,27 @@ impl Vault {
         intent: &ScopedMcpGrantMintIntent,
         created_at: u64,
     ) -> Result<StandingOutboundGrant> {
-        let policy = {
-            let rtxn = self.store.env.read_txn()?;
-            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
-        };
+        let mut wtxn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &wtxn)?;
+        }
+        let grant =
+            self.mint_scoped_mcp_outbound_grant_in_txn(&mut wtxn, id, intent, created_at)?;
+        wtxn.commit()?;
+        Ok(grant)
+    }
+
+    /// The scoped mint inside the caller's transaction, bound to the policy
+    /// floor that transaction reads. The caller owns the owner proof and the
+    /// header-class decision (ONE-1794's connector consent composes it).
+    pub(crate) fn mint_scoped_mcp_outbound_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        intent: &ScopedMcpGrantMintIntent,
+        created_at: u64,
+    ) -> Result<StandingOutboundGrant> {
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
         let binding_diff_handle = scoped_mcp_grant_binding_handle(intent);
         let grant = StandingOutboundGrant::from_scoped_mcp_grant_mint_intent(
             intent,
@@ -110,15 +127,10 @@ impl Vault {
             policy.read_frontier_hash()?,
         )?;
         let data = encode_standing_outbound_grant_body(&grant)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
-        }
-        if self.store.port_entity_record(&wtxn, id)?.is_some() {
+        if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
-        self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
-        wtxn.commit()?;
+        self.apply_standing_outbound_grant_body(wtxn, id, created_at, data)?;
         Ok(grant)
     }
 
@@ -181,9 +193,21 @@ impl Vault {
         revoked_at: u64,
     ) -> Result<StandingOutboundGrant> {
         let mut wtxn = self.store.env.write_txn()?;
+        let revoked = self.revoke_standing_outbound_grant_in_txn(&mut wtxn, id, revoked_at)?;
+        wtxn.commit()?;
+        Ok(revoked)
+    }
+
+    /// The revoke inside the caller's transaction.
+    pub(crate) fn revoke_standing_outbound_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        revoked_at: u64,
+    ) -> Result<StandingOutboundGrant> {
         let raw = self
             .store
-            .port_entity_record(&wtxn, id)?
+            .port_entity_record(&*wtxn, id)?
             .map(|row| row.encode())
             .ok_or(Error::EntityNotFound)?;
         let header =
@@ -194,8 +218,7 @@ impl Vault {
         let grant = decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_standing_outbound_grant_body(&revoked)?;
-        self.apply_standing_outbound_grant_body(&mut wtxn, id, revoked_at, data)?;
-        wtxn.commit()?;
+        self.apply_standing_outbound_grant_body(wtxn, id, revoked_at, data)?;
         Ok(revoked)
     }
 

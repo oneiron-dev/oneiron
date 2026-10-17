@@ -112,14 +112,43 @@
       for (const key in methods) Object.defineProperty(value, key, {value: methods[key], enumerable: false});
       return Object.freeze(value);
     };
-    // `store(value, name?)` streams the value to the host as the result
-    // frames do, then binds it: a string as given, any other value as its
-    // JSON. The host answers the stored result's card.
+    // `store(value, name?, {sources?, receipt?})` streams the value to the
+    // host as the result frames do, then binds it: a string as given, any
+    // other value as its JSON. The host answers the stored result's card.
+    // `sources` are the results it was made from, whose taint it inherits;
+    // `receipt` names a fold's source, jobs and summary tree, of which the
+    // host computes the fold receipt.
     if ("store" in bare) throw new TypeError("verb row shadows a host import");
-    bare.store = (value, name) => {
-      if (name !== undefined && typeof name !== "string") throw new TypeError("store name must be a string");
+    const listOf = (items, map) => Array.from(items ?? [], map);
+    bare.store = (value, name, options) => {
+      if (name !== undefined && name !== null && typeof name !== "string") throw new TypeError("store name must be a string");
+      const input = name == null ? {} : {name};
+      if (options !== undefined) {
+        if (!options || typeof options !== "object") throw new TypeError("store options must be an object");
+        if (options.sources !== undefined) input.sources = listOf(options.sources, refOf);
+        if (options.receipt !== undefined) {
+          const receipt = options.receipt;
+          input.receipt = {
+            source: refOf(receipt?.source),
+            tasks: listOf(receipt.tasks, String),
+            tree: listOf(receipt.tree, node => ({summary: refOf(node?.summary), inputs: listOf(node.inputs, refOf)})),
+          };
+          if (receipt.recipe !== undefined) input.receipt.recipe = receipt.recipe;
+        }
+      }
+      const sent = verbInput(input);
       sendFramed("store", text(value), true);
-      return Promise.resolve(send("store", verbInput(name === undefined ? {} : {name}))).then(decode).then(card);
+      return Promise.resolve(send("store", sent)).then(decode).then(card);
+    };
+    // `summarize(r, {effort?, group?, defer?})`: the row takes its ref and
+    // group as refs. A made summary answers its card; a deferred one its
+    // task and state.
+    const summarizeVerb = bare.summarize;
+    if (summarizeVerb) bare.summarize = (r, options = {}) => {
+      const input = {...options, ref: refOf(r)};
+      if (options.group !== undefined) input.group = listOf(options.group, refOf);
+      return summarizeVerb(input).then(reply =>
+        reply && typeof reply.handle === "string" ? card(reply) : reply);
     };
     // `describe` of a result answers its card; of anything else, the verb's
     // own answer.
@@ -169,6 +198,17 @@
         },
       });
     };
+    // The bundled helpers (reader_forks.js, diff.js): plain JS over the
+    // calls above, never engine verbs. Each step they take is one of those
+    // calls, checked and recorded as the program's own.
+    for (const name of ["readAll", "diff"])
+      if (name in bare) throw new TypeError("verb row shadows a host import");
+    const helpers = {
+      slice: bare.slice, chunks: bare.chunks, store: bare.store, describe: bare.describe,
+      can: bare.can, summarize: bare.summarize, spawn: sdk.self.spawn, wait: sdk.tasks?.wait,
+    };
+    if (helpers.can && helpers.summarize && helpers.spawn && helpers.wait) bare.readAll = makeReaderForks(helpers);
+    if (helpers.can) bare.diff = makeDiff(helpers);
     for (const root of ["tools", "connectors", "mcp", "memory", "board", "shared", "home", "sdk"])
       if (!roots.has(root)) bare[root] = refusal(root);
     for (const root of ["connectors", "mcp"]) sdk.self[root] ??= refusal(`self.${root}`);

@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::attempt_queue::encoding::{decode_record, encode_record};
+use crate::attempt_queue::encoding::decode_record;
 use crate::attempt_queue::engine::AttemptQueue;
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptRecord, AttemptState};
@@ -140,7 +140,7 @@ impl AttemptQueue<'_> {
             now,
         )?;
         count_cancel_request(&mut record.cancel_state.pressure);
-        let encoded = encode_record(record)?;
+        let encoded = self.encode_in_txn(wtxn, record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -234,7 +234,7 @@ impl AttemptQueue<'_> {
             },
             input.now,
         )?;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
@@ -294,7 +294,7 @@ impl AttemptQueue<'_> {
             },
             input.now,
         )?;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
@@ -349,7 +349,7 @@ impl AttemptQueue<'_> {
             },
             input.now,
         )?;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;
@@ -418,7 +418,7 @@ impl AttemptQueue<'_> {
             reserve_percent,
             record.attempt_count,
         );
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(wtxn, record.id.as_bytes(), &encoded)?;
@@ -486,7 +486,7 @@ impl AttemptQueue<'_> {
             },
             input.now,
         )?;
-        let encoded = encode_record(&record)?;
+        let encoded = self.encode_in_txn(&mut wtxn, &mut record)?;
         self.store
             .attempt_records
             .put(&mut wtxn, record.id.as_bytes(), &encoded)?;

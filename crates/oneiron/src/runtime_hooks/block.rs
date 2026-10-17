@@ -102,7 +102,7 @@ pub(super) fn put_new_block_in_txn(
     if BLOCKS.get(&vault.store, txn, &id)?.is_some() {
         return Ok(false);
     }
-    BLOCKS.put(&vault.store, txn, &id, block)?;
+    BLOCKS.put(vault, txn, &id, block)?;
     Ok(true)
 }
 
@@ -112,7 +112,7 @@ pub(super) fn put_block_in_txn(
     id: EntityId,
     block: &HookBlock,
 ) -> Result<()> {
-    BLOCKS.put(&vault.store, txn, &id, block)
+    BLOCKS.put(vault, txn, &id, block)
 }
 
 /// Whether any live block waits on a predicate.
@@ -152,7 +152,7 @@ pub(super) fn expire_for_predicate(vault: &Vault, predicate: &str, at: u64) -> R
             .collect::<Result<_>>()?;
         for (id, mut block) in matched.iter().cloned() {
             block.expired_at = Some(at);
-            BLOCKS.put(&vault.store, txn, &id, &block)?;
+            BLOCKS.put(vault, txn, &id, &block)?;
         }
         Ok(matched.len())
     })
@@ -195,7 +195,7 @@ impl Vault {
             {
                 row.expired_at = Some(self.store.clock.now_recorded_at());
             }
-            BLOCKS.put(&self.store, txn, &block, &row)?;
+            BLOCKS.put(self, txn, &block, &row)?;
             Ok(row)
         })
     }
