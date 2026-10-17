@@ -311,7 +311,9 @@ impl SyncServer {
         }
     }
 
-    fn check_space_move(
+    /// Runs one open move's paired probes now, through both spaces' towers.
+    /// Blocking.
+    pub(crate) fn check_space_move(
         &self,
         runtime: &tokio::runtime::Handle,
         moving: &SpaceMove,
