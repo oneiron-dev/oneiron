@@ -149,6 +149,11 @@ export_facade! {
     let output = client.vault_weave_digest(&input)?;
     crate::codec::encode("vault.weave.digest", &output)
 };
+"vault.weave.lens" => fn vault_weave_lens(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::claim::WeaveReportRequest = crate::codec::decode("vault.weave.lens", &input)?;
+    let output = client.vault_weave_lens(&input)?;
+    crate::codec::encode("vault.weave.lens", &output)
+};
 "vault.weave.link.wrong" => fn vault_weave_link_wrong(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::claim::WeaveWrongLinkRequest = crate::codec::decode("vault.weave.link.wrong", &input)?;
     let output = client.vault_weave_link_wrong(&input)?;
@@ -313,6 +318,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::decode("vault.shares.create", &input)?;
     let output = client.vault_shares_create(&input)?;
     crate::codec::encode("vault.shares.create", &output)
+};
+"vault.shares.revoke" => fn vault_shares_revoke(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::ShareRevokeRequest = crate::codec::decode("vault.shares.revoke", &input)?;
+    let output = client.vault_shares_revoke(&input)?;
+    crate::codec::encode("vault.shares.revoke", &output)
+};
+"vault.shares.view" => fn vault_shares_view(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::task_verb::sdk::ShareViewRequest = crate::codec::decode("vault.shares.view", &input)?;
+    let output = client.vault_shares_view(&input)?;
+    crate::codec::encode("vault.shares.view", &output)
 };
 "vault.hooks.replay" => fn vault_hooks_replay(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::decode("vault.hooks.replay", &input)?;
@@ -633,6 +648,36 @@ export_facade! {
     let input: oneiron::task_verb::sdk::AiVerdictRequest = crate::codec::decode("ai.verdict", &input)?;
     let output = client.ai_verdict(&input)?;
     crate::codec::encode("ai.verdict", &output)
+};
+"vault.graph.ask" => fn vault_graph_ask(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::GraphAskRequest = crate::codec::decode("vault.graph.ask", &input)?;
+    let output = client.vault_graph_ask(&input)?;
+    crate::codec::encode("vault.graph.ask", &output)
+};
+"vault.questions.create" => fn vault_questions_create(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::QuestionCreateRequest = crate::codec::decode("vault.questions.create", &input)?;
+    let output = client.vault_questions_create(&input)?;
+    crate::codec::encode("vault.questions.create", &output)
+};
+"vault.questions.edit" => fn vault_questions_edit(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::QuestionEditRequest = crate::codec::decode("vault.questions.edit", &input)?;
+    let output = client.vault_questions_edit(&input)?;
+    crate::codec::encode("vault.questions.edit", &output)
+};
+"vault.questions.pause" => fn vault_questions_pause(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::QuestionPauseRequest = crate::codec::decode("vault.questions.pause", &input)?;
+    let output = client.vault_questions_pause(&input)?;
+    crate::codec::encode("vault.questions.pause", &output)
+};
+"vault.questions.read" => fn vault_questions_read(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::QuestionReadRequest = crate::codec::decode("vault.questions.read", &input)?;
+    let output = client.vault_questions_read(&input)?;
+    crate::codec::encode("vault.questions.read", &output)
+};
+"vault.questions.answers" => fn vault_questions_answers(&self, input: WireJson) -> WireJson = |client| {
+    let input: oneiron::receipt::QuestionAnswersRequest = crate::codec::decode("vault.questions.answers", &input)?;
+    let output = client.vault_questions_answers(&input)?;
+    crate::codec::encode("vault.questions.answers", &output)
 };
 "connector.list" => fn connector_list(&self, input: WireJson) -> WireJson = |client| {
     let input: oneiron::task_verb::sdk::ConnectorListRequest = crate::codec::decode("connector.list", &input)?;
