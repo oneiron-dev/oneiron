@@ -29,6 +29,9 @@ use crate::owner::{imports, local_owner, location, note_imports, runs, secrets};
 
 mod vault_key;
 pub use self::vault_key::vault_key;
+pub(super) use self::vault_key::{
+    HostUnlock, ensure_page_seal_wrapped, prepare_page_seal, read_secret_file,
+};
 
 pub(super) fn emit(value: &impl Serialize) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
@@ -230,7 +233,20 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
+    // A restore makes a plain vault, and a sealed vault's page-seal mirror
+    // would stay beside it (OF-570).
+    let sealed = oneiron::world_keys::vault_is_sealed(&config.vault_path)?;
+    let refuse_sealed = || -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !sealed,
+            "vault {} is sealed (maximum tier), and a restore makes a plain vault: restore to \
+             another --vault-path",
+            config.vault_path.display()
+        );
+        Ok(())
+    };
     if let Some(previous) = &args.activate {
+        refuse_sealed()?;
         return emit(&backup::activate(
             previous,
             &config.vault_path,
@@ -246,6 +262,7 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
             .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?;
         return emit(&crate::owner::vault_key::BackupUnlocks::from(unlocks));
     }
+    refuse_sealed()?;
     // A backup opens with this install's keystore, as configured, unless the
     // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;

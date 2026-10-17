@@ -58,6 +58,9 @@ fn init_with_env(
         .ok_or_else(|| anyhow::anyhow!("no config location; pass --config"))?;
     // The questions are answered; the shared operation does the work.
     args.embedder = Some(choice);
+    if args.maximum_tier {
+        writeln!(output, "warning: {}", oneiron::PAGE_SEAL_WARNING)?;
+    }
     let (vault, outcome) = setup_models(&args, &path, env)?;
     super::print_doctor_report(&vault)?;
     writeln!(output, "config: {}", outcome.config.display())?;
@@ -166,7 +169,7 @@ pub(crate) fn setup_models(
             }
             None => "none".to_owned(),
         };
-        let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+        let vault = open_vault(answers, &config)?;
         std::fs::rename(&staged, path)?;
         let outcome = ModelSetupOutcome {
             config: path.to_path_buf(),
@@ -198,6 +201,38 @@ pub(crate) fn setup_models(
         let _ = std::fs::remove_file(staged);
     }
     result
+}
+
+/// Opens the configured vault, creating it on a first run: sealed when the
+/// config asks for the maximum tier (OF-570). A new sealed vault's key is
+/// wrapped to this device's keystore and to the password `--secret-file`
+/// names.
+fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiron::Vault> {
+    let fresh = !config.vault_path.join("data.mdb").exists();
+    anyhow::ensure!(
+        fresh || answers.secret_file.is_none(),
+        "--secret-file sets a new sealed vault's password; `oneiron vault-key set-password` \
+         changes it"
+    );
+    let password = answers
+        .secret_file
+        .as_deref()
+        .map(|file| super::owner::read_secret_file(file, "the vault password"))
+        .transpose()?
+        .map(super::owner::HostUnlock::Password);
+    let mut vault_config = config.vault_config();
+    if vault_config.page_seal.is_none() {
+        vault_config.page_seal = super::owner::prepare_page_seal(config, password.as_ref())?;
+    }
+    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)?;
+    if vault.vault_pages_sealed() {
+        config.keystore.install_on(&vault, &config.vault_path);
+        if let Some(super::owner::HostUnlock::Password(password)) = &password {
+            vault.set_vault_key_password(password, None)?;
+        }
+        super::owner::ensure_page_seal_wrapped(&vault, &config.vault_path)?;
+    }
+    Ok(vault)
 }
 
 /// Asks for the tagger the way the embedder is asked for: local, endpoint or
@@ -671,6 +706,9 @@ fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow
     );
     table.insert("dimensions".into(), i64::try_from(dims)?.into());
     table.insert("map_size".into(), i64::try_from(args.map_size)?.into());
+    if args.maximum_tier {
+        table.insert("maximum_tier".into(), true.into());
+    }
     if let Some(paths) = &args.dict_search_paths {
         let paths = paths
             .iter()

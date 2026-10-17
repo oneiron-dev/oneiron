@@ -91,7 +91,8 @@ impl KeystoreConfig {
     /// loads this install's signing keys from it before any signing work is
     /// admitted. A platform with none does not stop serve: the signing and
     /// world-key doors answer `KeystoreUnavailable` without it, and reads and sync
-    /// go on. True when one was installed.
+    /// go on. A sealed vault (maximum tier) with no wrap yet is wrapped to this
+    /// device here. True when one was installed.
     pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
         match self.open(vault_path) {
             Ok(Some(keystore)) => {
@@ -101,6 +102,7 @@ impl KeystoreConfig {
                 );
                 vault.install_device_keystore(keystore);
                 vault.prepare_install_signing_logged();
+                wrap_sealed_to_device(vault);
                 true
             }
             Ok(None) => {
@@ -119,6 +121,23 @@ impl KeystoreConfig {
                 false
             }
         }
+    }
+}
+
+/// A sealed vault (maximum tier) with no wrap yet takes this device's: its
+/// pages open from the mirror beside it only through a wrap.
+fn wrap_sealed_to_device(vault: &oneiron::Vault) {
+    let unwrapped = vault
+        .vault_key_wraps()
+        .is_ok_and(|wraps| wraps.is_empty());
+    if !vault.vault_pages_sealed() || !unwrapped {
+        return;
+    }
+    if let Err(error) = vault.add_vault_key_device() {
+        tracing::error!(
+            %error,
+            "the sealed vault's key was not wrapped to this device; it opens again only with a wrap"
+        );
     }
 }
 

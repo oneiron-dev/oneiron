@@ -1,7 +1,8 @@
 //! The vault data key's public side, shared by `oneiron vault-key`, `oneiron
 //! restore` and `/v1/owner/vault-key` (OF-570 E1): the wraps as an owner reads
-//! them, a passkey's PRF input, and the checkpoint signer pin a host with no
-//! vault trusts a backup by. No secret passes through here.
+//! them, whether the pages are sealed, a passkey's PRF input, and the
+//! checkpoint signer pin a host with no vault trusts a backup by. No secret
+//! passes through here.
 
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
@@ -51,6 +52,11 @@ pub(crate) struct VaultKeyReport {
     /// What keeps this install's device wrap and signing seeds at rest:
     /// `hardware`, `platform` or `software`; none without a keystore.
     pub(crate) keystore: Option<&'static str>,
+    /// `sealed` at the maximum tier (OF-570), else `plain`.
+    pub(crate) pages: &'static str,
+    /// The maximum tier's warning, while the pages are sealed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) warning: Option<&'static str>,
 }
 
 pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> {
@@ -66,6 +72,14 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
         keystore: vault
             .device_keystore_assurance()
             .map(oneiron_keystore::KeystoreAssurance::label),
+        pages: if vault.vault_pages_sealed() {
+            "sealed"
+        } else {
+            "plain"
+        },
+        warning: vault
+            .vault_pages_sealed()
+            .then_some(oneiron::PAGE_SEAL_WARNING),
     })
 }
 

@@ -12,6 +12,7 @@ use crate::overlay_db::OverlayDb;
 #[cfg(test)]
 use crate::store::test_hooks;
 use crate::store::{RawDatabases, Store, VaultWriterLease, seed_default_policy_manifest_in_txn};
+use crate::world_keys::page_seal_open_error;
 
 use super::embedding_transform_gates::{
     persist_embedding_transform_if_missing, preflight_embedding_transform,
@@ -153,6 +154,9 @@ impl Store {
                     .map_size(config.map_size)
                     .max_readers(config.max_readers)
                     .max_dbs(MAX_DBS);
+                if let Some(seal) = &config.page_seal {
+                    options.page_key(seal.page_key());
+                }
                 #[cfg(target_os = "linux")]
                 let opened = if let Some(lease) = lease {
                     // Keep the directory capability intact, just like the
@@ -168,18 +172,18 @@ impl Store {
                             #[cfg(test)]
                             test_hooks::run_after_lmdb_open(&canonical_path);
                         },
-                    )?
+                    )
                 } else {
                     options.open_with_cache_identity(
                         &storage_path,
                         canonical_path.clone(),
                         || {},
                         || {},
-                    )?
+                    )
                 };
                 #[cfg(not(target_os = "linux"))]
-                let opened = options.open(&canonical_path)?;
-                opened
+                let opened = options.open(&canonical_path);
+                opened.map_err(|error| page_seal_open_error(error, config.page_seal.is_some()))?
             };
             // Wrap IMMEDIATELY so every `?` early-return below (failed open
             // gates) also releases the environment instead of leaking it into

@@ -549,7 +549,13 @@ impl Vault {
         let privacy = config.privacy.clone();
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
-            vault_id: super::VaultId::resolve_at_open(&store)?,
+            vault_id: super::VaultId::resolve_at_open(
+                &store,
+                config
+                    .page_seal
+                    .as_ref()
+                    .map(crate::world_keys::VaultPageSeal::vault_id),
+            )?,
             retrieval_trace_key: super::retrieval_trace_key::RetrievalTraceKey::resolve_at_open(
                 &store,
             )?,
@@ -585,6 +591,9 @@ impl Vault {
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
         };
+        // A sealed vault (maximum tier) holds its data key and mirrors its
+        // wraps before any caller holds it.
+        vault.settle_page_seal()?;
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.
         crate::deletion::topology_delete_intent::recover_topology_delete_intents_on_open(&vault)?;

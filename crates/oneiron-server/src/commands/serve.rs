@@ -63,7 +63,18 @@ pub(super) async fn serve_with_config(
 
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
-    let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
+    // A sealed vault (maximum tier) opens with its page seal, and one the
+    // config asks for is created sealed where no vault is yet.
+    if vault_config.page_seal.is_none() {
+        vault_config.page_seal = super::owner::prepare_page_seal(&config, None)?;
+    }
+    if vault_config.page_seal.is_some() {
+        tracing::warn!("{}", oneiron::PAGE_SEAL_WARNING);
+    }
+    // A rehearsal restores into a plain scratch vault, as a restore does.
+    let mut rehearsal_config = vault_config.clone();
+    rehearsal_config.page_seal = None;
+    let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, rehearsal_config);
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(&config);
     #[cfg(unix)]
@@ -72,6 +83,7 @@ pub(super) async fn serve_with_config(
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
     config.keystore.install_on(&vault, &config.vault_path);
+    super::owner::ensure_page_seal_wrapped(&vault, &config.vault_path)?;
     #[cfg(unix)]
     if let Err(error) = vault.collect_result_bodies(4096) {
         tracing::warn!(%error, "result body collection at start failed");

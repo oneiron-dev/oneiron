@@ -69,7 +69,7 @@ impl std::fmt::Debug for VaultDataKey {
 }
 
 impl VaultDataKey {
-    fn generate() -> Result<Self> {
+    pub(super) fn generate() -> Result<Self> {
         let mut bytes = Zeroizing::new([0u8; 32]);
         os_fill(&mut bytes[..])?;
         Ok(Self(bytes))
@@ -77,12 +77,12 @@ impl VaultDataKey {
 
     /// `BLAKE3-derive_key("oneiron/vault-key-commitment/v1", vault id ‖ key)`: it
     /// pins which bytes are this vault's key and reveals nothing about them.
-    fn commitment(&self, vault_id: &[u8; 32]) -> [u8; 32] {
+    pub(super) fn commitment(&self, vault_id: &[u8; 32]) -> [u8; 32] {
         self.derive(COMMITMENT_CONTEXT, vault_id)
     }
 
     /// A key of its own for one use, `BLAKE3-derive_key(context, vault id ‖ key)`.
-    fn derive(&self, context: &str, vault_id: &[u8; 32]) -> [u8; 32] {
+    pub(super) fn derive(&self, context: &str, vault_id: &[u8; 32]) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new_derive_key(context);
         hasher.update(vault_id);
         hasher.update(&self.0[..]);
@@ -265,7 +265,12 @@ impl CarriedVaultKey {
         Ok(Zeroizing::new(key.derive(context, vault_id)))
     }
 
-    fn open(&self, vault_id: &[u8; 32], unlock: &VaultKeyUnlock<'_>) -> Result<VaultDataKey> {
+    /// The vault key a carried wrap opens to under `unlock`.
+    pub(super) fn open(
+        &self,
+        vault_id: &[u8; 32],
+        unlock: &VaultKeyUnlock<'_>,
+    ) -> Result<VaultDataKey> {
         let wrap = |kind: VaultKeyWrapKind| {
             let id = kind.id();
             self.wraps
@@ -536,6 +541,7 @@ impl Vault {
             Ok(info)
         })?;
         self.hold_vault_key(key);
+        self.sync_page_custody()?;
         Ok(info)
     }
 
@@ -590,6 +596,66 @@ impl Vault {
         })?;
         self.hold_vault_key(key);
         Ok(created)
+    }
+
+    /// Holds the data key a sealed vault opened with (OF-570 maximum tier).
+    /// A vault with a data key holds it only when its commitment names this
+    /// key; a new vault takes it as its own, with no wrap yet.
+    pub(super) fn admit_page_seal_key(&self, key: &Arc<VaultDataKey>) -> Result<()> {
+        let vault_id = *self.vault_id().as_bytes();
+        let commitment = key.commitment(&vault_id);
+        let stored = {
+            let txn = self.store.env.read_txn()?;
+            STATE.get(&self.store, &txn, &())?
+        };
+        let refused_key = || refused("the page seal's key is not this vault's data key");
+        match stored {
+            Some(state) if state.commitment != commitment => return Err(refused_key()),
+            Some(_) => {}
+            None => self.with_write_txn(|txn| {
+                if let Some(state) = STATE.get(&self.store, txn, &())? {
+                    return if state.commitment == commitment {
+                        Ok(())
+                    } else {
+                        Err(refused_key())
+                    };
+                }
+                let created_at = self.instant_in_txn(txn)?.secs();
+                STATE.put(
+                    &self.store,
+                    txn,
+                    &(),
+                    &VaultKeyState {
+                        commitment,
+                        created_at,
+                    },
+                )
+            })?,
+        }
+        *self
+            .world_keys
+            .vault_key
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(key));
+        Ok(())
+    }
+
+    /// The vault key as it rests, for the page-seal mirror: `None` while the
+    /// vault has no data key or no wrap.
+    pub(super) fn resting_vault_key(&self) -> Result<Option<CarriedVaultKey>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(state) = STATE.get(&self.store, &txn, &())? else {
+            return Ok(None);
+        };
+        let wraps: Vec<StoredWrap> = WRAPS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, stored)| stored)
+            .collect();
+        Ok((!wraps.is_empty()).then_some(CarriedVaultKey {
+            commitment: state.commitment,
+            wraps,
+        }))
     }
 
     /// The vault key as it rests, read in `txn` for a sealed artifact to carry,
@@ -854,7 +920,7 @@ impl Vault {
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let envelope = seal_wrap(&vault_id, &commitment, &kind, secret, &key)?;
-        self.with_write_txn(|txn| {
+        let info = self.with_write_txn(|txn| {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self, txn)?;
             }
@@ -879,7 +945,9 @@ impl Vault {
                 },
             )?;
             Ok(info)
-        })
+        })?;
+        self.sync_page_custody()?;
+        Ok(info)
     }
 
     /// Removes one wrap. The last wrap stays: without it the key is lost.
@@ -915,7 +983,8 @@ impl Vault {
             }
             WRAPS.delete(&self.store, txn, &id)?;
             Ok(())
-        })
+        })?;
+        self.sync_page_custody()
     }
 
     /// The vault key's wraps, public facts only.

@@ -514,6 +514,7 @@ struct FileServeConfig {
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
+    maximum_tier: Option<bool>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -570,6 +571,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref,
+            maximum_tier: value.maximum_tier,
         }
     }
 }
@@ -631,6 +633,8 @@ struct PartialServeConfig {
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
+    /// `maximum_tier` is file-only: `oneiron init --maximum-tier` writes it.
+    maximum_tier: Option<bool>,
 }
 
 impl fmt::Debug for PartialServeConfig {
@@ -700,6 +704,7 @@ impl fmt::Debug for PartialServeConfig {
                 "hosted_kms_key_ref",
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
+            .field("maximum_tier", &self.maximum_tier)
             .finish()
     }
 }
@@ -872,6 +877,9 @@ impl PartialServeConfig {
         if let Some(value) = self.hosted_kms_key_ref {
             resolved.hosted_kms_key_ref = Some(value);
         }
+        if let Some(value) = self.maximum_tier {
+            resolved.maximum_tier = value;
+        }
         Ok(())
     }
 }
@@ -942,6 +950,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
+            maximum_tier: None,
         }
     }
 }
