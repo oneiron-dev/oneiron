@@ -3,6 +3,8 @@
 //! packets between the owner's machines that may. A relay takes the home's
 //! new packets in first, so a replacement this machine puts next carries what
 //! the others put, then puts each window that changed here since its last put.
+//! A packet past one request is put in parts the home stages and then shelves
+//! whole, and every packet is read back in slices.
 
 use std::collections::BTreeSet;
 
@@ -15,7 +17,10 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::authority::{Destination, WorldPrivacyView};
 use crate::sync::client::SyncClientConfig;
 use crate::sync::manager::WindowManager;
-use crate::sync::residence::{SEALED_SHELF_PAGE_MAX, discover_local_window_keys};
+use crate::sync::residence::{
+    SEALED_PACKET_MAX, SEALED_PUT_PART_MAX, SEALED_READ_PART_MAX, SEALED_SHELF_PAGE_MAX,
+    discover_local_window_keys,
+};
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
 use crate::world_keys::{SealedContentKind, SealedResidenceContent};
@@ -50,10 +55,11 @@ struct SealedListEntry {
 }
 
 #[derive(Deserialize)]
-struct SealedGetReply {
+struct SealedReadReply {
     id: String,
     window: String,
-    packet: String,
+    total: u64,
+    part: String,
 }
 
 fn storage(error: crate::Error) -> TransportError {
@@ -210,18 +216,9 @@ impl Relayer<'_> {
         let Some(world) = window.world() else {
             return Ok(false);
         };
-        let reply = match rpc.request("residence.sealed.get", json!({"id": id})).await {
-            Ok(reply) => reply,
-            Err(TransportError::InvalidPayload(_)) => return Ok(false),
-            Err(error) => return Err(error),
+        let Some(bytes) = read_sealed_packet(rpc, id, window).await? else {
+            return Ok(false);
         };
-        let reply: SealedGetReply = serde_json::from_value(reply).map_err(|_| refused())?;
-        if reply.id != id || reply.window != window.as_str() {
-            return Err(refused());
-        }
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(reply.packet)
-            .map_err(|_| refused())?;
         let Ok(packet) = SealedResidenceContent::from_bytes(&bytes) else {
             return Ok(false);
         };
@@ -269,21 +266,8 @@ impl Relayer<'_> {
             }
             let retire_through =
                 (binding.kind == SealedContentKind::Replacement && through > 0).then_some(through);
-            let packet = base64::engine::general_purpose::STANDARD.encode(packet.into_bytes());
-            match rpc
-                .request(
-                    "residence.sealed.put",
-                    json!({
-                        "window": window.as_str(),
-                        "packet": packet,
-                        "retireThrough": retire_through,
-                    }),
-                )
-                .await
-            {
-                Ok(_) => {}
-                Err(TransportError::InvalidPayload(_)) => continue,
-                Err(error) => return Err(error),
+            if !put_sealed_packet(rpc, &window, &packet.into_bytes(), retire_through).await? {
+                continue;
             }
             self.vault
                 .with_write_txn_grouped(|txn| {
@@ -293,5 +277,107 @@ impl Relayer<'_> {
             relay.put += 1;
         }
         Ok(())
+    }
+}
+
+/// Reads one shelved packet in slices. `None` when the home no longer serves
+/// it.
+async fn read_sealed_packet(
+    rpc: &mut ResidenceRpc,
+    id: &str,
+    window: &WindowKey,
+) -> Result<Option<Vec<u8>>, TransportError> {
+    let mut bytes = Vec::new();
+    let mut total = None;
+    loop {
+        let reply = match rpc
+            .request(
+                "residence.sealed.read",
+                json!({"id": id, "offset": bytes.len()}),
+            )
+            .await
+        {
+            Ok(reply) => reply,
+            Err(TransportError::InvalidPayload(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let reply: SealedReadReply = serde_json::from_value(reply).map_err(|_| refused())?;
+        if reply.id != id
+            || reply.window != window.as_str()
+            || reply.total > SEALED_PACKET_MAX
+            || *total.get_or_insert(reply.total) != reply.total
+        {
+            return Err(refused());
+        }
+        let part = base64::engine::general_purpose::STANDARD
+            .decode(reply.part)
+            .map_err(|_| refused())?;
+        if part.is_empty()
+            || part.len() > SEALED_READ_PART_MAX
+            || (bytes.len() + part.len()) as u64 > reply.total
+        {
+            return Err(refused());
+        }
+        bytes.extend_from_slice(&part);
+        if bytes.len() as u64 == reply.total {
+            return Ok(Some(bytes));
+        }
+    }
+}
+
+/// Puts one sealed packet: whole when it fits one request, else in parts the
+/// home stages and shelves as one. `false` when the home refused it.
+async fn put_sealed_packet(
+    rpc: &mut ResidenceRpc,
+    window: &WindowKey,
+    packet: &[u8],
+    retire_through: Option<u64>,
+) -> Result<bool, TransportError> {
+    let sent = if packet.len() <= SEALED_PUT_PART_MAX {
+        rpc.request(
+            "residence.sealed.put",
+            json!({
+                "window": window.as_str(),
+                "packet": base64::engine::general_purpose::STANDARD.encode(packet),
+                "retireThrough": retire_through,
+            }),
+        )
+        .await
+    } else {
+        let upload = blake3::hash(packet).to_hex();
+        let mut offset = 0;
+        for part in packet.chunks(SEALED_PUT_PART_MAX) {
+            match rpc
+                .request(
+                    "residence.sealed.stage",
+                    json!({
+                        "window": window.as_str(),
+                        "upload": upload.as_str(),
+                        "offset": offset,
+                        "part": base64::engine::general_purpose::STANDARD.encode(part),
+                    }),
+                )
+                .await
+            {
+                Ok(_) => {}
+                Err(TransportError::InvalidPayload(_)) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+            offset += part.len();
+        }
+        rpc.request(
+            "residence.sealed.commit",
+            json!({
+                "window": window.as_str(),
+                "upload": upload.as_str(),
+                "retireThrough": retire_through,
+            }),
+        )
+        .await
+    };
+    match sent {
+        Ok(_) => Ok(true),
+        Err(TransportError::InvalidPayload(_)) => Ok(false),
+        Err(error) => Err(error),
     }
 }

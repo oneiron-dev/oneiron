@@ -289,6 +289,10 @@ side_tables! {
     /// The last home arrival number this machine took sealed packets in through (u64be).
     /// Key: ().
     SYNC_RESIDENCE_SEALED_TAKEN: SyncState b"rst" Raw;
+    /// A sealed packet the home stages from parts until its last one (OF-534 G7): u64be vault
+    /// second of its latest part ‖ the window label its sender named, and beside it each part's
+    /// bytes. Key: hex64 (blake3 of the whole packet), then ":" hex16 (offset) per part.
+    SYNC_RESIDENCE_SEALED_STAGE: SyncState b"rsu:" Raw;
     /// Recorded-clock seconds (u64be) of an opened thin item's last touch, which ages its read
     /// cache for pruning. Key: hex32 (entity id).
     SYNC_RESIDENCE_ITEM_TOUCH: SyncState b"rt:e:" Raw;

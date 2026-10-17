@@ -29,8 +29,25 @@ const LABEL_PREFIX: &str = "rsh:";
 /// The home's next arrival number (u64be).
 const NEXT_KEY: &str = "rsn";
 
+/// A packet put in parts, staged on the home until its last part: u64be vault
+/// second of its latest part ‖ the window label its sender named. Key: hex64
+/// (blake3 of the whole packet). Each part beside it: key ":" hex16 (its
+/// offset), holding the part's bytes.
+const STAGE_PREFIX: &str = "rsu:";
+/// How long a staged packet waits for its next part before the home drops it.
+const STAGE_IDLE_SECS: u64 = 60 * 60;
+
 /// The most entries one shelf listing returns.
 pub const SEALED_SHELF_PAGE_MAX: usize = 256;
+/// The most packet bytes one put request carries; in base64 it stays under the
+/// 8 MiB request bound. A larger packet is put in parts of this size.
+pub const SEALED_PUT_PART_MAX: usize = 4 * 1024 * 1024;
+/// The most packet bytes one read reply carries; in base64 it stays under the
+/// 32 MiB reply bound.
+pub const SEALED_READ_PART_MAX: usize = 16 * 1024 * 1024;
+/// The largest packet the home stages or a reader takes in: a 1 GiB sealed body
+/// and its envelopes.
+pub const SEALED_PACKET_MAX: u64 = 1025 * 1024 * 1024;
 
 /// One live packet on the home's shelf, as a reader lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +82,16 @@ fn peer_withheld(vault: &Vault, peer: PeerMachine) -> Result<BTreeSet<EntityId>>
 
 fn private_world(window: &WindowKey) -> Result<EntityId> {
     window.world().ok_or_else(denied)
+}
+
+/// Refuses an unproved peer, a base window, a world kept off the sender and a
+/// world whose sealed copies are off.
+fn admit_sender(vault: &Vault, peer: PeerMachine, window: &WindowKey) -> Result<()> {
+    let world = private_world(window)?;
+    if peer_withheld(vault, peer)?.contains(&world) {
+        return Err(denied());
+    }
+    vault.require_sealed_copies(world)
 }
 
 /// Every label on the shelf with its live state, dropping the labels whose
@@ -125,11 +152,7 @@ pub fn shelve_sealed_window(
     packet: &[u8],
     retire_through: Option<u64>,
 ) -> Result<(SealedContentId, u64)> {
-    let world = private_world(window)?;
-    if peer_withheld(vault, peer)?.contains(&world) {
-        return Err(denied());
-    }
-    vault.require_sealed_copies(world)?;
+    admit_sender(vault, peer, window)?;
     let packet = SealedResidenceContent::from_bytes(packet)?;
     let id = vault.store_sealed_world_content(&packet)?;
     let key = label_key(&id);
@@ -223,4 +246,169 @@ pub fn sealed_shelf_packet(
     Ok(vault
         .sealed_world_content(id)?
         .map(|packet| (window, packet.into_bytes())))
+}
+
+fn stage_key(upload: &[u8; 32]) -> String {
+    format!("{STAGE_PREFIX}{}", blake3::Hash::from(*upload).to_hex())
+}
+
+fn decode_stage(raw: &[u8]) -> Result<(u64, &[u8])> {
+    let (at, window) = raw.split_at_checked(8).ok_or(Error::InvalidKey)?;
+    Ok((
+        u64::from_be_bytes(at.try_into().map_err(|_| Error::InvalidKey)?),
+        window,
+    ))
+}
+
+/// Stages one part of a sealed packet of `window` too large for one request,
+/// from the machine `peer` proved; the sender and world are refused as
+/// [`shelve_sealed_window`] refuses them. `upload` is the blake3 digest of the
+/// whole packet. `offset` must be the bytes staged so far, and 0 starts the
+/// packet over. A staged packet idle for an hour is dropped. Returns the bytes
+/// staged.
+///
+/// # Errors
+///
+/// A refused sender or world; an empty or oversized part; an offset other than
+/// the bytes staged, or a packet staged for another window; storage errors.
+pub fn stage_sealed_part(
+    vault: &Vault,
+    peer: PeerMachine,
+    window: &WindowKey,
+    upload: &[u8; 32],
+    offset: u64,
+    part: &[u8],
+) -> Result<u64> {
+    admit_sender(vault, peer, window)?;
+    let end = offset.checked_add(part.len() as u64).ok_or_else(denied)?;
+    if part.is_empty() || part.len() > SEALED_PUT_PART_MAX || end > SEALED_PACKET_MAX {
+        return Err(denied());
+    }
+    let key = stage_key(upload);
+    vault.with_write_txn_grouped(|wtxn| {
+        let now = vault.instant_in_txn(wtxn)?.secs();
+        // Each staged packet whose header does not decode or has idled out,
+        // and this one when it starts over.
+        let mut dropped = Vec::new();
+        let mut staged: Option<u64> = None;
+        for row in vault.store.sync_state.prefix_iter(wtxn, STAGE_PREFIX)? {
+            let (row_key, raw) = row?;
+            let Some(head) = row_key.get(..key.len()) else {
+                continue;
+            };
+            if row_key.len() != key.len() {
+                if let Some(bytes) = staged.as_mut().filter(|_| head == key) {
+                    *bytes += raw.len() as u64;
+                }
+                continue;
+            }
+            let idle =
+                decode_stage(&raw).map_or(true, |(at, _)| at.saturating_add(STAGE_IDLE_SECS) < now);
+            if head == key && offset > 0 && !idle {
+                let (_, labelled) = decode_stage(&raw)?;
+                if labelled != window.as_str().as_bytes() {
+                    return Err(denied());
+                }
+                staged = Some(0);
+            } else if head == key || idle {
+                dropped.push(row_key.into_owned());
+            }
+        }
+        if staged.unwrap_or(0) != offset {
+            return Err(denied());
+        }
+        let parts: Vec<String> = {
+            let mut parts = Vec::new();
+            for head in &dropped {
+                for row in vault.store.sync_state.prefix_iter(wtxn, head)? {
+                    parts.push(row?.0.into_owned());
+                }
+            }
+            parts
+        };
+        for row_key in &parts {
+            vault.store.sync_state.delete(wtxn, row_key)?;
+        }
+        let mut header = now.to_be_bytes().to_vec();
+        header.extend_from_slice(window.as_str().as_bytes());
+        vault.store.sync_state.put(wtxn, &key, &header)?;
+        vault
+            .store
+            .sync_state
+            .put(wtxn, &format!("{key}:{offset:016x}"), part)?;
+        Ok(end)
+    })
+}
+
+/// Shelves the packet of `window` the machine `peer` staged under `upload`, as
+/// [`shelve_sealed_window`] shelves a whole one, and drops its staged parts.
+///
+/// # Errors
+///
+/// No packet staged for `window` under `upload`, or staged bytes that are not
+/// the packet `upload` names; whatever [`shelve_sealed_window`] refuses.
+pub fn shelve_staged_sealed_window(
+    vault: &Vault,
+    peer: PeerMachine,
+    window: &WindowKey,
+    upload: &[u8; 32],
+    retire_through: Option<u64>,
+) -> Result<(SealedContentId, u64)> {
+    admit_sender(vault, peer, window)?;
+    let key = stage_key(upload);
+    let packet = vault.with_write_txn_grouped(|wtxn| {
+        let mut packet = Vec::new();
+        let mut keys = Vec::new();
+        let mut labelled = false;
+        for row in vault.store.sync_state.prefix_iter(wtxn, &key)? {
+            let (row_key, raw) = row?;
+            if row_key.len() == key.len() {
+                labelled = decode_stage(&raw)
+                    .is_ok_and(|(_, labelled)| labelled == window.as_str().as_bytes());
+            } else if row_key.get(key.len()..) == Some(format!(":{:016x}", packet.len()).as_str()) {
+                packet.extend_from_slice(&raw);
+            } else {
+                labelled = false;
+            }
+            keys.push(row_key.into_owned());
+        }
+        for row_key in &keys {
+            vault.store.sync_state.delete(wtxn, row_key)?;
+        }
+        Ok(labelled.then_some(packet))
+    })?;
+    let packet = packet.ok_or_else(denied)?;
+    if blake3::hash(&packet).as_bytes() != upload {
+        return Err(denied());
+    }
+    shelve_sealed_window(vault, peer, window, &packet, retire_through)
+}
+
+/// One slice of a shelved packet, at most [`SEALED_READ_PART_MAX`] bytes from
+/// `offset`, with its window and whole length, when the machine `peer` proved
+/// may read its world: a packet too large for one reply is read in slices.
+/// `None` for a packet not here, a world kept off the peer, and an offset at or
+/// past the packet's end.
+///
+/// # Errors
+///
+/// An unproved peer; storage errors.
+pub fn sealed_shelf_packet_part(
+    vault: &Vault,
+    peer: PeerMachine,
+    id: &SealedContentId,
+    offset: u64,
+) -> Result<Option<(WindowKey, u64, Vec<u8>)>> {
+    let Some((window, packet)) = sealed_shelf_packet(vault, peer, id)? else {
+        return Ok(None);
+    };
+    let Some(rest) = usize::try_from(offset)
+        .ok()
+        .and_then(|offset| packet.get(offset..))
+        .filter(|rest| !rest.is_empty())
+    else {
+        return Ok(None);
+    };
+    let part = rest[..rest.len().min(SEALED_READ_PART_MAX)].to_vec();
+    Ok(Some((window, packet.len() as u64, part)))
 }
