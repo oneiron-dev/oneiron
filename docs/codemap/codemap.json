@@ -5287,9 +5287,12 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "ArtifactAskOutcome",
+      "ArtifactAskSubmit",
+      "ArtifactAskUnits",
       "ArtifactExportFile",
       "ArtifactExportRequest",
       "ArtifactRefRequest",
@@ -5298,6 +5301,7 @@
       "DeckProposeOutcome",
       "DeckProposeRequest",
       "DiscardedProposal",
+      "FolderItemInput",
       "KeptProposal",
       "NativeOutputRequest",
       "ProposalSettleRequest",
@@ -5311,8 +5315,9 @@
      "path": "src/blob_artifact/verbs.rs",
      "purpose": "The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every…",
      "surface": {
-      "fn": 13,
-      "struct": 17
+      "enum": 1,
+      "fn": 15,
+      "struct": 20
      }
     },
     {
@@ -19313,6 +19318,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactAsk",
+      "ArtifactAskRun",
+      "UnitAbstention",
+      "UnitCall",
+      "UnitDecider",
+      "UnitRefusal"
+     ],
+     "path": "src/edit_roundtrip/artifact_question.rs",
+     "purpose": "Typed questions over artifact units (ARCH-0076 §2, OF-506)",
+     "surface": {
+      "crate-vis": 6,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -19380,6 +19404,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FolderAsk",
+      "FolderItem"
+     ],
+     "path": "src/edit_roundtrip/folder_review.rs",
+     "purpose": "Typed questions over files in a folder (ARCH-0076 §2, \"File in a folder\"): each selected file is one unit…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/formula.rs",
      "purpose": "Serialize post-2007 spreadsheet functions with Excel's OOXML prefix",
@@ -19403,18 +19441,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SheetAnswerBundle",
-      "SheetCellAnswer"
+      "SheetCellAnswer",
+      "SheetRowsAsk"
      ],
      "path": "src/edit_roundtrip/judgment.rs",
      "purpose": "Typed sheet answers: one ask over a bounded range becomes one retained edit",
      "surface": {
-      "crate-vis": 1,
-      "fn": 2,
-      "struct": 2
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -19453,8 +19492,8 @@
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
       "crate-vis": 4,
-      "mod": 3,
-      "re-export": 11
+      "mod": 6,
+      "re-export": 14
      }
     },
     {
@@ -19500,6 +19539,21 @@
      "surface": {
       "enum": 3,
       "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ParagraphAsk",
+      "ParagraphJudgment"
+     ],
+     "path": "src/edit_roundtrip/paragraph_review.rs",
+     "purpose": "Typed questions over paragraphs (ARCH-0076 §2, \"Paragraph or clause\"): each selected paragraph of a DOCX…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
       "struct": 2
      }
     },
@@ -19675,7 +19729,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ShapeReviewAnchor",
@@ -19694,7 +19748,7 @@
      "path": "src/edit_roundtrip/slides_review.rs",
      "purpose": "Bounded typed review of slide/shape units into one retained comment proposal",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 3,
       "struct": 10
@@ -19744,7 +19798,7 @@
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
       "const": 4,
-      "crate-vis": 44
+      "crate-vis": 47
      }
     },
     {
@@ -26467,7 +26521,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 8
      }
     },
@@ -49174,9 +49228,9 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 32,
+     "files": 35,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
     },
@@ -50119,9 +50173,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 119,
+   "over_bar": 121,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3026,
+   "source_files": 3029,
    "test_files": 903
   },
   "oneiron-android": {
@@ -64014,10 +64068,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/decision_artifact.rs",
+     "purpose": "Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/decision_graph.rs",
      "purpose": "Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -67366,6 +67430,13 @@
      "layout": "file+dir",
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
+    "decision_artifact": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a…"
+    },
     "decision_graph": {
      "files": 1,
      "impl_vault": false,
@@ -67607,7 +67678,7 @@
    },
    "over_bar": 29,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 489,
+   "source_files": 490,
    "test_files": 182
   },
   "oneiron-spawn": {
