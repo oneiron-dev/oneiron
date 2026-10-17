@@ -27,10 +27,13 @@ pub(super) struct TinyExtractor {
     model: ModelId,
     locality: ModelLocality,
     prompt: String,
+    /// The vault whose `host.budget.hit` hooks a spent budget runs.
+    vault: Arc<oneiron::Vault>,
 }
 
 impl TinyExtractor {
     pub(super) fn new(
+        vault: Arc<oneiron::Vault>,
         runtime: &RuntimeConfig,
         backend: Arc<dyn LlmBackend>,
         budget: BudgetGuard,
@@ -55,6 +58,7 @@ impl TinyExtractor {
             model,
             locality,
             prompt,
+            vault,
         })
     }
 
@@ -111,6 +115,10 @@ impl TinyExtractor {
         let admission = self
             .budget
             .admit_for_request(&request)
+            .inspect_err(|denied| {
+                self.vault
+                    .budget_denied_hooks(denied, &self.budget, request.model.as_str(), None);
+            })
             .map_err(LlmError::from)?;
         let mut lease = OpenLease {
             budget: &self.budget,

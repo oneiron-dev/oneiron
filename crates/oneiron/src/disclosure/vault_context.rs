@@ -21,8 +21,7 @@ use crate::error::{Error, Result};
 use crate::federation::{Scope, record_scope::scope_for_blob};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
@@ -125,16 +124,10 @@ impl Vault {
         scope: &DisclosureScope,
     ) -> Result<()> {
         scope.validate()?;
-        let raw = self
-            .store
-            .port_entity_record(&*wtxn, contact_id)?
-            .map(|row| row.encode())
+        // The contact is read from its claims (OF-272): a row of another
+        // kind is refused, a dropped contact row is not.
+        self.get_counterparty_contact_in_txn(&*wtxn, contact_id)?
             .ok_or(Error::EntityNotFound)?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_COUNTERPARTY_CONTACT {
-            return Err(Error::InvalidEntityType(header.entity_type));
-        }
         DISCLOSURE_SCOPES.put(&self.store, wtxn, contact_id, scope)?;
         let claim_id = disclosure_scope_claim_id(contact_id)?;
         let claim = ClaimBody::new(

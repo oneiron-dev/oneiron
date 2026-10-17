@@ -1,9 +1,9 @@
 //! Production MCP provider over the hash-pinned engine QuickJS component.
 
-use super::{McpCodeModeProvider, RunCompactionSeat};
+use super::{McpCodeModeProvider, ReaderMeter, RunCompactionSeat};
 use oneiron::code_run::CodeRunDeterminism;
 use oneiron::code_sandbox::quickjs::QuickJsRuntimeFactory;
-use oneiron::code_sandbox::wasmtime_runtime::ComponentBudget;
+use oneiron::code_sandbox::wasmtime_runtime::{ComponentBudget, WasmtimeComponentRuntime};
 use oneiron::engine_executor::{
     EngineExecutorConfig, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
     RunCompaction,
@@ -13,7 +13,7 @@ use oneiron::llm::run_admission::RunReceiptSink;
 use oneiron::llm::seat::SeatDecisions;
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, Vault, WriteActor};
 use oneiron_code_check::ShadowCheck;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::models::{InjectedRuns, LoggedReceipts};
 
@@ -74,6 +74,27 @@ pub struct McpQuickJsProvider {
     /// to the server's run receipts when the server takes this provider.
     injected: Option<(Arc<dyn SingleRouteBackend>, BudgetGuard)>,
     code_check: Option<Arc<ShadowCheck>>,
+    /// Builds each reader child's backend on its own meter; none runs no
+    /// child.
+    reader_meter: Option<ReaderMeter>,
+    /// The runtime reader children are made fresh from, compiled once at
+    /// the first child.
+    reader_template: Mutex<Option<WasmtimeComponentRuntime>>,
+}
+
+/// A reader child's backend over the host-injected model: its calls are
+/// runs on the child's own meter, their receipts written to `receipts`.
+fn injected_meter(
+    backend: Arc<dyn SingleRouteBackend>,
+    receipts: Arc<dyn RunReceiptSink>,
+) -> ReaderMeter {
+    Arc::new(move |meter: BudgetGuard| {
+        Arc::new(InjectedRuns::new(
+            Arc::clone(&backend),
+            meter,
+            Arc::clone(&receipts),
+        )) as Arc<dyn LlmBackend>
+    })
 }
 
 impl McpQuickJsProvider {
@@ -94,6 +115,10 @@ impl McpQuickJsProvider {
             Arc::new(LoggedReceipts),
         );
         let mut provider = Self::gated(runtime, Arc::new(models), lease, config)?;
+        provider.reader_meter = Some(injected_meter(
+            Arc::clone(&backend),
+            Arc::new(LoggedReceipts),
+        ));
         provider.injected = Some((backend, meter));
         Ok(provider)
     }
@@ -118,18 +143,29 @@ impl McpQuickJsProvider {
             clock_from_first_start: false,
             injected: None,
             code_check: None,
+            reader_meter: None,
+            reader_template: Mutex::new(None),
         })
     }
 
     /// Writes the host-injected model's run receipts to `receipts`.
     pub(crate) fn with_run_receipts(mut self, receipts: Arc<dyn RunReceiptSink>) -> Self {
         if let Some((backend, meter)) = &self.injected {
+            self.reader_meter = Some(injected_meter(Arc::clone(backend), Arc::clone(&receipts)));
             self.backend = Arc::new(InjectedRuns::new(
                 Arc::clone(backend),
                 meter.clone(),
                 receipts,
             ));
         }
+        self
+    }
+
+    /// Each reader child's model calls go through the backend `meter`
+    /// builds on the child's own guard.
+    #[must_use]
+    pub(crate) fn with_reader_meter(mut self, meter: ReaderMeter) -> Self {
+        self.reader_meter = Some(meter);
         self
     }
 
@@ -199,6 +235,24 @@ impl McpCodeModeProvider for McpQuickJsProvider {
             Ok(runtime) => Box::new(runtime),
             Err(_) => Box::new(UnavailableRuntime),
         }
+    }
+    /// A child shares the template's compiled code and nothing else: each
+    /// is fresh, with no store, capability or adapter of another run's.
+    fn reader_runtime(&self) -> Box<dyn JsCodeModeRuntime + Send> {
+        let mut template = self
+            .reader_template
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if template.is_none() {
+            *template = self.runtime.runtime().ok();
+        }
+        match template.as_ref() {
+            Some(template) => Box::new(template.fresh()),
+            None => Box::new(UnavailableRuntime),
+        }
+    }
+    fn reader_backend(&self, meter: BudgetGuard) -> Option<Arc<dyn LlmBackend>> {
+        self.reader_meter.as_ref().map(|build| build(meter))
     }
     fn executor_config(
         &self,
