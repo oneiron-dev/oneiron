@@ -5,7 +5,9 @@
 //! notice and the digest renders when the owner opens it. No composition
 //! policy lives here. Each published period with anything in it queues the
 //! lens's generate step (`weave_lens.rs`), whose render lands on the row.
-use super::weave_lens::{WeaveLensRender, settle_weave_lens_axes};
+use super::weave_lens::{
+    KeptLiveLens, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
+};
 use super::{
     ScopedRead, ScopedReadReceipt, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport,
     WeaveSection, WeaveSectionKind, WeaveSectionSpec,
@@ -24,6 +26,8 @@ use std::collections::BTreeSet;
 const SCHEDULE_PREFIX: &[u8] = b"weave:schedule:v1:";
 const DIGEST_PREFIX: &[u8] = b"weave:digest:v1:";
 const SOURCE_PREFIX: &[u8] = b"weave:digest_source:v1:";
+/// Each reader's newest live lens render, as [`KeptLiveLens`] keeps it.
+const LIVE_PREFIX: &[u8] = b"weave:live:v1:";
 /// The producer of a weave digest's inbox NOTIFICATION; `source.result` is
 /// the digest's period, its `scheduled_for` second.
 pub const WEAVE_DIGEST_NOTIFICATION_PRODUCER: &str = "weave.digest";
@@ -854,6 +858,41 @@ impl Vault {
             }
         }
         Ok(landed)
+    }
+
+    /// Keep a live lens's render as `reader`'s newest (OF-499), then settle
+    /// the one it replaces on the skill's corrections axis. The axis is
+    /// evidence about the skill, never a gate on the render.
+    pub(super) fn keep_live_weave_lens(
+        &self,
+        reader: WeaveReader<'_>,
+        report: &WeaveReport,
+        render: &WeaveLensRender,
+    ) -> Result<()> {
+        let id = {
+            let txn = self.store.env.read_txn()?;
+            reader.id(self, &txn)?
+        };
+        let reader = WeaveDigestReader::of(&reader, id);
+        let key = reader.key(LIVE_PREFIX);
+        let bytes = serde_json::to_vec(&KeptLiveLens::of(report, render)).map_err(|_| invalid())?;
+        let previous = self.with_write_txn_grouped(|txn| {
+            let previous = self
+                .store
+                .vault_meta
+                .get(&*txn, &key)?
+                .map(|bytes| serde_json::from_slice::<KeptLiveLens>(&bytes))
+                .transpose()
+                .map_err(|_| invalid())?;
+            self.store.vault_meta.put(txn, &key, &bytes)?;
+            Ok(previous)
+        })?;
+        if let Some(previous) = previous.filter(|kept| kept.rendered_at() < render.rendered_at)
+            && let Err(error) = settle_live_weave_lens(self, reader, &previous, render.rendered_at)
+        {
+            tracing::warn!(?error, "live weave lens axis did not settle");
+        }
+        Ok(())
     }
 
     /// The reader's newest period before `scheduled_for` that holds a render.

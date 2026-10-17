@@ -1,17 +1,21 @@
 //! The live weave lens's generate step (OF-499, ARCH-0063 §6):
 //! `vault.weave.lens` and `POST /v1/owner/weave/lens` render the caller's
 //! live weave report through the shipped weave-report skill, on demand and
-//! outside the Dreamer pass, on the Dreamer narrative role's route. The
-//! engine reads the report and the skill under the caller's own read before
-//! the step, then re-reads the report and composes the lens after it. The
-//! host lends the route, a run on the caller's own budget line and the
-//! egress decision. Nothing is saved: a digest period's render is the
-//! Dreamer's (`dreamer.weave_lens`).
+//! outside the Dreamer pass, on the Dreamer narrative role's route, else its
+//! extraction role's (as a TASK realizes). The engine reads the report and
+//! the skill under the caller's own read before the step, then re-reads the
+//! report and composes the lens after it. The host lends the route, a run on
+//! the caller's own budget line and the egress decision. The engine keeps
+//! the caller's newest live render, and the one before it settles on the
+//! skill's corrections axis; a digest period's render is the Dreamer's
+//! (`dreamer.weave_lens`).
 use std::sync::Arc;
 
 use oneiron::claim::{CallerLocality, WeaveLiveLens, WeaveReportRequest};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::dreamer_consolidation::{DREAMER_NARRATIVE_ROLE, live_weave_lens_request};
+use oneiron::dreamer_consolidation::{
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, live_weave_lens_request,
+};
 use oneiron::lens::GeneratedLens;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::memory::{
@@ -82,7 +86,7 @@ fn unavailable(message: String) -> MemoryError {
         MEMORY_CODE_MODEL_UNAVAILABLE,
         message,
         &[
-            "Serve a model on the Dreamer's narrative role ([models.dreamer]), or read vault.weave.report.",
+            "Serve a model on the Dreamer's narrative or extraction role ([models.dreamer]), or read vault.weave.report.",
         ],
     )
 }
@@ -110,8 +114,9 @@ fn joined() -> MemoryError {
 }
 
 /// Renders `caller`'s live weave report into its lens. A server that serves
-/// no route for the Dreamer's narrative role, or a skill that does not load,
-/// renders nothing and says so; it never passes the data off as a render.
+/// no route for the Dreamer's narrative or extraction role, or a skill that
+/// does not load, renders nothing and says so; it never passes the data off
+/// as a render.
 pub(crate) async fn render_live_weave_lens(
     server: &Arc<SyncServer>,
     caller: WeaveLensCaller,
@@ -119,17 +124,52 @@ pub(crate) async fn render_live_weave_lens(
 ) -> MemoryResult<GeneratedLens> {
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
-    let role = DREAMER_NARRATIVE_ROLE;
-    let seat = runtime
-        .seat(role)
-        .ok_or_else(|| unavailable(format!("{VERB}: no model seat serves the Dreamer")))?;
-    let route = runtime
-        .route_role(&vault, role, seat)
-        .map_err(|refusal| unavailable(format!("{VERB}: {refusal}")))?;
+    // An agent that dreams on its own model reads its own lens on that
+    // model (OF-490); anyone else on the narrative role's route, else the
+    // extraction role's.
+    let own = match &caller {
+        WeaveLensCaller::Credential {
+            actor,
+            class: EdgeActorClass::Agent,
+            ..
+        } => match super::dreamer::own_dreaming_slot(&vault, *actor)? {
+            Some(slot) => super::dreamer::served_slot_model(&vault, runtime, &slot)?,
+            None => None,
+        },
+        _ => None,
+    };
+    let (role, model, locality, ladder) = match own {
+        Some((model, locality, ladder)) => (None, model, locality, ladder),
+        None => {
+            let mut refused = None;
+            let mut chosen = None;
+            for role in [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE] {
+                let Some(seat) = runtime.seat(role) else {
+                    continue;
+                };
+                match runtime.route_role(&vault, role, seat) {
+                    Ok(route) => {
+                        chosen = Some((role, route));
+                        break;
+                    }
+                    Err(refusal) => {
+                        refused.get_or_insert_with(|| refusal.to_string());
+                    }
+                }
+            }
+            let (role, route) = chosen.ok_or_else(|| {
+                unavailable(match refused {
+                    Some(refusal) => format!("{VERB}: {refusal}"),
+                    None => format!("{VERB}: no model seat serves the Dreamer"),
+                })
+            })?;
+            (Some(role), route.model, route.locality, route.ladder)
+        }
+    };
     // The report goes to the model and its lens back to the caller: it is
     // read as the farther of the two, on this device only when both are.
     let reads_at = if caller.locality() == CallerLocality::OnDevice
-        && route.locality == ModelLocality::OnDevice
+        && locality == ModelLocality::OnDevice
     {
         CallerLocality::OnDevice
     } else {
@@ -167,7 +207,6 @@ pub(crate) async fn render_live_weave_lens(
         actor,
     )?;
     let run = server.ai.undeclared_run(run_id, meter);
-    let model = route.model.clone();
     let step = live_weave_lens_request(
         &vault,
         &live,
@@ -176,14 +215,13 @@ pub(crate) async fn render_live_weave_lens(
         &HostInferenceContext {
             binding: HostInferenceBinding::Advertised {
                 model: model.clone(),
-                locality: route.locality,
+                locality,
             },
             extraction_egress: server.extraction_egress.as_deref(),
         },
-        route.ladder.supports(&model, &LlmCapability::Reasoning),
+        ladder.supports(&model, &LlmCapability::Reasoning),
     )?;
-    let response = route
-        .ladder
+    let response = ladder
         .generate(&run, step, None)
         .await
         .map_err(|error| step_failed(&error))?;

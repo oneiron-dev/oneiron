@@ -501,6 +501,116 @@ pub(super) fn compose_weave_lens(
     GeneratedLens::new(root)
 }
 
+/// What a live lens render keeps (OF-499): the skill and model that
+/// rendered it, when, and the links it showed. It holds no report body: it
+/// only settles the corrections axis when the reader's next live lens
+/// renders.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KeptLiveLens {
+    skill_ref: String,
+    model: String,
+    rendered_at: u64,
+    /// Each link as `(source hex, edge kind byte, target hex)`.
+    links: Vec<(String, u8, String)>,
+}
+
+impl KeptLiveLens {
+    pub(crate) fn of(report: &WeaveReport, render: &WeaveLensRender) -> Self {
+        Self {
+            skill_ref: render.skill_ref.clone(),
+            model: render.model.clone(),
+            rendered_at: render.rendered_at,
+            links: report
+                .sections
+                .iter()
+                .flat_map(|section| &section.items)
+                .filter_map(|item| match item {
+                    WeaveItem::Link {
+                        source,
+                        kind,
+                        target,
+                    } => Some((source.to_hex(), *kind as u8, target.to_hex())),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn rendered_at(&self) -> u64 {
+        self.rendered_at
+    }
+
+    fn links(&self) -> Result<Vec<EdgeRef>> {
+        self.links
+            .iter()
+            .map(|(source, kind, target)| {
+                Ok(EdgeRef::new(
+                    EntityId::from_hex(source).map_err(|_| invalid("kept link"))?,
+                    crate::EdgeKind::try_from_u8(*kind).ok_or_else(|| invalid("kept link"))?,
+                    EntityId::from_hex(target).map_err(|_| invalid("kept link"))?,
+                ))
+            })
+            .collect()
+    }
+}
+
+/// Whether `reader` marked any of `links` wrong at or after `since`.
+fn corrected_since(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    reader: EntityId,
+    links: impl IntoIterator<Item = EdgeRef>,
+    since: u64,
+) -> Result<bool> {
+    for link in links {
+        if vault
+            .weave_link_correction_labels_in_txn(txn, link)?
+            .iter()
+            .any(|label| label.actor == reader && label.recorded_at >= since)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Settle one live lens render on the skill's corrections axis once the
+/// reader's next live lens renders: whether they marked any link it showed
+/// wrong since it rendered. A live lens has no notice to open, so it settles
+/// no read rate (CALLS: weave live lens axes). Keyed by the render, so a
+/// replay replaces its own row.
+pub(crate) fn settle_live_weave_lens(
+    vault: &Vault,
+    reader: WeaveDigestReader,
+    kept: &KeptLiveLens,
+    now: u64,
+) -> Result<()> {
+    let skill = EntityId::from_hex(&kept.skill_ref).map_err(|_| invalid("skill ref"))?;
+    let (tag, id) = reader.tag();
+    let receipt = format!("weave.live:{tag}:{}:{}", id.to_hex(), kept.rendered_at);
+    let links = kept.links()?;
+    let cell = LearningCell::new(LearningPredicate::Reliability, skill)
+        .executor(kept.model.clone())
+        .axis(WEAVE_LENS_CORRECTIONS_AXIS);
+    vault.with_write_txn_grouped(|txn| {
+        let corrected = corrected_since(vault, txn, id, links.iter().copied(), kept.rendered_at)?;
+        crate::learning::record_evidence_in_txn(
+            vault,
+            txn,
+            &cell,
+            &LearningEvidence::anchored(
+                receipt.clone(),
+                now,
+                Anchor::WorldOutcome,
+                Observation::Success(!corrected),
+            ),
+            now,
+        )?;
+        Ok(())
+    })
+}
+
 /// Settle one rendered period on the skill's axes once the reader's next
 /// period has rendered: whether the reader opened the period's notice, and
 /// whether they marked any of its links wrong since it rendered. Each lands
@@ -538,25 +648,19 @@ pub(crate) fn settle_weave_lens_axes(
                 now,
             )?;
         }
-        let mut corrected = false;
-        for item in report.sections.iter().flat_map(|section| &section.items) {
-            if let WeaveItem::Link {
-                source,
-                kind,
-                target,
-            } = item
-                && vault
-                    .weave_link_correction_labels_in_txn(
-                        txn,
-                        EdgeRef::new(*source, *kind, *target),
-                    )?
-                    .iter()
-                    .any(|label| label.actor == id && label.recorded_at >= render.rendered_at)
-            {
-                corrected = true;
-                break;
-            }
-        }
+        let links = report
+            .sections
+            .iter()
+            .flat_map(|section| &section.items)
+            .filter_map(|item| match item {
+                WeaveItem::Link {
+                    source,
+                    kind,
+                    target,
+                } => Some(EdgeRef::new(*source, *kind, *target)),
+                _ => None,
+            });
+        let corrected = corrected_since(vault, txn, id, links, render.rendered_at)?;
         crate::learning::record_evidence_in_txn(
             vault,
             txn,

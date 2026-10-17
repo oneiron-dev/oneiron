@@ -97,7 +97,8 @@ fn lens_request(
 
 /// A live render's generate step (`vault.weave.lens`), for a host that calls
 /// its route itself: the period render's request over `live`, authorized as
-/// a call of `role` on `inference`, at the reasoning level a Dreamer call
+/// a call of `role` on `inference` (as raw inference with no role: an
+/// agent's own dreaming model), at the reasoning level a Dreamer call
 /// carries. `takes_reasoning` says whether the route's model takes
 /// reasoning controls.
 ///
@@ -107,7 +108,7 @@ fn lens_request(
 pub fn live_weave_lens_request(
     vault: &Vault,
     live: &WeaveLiveLens,
-    role: ModelRole,
+    role: Option<ModelRole>,
     model: ModelId,
     inference: &HostInferenceContext<'_>,
     takes_reasoning: bool,
@@ -121,9 +122,13 @@ pub fn live_weave_lens_request(
         live.instruction.clone(),
         live.input.clone(),
     )?;
-    let mut request = vault
-        .authorize_model_role(role, request, inference)?
-        .into_request();
+    // A role's route is admitted as that role; an agent's own model as raw
+    // inference, as its dreaming is.
+    let authorized = match role {
+        Some(role) => vault.authorize_model_role(role, request, inference)?,
+        None => vault.authorize_raw_inference(request, inference)?,
+    };
+    let mut request = authorized.into_request();
     super::roles::bind_reasoning_for(vault, takes_reasoning, &mut request)?;
     Ok(request)
 }

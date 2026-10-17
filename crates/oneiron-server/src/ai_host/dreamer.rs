@@ -724,7 +724,7 @@ impl TaskLend<'_> {
 }
 
 /// A resident's own dreaming model as this server serves it.
-type OwnModel = (
+pub(super) type OwnModel = (
     ModelId,
     oneiron::ModelLocality,
     Arc<crate::models::OfferLadder>,
@@ -751,13 +751,9 @@ impl ResidentLend<'_> {
         ctx: &WakeAttemptContext<'_>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
         let resident = resident_of_dream_input(&attempt.status.payload.input)?;
-        let slot = self
-            .vault
-            .get_agent_definition(&resident)?
-            .filter(|definition| definition.dreaming_mode() == DreamingMode::Own)
-            .and_then(|definition| definition.dreaming_model.or(definition.model_tier));
+        let slot = own_dreaming_slot(self.vault, resident)?;
         let own = match &slot {
-            Some(slot) => self.own_model(slot)?,
+            Some(slot) => served_slot_model(self.vault, self.runtime, slot)?,
             None => None,
         };
         if let Some((model, locality, ladder)) = own {
@@ -827,44 +823,60 @@ impl ResidentLend<'_> {
         )
         .await
     }
+}
 
-    /// The model a resident's slot names, as this server serves it: a model
-    /// id as it stands, else a tier the vault's manifest binds a chat-wire
-    /// role to, on the vault's live route for that slot (the first such role
-    /// this server serves). None when the slot names nothing served here.
-    fn own_model(self, slot: &oneiron::ModelTierRef) -> oneiron::Result<Option<OwnModel>> {
-        let Some(router) = self.runtime.router() else {
-            return Ok(None);
-        };
-        let served = |model: ModelId| {
-            router
-                .served(&model)
-                .map(|(locality, ladder)| (model, locality, ladder))
-        };
-        if let Some(own) = ModelId::new(slot.0.clone()).ok().and_then(served) {
-            return Ok(Some(own));
-        }
-        let Some(manifest) = self.vault.model_manifest()? else {
-            return Ok(None);
-        };
-        let slot_kind = oneiron::llm::manifest::ModelSlot::Llm;
-        let Some(widest) = manifest.routes.get(&slot_kind).copied() else {
-            return Ok(None);
-        };
-        let route = self.vault.model_route(slot_kind)?.unwrap_or(widest);
-        Ok(manifest
-            .roles
-            .values()
-            .filter(|binding| binding.slot == slot_kind && binding.tier == *slot)
-            .filter_map(|binding| {
-                if route == widest {
-                    Some(binding.model.clone())
-                } else {
-                    binding.route_models.get(&route).cloned()
-                }
-            })
-            .find_map(served))
+/// A resident's own dreaming slot (OF-490): its dreaming model, else its
+/// talking model's tier, when it dreams on its own; None otherwise.
+pub(super) fn own_dreaming_slot(
+    vault: &Vault,
+    resident: oneiron::EntityId,
+) -> oneiron::Result<Option<oneiron::ModelTierRef>> {
+    Ok(vault
+        .get_agent_definition(&resident)?
+        .filter(|definition| definition.dreaming_mode() == DreamingMode::Own)
+        .and_then(|definition| definition.dreaming_model.or(definition.model_tier)))
+}
+
+/// The model a resident's slot names, as this server serves it: a model id
+/// as it stands, else a tier the vault's manifest binds a chat-wire role to,
+/// on the vault's live route for that slot (the first such role this server
+/// serves). None when the slot names nothing served here.
+pub(super) fn served_slot_model(
+    vault: &Vault,
+    runtime: &ModelRuntime,
+    slot: &oneiron::ModelTierRef,
+) -> oneiron::Result<Option<OwnModel>> {
+    let Some(router) = runtime.router() else {
+        return Ok(None);
+    };
+    let served = |model: ModelId| {
+        router
+            .served(&model)
+            .map(|(locality, ladder)| (model, locality, ladder))
+    };
+    if let Some(own) = ModelId::new(slot.0.clone()).ok().and_then(served) {
+        return Ok(Some(own));
     }
+    let Some(manifest) = vault.model_manifest()? else {
+        return Ok(None);
+    };
+    let slot_kind = oneiron::llm::manifest::ModelSlot::Llm;
+    let Some(widest) = manifest.routes.get(&slot_kind).copied() else {
+        return Ok(None);
+    };
+    let route = vault.model_route(slot_kind)?.unwrap_or(widest);
+    Ok(manifest
+        .roles
+        .values()
+        .filter(|binding| binding.slot == slot_kind && binding.tier == *slot)
+        .filter_map(|binding| {
+            if route == widest {
+                Some(binding.model.clone())
+            } else {
+                binding.route_models.get(&route).cloned()
+            }
+        })
+        .find_map(served))
 }
 
 impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, E> {
