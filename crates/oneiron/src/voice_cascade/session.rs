@@ -4,12 +4,13 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::Vault;
-use crate::error::Result;
+use crate::conversation::OutputMark;
+use crate::error::{Error, Result};
 use crate::interlocutor::{InterlocutorResolutionInput, InterlocutorSet};
 use crate::policy_model::PolicyClassifyRequest;
 use crate::speculative::SpeculativeSessionConfig;
 use crate::store::GateSystemNoticeRecord;
+use crate::{EdgeActorClass, EntityId, Vault};
 
 use super::retrieval::invalid;
 use super::{
@@ -24,6 +25,28 @@ pub use preparation::PreparedAsr;
 
 const MAX_TOOL_EVENTS: usize = 128;
 const MAX_PENDING_SENTENCES: usize = 64;
+/// How long a bound session's "who is this?" ask for a speaker it could
+/// not place stays open: the ask door's own default for an ask with no
+/// class (CALLS.md: FIX 1388 ask expiry).
+pub const VOICE_IDENTITY_ASK_SECONDS: u64 = 24 * 60 * 60;
+
+/// A voice session's trusted binding to the committed container it is
+/// heard in (OF-365 P5). Only the host's auth layer supplies it, never a
+/// voice match, the wire or a spoken claim, and the session never parses
+/// its roster ref as a room id.
+#[derive(Debug, Clone)]
+pub struct VoiceContainerBinding {
+    /// The conversation (chat, room or meeting) the session is heard in.
+    pub container: EntityId,
+    /// The verified writer each speaker's entry is recorded by: the
+    /// session's authenticated person.
+    pub writer: EntityId,
+    pub writer_class: EdgeActorClass,
+    /// Live contacts an unplaced speaker may be, in the host's order.
+    pub candidates: Vec<EntityId>,
+    /// How long each "who is this?" ask stays open, in engine seconds.
+    pub ask_seconds: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct VoiceSessionConfig {
@@ -43,6 +66,11 @@ pub struct VoiceSessionConfig {
     /// to help reaches this person's trusted contacts (OF-527); without it,
     /// it reaches no one's.
     pub policy_person: Option<crate::consent::AuthenticatedOwner>,
+    /// The container this session is heard in, when its host bound one.
+    /// Each speaker it cannot place enters it before any context is
+    /// assembled, and an attendee's entry stops output assembled before
+    /// it. Without one, the session is no room's.
+    pub container: Option<VoiceContainerBinding>,
 }
 
 impl VoiceSessionConfig {
@@ -56,6 +84,7 @@ impl VoiceSessionConfig {
             policy_world_ref: None,
             policy_caller_ref: None,
             policy_person: None,
+            container: None,
         }
     }
 }
@@ -102,6 +131,9 @@ pub struct AudienceRefresh {
 struct Generation {
     budget: Option<super::budget::GenerationBudget>,
     request: BrainRequest,
+    /// Taken before this generation's audience was read: its audio goes
+    /// out only while no attendee has entered the bound container since.
+    mark: OutputMark,
     llm_done: bool,
     audio_open: bool,
     sentence: u64,
@@ -233,9 +265,11 @@ impl VoiceCascadeSession {
                     .epoch
                     .checked_add(1)
                     .ok_or_else(|| invalid("generation epoch exhausted"))?;
-                let interlocutors = self
-                    .vault
-                    .resolve_interlocutors(&self.config.interlocutors)?;
+                // The mark follows this final's own entries, which its
+                // audience reads, and precedes that read.
+                self.enter_bound_speakers();
+                let mark = self.vault.container_output_mark();
+                let interlocutors = self.resolve_audience()?;
                 self.observe_audience(Some(&interlocutors))?;
                 let retrieval = self
                     .retrieval
@@ -265,6 +299,7 @@ impl VoiceCascadeSession {
                 self.generation = Some(Generation {
                     budget: None,
                     request: request.clone(),
+                    mark,
                     llm_done: false,
                     audio_open: true,
                     sentence: 0,
@@ -524,6 +559,8 @@ impl VoiceCascadeSession {
 
     /// Check at BOTH enqueue and dequeue in the audio sibling. This also accepts
     /// final TTS PCM after brain Done, until drain acknowledgement or cancellation.
+    /// In a bound session, audio also stops going out the moment an
+    /// attendee enters the container, before the entry's wake arrives.
     #[must_use]
     pub fn accepts_pcm(&self, generation: GenerationEpoch) -> bool {
         !self.ended
@@ -531,6 +568,10 @@ impl VoiceCascadeSession {
                 active.audio_open
                     && active.request.generation == generation
                     && generation.value == self.epoch
+                    && self.config.container.as_ref().is_none_or(|bound| {
+                        self.vault
+                            .container_output_admits(active.mark, bound.container)
+                    })
             })
     }
 
@@ -603,10 +644,7 @@ impl VoiceCascadeSession {
     /// every speaker it heard until the session ends.
     pub fn refresh_interlocutors(&mut self) -> Result<AudienceRefresh> {
         self.require_open()?;
-        let interlocutors = self
-            .vault
-            .resolve_interlocutors(&self.config.interlocutors)
-            .ok();
+        let interlocutors = self.read_audience().ok();
         let changed = self.observe_audience(interlocutors.as_ref())?;
         let stop = (changed && self.generation.is_some())
             .then(|| self.stop_generation(StopReason::RosterChanged, true));
@@ -616,6 +654,98 @@ impl VoiceCascadeSession {
             interlocutors,
             stop,
         })
+    }
+
+    /// The newcomer barrier (OF-365 P5, FIX 1389), for a host woken by an
+    /// attendee's entry into the container this session is bound to.
+    /// Everything assembled before the entry was assembled for an audience
+    /// without the newcomer, so the audience revision moves even when the
+    /// parties read the same: prepared ASR is fenced, and the brain rebuilds
+    /// its history and retrieval for the new revision. A live generation
+    /// stops before the next audio plays. Nothing re-runs on its own.
+    pub fn entry_barrier(&mut self) -> Result<AudienceRefresh> {
+        self.require_open()?;
+        let interlocutors = self.read_audience().ok();
+        if !self.observe_audience(interlocutors.as_ref())? {
+            self.move_audience_revision()?;
+        }
+        self.prepared_asr = None;
+        self.preparation_active = false;
+        let stop = self
+            .generation
+            .is_some()
+            .then(|| self.stop_generation(StopReason::RosterChanged, true));
+        Ok(AudienceRefresh {
+            audience_revision: self.audience_revision,
+            changed: true,
+            interlocutors,
+            stop,
+        })
+    }
+
+    /// Whether the audience last read already names the entry `entry_ref`:
+    /// one this session recorded and read before its wake arrived, so no
+    /// output was assembled without it.
+    #[must_use]
+    pub fn audience_names_entry(&self, entry_ref: EntityId) -> bool {
+        self.audience.as_ref().is_some_and(|audience| {
+            audience
+                .non_owner()
+                .any(|party| party.audience_ref() == Some(entry_ref))
+        })
+    }
+
+    /// The session's audience now, after a bound session records the entry
+    /// of each speaker its roster could not place.
+    fn read_audience(&self) -> Result<InterlocutorSet> {
+        self.enter_bound_speakers();
+        self.resolve_audience()
+    }
+
+    /// A bound session reads each unplaced speaker through its entry, and
+    /// one whose entry could not be recorded has none, so it narrows to
+    /// nothing.
+    fn resolve_audience(&self) -> Result<InterlocutorSet> {
+        match &self.config.container {
+            Some(bound) => self
+                .vault
+                .resolve_interlocutors_in_container(&self.config.interlocutors, bound.container),
+            None => self.vault.resolve_interlocutors(&self.config.interlocutors),
+        }
+    }
+
+    fn enter_bound_speakers(&self) {
+        if let Some(bound) = &self.config.container
+            && let Err(error) = self.enter_unplaced_speakers(bound)
+        {
+            tracing::warn!(%error, "voice: a speaker's entry was not recorded");
+        }
+    }
+
+    /// Each speaker the session's stored roster could not place enters the
+    /// bound container, keyed by the capture's speaker key under the
+    /// roster's revision, and its owner is asked who it is, once. A speaker
+    /// already entered replays its entry.
+    fn enter_unplaced_speakers(&self, bound: &VoiceContainerBinding) -> Result<()> {
+        let Some(roster_ref) = self.config.interlocutors.voice_session_ref.as_deref() else {
+            return Ok(());
+        };
+        let Some(roster) = self.vault.voice_session_roster(roster_ref)? else {
+            return Ok(());
+        };
+        if roster.unplaced_speakers().is_empty() {
+            return Ok(());
+        }
+        let until = self
+            .vault
+            .now_recorded_at()
+            .checked_add(bound.ask_seconds)
+            .ok_or_else(|| invalid("voice identity ask expiry overflow"))?;
+        self.vault
+            .memory(bound.writer, bound.writer_class)
+            .voice_speakers_entered(bound.container, &roster, None, &bound.candidates, until)
+            .map(drop)
+            .map_err(|error| Error::InvalidConfig(format!("voice speaker entry: {error}")))
     }
 
     /// Records the audience just read (`None`: unreadable), moving the
@@ -628,13 +758,18 @@ impl VoiceCascadeSession {
             (_, None) => true,
         };
         if changed {
-            self.audience_revision = self
-                .audience_revision
-                .checked_add(1)
-                .ok_or_else(|| invalid("audience revision exhausted"))?;
+            self.move_audience_revision()?;
         }
         self.audience = audience.cloned();
         Ok(changed)
+    }
+
+    fn move_audience_revision(&mut self) -> Result<()> {
+        self.audience_revision = self
+            .audience_revision
+            .checked_add(1)
+            .ok_or_else(|| invalid("audience revision exhausted"))?;
+        Ok(())
     }
 
     fn stop_generation(&mut self, reason: StopReason, cancel_llm: bool) -> OutputStop {

@@ -12,12 +12,17 @@ impl crate::store::Store {
 
     /// Called only after a successful commit, with the TASKs it wrote.
     pub(crate) fn notify_task_updates(&self, ids: impl IntoIterator<Item = crate::EntityId>) {
+        // A committed attendee entry moves its container's output mark
+        // before any wake goes out (OF-365 P5).
+        let ids = ids
+            .into_iter()
+            .inspect(|id| self.container_output.committed(*id));
         #[cfg(feature = "sync")]
         for id in ids {
             let _ = self.task_updates.send(id);
         }
         #[cfg(not(feature = "sync"))]
-        let _ = ids;
+        ids.for_each(drop);
     }
 }
 
