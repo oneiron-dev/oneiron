@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 223 facade rows, 635 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 183.
+// UniFFI census: 224 facade rows, 642 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 184.
 // WireJson rows: vault.embedding_spaces.list (result), vault.embedding_spaces.bind (result), vault.embedding_spaces.one_space (result), vault.embedding_spaces.retire (result), vault.embedding_spaces.move_approve (result), vault.embedding_spaces.move_undo (result), vault.embedding_spaces.move_abandon (result), vault.embedding_spaces.declare (input and result).
 // WireJson leaves inside the generated types, past each serde_json::Value: GeneratedLens.root (the recursive type LensNode), RunTree.roots (the recursive type RunTreeNode).
 #![allow(
@@ -144,6 +144,51 @@ pub struct ReportReceipt {
     pub route: ReportRoute,
     #[serde(rename = "disclosure")]
     pub disclosure: ReportDisclosure,
+}
+
+/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ScratchpadRecallRequest {
+    #[serde(rename = "session_id")]
+    pub session_id: String,
+    #[serde(rename = "query")]
+    pub query: String,
+}
+
+/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallMark`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ScratchpadRecallMark {
+    #[serde(rename = "keep")]
+    Keep,
+    #[serde(rename = "scratch")]
+    Scratch,
+}
+
+/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallReplyLine`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScratchpadRecallReplyLine {
+    #[serde(rename = "index")]
+    pub index: u64,
+    #[serde(rename = "mark", default, skip_serializing_if = "Option::is_none")]
+    pub mark: Option<ScratchpadRecallMark>,
+    #[serde(rename = "pin")]
+    pub pin: bool,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScratchpadRecallReply {
+    #[serde(rename = "pad", default, skip_serializing_if = "Option::is_none")]
+    pub pad: Option<String>,
+    #[serde(rename = "sealed")]
+    pub sealed: bool,
+    #[serde(rename = "matched")]
+    pub matched: u64,
+    #[serde(rename = "lines")]
+    pub lines: Vec<ScratchpadRecallReplyLine>,
 }
 
 /// `oneiron::task_verb::sdk_self::DiaryEntryRequest`.
@@ -9313,6 +9358,17 @@ pub struct GraphAskSelection {
     pub limit: u64,
 }
 
+/// `oneiron::config::HostingPrivacyPosture`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HostingPrivacyPosture {
+    #[serde(rename = "managed")]
+    Hosted,
+    #[serde(rename = "relay")]
+    Relay,
+    #[serde(rename = "self-host")]
+    SelfHostLocal,
+}
+
 /// `oneiron::receipt::questions::GraphAskRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -9331,6 +9387,8 @@ pub struct GraphAskRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub unit_deadline_ms: Option<u64>,
+    #[serde(rename = "posture", default, skip_serializing_if = "Option::is_none")]
+    pub posture: Option<HostingPrivacyPosture>,
 }
 
 /// `oneiron::llm::decision::types::TypedDecision`.
@@ -9466,17 +9524,6 @@ pub struct QuestionCriteria {
 pub enum QuestionAudience {
     #[serde(rename = "asker")]
     Asker,
-}
-
-/// `oneiron::config::HostingPrivacyPosture`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum HostingPrivacyPosture {
-    #[serde(rename = "managed")]
-    Hosted,
-    #[serde(rename = "relay")]
-    Relay,
-    #[serde(rename = "self-host")]
-    SelfHostLocal,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionMedia`.
@@ -9665,6 +9712,55 @@ pub struct QuestionReadRequest {
 pub struct QuestionAnswersRequest {
     #[serde(rename = "id")]
     pub id: String,
+}
+
+/// `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskStanding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum ArtifactAskStanding {
+    #[serde(rename = "unanswered")]
+    Unanswered,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "kept")]
+    Kept {
+        #[serde(rename = "version")]
+        version: u64,
+    },
+    #[serde(rename = "closed")]
+    Closed,
+}
+
+/// `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactAskRecord {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "question_version")]
+    pub question_version: u32,
+    #[serde(rename = "artifact_version")]
+    pub artifact_version: u64,
+    #[serde(rename = "asked_at")]
+    pub asked_at: u64,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
+    #[serde(rename = "standing")]
+    pub standing: ArtifactAskStanding,
+}
+
+/// `oneiron::receipt::questions::QuestionAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum QuestionAnswer {
+    #[serde(rename = "graph")]
+    Graph(AnswerRecord),
+    #[serde(rename = "artifact")]
+    Artifact(ArtifactAskRecord),
 }
 
 /// `oneiron::receipt::decision_asks::DecisionAskAnswerRequest`.
