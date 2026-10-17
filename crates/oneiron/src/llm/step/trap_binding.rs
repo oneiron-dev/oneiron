@@ -148,14 +148,6 @@ pub(super) fn trap_binding_put_in_txn(
     TRAP_BINDING.put(&vault.store, wtxn, anchor, row)
 }
 
-pub(super) fn trap_binding_read(
-    vault: &Vault,
-    anchor: &EntityId,
-) -> Result<Option<TrapBindingRow>> {
-    let rtxn = vault.store.env.read_txn()?;
-    trap_binding_read_in_txn(vault, &rtxn, anchor)
-}
-
 pub(super) fn trap_binding_read_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
