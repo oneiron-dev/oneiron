@@ -303,6 +303,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // A reader child reads its parent's own result and answers inside
         // the run's route: nothing of it leaves the vault.
         SelfEffect::ReaderSpawn | SelfEffect::ReaderReport | SelfEffect::TasksWaitSet => false,
+        // The leader's advice and pattern are her vault's own skills, read
+        // on her lease.
+        SelfEffect::Leader => false,
     }
 }
 

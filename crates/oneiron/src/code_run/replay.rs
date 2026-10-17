@@ -157,6 +157,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::TaskWaitSet(_) if self.effect != SelfEffect::TasksWaitSet => Err(
                 invalid_code_run_replay("task wait set answer belongs to another effect"),
             ),
+            SelfDispatchOutcome::Leader(_) if self.effect != SelfEffect::Leader => Err(
+                invalid_code_run_replay("leader answer belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(

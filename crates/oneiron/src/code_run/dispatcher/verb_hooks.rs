@@ -22,7 +22,7 @@ use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFixtureEffectCall,
+    SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFixtureEffectCall, SelfLeaderCall,
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
     SelfMemorySupersedeClaimCall, SelfSkillCall, SelfSpeechCall, SelfTaskRefuseCall,
     SelfWakePolicyWriteCall,
@@ -291,7 +291,9 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
         | SelfCall::TasksWait(_)
         | SelfCall::TasksWaitSet(_)
         | SelfCall::InferenceDefaultsRead
-        | SelfCall::Context(_) => VerbDomain::Read,
+        | SelfCall::Context(_)
+        // Advice and a pattern load start no work and write no memory.
+        | SelfCall::Leader(_) => VerbDomain::Read,
         SelfCall::Fold(fold) if !fold.writes() => VerbDomain::Read,
         SelfCall::AgentVerb(verb) if !verb.verb.writes() => VerbDomain::Read,
         _ => VerbDomain::Write,
@@ -375,6 +377,8 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Value {
         SelfDispatchOutcome::ReaderSpawn(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::ReaderReport(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::TaskWaitSet(result) => json!({"output": result}),
+        SelfDispatchOutcome::Leader(text) => json!({"output": serde_json::from_str::<Value>(text)
+            .unwrap_or_else(|_| Value::String(text.clone()))}),
     }
 }
 
@@ -400,6 +404,8 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
                     .collect::<Vec<_>>(),
                 "depthRemaining": spawn.context.depth_remaining,
                 "projectRef": spawn.context.project_ref.map(|id| id.to_hex()),
+                "typeRef": spawn.context.type_ref.as_ref().map(ToString::to_string),
+                "ask": to_json(&spawn.ask)?,
             })
         }
         SelfCall::AgentsPut(put) => json!({
@@ -464,6 +470,8 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
             "resultRef": report.result_ref,
         }),
         SelfCall::TasksWaitSet(wait) => to_json(wait)?,
+        SelfCall::Leader(SelfLeaderCall::Advice { top }) => json!({"top": top}),
+        SelfCall::Leader(SelfLeaderCall::Pattern { skill }) => json!({"skill": skill.to_hex()}),
     })
 }
 
@@ -803,7 +811,8 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         | SelfCall::Context(_)
         | SelfCall::AgentVerb(_)
         | SelfCall::ReaderSpawn(_)
-        | SelfCall::ReaderReport(_) => {
+        | SelfCall::ReaderReport(_)
+        | SelfCall::Leader(_) => {
             return Err(format!("{} takes no rewrite", call.effect().as_str()));
         }
     })
