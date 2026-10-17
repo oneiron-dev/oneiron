@@ -383,6 +383,69 @@ impl Vault {
             "the channel's built-in pack is not installed",
         ))
     }
+
+    /// What a served host runs a built-in channel on (OF-519): the engine's
+    /// own `oneiron.<channel>` receipt installed Active for this engine
+    /// version, and the declared `connection` of that exact source with a
+    /// check that is still Verified. `None` when either is missing, so a
+    /// host drops the channel the moment its pack or its check goes.
+    pub fn checked_builtin_channel(
+        &self,
+        channel: &str,
+        connection: &str,
+    ) -> Result<Option<CheckedBuiltinConnection>> {
+        if !PACKS.iter().any(|(name, _)| *name == channel) {
+            return Ok(None);
+        }
+        let pack = format!("oneiron.{channel}");
+        let receipt = {
+            let txn = self.store.env.read_txn()?;
+            self.installed_pack_in_txn(&txn, &pack)?
+        };
+        let Some(receipt) = receipt.filter(|receipt| {
+            receipt.status == PackInstallStatus::Active
+                && receipt.adapter == Some(PackAdapter::Builtin(channel.to_owned()))
+                && receipt.engine_version.as_deref() == Some(env!("CARGO_PKG_VERSION"))
+        }) else {
+            return Ok(None);
+        };
+        let source = embedded_builtin_source(channel)?;
+        if source.content_hash().to_hex() != receipt.content_hash {
+            return Ok(None);
+        }
+        let Some(declared) = source
+            .manifest()
+            .setup
+            .as_ref()
+            .and_then(|setup| setup.connection(connection))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let Ok(check) = self.require_candidate_pack_connection_verified(
+            &pack,
+            &receipt.content_hash,
+            connection,
+        ) else {
+            return Ok(None);
+        };
+        Ok(Some(CheckedBuiltinConnection {
+            content_hash: receipt.content_hash,
+            connection: declared,
+            check,
+        }))
+    }
+}
+
+/// A built-in channel's checked connection, as a served host reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedBuiltinConnection {
+    /// The exact installed source.
+    pub content_hash: String,
+    /// The connection as that source declares it: its credential names.
+    pub connection: super::PackSetupConnection,
+    /// Its Verified check: the account, and the provider's own id for it.
+    pub check: super::PackSetupCheckRecord,
 }
 
 #[cfg(test)]

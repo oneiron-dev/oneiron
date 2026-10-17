@@ -65,6 +65,8 @@ pub struct PackConnectionEvidence {
     /// The provider account the credential belongs to: a workspace, an
     /// Official Account, a mailbox.
     pub account: String,
+    /// The provider's stable id for that account, when it reports one.
+    pub provider_account: Option<String>,
     /// What the provider reports the credential holds. Empty when the
     /// provider reports nothing; then only the account is compared.
     pub scopes: Vec<String>,
@@ -258,6 +260,7 @@ impl Vault {
                 connection: declared.id.clone(),
                 verified: false,
                 account: None,
+                provider_account: None,
                 evidence: None,
                 reason: Some(bounded(&reason)),
                 basis,
@@ -315,6 +318,7 @@ impl Vault {
                 connection: declared.id.clone(),
                 verified: true,
                 account: Some(bounded(&record.connector)),
+                provider_account: None,
                 evidence: Some(report.report_hash),
                 reason: None,
                 basis,
@@ -324,6 +328,7 @@ impl Vault {
                 connection: declared.id.clone(),
                 verified: false,
                 account: None,
+                provider_account: None,
                 evidence: None,
                 reason: Some(bounded(&error.to_string())),
                 basis,
@@ -766,8 +771,20 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
             }
             _ => field("emailAddress").unwrap_or_default().to_owned(),
         };
+        // The provider's stable id a served host binds inbound events to:
+        // the workspace a Slack event names, the bot a LINE webhook is for.
+        let provider_account = match check.check {
+            SLACK_AUTH_TEST_CHECK => field("team_id"),
+            LINE_BOT_INFO_CHECK => field("userId"),
+            LINKEDIN_SESSION_CHECK => reply
+                .get("miniProfile")
+                .and_then(|profile| reply_field(profile, "publicIdentifier")),
+            _ => field("emailAddress"),
+        }
+        .map(str::to_owned);
         Ok(PackConnectionEvidence {
             account,
+            provider_account,
             scopes: scopes
                 .map(|header| {
                     header
@@ -864,6 +881,7 @@ fn judge_evidence(
         connection: declared.id.clone(),
         verified: reason.is_none(),
         account: Some(bounded(&evidence.account)),
+        provider_account: evidence.provider_account.as_deref().map(bounded),
         evidence: Some(evidence.evidence),
         reason: reason.map(|reason| bounded(&reason)),
         basis,

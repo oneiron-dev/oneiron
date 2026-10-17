@@ -35,6 +35,11 @@ own qualification passes.
 5. Check the connection. The check asks Slack who the app is and which scopes
    it holds. It passes only when Slack names the workspace and the scopes match
    what the owner allowed, no more and no less.
+6. Once the check passes, turn on Event Subscriptions in the app. The Request
+   URL is the host's public address followed by `/v1/hooks/slack/events`; Slack
+   sends it a challenge, and the host answers it. Subscribe the bot to
+   `app_mention` and `message.im`, so mentions and direct messages reach the
+   agent. Each one is verified with the Signing Secret before it is kept.
 
 ## When the check fails
 

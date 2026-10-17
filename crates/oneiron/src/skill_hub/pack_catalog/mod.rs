@@ -2,6 +2,7 @@
 mod advisories;
 mod agent_facets;
 mod builtin;
+pub use builtin::CheckedBuiltinConnection;
 pub(crate) use builtin::seed_builtin_packs;
 mod codec;
 mod doors;

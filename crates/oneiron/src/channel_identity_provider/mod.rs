@@ -14,6 +14,7 @@ pub mod mailbox_cursor;
 pub(crate) mod member_mail;
 mod shared_validate;
 mod slack_adapter;
+mod slack_personas;
 mod slack_validate;
 pub mod stalwart;
 #[cfg(test)]

@@ -97,6 +97,11 @@ pub struct PackSetupCheckRecord {
     pub connection: String,
     pub verified: bool,
     pub account: Option<String>,
+    /// The provider's own stable id for the account (a Slack team id, a LINE
+    /// bot user id), when its check reports one. A served host binds inbound
+    /// provider events to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_account: Option<String>,
     pub evidence: Option<String>,
     pub reason: Option<String>,
     pub basis: String,

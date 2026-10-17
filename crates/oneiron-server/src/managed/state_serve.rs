@@ -681,6 +681,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 .map(|admission| Box::new(admission) as Box<dyn Send>)
         })
     });
+    // Checked built-in channels, under the same admission (OF-519).
+    let builtin_host = crate::builtin_host::spawn(&sync_server, {
+        let state = Arc::clone(&state);
+        Arc::new(move || {
+            state
+                .admit_http_mutation()
+                .ok()
+                .map(|admission| Box::new(admission) as Box<dyn Send>)
+        })
+    });
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -707,6 +717,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = connector_events.await;
     connector_sends.abort();
     let _ = connector_sends.await;
+    builtin_host.abort();
+    let _ = builtin_host.await;
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 

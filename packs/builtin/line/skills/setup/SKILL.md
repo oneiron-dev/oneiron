@@ -29,10 +29,12 @@ qualification passes.
 3. Store both values through the owner secrets form, under the names the card
    shows, each bound for read to connector:line. Never ask for either value in
    chat, never repeat one back, and never write one into a note or a card.
-4. Set the webhook URL the host shows on the channel's Messaging API tab, and
-   turn webhooks on, so messages reach the agent.
-5. Check the connection. The check asks LINE which Official Account the access
+4. Check the connection. The check asks LINE which Official Account the access
    token belongs to, and passes only when LINE names it.
+5. Once the check passes, set the webhook URL on the channel's Messaging API
+   tab to the host's public address followed by `/v1/hooks/line/webhook`, and
+   turn webhooks on, so messages reach the agent. Each delivery is verified
+   with the channel secret before it is kept.
 
 ## When the check fails
 
