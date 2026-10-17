@@ -1358,6 +1358,154 @@ async fn vault_members_withdraw_invitation(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_shared_object(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.object")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.object", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.object", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shared_object(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_shared_withdraw_objection(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.withdraw_objection")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.withdraw_objection", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.withdraw_objection", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shared_withdraw_objection(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_shared_started(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.started")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.started", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.started", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shared_started(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_shared_matured(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.matured")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.matured", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.matured", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shared_matured(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_shared_erase_ask(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.erase_ask")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.erase_ask", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.erase_ask", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shared_erase_ask(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_shared_erase_asks(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.erase_asks")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.erase_asks", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.erase_asks", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shared_erase_asks(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_shared_close_erase_ask(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.close_erase_ask")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.close_erase_ask", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.close_erase_ask", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_shared_close_erase_ask(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4397,6 +4545,15 @@ pub(crate) async fn call_verb(
         "vault.members.withdraw_invitation" => {
             vault_members_withdraw_invitation(server, call, input).await
         }
+        "vault.shared.object" => vault_shared_object(server, call, input).await,
+        "vault.shared.withdraw_objection" => {
+            vault_shared_withdraw_objection(server, call, input).await
+        }
+        "vault.shared.started" => vault_shared_started(server, call, input).await,
+        "vault.shared.matured" => vault_shared_matured(server, call, input).await,
+        "vault.shared.erase_ask" => vault_shared_erase_ask(server, call, input).await,
+        "vault.shared.erase_asks" => vault_shared_erase_asks(server, call, input).await,
+        "vault.shared.close_erase_ask" => vault_shared_close_erase_ask(server, call, input).await,
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
         "vault.authority.handoff_alarms" => {
