@@ -244,6 +244,25 @@ impl NoteDocument {
         }
     }
 
+    /// Rewrites the live body to `text` by the smallest edits that make it:
+    /// a mask on write's handles in place of the spans it lifted (OF-067).
+    /// Every other character keeps its identity, and the cursors on it.
+    pub(super) fn mask_body(&self, text: &str) -> Result<()> {
+        self.doc
+            .get_text(BODY)
+            .update(
+                text,
+                loro::UpdateOptions {
+                    timeout_ms: None,
+                    use_refined_diff: true,
+                },
+            )
+            .map_err(|_| invalid("NOTE mask update"))?;
+        self.doc
+            .commit_with(CommitOptions::new().commit_msg("oneiron.note/v1 mask_on_write"));
+        Ok(())
+    }
+
     pub(super) fn set_title(&self, title: &str, actor: &WriteActor) -> Result<()> {
         validate_title(title)?;
         self.doc
