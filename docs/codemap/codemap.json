@@ -26637,7 +26637,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 20,
-      "mod": 193,
+      "mod": 194,
       "re-export": 75
      }
     },
@@ -29299,6 +29299,16 @@
       "crate-vis": 3,
       "fn": 14,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/shape_doors.rs",
+     "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `vault.shape.read` and `vault.shape.plan`…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -45529,7 +45539,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 262
+      "fn": 265
      }
     },
     {
@@ -47155,6 +47165,87 @@
      "purpose": "Local archive visibility",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ShapeApplier",
+      "ShapeApplyItem",
+      "ShapeApplyReceipt",
+      "ShapeApplyRequest",
+      "ShapeItemState"
+     ],
+     "path": "src/vault_shape/apply.rs",
+     "purpose": "Apply: the gated landing of a plan, one item at a time, through the named doors the vault already has",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/live.rs",
+     "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeCeiling",
+      "ShapePlanRequest",
+      "ShapeRead",
+      "ShapeRow",
+      "ShapeSeed",
+      "ShapeTarget"
+     ],
+     "path": "src/vault_shape/mod.rs",
+     "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 2,
+      "re-export": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeChange",
+      "ShapeItemClass",
+      "ShapePlan",
+      "ShapePlanItem",
+      "ShapePlanSummary"
+     ],
+     "path": "src/vault_shape/plan.rs",
+     "purpose": "Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item…",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StoredShapeSeed"
+     ],
+     "path": "src/vault_shape/seed.rs",
+     "purpose": "The seed's store: each revision is one immutable ASSET row in the replicated ledger, the same carrier a…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -50910,7 +51001,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51518,6 +51609,13 @@
      "layout": "dir",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
+    "vault_shape": {
+     "files": 5,
+     "impl_vault": true,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
+    },
     "voice_cascade": {
      "files": 31,
      "impl_vault": true,
@@ -51577,7 +51675,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3117,
+   "source_files": 3123,
    "test_files": 903
   },
   "oneiron-android": {
@@ -59448,7 +59546,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 217
+      "fn": 220
      }
     },
     {
@@ -60464,7 +60562,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 218
+      "fn": 221
      }
     },
     {
@@ -63111,7 +63209,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -63211,6 +63309,16 @@
      "path": "src/api/facade/tests/call_mode.rs",
      "purpose": "Call mode at the HTTP recall door (retrieval hub #call-mode)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/vault_shape_doors.rs",
+     "purpose": "`vault.shape.apply` (ARCH-0070) as a host door: the gated landing of a shape plan",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -69649,7 +69757,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 279,
+     "files": 280,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69987,7 +70095,7 @@
    },
    "over_bar": 39,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 550,
+   "source_files": 551,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -70630,6 +70738,21 @@
       "SelfEffect",
       "Sensitivity",
       "SensitivityCeiling",
+      "ShapeApplyItem",
+      "ShapeApplyReceipt",
+      "ShapeApplyRequest",
+      "ShapeCeiling",
+      "ShapeChange",
+      "ShapeItemClass",
+      "ShapeItemState",
+      "ShapePlan",
+      "ShapePlanItem",
+      "ShapePlanRequest",
+      "ShapePlanSummary",
+      "ShapeRead",
+      "ShapeRow",
+      "ShapeSeed",
+      "ShapeTarget",
       "ShareCreateRequest",
       "ShareCreated",
       "ShareRevokeReceipt",
@@ -70681,6 +70804,7 @@
       "SteerReceipt",
       "SteerRequest",
       "StopCause",
+      "StoredShapeSeed",
       "TaskAnswerRequest",
       "TaskAskAnswer",
       "TaskAskBranch",
@@ -70776,8 +70900,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 173,
-      "struct": 443
+      "enum": 179,
+      "struct": 453
      }
     },
     {
