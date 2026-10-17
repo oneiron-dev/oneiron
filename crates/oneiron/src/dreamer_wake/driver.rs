@@ -110,6 +110,8 @@ pub struct DreamerWakeDriver<'a> {
     pub(super) steering: Vec<BudgetSteeringSignal>,
     consolidation_only: bool,
     skill_optimizer: Option<crate::dreamer_runner::maintenance::CoachSkillOptimizer<'a>>,
+    contribution_host:
+        Option<&'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync)>,
     tournament_candidate: Option<(
         crate::autoreason_campaign::beam_promotion::AuthoringStrategyPin,
         DreamerClaimAuthoringAdmission,
@@ -134,6 +136,7 @@ impl<'a> DreamerWakeDriver<'a> {
             steering: Vec::new(),
             consolidation_only: false,
             skill_optimizer: None,
+            contribution_host: None,
             tournament_candidate: None,
             #[cfg(feature = "sync")]
             progress: None,
@@ -146,6 +149,15 @@ impl<'a> DreamerWakeDriver<'a> {
         optimizer: crate::dreamer_runner::maintenance::CoachSkillOptimizer<'a>,
     ) -> Self {
         self.skill_optimizer = Some(optimizer);
+        self
+    }
+
+    /// Attach the host's replay capsule for the Coach's contribution checks.
+    pub fn with_contribution_host(
+        mut self,
+        host: &'a (dyn crate::dreamer_runner::maintenance::ContributionReplayHost + Send + Sync),
+    ) -> Self {
+        self.contribution_host = Some(host);
         self
     }
 
@@ -683,7 +695,11 @@ impl<'a> DreamerWakeDriver<'a> {
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
                     {
-                        crate::dreamer_runner::maintenance::execute(&admitted, &ctx)
+                        crate::dreamer_runner::maintenance::execute(
+                            &admitted,
+                            &ctx,
+                            self.contribution_host,
+                        )
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
                     {

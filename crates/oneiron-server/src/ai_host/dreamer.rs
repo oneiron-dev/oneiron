@@ -96,6 +96,9 @@ pub(super) struct DreamerStart {
     pub(super) decisions: Arc<std::sync::OnceLock<DecisionHost>>,
     pub(super) question_timer: QuestionTimer,
     pub(super) admission: PassAdmission,
+    /// The host syncs as a device of another home (`[device_sync]`): the
+    /// Dreamer defers to the elected home and never claims it.
+    pub(super) device: bool,
 }
 
 /// The input each model a role's rungs name may fill: its provider's context
@@ -203,6 +206,7 @@ async fn supervise(
         decisions,
         question_timer,
         admission,
+        device,
     } = start;
     // Stewardship follow-up drafts ride this thread and stop with it.
     tokio::spawn(super::stewardship::draft_loop(
@@ -212,7 +216,7 @@ async fn supervise(
         Arc::clone(&admission),
     ));
     let built = (|| -> anyhow::Result<_> {
-        let node_id = claim_home_node(&vault)?;
+        let node_id = claim_home_node(&vault, device)?;
         // The nightly harness audit reads this; a failed record never stops
         // the Dreamer.
         if let Err(error) = super::harness::record_tuning_config(
@@ -298,12 +302,17 @@ async fn supervise(
 }
 
 /// One Dreamer per vault: this server is the vault's always-on local node
-/// and designates itself home, so macro rounds admit here too.
-fn claim_home_node(vault: &Vault) -> oneiron::Result<u64> {
+/// and designates itself home, so macro rounds admit here too. A device of
+/// another home (`device`) claims nothing and leaves macro rounds there.
+fn claim_home_node(vault: &Vault, device: bool) -> oneiron::Result<u64> {
     let store = DreamerRunnerStore::new(vault);
     let candidate = store.local_home_node_candidate(true, true, false)?;
     let node_id = candidate.node_id;
-    store.elect_home_node(&[candidate], now_ms() / 1_000)?;
+    // A device defers to the elected home its sync section names; claiming
+    // it here would make this install the home, and a home dials no one.
+    if !device {
+        store.elect_home_node(&[candidate], now_ms() / 1_000)?;
+    }
     Ok(node_id)
 }
 

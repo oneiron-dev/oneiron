@@ -183,8 +183,8 @@ impl HeldImage {
 ///
 /// Every model rung blocks on the server's runtime: call this on a blocking
 /// thread. Each rung spends on the caller's own line, a meter bound to
-/// `principal` under the vault's budget policy and sized as one model turn,
-/// and its spend counts toward the caller's check (FIX 1123).
+/// `principal` with no limit ([`BudgetGuard::uncapped`]), and its spend counts
+/// toward the caller's check (FIX 1123).
 pub(crate) fn run_verdict(
     server: &SyncServer,
     principal: EntityId,
@@ -195,21 +195,17 @@ pub(crate) fn run_verdict(
     request: &AiVerdictRequest,
 ) -> MemoryResult<AiVerdict> {
     let vault = server.vault();
-    let settings = server.ai.chat_settings();
-    let meter = vault
-        .policy_budget_guard(
-            format!("ai.verdict:{}:{}", principal.to_hex(), vault.now_recorded_at()),
-            settings.turn_budget_units,
-            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
-            BudgetExhaustionPolicy::Suspend,
-            WriteActor::new(principal, class),
-        )
-        .map_err(|error| {
-            MemoryError::bad_request_with(
-                format!("ai.verdict has no line to meter on: {error}"),
-                &["Repair the vault's budget policy, then ask again."],
-            )
-        })?;
+    // The caller's own Read line: it admits and charges every rung's call,
+    // and nothing on it is refused for spend (rule 5).
+    let meter = BudgetGuard::uncapped(
+        format!(
+            "ai.verdict:{}:{}",
+            principal.to_hex(),
+            vault.now_recorded_at()
+        ),
+        oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
+        WriteActor::new(principal, class),
+    );
     let answered = on_caller_meter(&meter, || {
         answer_verdict(server, principal, class, reader, lane, held, request)
     });
