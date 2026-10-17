@@ -44546,7 +44546,7 @@
      "path": "src/task_verb/ask_types.rs",
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 16,
       "fn": 6,
       "struct": 21
