@@ -26392,6 +26392,7 @@
      "path": "src/llm/decision/asks.rs",
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an owner ask that the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 12,
       "struct": 4
      }
@@ -38191,6 +38192,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/exploration_trial.rs",
+     "purpose": "Exploration trials: an open optimizer proposal runs on live work as a version choice for the active skill it…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -38269,7 +38280,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 8
      }
@@ -39795,8 +39806,8 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 9,
-      "re-export": 10
+      "crate-vis": 10,
+      "re-export": 11
      }
     },
     {
@@ -39903,6 +39914,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "SkillEditPreflight"
+     ],
+     "path": "src/skill_optimize/gate/preflight.rs",
+     "purpose": "A proposal's offline floors, judged on the held-out set before any live run is routed to it (ARCH-0053…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ProjectGoalRevisionProposal",
       "TradeoffRole"
      ],
@@ -39970,6 +39995,7 @@
      "path": "src/skill_optimize/goal_axes.rs",
      "purpose": "Goal-axis measurements for the goal-record admission door",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 1,
       "struct": 6,
@@ -50024,7 +50050,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50052,7 +50078,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50299,7 +50325,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3038,
+   "source_files": 3040,
    "test_files": 903
   },
   "oneiron-android": {
