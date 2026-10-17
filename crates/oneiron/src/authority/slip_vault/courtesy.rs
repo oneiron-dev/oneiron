@@ -1,14 +1,20 @@
 //! The host's signature on a courtesy deletion ask and on its answer
 //! (OF-273). A peer accepts either only where it pinned this host's key.
+//! The same key signs a shared vault's outcome notices for a removed device
+//! (FIX 2053), which accepts them only under the home root it trusts.
 
 use ed25519_dalek::Signer;
 
 use super::HostSlipIssuer;
+use crate::authority::{
+    AuthoritySignature, AuthorityVaultId, invalid_authority, verify_authority_signature,
+};
 use crate::deletion::{
     CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply,
     SignedCooperativeDeletionRequest,
 };
 use crate::error::Result;
+use crate::federation::{SharedActOutcome, SignedSharedActOutcome, shared_act_outcome_transcript};
 use crate::{EntityId, Vault};
 
 impl HostSlipIssuer {
@@ -46,5 +52,29 @@ impl HostSlipIssuer {
             self.public_key(),
             |transcript| Ok(self.signing.sign(transcript).to_bytes().to_vec()),
         )
+    }
+
+    /// Signs `outcome` as a notice of the vault `authority_vault_id` names,
+    /// over [`shared_act_outcome_transcript`].
+    pub fn sign_shared_act_outcome(
+        &self,
+        authority_vault_id: AuthorityVaultId,
+        outcome: &SharedActOutcome,
+    ) -> Result<SignedSharedActOutcome> {
+        let transcript = shared_act_outcome_transcript(&authority_vault_id, outcome)?;
+        let public_key = self.public_key();
+        let signature = AuthoritySignature {
+            suite: public_key.suite(),
+            public_key,
+            signature: self.signing.sign(&transcript).to_bytes().to_vec(),
+        };
+        if !verify_authority_signature(&signature, &transcript) {
+            return Err(invalid_authority());
+        }
+        Ok(SignedSharedActOutcome {
+            authority_vault_id,
+            outcome: outcome.clone(),
+            signature,
+        })
     }
 }
