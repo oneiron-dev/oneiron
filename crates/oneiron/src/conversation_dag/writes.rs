@@ -252,12 +252,7 @@ pub(crate) fn append_in_txn(
         if !seen.insert(*recipient) {
             return Err(invalid("duplicate recipient"));
         }
-        require_type(
-            &vault.store,
-            txn,
-            recipient,
-            crate::registry::ENTITY_TYPE_PERSON,
-        )?;
+        graph::require_recipient(&vault.store, txn, recipient)?;
     }
     let mut body = stamp_body(
         &input.body,
