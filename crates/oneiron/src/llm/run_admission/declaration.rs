@@ -187,6 +187,14 @@ impl RunDeclaration {
         &self.budget
     }
 
+    /// This declaration with one admission's reservation at
+    /// `reserve_units`: a bounded media stream reserves its bound, not one
+    /// call's.
+    pub(super) fn with_reserve(mut self, reserve_units: u64) -> Self {
+        self.budget.reserve_units = reserve_units;
+        self
+    }
+
     pub(super) fn admits_connector(&self, connector: &str) -> bool {
         !self.declared || self.connectors.contains(connector)
     }
