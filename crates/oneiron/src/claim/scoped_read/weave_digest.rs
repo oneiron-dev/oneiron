@@ -492,6 +492,9 @@ fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {
 /// A hard delete cannot leave a copied report body in vault metadata. This
 /// source-prefix index is populated in the same transaction as publication,
 /// and invalidated by the common deletion door in its erasure transaction.
+/// A deleted reader's own rows go too: its saved periods (a resident's carry
+/// its dreaming counters, which index no source), its schedule and its kept
+/// live render.
 pub(crate) fn invalidate_weave_digest_source_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -512,22 +515,48 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         {
             return Err(Error::CorruptedIndex("weave digest source index"));
         }
-        if let Some(raw) = store.vault_meta.get(&*txn, digest_key)? {
-            // Even an undecodable saved row is deleted. If it cannot be
-            // decoded, orphan index keys contain references but no body bytes.
-            if let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw)
-                && let Ok(report) = wire.into_report()
-                && let Ok(sources) = report_sources(&report.value)
-            {
-                for other in sources {
-                    store
-                        .vault_meta
-                        .delete(txn, &source_key(&other, digest_key))?;
-                }
-            }
-            store.vault_meta.delete(txn, digest_key)?;
-        }
+        erase_weave_digest_in_txn(store, txn, digest_key)?;
         store.vault_meta.delete(txn, &index_key)?;
+    }
+    for reader in [
+        WeaveDigestReader::Person(*source),
+        WeaveDigestReader::Owner(*source),
+        WeaveDigestReader::Agent(*source),
+    ] {
+        let periods = store
+            .vault_meta
+            .prefix_iter(&*txn, &reader.key(DIGEST_PREFIX))?
+            .map(|row| row.map(|(key, _)| key.to_vec()))
+            .collect::<Result<Vec<_>>>()?;
+        for digest_key in periods {
+            erase_weave_digest_in_txn(store, txn, &digest_key)?;
+        }
+        store.vault_meta.delete(txn, &reader.key(SCHEDULE_PREFIX))?;
+        store.vault_meta.delete(txn, &reader.key(LIVE_PREFIX))?;
+    }
+    Ok(())
+}
+
+/// Deletes one saved period and the source-index keys its report wrote.
+fn erase_weave_digest_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    digest_key: &[u8],
+) -> Result<()> {
+    if let Some(raw) = store.vault_meta.get(&*txn, digest_key)? {
+        // Even an undecodable saved row is deleted. If it cannot be
+        // decoded, orphan index keys contain references but no body bytes.
+        if let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw)
+            && let Ok(report) = wire.into_report()
+            && let Ok(sources) = report_sources(&report.value)
+        {
+            for other in sources {
+                store
+                    .vault_meta
+                    .delete(txn, &source_key(&other, digest_key))?;
+            }
+        }
+        store.vault_meta.delete(txn, digest_key)?;
     }
     Ok(())
 }
