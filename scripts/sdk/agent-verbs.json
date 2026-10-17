@@ -293,6 +293,7 @@
       "output": "crate::task_verb::sdk::DiaryQueryOutcome",
       "call": "crate::task_verb::sdk::self_memory_diary_query_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -454,6 +455,7 @@
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -465,6 +467,7 @@
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -476,6 +479,7 @@
       "output": "crate::task_verb::sdk::FanoutLaunchView",
       "call": "crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1002,6 +1006,7 @@
       "output": "Option<crate::claim::WeaveDigestView>",
       "call": "memory.weave_digest(None, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1013,6 +1018,7 @@
       "output": "crate::lens::LensFrameCard",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.lens\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1024,6 +1030,7 @@
       "output": "crate::claim::WeaveLinkCorrectionView",
       "call": "memory.weave_wrong_link(None, &memory.embedded_owner(\"vault.weave.link.wrong\")?, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1035,6 +1042,7 @@
       "output": "crate::claim::WeaveLinkCorrectionView",
       "call": "memory.weave_owner_wrong_link(&memory.embedded_owner(\"vault.weave.owner.link.wrong\")?, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1046,6 +1054,7 @@
       "output": "crate::claim::WeaveItemCorrectionView",
       "call": "memory.weave_wrong_item(None, &memory.embedded_owner(\"vault.weave.item.wrong\")?, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1057,6 +1066,7 @@
       "output": "crate::claim::WeaveItemCorrectionView",
       "call": "memory.weave_owner_wrong_item(&memory.embedded_owner(\"vault.weave.owner.item.wrong\")?, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1250,6 +1260,7 @@
       "output": "crate::task_verb::sdk::SharedActExecuted",
       "call": "crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1492,6 +1503,7 @@
       "output": "crate::task_verb::sdk::RecordErasePreview",
       "call": "crate::task_verb::sdk::preview_record_erase(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1503,6 +1515,7 @@
       "output": "crate::task_verb::sdk::RecordEraseOutcome",
       "call": "crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2011,6 +2024,7 @@
       "output": "crate::task_verb::sdk::SecretUseAnswer",
       "call": "crate::task_verb::sdk::use_secret_as_caller(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
       "admission": {
@@ -2036,6 +2050,7 @@
       "output": "crate::receipt::ShareRevokeReceipt",
       "call": "crate::task_verb::sdk::revoke_share_as_caller(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2048,6 +2063,7 @@
       "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>",
       "call": "crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -2331,6 +2347,7 @@
       "output": "crate::blob_artifact::SlideReviewOutcome",
       "call": "memory.artifacts_review_slides(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {},
       "section": false,
@@ -2356,6 +2373,7 @@
       "output": "crate::blob_artifact::ArtifactAskOutcome",
       "call": "memory.artifacts_ask(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {},
       "section": false
@@ -2367,6 +2385,7 @@
       "output": "crate::critic::review::CriticReviewOutcome",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.critic.review\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {},
       "section": false
@@ -3354,6 +3373,7 @@
       "output": "crate::task_verb::sdk::AiVerdict",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.verdict\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -3506,6 +3526,7 @@
       "output": "crate::task_verb::sdk::ConnectorCallReply",
       "call": "crate::task_verb::sdk::connector_call_host_only(memory, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
       "admission": {
@@ -4361,6 +4382,7 @@
       "output": "crate::core_write::DagRecordAppendReceipt",
       "call": "memory.conversations_records_append(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"spec": "$"},
@@ -5032,6 +5054,7 @@
       "output": "crate::office_body::DeckPreview",
       "call": "memory.artifacts_body_deck_preview(&input, None)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true

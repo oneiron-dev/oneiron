@@ -14,7 +14,7 @@ use crate::federation::{
     FederationGrantRole as Role, PendingAuthorityAct, RemovalExportDelivery, SharedActExecution,
     SharedActExecutionReceipt, SharedActKind, SharedActOutcome, SharedVaultDeletion,
 };
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
 
 /// A shared vault, by the id its creation named.
@@ -227,6 +227,38 @@ pub fn execute_shared_act(
     slips: Option<&HostSlipIssuer>,
     input: SharedActRequest,
 ) -> MemoryResult<SharedActExecuted> {
+    execute_shared_act_listing(vault, executor, slips, input).0
+}
+
+/// [`execute_shared_act`], beside the rows its answer was derived from, the
+/// rows its receipt names by ref aside (DEC-0005): those a held erase's
+/// handle listed, and none past the receipt's for any other act, whose
+/// effect reads the act, the roster and the grants its receipt names.
+/// `None` for an export-first removal: its receipt counts and digests every
+/// record the removed Owner could read, which no list names, as a
+/// whole-vault export's does not.
+pub fn execute_shared_act_listing(
+    vault: &Vault,
+    executor: &AuthenticatedOwner,
+    slips: Option<&HostSlipIssuer>,
+    input: SharedActRequest,
+) -> (MemoryResult<SharedActExecuted>, Option<Vec<EntityId>>) {
+    let producers = ProducerRows::default();
+    let answer = execute_shared_act_into(vault, executor, slips, input, &producers);
+    let listed = match &answer {
+        Ok(executed) if executed.receipt.export.is_some() => None,
+        _ => Some(producers.take()),
+    };
+    (answer, listed)
+}
+
+fn execute_shared_act_into(
+    vault: &Vault,
+    executor: &AuthenticatedOwner,
+    slips: Option<&HostSlipIssuer>,
+    input: SharedActRequest,
+    producers: &ProducerRows,
+) -> MemoryResult<SharedActExecuted> {
     let erase = vault
         .pending_authority_act(&input.act_id)?
         .is_some_and(|act| SharedActKind::parse(&act.act) == Some(SharedActKind::Erase));
@@ -235,6 +267,7 @@ pub fn execute_shared_act(
         // record; its receipt then tells the Owners (OF-150).
         vault
             .memory(executor.revalidate_person(vault)?, EdgeActorClass::Human)
+            .listing_producers(producers)
             .execute_completed_entity_erase(executor, &input.act_id)?;
         return Ok(SharedActExecuted {
             receipt: vault.record_erase_completion(executor, &input.act_id)?,
