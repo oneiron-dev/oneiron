@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 308 facade rows, 1188 declarations.
-Inputs: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 265 of 308 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 309 facade rows, 1205 declarations.
+Inputs: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 266 of 309 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 72; unread shapes: 0.
 """
 
@@ -2196,11 +2196,20 @@ class AuthorityAuditRow(TypedDict):
     fold_valid: bool
     issue_codes: NotRequired[list[str]]
 AuthorityAuditOrder = Literal["entry_ref_ascending"]
+class ColdAuthorityAuditRow(TypedDict):
+    entry_ref: EntityId
+    entry_hash: str
+    checkpoint: str
+    signer_key: str
+    seq: int
+    parents: list[str]
+    fold_valid: bool
 class AuthorityAuditPage(TypedDict):
     rows: list[AuthorityAuditRow]
     next_after: NotRequired[EntityId | None]
     order: AuthorityAuditOrder
     scanned: int
+    cold_attested: NotRequired[list[ColdAuthorityAuditRow]]
 class MeshPathReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 MeshPathDirection = Literal["inbound", "outbound"]
@@ -2702,6 +2711,7 @@ class WeaveReceipt(TypedDict):
     validation_overlap: float
     claim: EntityId
     claim_approval: ClaimApprovalStatus
+    gate_decision: str
     at: int
 class PruneReasonDominatedBody(TypedDict):
     by: AttemptId
@@ -5228,6 +5238,20 @@ class ConnectorCallStatusSettled(TypedDict):
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
 class CommitRequest(TypedDict):
     claims: list[ClaimInput]
+RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
+class RecordRefusal(TypedDict):
+    reason: RefusalReason
+    code: str
+    message: str
+    suggestions: list[str]
+    field: str
+class CommitOutcomeLanded(CommitReceipt):
+    outcome: Literal["landed"]
+class CommitOutcomeRefused(TypedDict):
+    outcome: Literal["refused"]
+    refusal: RecordRefusal
+    receipt_ref: NotRequired[str | None]
+CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):
@@ -5355,6 +5379,90 @@ class ArtifactCreateRequest(TypedDict):
     content_base64: str
     run_ref: NotRequired[str | None]
     made_by: NotRequired[Any | None]
+DocumentKind = Literal["document", "template"]
+class EsignItem(TypedDict):
+    artifact_ref: str
+    original_version: int
+RecipientRole = Literal["signer", "approver", "viewer", "cc"]
+class EsignRecipient(TypedDict):
+    id: str
+    email: str
+    name: str
+    role: RecipientRole
+    order: int
+    expires_at: int
+    principal_ref: NotRequired[str | None]
+    automated: bool
+    natural_person: NotRequired[str | None]
+class FieldGeometry(TypedDict):
+    page: int
+    x_percent: float
+    y_percent: float
+    width_percent: float
+    height_percent: float
+class FieldMetaSignature(TypedDict):
+    kind: Literal["signature"]
+class FieldMetaInitials(TypedDict):
+    kind: Literal["initials"]
+class FieldMetaName(TypedDict):
+    kind: Literal["name"]
+class FieldMetaEmail(TypedDict):
+    kind: Literal["email"]
+class FieldMetaDate(TypedDict):
+    kind: Literal["date"]
+class FieldMetaText(TypedDict):
+    kind: Literal["text"]
+    max_bytes: int
+class FieldMetaCheckbox(TypedDict):
+    kind: Literal["checkbox"]
+class FieldMetaSelect(TypedDict):
+    kind: Literal["select"]
+    options: list[str]
+FieldMeta = FieldMetaSignature | FieldMetaInitials | FieldMetaName | FieldMetaEmail | FieldMetaDate | FieldMetaText | FieldMetaCheckbox | FieldMetaSelect
+class EsignField(TypedDict):
+    id: str
+    item: int
+    recipient: str
+    required: bool
+    geometry: FieldGeometry
+    meta: FieldMeta
+class EsignNoticeSwitches(TypedDict):
+    invite: bool
+    pending: bool
+    completed: bool
+    rejection: bool
+    void: bool
+    expiry: bool
+class EsignLifecycleRules(TypedDict):
+    expiry_after_seconds: int
+    first_reminder_after_seconds: int
+    repeat_reminder_every_seconds: int
+    reminder_cap_seconds: int
+    notices: EsignNoticeSwitches
+class EsignDocument(TypedDict):
+    schema_version: int
+    kind: DocumentKind
+    title: str
+    sequential: bool
+    expires_at: int
+    items: list[EsignItem]
+    recipients: list[EsignRecipient]
+    fields: list[EsignField]
+    full_trail_appendix: bool
+    lifecycle: NotRequired[EsignLifecycleRules | None]
+    project: NotRequired[EntityId | None]
+class EsignCreateRequest(TypedDict):
+    document_ref: str
+    draft: EsignDocument
+DocumentStatus = Literal["draft", "pending", "completed", "rejected", "voided", "expired"]
+class EsignDraftView(TypedDict):
+    document_ref: str
+    status: DocumentStatus
+    title: str
+    expires_at: int
+    project_ref: NotRequired[str | None]
+    recipients: list[str]
+    fields: int
 class CoreWriteTextField(TypedDict):
     field: str
     value: str
