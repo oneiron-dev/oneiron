@@ -6969,6 +6969,7 @@
      "kind": "src",
      "notable": [
       "Retired",
+      "RetiredWorkflow",
       "WorkflowRecord"
      ],
      "path": "src/browser_library.rs",
@@ -6976,8 +6977,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 6,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -8117,7 +8118,7 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -8131,19 +8132,25 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "AuthoredCampaignProgram",
       "CampaignProgram",
       "CampaignProgramAudience",
+      "CampaignProgramDefinition",
+      "CampaignProgramDraft",
       "CampaignProgramOutbound",
-      "CampaignProgramStep"
+      "CampaignProgramStep",
+      "CampaignProgramStepDraft"
      ],
      "path": "src/campaign/enrollment/program.rs",
      "purpose": "Persisted campaign program and step state authorizing both halves of the consequence",
      "surface": {
-      "fn": 6,
-      "struct": 4
+      "const": 5,
+      "crate-vis": 1,
+      "fn": 10,
+      "struct": 8
      }
     },
     {
@@ -8405,6 +8412,7 @@
      "purpose": "Campaign record types, lifecycle operations, and vault storage",
      "surface": {
       "const": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 6,
       "struct": 4
@@ -8444,7 +8452,8 @@
      "path": "src/campaign/surface/mod.rs",
      "purpose": "CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack",
      "surface": {
-      "re-export": 4
+      "crate-vis": 2,
+      "re-export": 5
      }
     },
     {
@@ -8458,6 +8467,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArchiveCampaignProgramRequest",
+      "CampaignProgramAudienceSpec",
+      "CampaignProgramDefinitionView",
+      "CampaignProgramLifecycle",
+      "CampaignProgramOutboundSpec",
+      "CampaignProgramReadRequest",
+      "CampaignProgramReadResult",
+      "CampaignProgramRecord",
+      "CampaignProgramStepSpec",
+      "CreateCampaignProgramRequest",
+      "UpdateCampaignProgramRequest"
+     ],
+     "path": "src/campaign/surface/program.rs",
+     "purpose": "Wire shapes of the four campaign program verbs (`vault.campaign.program.*`)",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "struct": 10
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -8466,7 +8499,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CampaignSurfaceVerb",
@@ -8476,7 +8509,7 @@
      "path": "src/campaign/surface/verbs.rs",
      "purpose": "Closed verb vocabulary and the single shared dispatch door",
      "surface": {
-      "const": 12,
+      "const": 18,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -9782,7 +9815,7 @@
      "path": "src/claim/put.rs",
      "purpose": "`Vault` claim write doors: the public `put_claim` family, the crate-private reserved-namespace door, the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -10930,7 +10963,7 @@
      "path": "src/code_run/dispatcher/envelope.rs",
      "purpose": "Write-envelope construction, gate bodies and the write-gate checks every memory verb clears",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -11020,6 +11053,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/team_submit.rs",
+     "purpose": "`self.team.submit` (OF-540): a team's leader submits one pinned output of its team for the owner's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/team_verbs.rs",
      "purpose": "`self.team.start` and `self.team.record` (OF-540): a pattern-skill run's own team, bound to the running…",
      "surface": {
@@ -11068,9 +11111,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 5,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -11408,6 +11451,20 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeamSubmitAnswer",
+      "TeamSubmitInput"
+     ],
+     "path": "src/code_run/team_submit.rs",
+     "purpose": "`self.team.submit` (OF-540): what a team's leader submits for the owner's review, and what the host answers",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 2
      }
     },
     {
@@ -18497,6 +18554,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach_learning.rs",
+     "purpose": "The Coach's own record (ARCH-0066 #coach: \"calibration, meta-learning\"; ARCH-0053 #training-offers): each…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/coach_repair.rs",
      "purpose": "The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418)",
      "surface": {
@@ -18652,7 +18721,7 @@
       "const": 3,
       "crate-vis": 7,
       "fn": 1,
-      "mod": 11,
+      "mod": 12,
       "re-export": 4
      }
     },
@@ -29024,7 +29093,7 @@
      "path": "src/memory/campaign.rs",
      "purpose": "Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`…",
      "surface": {
-      "fn": 10
+      "fn": 14
      }
     },
     {
@@ -38124,7 +38193,7 @@
      "path": "src/saved_query/lifecycle.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4
      }
     },
@@ -46555,7 +46624,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 309
+      "fn": 313
      }
     },
     {
@@ -51544,9 +51613,9 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "CRM pack engine-side registration home"
     },
@@ -51642,7 +51711,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 65,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51908,7 +51977,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -52909,9 +52978,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 162,
+   "over_bar": 163,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3203,
+   "source_files": 3207,
    "test_files": 903
   },
   "oneiron-android": {
@@ -60897,7 +60966,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 263
+      "fn": 267
      }
     },
     {
@@ -61914,7 +61983,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 264
+      "fn": 268
      }
     },
     {
@@ -63547,7 +63616,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer.rs",
@@ -64019,13 +64088,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/campaign.rs",
      "purpose": "CA-07 campaign HTTP routes",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -69586,7 +69655,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -69647,7 +69716,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 18,
       "re-export": 13,
       "struct": 2
@@ -71838,7 +71907,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 47,
+   "over_bar": 48,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 584,
    "test_files": 182
@@ -72044,6 +72113,7 @@
       "AnswerRecord",
       "AnsweringAuthority",
       "ApproveScope",
+      "ArchiveCampaignProgramRequest",
       "ArtifactAskRecord",
       "ArtifactAskStanding",
       "ArtifactAskUnits",
@@ -72095,6 +72165,14 @@
       "CallReceiptRequest",
       "CallTransport",
       "CallableCardView",
+      "CampaignProgramAudienceSpec",
+      "CampaignProgramDefinitionView",
+      "CampaignProgramLifecycle",
+      "CampaignProgramOutboundSpec",
+      "CampaignProgramReadRequest",
+      "CampaignProgramReadResult",
+      "CampaignProgramRecord",
+      "CampaignProgramStepSpec",
       "CancelRejectionPathology",
       "Care",
       "ChangeKind",
@@ -72167,6 +72245,7 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
       "Criterion",
@@ -72805,6 +72884,7 @@
       "TypedDecision",
       "UndoneKeep",
       "UnsupportedCapability",
+      "UpdateCampaignProgramRequest",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
       "WeaveItemView",
@@ -72847,8 +72927,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 241,
-      "struct": 592
+      "enum": 242,
+      "struct": 602
      }
     },
     {

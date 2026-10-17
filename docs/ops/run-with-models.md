@@ -216,7 +216,9 @@ route say, holds a socket when its entry sets `responses_socket = true` (a
 
 An `anthropic-compat` provider at `https://api.anthropic.com` sends a
 `/v1/messages` request body of 16 KiB or more gzip-encoded (level 1), when that
-makes it smaller. Replies do not change. Any other provider sends plain bodies
+makes it smaller, except on a cloud node (a managed or host-readable
+deployment), where gzip costs more on the link than it saves; zstd still
+compresses there. Replies do not change. Any other provider sends plain bodies
 unless its entry names the codec its route decodes: `request_compression =
 "zstd"` (level 3) for our CPA agents route, say, or `"gzip"`. Set
 `request_compression = false` to send plain. If a compressed body is answered
