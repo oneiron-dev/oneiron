@@ -48,13 +48,7 @@ pub(crate) async fn vault_packs_put(
     auth: &CoreAuth,
     input: PackPutRequest,
 ) -> MemoryResult<PackPutReceipt> {
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "vault.packs.put is the vault owner's",
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = owner_proof(auth, server, "vault.packs.put")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         oneiron::task_verb::sdk::put_pack_as_owner(server.vault(), &owner, input)
@@ -72,13 +66,7 @@ pub(crate) async fn vault_artifacts_review_slides(
     auth: &CoreAuth,
     input: oneiron::blob_artifact::SlideReviewSubmit,
 ) -> MemoryResult<oneiron::blob_artifact::SlideReviewOutcome> {
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "a slide review binds its proposal to an authenticated principal",
-            &["Present a slip paired from a link created with --principal-ref."],
-        )
-    })?;
+    let (actor, class) = slide_reviewer(auth)?;
     let server = Arc::clone(server);
     let auth = auth.clone();
     tokio::task::spawn_blocking(move || {
@@ -96,6 +84,17 @@ pub(crate) async fn vault_artifacts_review_slides(
     .map_err(|_| internal("vault.artifacts.review_slides"))?
 }
 
+/// The principal a slide review binds its proposal to.
+fn slide_reviewer(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a slide review binds its proposal to an authenticated principal",
+            &["Present a slip paired from a link created with --principal-ref."],
+        )
+    })
+}
+
 /// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the
 /// owner's view under the proof `/v1/owner` takes from the request.
 pub(crate) async fn vault_authority_audit(
@@ -103,13 +102,7 @@ pub(crate) async fn vault_authority_audit(
     auth: &CoreAuth,
     input: oneiron::receipt::AuthorityAuditQuery,
 ) -> MemoryResult<oneiron::receipt::AuthorityAuditPage> {
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "vault.authority.audit is the vault owner's",
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = owner_proof(auth, server, "vault.authority.audit")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         server
@@ -243,7 +236,7 @@ pub(crate) async fn ai_video_poll(
     auth: &CoreAuth,
     input: AiVideoJobRequest,
 ) -> MemoryResult<AiVideoJob> {
-    owner_grade(auth, "video jobs are the owner's")?;
+    owner_grade(auth, VIDEO_JOB_OWNERS)?;
     let state = server
         .ai
         .model_runtime()
@@ -260,7 +253,7 @@ pub(crate) async fn ai_video_cancel(
     auth: &CoreAuth,
     input: AiVideoJobRequest,
 ) -> MemoryResult<AiVideoCancelled> {
-    owner_grade(auth, "video jobs are the owner's")?;
+    owner_grade(auth, VIDEO_JOB_OWNERS)?;
     server
         .ai
         .model_runtime()
@@ -284,13 +277,7 @@ pub(crate) async fn self_memory_diary_query(
     input: oneiron::task_verb::sdk::DiaryQueryRequest,
 ) -> MemoryResult<oneiron::task_verb::sdk::DiaryQueryOutcome> {
     let owner = crate::api::owner_routes::owner(auth, server).ok();
-    let (actor, class) = super::facade_actor(auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "self.memory.diary.query reads as the credential's own principal",
-            &["Present a slip paired with a principal ref and an actor class."],
-        )
-    })?;
+    let (actor, class) = diary_reader(auth)?;
     let server = Arc::clone(server);
     let auth = auth.clone();
     tokio::task::spawn_blocking(move || {
@@ -300,6 +287,17 @@ pub(crate) async fn self_memory_diary_query(
     })
     .await
     .map_err(|_| internal("self.memory.diary.query"))?
+}
+
+/// The principal a diary query reads as.
+fn diary_reader(auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    super::facade_actor(auth).map_err(|_| {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "self.memory.diary.query reads as the credential's own principal",
+            &["Present a slip paired with a principal ref and an actor class."],
+        )
+    })
 }
 
 /// `ai.verdict`: the caller's own typed question through the host's
@@ -353,13 +351,7 @@ pub(crate) async fn vault_hooks_replay(
     auth: &CoreAuth,
     input: HooksReplayRequest,
 ) -> MemoryResult<Vec<HookReplayRow>> {
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "vault.hooks.replay is the vault owner's",
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = owner_proof(auth, server, "vault.hooks.replay")?;
     let Some(runtime) = server.hook_runtime.get().cloned() else {
         return Err(MemoryError::new(
             MEMORY_CODE_MODEL_UNAVAILABLE,
@@ -407,6 +399,11 @@ fn asking(auth: &CoreAuth, server: &SyncServer) -> MemoryResult<(EntityId, EdgeA
     Ok((actor, class))
 }
 
+/// The refusal of an `ai.*` media call from a credential short of the owner's.
+const MEDIA_OWNERS: &str = "ai.* media calls are the owner's";
+/// The refusal of a video job's poll or cancel from one short of it.
+const VIDEO_JOB_OWNERS: &str = "video jobs are the owner's";
+
 fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
     if auth.is_owner_grade() {
         return Ok(());
@@ -416,6 +413,50 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
         message,
         &["Present a verified, unattenuated owner credential."],
     ))
+}
+
+/// The authority check host-door row `verb`'s own door runs first: the
+/// owner's proof, a person's proof, a bound principal or an owner-grade
+/// credential. The facade runs it before the row's pre chain, so a hook
+/// never fires on a call the door refuses; the door runs it again for the
+/// proof it acts under. A row whose door has no such check passes.
+pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
+    match verb {
+        "vault.packs.put"
+        | "vault.authority.audit"
+        | "vault.hooks.replay"
+        | "vault.lenses.activate"
+        | "vault.lenses.deactivate"
+        | "vault.packs.setup.prepare"
+        | "vault.packs.setup.get"
+        | "vault.packs.setup.answer"
+        | "vault.packs.setup.verify"
+        | "vault.authority.handoff_alarms"
+        | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.legal_holds.place"
+        | "vault.legal_holds.widen"
+        | "vault.legal_holds.list"
+        | "vault.legal_holds.log"
+        | "vault.legal_holds.lift_and_erase" => owner_proof(auth, server, verb).map(drop),
+        "vault.shared.propose_delete"
+        | "vault.shared.propose_transfer"
+        | "vault.shared.propose_remove_owner"
+        | "vault.shared.execute"
+        | "vault.shared.receipt"
+        | "vault.shared.outcomes"
+        | "vault.members.add"
+        | "vault.members.change"
+        | "vault.members.remove"
+        | "vault.members.leave" => super::shared_act_doors::person(server, auth, verb).map(drop),
+        "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),
+        "self.memory.diary.query" => diary_reader(auth).map(drop),
+        "ai.verdict" => asking(auth, server).map(drop),
+        "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
+            owner_grade(auth, MEDIA_OWNERS)
+        }
+        "ai.video.poll" | "ai.video.cancel" => owner_grade(auth, VIDEO_JOB_OWNERS),
+        _ => Ok(()),
+    }
 }
 
 pub(super) fn internal(verb: &str) -> MemoryError {
@@ -434,7 +475,7 @@ fn admit(
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<MediaRequest> {
-    owner_grade(auth, "ai.* media calls are the owner's")?;
+    owner_grade(auth, MEDIA_OWNERS)?;
     let media = server.ai.model_runtime().media();
     let Some((seat, _)) = media.seat(operation) else {
         return Err(MemoryError::new(
@@ -548,9 +589,9 @@ fn failure(operation: AiOperation, error: &LlmError) -> MemoryError {
     )
 }
 
-/// The owner's proof for a `vault.lenses.*` slot decision, from the request,
-/// as `/v1/owner` takes it.
-fn lens_owner(
+/// The vault owner's proof for an owner's host door, from the request, as
+/// `/v1/owner` takes it.
+fn owner_proof(
     auth: &CoreAuth,
     server: &SyncServer,
     verb: &str,
@@ -572,7 +613,7 @@ pub(crate) async fn vault_lenses_activate(
     auth: &CoreAuth,
     input: LensActivateRequest,
 ) -> MemoryResult<LensActivationReceipt> {
-    let owner = lens_owner(auth, server, "vault.lenses.activate")?;
+    let owner = owner_proof(auth, server, "vault.lenses.activate")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || server.vault().activate_lens(&owner, input))
         .await
@@ -586,7 +627,7 @@ pub(crate) async fn vault_lenses_deactivate(
     auth: &CoreAuth,
     input: LensDeactivateRequest,
 ) -> MemoryResult<LensActivationReceipt> {
-    let owner = lens_owner(auth, server, "vault.lenses.deactivate")?;
+    let owner = owner_proof(auth, server, "vault.lenses.deactivate")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || server.vault().deactivate_lens(&owner, input))
         .await
@@ -601,7 +642,7 @@ pub(crate) async fn vault_packs_setup_prepare(
     auth: &CoreAuth,
     input: PackSetupRequest,
 ) -> MemoryResult<PackSetupReceipt> {
-    let owner = lens_owner(auth, server, "vault.packs.setup.prepare")?;
+    let owner = owner_proof(auth, server, "vault.packs.setup.prepare")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         oneiron::task_verb::sdk::prepare_pack_setup_as_owner(server.vault(), &owner, &input)
@@ -617,7 +658,7 @@ pub(crate) async fn vault_packs_setup_get(
     auth: &CoreAuth,
     input: PackSetupRequest,
 ) -> MemoryResult<PackSetupReceipt> {
-    let owner = lens_owner(auth, server, "vault.packs.setup.get")?;
+    let owner = owner_proof(auth, server, "vault.packs.setup.get")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         oneiron::task_verb::sdk::pack_setup_as_owner(server.vault(), &owner, &input)
@@ -635,7 +676,7 @@ pub(crate) async fn vault_packs_setup_answer(
     auth: &CoreAuth,
     input: PackSetupAnswerRequest,
 ) -> MemoryResult<PackSetupReceipt> {
-    let owner = lens_owner(auth, server, "vault.packs.setup.answer")?;
+    let owner = owner_proof(auth, server, "vault.packs.setup.answer")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         oneiron::task_verb::sdk::answer_pack_setup_as_owner(server.vault(), &owner, &input)
@@ -651,7 +692,7 @@ pub(crate) async fn vault_packs_setup_verify(
     auth: &CoreAuth,
     input: PackSetupVerifyRequest,
 ) -> MemoryResult<PackSetupReceipt> {
-    let owner = lens_owner(auth, server, "vault.packs.setup.verify")?;
+    let owner = owner_proof(auth, server, "vault.packs.setup.verify")?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         oneiron::task_verb::sdk::verify_pack_setup_as_owner(server.vault(), &owner, &input)
