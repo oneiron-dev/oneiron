@@ -16,6 +16,7 @@
 //! until an anchor speaks. A swap that later picks or outcomes contradict
 //! re-pins back. No original answer is rescored or rewritten, and every swap
 //! and every re-pin reaches the vault's owners.
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::de::DeserializeOwned;
@@ -696,18 +697,31 @@ fn sides_with(answers: &[JudgeShadowAnswer], reference: &DecisionAnswer) -> Opti
 }
 
 /// Cases sided with `judge`, by any settler.
-fn sided(cases: impl Iterator<Item = &'_ JudgeSwapDisagreement>, judge: &str) -> usize {
+fn sided<I>(cases: I, judge: &str) -> usize
+where
+    I: Iterator,
+    I::Item: Borrow<JudgeSwapDisagreement>,
+{
     cases
-        .filter(|case| case.sided_with.as_deref() == Some(judge))
+        .filter(|case| {
+            <I::Item as Borrow<JudgeSwapDisagreement>>::borrow(case)
+                .sided_with
+                .as_deref()
+                == Some(judge)
+        })
         .count()
 }
 
 /// Cases an anchor (a pick or a settled outcome) sided with `judge`.
-fn anchored(cases: impl Iterator<Item = &'_ JudgeSwapDisagreement>, judge: &str) -> usize {
+fn anchored<I>(cases: I, judge: &str) -> usize
+where
+    I: Iterator,
+    I::Item: Borrow<JudgeSwapDisagreement>,
+{
     sided(
         cases.filter(|case| {
             matches!(
-                case.settled_by,
+                <I::Item as Borrow<JudgeSwapDisagreement>>::borrow(case).settled_by,
                 JudgeSwapSettledBy::Pick | JudgeSwapSettledBy::Outcome
             )
         }),
