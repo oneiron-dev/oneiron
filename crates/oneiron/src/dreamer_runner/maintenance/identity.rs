@@ -26,6 +26,9 @@
 //!
 //! Every answer saves the resolution and a context hint (the name, the words
 //! around it and the entity it named), so the same question rarely returns.
+//! Someone new confirms the mention's provisional entity as a real, synced
+//! person and asserts it distinct from each real candidate (ARCH-0055 §6), so
+//! no merge of the two is proposed again.
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
@@ -33,8 +36,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::MAINTENANCE_QUEUE_KIND;
+use crate::claim::ClaimSource;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
+use crate::identity_topology::{AssertDistinctOp, IdentityOpWrite, IdentityTopologyOp};
 use crate::lens::{
     ButtonControl, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
     GeneratedUiCard, GeneratedUiStateSnapshot, LensAtom, LensAtomId, LensNode, LensRenderId,
@@ -79,6 +84,8 @@ const EXCERPT_BYTES: usize = 480;
 const MAX_NAME_BYTES: usize = 256;
 /// How long a failed decision waits before the host tries again.
 const RETRY_SECS: u64 = 3_600;
+/// The rationale on a someone-new answer's `assert_distinct` event.
+const SOMEONE_NEW_RATIONALE: &str = "identity ask: someone new";
 /// Words too common to tell two people apart.
 const STOP_WORDS: &[&str] = &[
     "about", "after", "again", "also", "been", "before", "being", "could", "does", "doing", "done",
@@ -133,7 +140,7 @@ pub struct IdentityAsk {
     /// The entities it may be, real or provisional.
     pub candidates: Vec<EntityId>,
     /// The mention's own provisional entity, when it named only that one and
-    /// the name now keys to real people: "someone new" keeps it.
+    /// the name now keys to real people: "someone new" confirms it.
     pub provisional: Option<EntityId>,
     /// The words around the mention, as a hint keeps them.
     pub context: Vec<String>,
@@ -168,6 +175,8 @@ pub struct IdentityOption {
     /// Its stored name; empty for someone new.
     pub label: String,
     pub provisional: bool,
+    /// When a provisional candidate was first said, store-clock seconds.
+    pub first_said: Option<u64>,
 }
 
 /// An open ask as the owner reads it.
@@ -191,6 +200,9 @@ pub struct IdentityAskView {
 pub struct IdentityCardCopy {
     pub prompt: String,
     pub someone_new: String,
+    /// A provisional candidate's button: `{name}` takes its name and `{day}`
+    /// the day it was first said. None shows `{name} · {day}`.
+    pub provisional: Option<String>,
 }
 
 /// The host's decision path for an ask: its ladder, the principal the
@@ -468,12 +480,14 @@ fn label_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<S
     Ok(name.unwrap_or_else(|| id.to_hex().chars().take(8).collect()))
 }
 
-/// Whether the link is an uncertain person: two or more candidates, or the
-/// mention's own provisional entity alone while its name keys to real
-/// people now.
+/// Whether the link in `turn` is an uncertain person: two or more
+/// candidates, or the mention's own provisional entity alone while its name
+/// keys to real people now in a world the turn is in, as the Linker filters
+/// them.
 fn uncertain_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    turn: EntityId,
     link: &MentionLink,
     name: &str,
 ) -> Result<Option<Uncertain>> {
@@ -501,7 +515,10 @@ fn uncertain_in_txn(
     let mut real = BTreeSet::new();
     for hit in vault.lookup_identity_key_in_txn(txn, kind, name)? {
         for head in vault.resolve_entity_in_txn(txn, &hit)? {
-            if head != own && entity_of_kind_in_txn(vault, txn, &head, kind)? {
+            if head != own
+                && entity_of_kind_in_txn(vault, txn, &head, kind)?
+                && crate::tagging::shares_world_in_txn(vault, txn, turn, &head)?
+            {
                 real.insert(head);
             }
         }
@@ -658,15 +675,60 @@ fn parse_choice(ask: &IdentityAsk, choice: &str) -> Option<Answer> {
         .map(|id| Answer::Is(*id))
 }
 
+/// Asserts the new person `fresh` distinct from each real person the ask
+/// offered, as each resolves now (ARCH-0055 §6: "different things" mints
+/// `assert_distinct`), with `source` as the claim's. Nothing when `fresh` is
+/// no stored entity: no readable text named it any more.
+fn assert_distinct_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ask: &IdentityAsk,
+    fresh: EntityId,
+    source: ClaimSource,
+    now: u64,
+) -> Result<()> {
+    if !entity_of_kind_in_txn(vault, txn, &fresh, ask.kind)? {
+        return Ok(());
+    }
+    let mut real = BTreeSet::new();
+    for candidate in &ask.candidates {
+        for head in vault.resolve_entity_in_txn(txn, candidate)? {
+            if head != fresh
+                && entity_of_kind_in_txn(vault, txn, &head, ask.kind)?
+                && crate::deletion::topology_delete_reservation_in_txn(&vault.store, txn, &head)?
+                    .is_none()
+            {
+                real.insert(head);
+            }
+        }
+    }
+    let write = IdentityOpWrite::auto(source);
+    for head in real {
+        vault.apply_identity_topology_op_in_txn(
+            txn,
+            &IdentityTopologyOp::AssertDistinct(AssertDistinctOp {
+                a: fresh,
+                b: head,
+                reason: SOMEONE_NEW_RATIONALE.to_owned(),
+            }),
+            &write,
+            now,
+        )?;
+    }
+    Ok(())
+}
+
 /// Settles the ask's mention as `answer` and saves the hint: a chosen
 /// candidate takes the span (and absorbs the mention's own provisional
 /// entity, everywhere it is named); someone new keeps that provisional
-/// entity, or mints one for the span.
+/// entity, or mints one for the span, confirms it as a real person and
+/// asserts it distinct from the real candidates, said by `source`.
 fn apply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ask: &IdentityAsk,
     answer: Answer,
+    source: ClaimSource,
     now: u64,
 ) -> Result<EntityId> {
     let span = (&ask.message, ask.start, ask.end);
@@ -691,6 +753,8 @@ fn apply_in_txn(
                 )?,
             };
             crate::tagging::settle_mention_in_txn(vault, txn, &ask.turn, span, fresh)?;
+            crate::tagging::confirm_provisional_in_txn(vault, txn, &fresh)?;
+            assert_distinct_in_txn(vault, txn, ask, fresh, source, now)?;
             fresh
         }
     };
@@ -705,9 +769,10 @@ fn settle_ask_in_txn(
     key: &[u8; 32],
     ask: &IdentityAsk,
     answer: Answer,
+    source: ClaimSource,
     now: u64,
 ) -> Result<EntityId> {
-    let entity = apply_in_txn(vault, txn, ask, answer, now)?;
+    let entity = apply_in_txn(vault, txn, ask, answer, source, now)?;
     ASKS.delete(&vault.store, txn, key)?;
     Ok(entity)
 }
@@ -767,11 +832,14 @@ fn options_in_txn(
 ) -> Result<Vec<IdentityOption>> {
     let mut options = Vec::with_capacity(ask.candidates.len() + 1);
     for id in &ask.candidates {
+        let first_said = crate::tagging::provisional_in_txn(&vault.store, txn, id)?
+            .map(|entity| entity.minted_at);
         options.push(IdentityOption {
             choice: format!("{IS_PREFIX}{}", id.to_hex()),
             entity: Some(id.to_hex()),
             label: label_in_txn(vault, txn, id)?,
-            provisional: crate::tagging::provisional_in_txn(&vault.store, txn, id)?.is_some(),
+            provisional: first_said.is_some(),
+            first_said,
         });
     }
     options.push(IdentityOption {
@@ -779,6 +847,7 @@ fn options_in_txn(
         entity: None,
         label: String::new(),
         provisional: false,
+        first_said: None,
     });
     Ok(options)
 }
@@ -802,6 +871,23 @@ fn view_in_txn(
         opened_at: ask.opened_at,
         escalated_at: ask.escalated_at,
     })
+}
+
+/// A provisional candidate's button label: its name and the day it was first
+/// said, in the copy's words when the host gave them, so it reads apart from
+/// a real person of the same name.
+fn provisional_label(name: &str, first_said: u64, copy: &IdentityCardCopy) -> String {
+    let Some(day) = i64::try_from(first_said)
+        .ok()
+        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
+        .map(|at| at.format("%Y-%m-%d").to_string())
+    else {
+        return name.to_owned();
+    };
+    match &copy.provisional {
+        Some(words) => words.replace("{name}", name).replace("{day}", &day),
+        None => format!("{name} · {day}"),
+    }
 }
 
 /// A one-tap choice card for an ask: the name and the question, then one
@@ -830,10 +916,10 @@ fn card(
             command: SelfUiActionId::new(IDENTITY_ANSWER_VERB)?,
             args: vec![SelfUiValue::Text(LensText::new(args)?)],
         };
-        let label = if option.entity.is_some() {
-            option.label.clone()
-        } else {
-            copy.someone_new.clone()
+        let label = match (&option.entity, option.first_said) {
+            (None, _) => copy.someone_new.clone(),
+            (Some(_), Some(first_said)) => provisional_label(&option.label, first_said, copy),
+            (Some(_), None) => option.label.clone(),
         };
         root.children.push(LensNode::new(
             element.clone(),
@@ -886,7 +972,7 @@ fn ask_for_mention_in_txn(
     else {
         return Ok(None);
     };
-    let Some(found) = uncertain_in_txn(vault, txn, &mention.link, name)? else {
+    let Some(found) = uncertain_in_txn(vault, txn, *turn, &mention.link, name)? else {
         return Ok(None);
     };
     Ok(Some(IdentityAsk {
@@ -946,7 +1032,14 @@ fn recheck_turn_in_txn(
             continue;
         };
         if let Some(entity) = hinted_in_txn(vault, txn, &ask)? {
-            apply_in_txn(vault, txn, &ask, Answer::Is(entity), now)?;
+            apply_in_txn(
+                vault,
+                txn,
+                &ask,
+                Answer::Is(entity),
+                ClaimSource::Inferred,
+                now,
+            )?;
             continue;
         }
         if open.len() >= MAX_OPEN_ASKS || open.iter().any(|(_, held)| same_question(held, &ask)) {
@@ -1163,7 +1256,13 @@ impl Vault {
             }
             match answer {
                 Some(answer) => Ok(IdentityRuling::Settled(settle_ask_in_txn(
-                    self, txn, &key, &current, answer, now,
+                    self,
+                    txn,
+                    &key,
+                    &current,
+                    answer,
+                    ClaimSource::Inferred,
+                    now,
                 )?)),
                 None => {
                     escalate_in_txn(self, txn, &key, current, now)?;
@@ -1229,7 +1328,8 @@ impl Vault {
                 .ok_or_else(|| invalid("no such open ask"))?;
             let answer =
                 parse_choice(&held, choice).ok_or_else(|| invalid("not one of the ask's options"))?;
-            let entity = settle_ask_in_txn(self, txn, &key, &held, answer, now)?;
+            let entity =
+                settle_ask_in_txn(self, txn, &key, &held, answer, ClaimSource::UserStated, now)?;
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
@@ -1259,7 +1359,15 @@ impl Memory<'_> {
             let answer = parse_choice(&held, &input.choice).ok_or_else(|| {
                 MemoryError::bad_request("choice is one of the ask's options or someone_new")
             })?;
-            let entity = settle_ask_in_txn(self.vault(), txn, &key, &held, answer, now)?;
+            let entity = settle_ask_in_txn(
+                self.vault(),
+                txn,
+                &key,
+                &held,
+                answer,
+                ClaimSource::UserStated,
+                now,
+            )?;
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
@@ -1289,6 +1397,7 @@ impl Memory<'_> {
         let copy = IdentityCardCopy {
             prompt: input.prompt.clone(),
             someone_new: input.someone_new.clone(),
+            provisional: None,
         };
         let vault = self.vault();
         let hits = vault.tagged_mentions_of_name(ENTITY_TYPE_PERSON, name)?;
@@ -1363,7 +1472,14 @@ impl Memory<'_> {
                 });
             };
             if let Some(entity) = hinted_in_txn(vault, txn, &ask)? {
-                let entity = apply_in_txn(vault, txn, &ask, Answer::Is(entity), now)?;
+                let entity = apply_in_txn(
+                    vault,
+                    txn,
+                    &ask,
+                    Answer::Is(entity),
+                    ClaimSource::Inferred,
+                    now,
+                )?;
                 return Ok(IdentityActNow::Settled {
                     entity: entity.to_hex(),
                 });
