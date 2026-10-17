@@ -710,6 +710,26 @@ impl PipelineBuilder<'_> {
                 overrides.skip_ret01_abstain,
             )?;
 
+            // OF-023 hold-both: an observed claim never sits above a stated
+            // claim of its question (ARCH-0003), in order or score, so no
+            // budget or cut below keeps the observed mate over the stated
+            // one. No multiplier applies here: the pack's assembly applies
+            // those once. Every other row keeps its place and score.
+            {
+                let policy = crate::context_pack::source_ranking::SourceRankingPolicy::default();
+                let body =
+                    |id: &crate::EntityId| claim_gate.decisions.get(id).and_then(Option::as_ref);
+                crate::context_pack::source_ranking::clamp_order(&mut scores, &policy, |row| {
+                    body(&row.id)
+                })?;
+                let bodies: Vec<_> = scores.iter().map(|row| body(&row.id)).collect();
+                let mut ranked: Vec<f32> = scores.iter().map(|row| row.score).collect();
+                crate::context_pack::source_ranking::clamp_scores(&bodies, &mut ranked, &policy)?;
+                for (row, score) in scores.iter_mut().zip(ranked) {
+                    row.score = score;
+                }
+            }
+
             // A pack emptied by its disclosure clamp or its world share lost
             // nothing to a threshold.
             let mut emptied_by_policy = false;
