@@ -1531,6 +1531,11 @@ budget_units = 50000           # its own meter; models.raw_budget_units when uns
 [models.decisions.booking_parse]
 role = "checker"        # the cheap seat a booking page's free text is parsed on
 max_input_bytes = 4096  # the longest text one parse reads (the default and the most)
+
+[models.decisions.connector_slate]
+# A connector's register and refresh doors ask, for each tool on its grant slate:
+wording = "What should this connector tool's setting be?"
+budget_ms = 30000       # the whole draft's budget (the default)
 ```
 
 The Big rung asks each question as one model call on that seat. The call is
@@ -1553,6 +1558,15 @@ authenticated caller's parse is paid on its principal's line. An anonymous
 visitor's parse is paid on the owner's line, since the owner publishes the
 page. Without the row, free text is refused, and a constraint object still
 works.
+
+A connector's grant slate (`POST /v1/owner/connectors/register` and
+`/refresh`) is drafted one tool at a time, up to the Big rung, when
+`[models.decisions.connector_slate]` words the question. The question reads
+the tool, the owner's past rulings on tools like it and the rule draft, and
+picks auto, always ask or never allow; only the owner picks always allow. An abstain, an answer
+outside the options, a failed call or a row past `budget_ms` keeps the rule
+draft. Without the row, the rule draft alone fills the slate. The owner
+stamps the slate either way.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The
